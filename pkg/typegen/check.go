@@ -26,7 +26,7 @@ func Check(ctx context.Context, m Manifest, o Options) error {
 	}
 	defer prepared.Close()
 	for _, app := range prepared.Manifest.Apps {
-		if p := app.prepared; p != nil {
+		if p := app.prepared; p != nil && o.selects(app.Name) {
 			if p.diagnostic != "" {
 				fmt.Fprintf(o.Stdout, "%s: %s\n", app.Name, p.diagnostic)
 			}
@@ -109,11 +109,11 @@ func pythonEnvironment(app, fallback string) string {
 	return fallback
 }
 func linkNodeModules(source, destination string, files map[string]string, meta slotMetadata) error {
-	pkg, err := nodeSlot(source)
+	pkg, name, err := nodeSlot(source)
 	if err != nil {
 		return err
 	}
-	target := filepath.Join(destination, "node_modules", nodePackage)
+	target := filepath.Join(destination, "node_modules", name)
 	if err = copyTree(pkg, target); err != nil {
 		return err
 	}
@@ -197,7 +197,7 @@ func publishedTypeMetadata(ctx context.Context, app App, o Options) (*mcpcontrac
 func checkPublishedTypes(ctx context.Context, m Manifest, o Options) error {
 	published := map[string]*mcpcontract.Metadata{}
 	for _, app := range m.Apps {
-		if app.prepared == nil {
+		if app.prepared == nil || !o.selects(app.Name) {
 			continue
 		}
 		metadata, err := publishedTypeMetadata(ctx, app, o)
@@ -209,7 +209,7 @@ func checkPublishedTypes(ctx context.Context, m Manifest, o Options) error {
 	var problems []string
 	for _, app := range m.Apps {
 		p := app.prepared
-		if p == nil || !hasContract(p.metadata) {
+		if p == nil || !o.selects(app.Name) || !hasContract(p.metadata) {
 			continue
 		}
 		canonical, err := mcptype.Canonical(ctx, map[string]any{"contract": p.metadata.Contract})

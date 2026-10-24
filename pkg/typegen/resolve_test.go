@@ -30,8 +30,10 @@ func TestPrepareUsesUntypedClientsOnlyForUnavailableRegistryContracts(t *testing
 		status           int
 		transportFailure bool
 		unavailable      bool
+		noRuntime        bool
 	}{
 		{name: "missing registry record", status: http.StatusNotFound, unavailable: true},
+		{name: "unused runtime", status: http.StatusNotFound, unavailable: true, noRuntime: true},
 		{name: "registry transport unavailable", transportFailure: true, unavailable: true},
 		{name: "wrong registry identity", status: http.StatusOK, body: `{"server":{"name":"example.com/wrong","version":"1.0.0","description":"Wrong identity"}}`},
 		{name: "malformed registry descriptor", status: http.StatusOK, body: `{"server":{"name":"example.com/dependency","version":"1.0.0","description":123}}`},
@@ -39,7 +41,11 @@ func TestPrepareUsesUntypedClientsOnlyForUnavailableRegistryContracts(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			app := t.TempDir()
 			ref := Reference{Name: "example.com/dependency", Version: "1.0.0", Registry: "https://registry.example"}
-			put(t, app, "server.py", "from holon.apps import apps\nfrom mcp.server import MCPServer\nserver = MCPServer(\"provider\")\n@server.tool()\ndef read(id: str) -> str:\n    return id\n")
+			source := pythonProvider
+			if !test.noRuntime {
+				source = "from holon.apps import apps\n" + source
+			}
+			put(t, app, "server.py", source)
 			put(t, app, "server.json", string(mustJSON(t, map[string]any{
 				"name": "example.com/provider", "version": "1.0.0", "description": "Provider",
 				"_meta": map[string]any{PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]Reference{"dependency": ref}}}},
@@ -69,8 +75,8 @@ func TestPrepareUsesUntypedClientsOnlyForUnavailableRegistryContracts(t *testing
 				t.Fatalf("unavailable dependency blocked generation: %v", err)
 			}
 			defer prepared.Close()
-			if !strings.Contains(diagnostics.String(), "typed dependency dependency unavailable:") {
-				t.Fatalf("missing diagnostic: %s", &diagnostics)
+			if strings.Contains(diagnostics.String(), "typed dependency dependency unavailable:") == test.noRuntime {
+				t.Fatalf("unavailable diagnostic does not match runtime usage: %s", &diagnostics)
 			}
 			if len(prepared.Metadata()["provider"].Requires) != 0 {
 				t.Fatal("unavailable dependency was advertised as a typed expectation")

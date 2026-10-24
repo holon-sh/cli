@@ -55,7 +55,7 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	if err := os.Symlink(store, filepath.Join(app, "node_modules/@holon/apps")); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := nodeSlot(app)
+	resolved, _, err := nodeSlot(app)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,5 +205,45 @@ func TestCheckDoesNotChangeSourceOrInstalledSlot(t *testing.T) {
 	}
 	if !maps.Equal(before, contents()) {
 		t.Fatal("check modified application files or the installed SDK")
+	}
+}
+
+func TestFallbackNodeSlotGenerationAndCheckSnapshot(t *testing.T) {
+	if _, err := typeLanguages["typescript"].localProgram(context.Background()); err != nil {
+		t.Skip(err)
+	}
+	app := t.TempDir()
+	const name = "@holon-sh/apps"
+	pkg := filepath.Join(app, "node_modules", name)
+	put(t, app, "package.json", `{"type":"module","devDependencies":{"@holon-sh/apps":"^0.1.0"}}`)
+	put(t, app, "src/index.ts", `export const answer: string = "ok";`)
+	put(t, pkg, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
+	var output bytes.Buffer
+	manifest := Manifest{Apps: []App{{Name: "app", Path: app}}}
+	options := Options{NoInstall: true, NoPublished: true, Stdout: &output, Stderr: &output}
+	if err := Generate(t.Context(), manifest, options); err != nil {
+		t.Fatalf("generate fallback scope: %v\n%s", err, &output)
+	}
+	if strings.Contains(output.String(), "npm install") {
+		t.Fatalf("installed a second runtime: %s", &output)
+	}
+	before := read(t, pkg, "generated/index.d.ts")
+	if !strings.Contains(before, mcpcontract.Marker) {
+		t.Fatalf("fallback slot was not generated: %s", before)
+	}
+	if err := Check(t.Context(), manifest, options); err != nil {
+		t.Fatalf("check fallback scope: %v\n%s", err, &output)
+	}
+	// Check must replace the fallback slot in its snapshot, not leave a symlink
+	// to the installed package while writing a different package scope.
+	snapshot := t.TempDir()
+	if err := linkNodeModules(app, snapshot, map[string]string{"index.d.ts": "snapshot contract"}, slotOwner("app")); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, snapshot, "node_modules/"+name+"/generated/index.d.ts"); got != "snapshot contract" {
+		t.Fatalf("check did not use the fallback snapshot contract: %s", got)
+	}
+	if got := read(t, pkg, "generated/index.d.ts"); got != before {
+		t.Fatal("checking changed the installed fallback slot")
 	}
 }

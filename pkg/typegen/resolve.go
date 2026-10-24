@@ -10,6 +10,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"net/http"
 	"net/url"
+	"oras.land/oras-go/v2/errdef"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 	"time"
 )
 
@@ -132,6 +134,16 @@ func resolveRequired(ctx context.Context, name string, ref Reference, local map[
 	if app.unavailable != "" {
 		return nil, app.unavailable, nil
 	}
+	if app.Image != "" {
+		metadata, err := resolveTypeMetadata(ctx, app.Image, o)
+		if err != nil {
+			if ctx.Err() == nil && contractUnavailable(err) {
+				return nil, err.Error(), nil
+			}
+			return nil, "", err
+		}
+		return metadata, "provider has no available typed contract; its clients are untyped", nil
+	}
 	descriptor := app.descriptor
 	if descriptor == nil {
 		var err error
@@ -188,5 +200,7 @@ func resolveDescriptor(ctx context.Context, d *Descriptor, o Options) (*mcpcontr
 func contractUnavailable(err error) bool {
 	var status HTTPError
 	var transport *url.Error
-	return errors.As(err, &status) || errors.As(err, &transport)
+	var registry *errcode.ErrorResponse
+	return errors.As(err, &status) || errors.As(err, &transport) || errors.Is(err, errdef.ErrNotFound) ||
+		errors.As(err, &registry) && (registry.StatusCode == 401 || registry.StatusCode == 403 || registry.StatusCode == 404)
 }

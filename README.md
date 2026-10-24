@@ -20,8 +20,17 @@ required for extracting the respective languages.
 
 Generation writes TypeScript files into the installed package's `generated/`
 directory and Python files into `<app>/holon/apps/__init__.py`. Existing foreign
-files are refused. Two apps cannot share the same installed TypeScript slot.
+files are refused. Selecting apps generates and installs runtimes only for those
+apps; local dependencies are extracted without changing their files. The fallback
+`@holon-sh/apps` scope is also supported, and existing runtime declarations in
+dependencies, devDependencies, or peerDependencies are reused.
+Two apps cannot share the same installed TypeScript slot.
 `holon check` uses temporary copies and leaves the app's files unchanged.
+
+Dependencies declared with `image:` in `holon.yaml` use the image's retained OCI
+contract. Unavailable or private contracts produce untyped clients, with a
+diagnostic when the app imports the runtime. Invalid contracts and identity
+mismatches remain errors.
 
 ## Build and verify
 

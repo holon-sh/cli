@@ -20,7 +20,15 @@ func ensureDependencies(ctx context.Context, app App, o Options) error {
 		if err := readTypeJSON(filepath.Join(app.Path, "package.json"), &pkg); err != nil {
 			return err
 		}
-		if pkg.Dependencies[nodePackage] == "" {
+		hasRuntime := false
+		for _, dependencies := range []map[string]string{pkg.Dependencies, pkg.DevDependencies, pkg.PeerDependencies} {
+			for _, name := range nodePackages {
+				if dependencies[name] != "" {
+					hasRuntime = true
+				}
+			}
+		}
+		if !hasRuntime {
 			manager, _, _ := strings.Cut(pkg.PackageManager, "@")
 			if manager == "" {
 				manager = "npm"

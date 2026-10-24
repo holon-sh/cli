@@ -12,6 +12,8 @@ import (
 
 const nodePackage = "@holon/apps"
 
+var nodePackages = []string{nodePackage, "@holon-sh/apps"}
+
 type slotMetadata struct {
 	Marker      string               `json:"marker"`
 	Placeholder bool                 `json:"placeholder,omitempty"`
@@ -20,33 +22,36 @@ type slotMetadata struct {
 	Digests     map[string]string    `json:"digests,omitempty"`
 }
 
-func nodeSlot(root string) (string, error) {
+// nodeSlot returns the real slot directory and the import specifier used by the app.
+func nodeSlot(root string) (string, string, error) {
 	for dir := root; ; dir = filepath.Dir(dir) {
-		candidate := filepath.Join(dir, "node_modules", nodePackage)
-		real, err := filepath.EvalSymlinks(candidate)
-		if err == nil {
-			var pkg struct {
-				Holon struct {
-					Slot            string `json:"slot"`
-					ContractVersion int    `json:"contractVersion"`
-				} `json:"holon"`
+		for _, name := range nodePackages {
+			candidate := filepath.Join(dir, "node_modules", name)
+			real, err := filepath.EvalSymlinks(candidate)
+			if err == nil {
+				var pkg struct {
+					Holon struct {
+						Slot            string `json:"slot"`
+						ContractVersion int    `json:"contractVersion"`
+					} `json:"holon"`
+				}
+				if err := readTypeJSON(filepath.Join(real, "package.json"), &pkg); err != nil {
+					return "", "", err
+				}
+				if pkg.Holon.Slot != "generated" || pkg.Holon.ContractVersion != mcpcontract.Version {
+					return "", "", fmt.Errorf("%s does not declare a compatible holon.slot", candidate)
+				}
+				return real, name, nil
 			}
-			if err := readTypeJSON(filepath.Join(real, "package.json"), &pkg); err != nil {
-				return "", err
+			if !errors.Is(err, os.ErrNotExist) {
+				return "", "", err
 			}
-			if pkg.Holon.Slot != "generated" || pkg.Holon.ContractVersion != mcpcontract.Version {
-				return "", fmt.Errorf("%s does not declare a compatible holon.slot", candidate)
-			}
-			return real, nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", err
 		}
 		if filepath.Dir(dir) == dir {
 			break
 		}
 	}
-	return "", fmt.Errorf("%s is not installed for %s; install it before generating types", nodePackage, root)
+	return "", "", fmt.Errorf("%s is not installed for %s; install it before generating types", nodePackage, root)
 }
 func validateNodeSlot(pkg string, meta slotMetadata) error {
 	directory := filepath.Join(pkg, "generated")

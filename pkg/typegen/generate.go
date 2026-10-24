@@ -28,6 +28,10 @@ type Options struct {
 	NoPublished    bool
 }
 
+func (o Options) selects(name string) bool {
+	return len(o.Apps) == 0 || slices.Contains(o.Apps, name)
+}
+
 func (o Options) defaults() Options {
 	if o.HTTPClient == nil {
 		o.HTTPClient = &http.Client{Timeout: 30 * time.Second}
@@ -139,7 +143,7 @@ func Prepare(ctx context.Context, manifest Manifest, options Options) (_ *Prepar
 	}
 	for _, app := range manifest.Apps {
 		p := app.prepared
-		if p == nil {
+		if p == nil || !o.selects(app.Name) {
 			continue
 		}
 		request := mcptype.GenerateRequest{Identity: p.metadata.Identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + app.Name}
@@ -160,7 +164,9 @@ func Prepare(ctx context.Context, manifest Manifest, options Options) (_ *Prepar
 					return nil, fmt.Errorf("%s typed dependency %s: %w", app.Name, name, err)
 				}
 				if actual == nil || actual.Contract == nil {
-					fmt.Fprintf(o.Stderr, "%s: typed dependency %s unavailable: %s\n", app.Name, name, diagnostic)
+					if p.usesApps {
+						fmt.Fprintf(o.Stderr, "%s: typed dependency %s unavailable: %s\n", app.Name, name, diagnostic)
+					}
 					continue
 				}
 				if actual.Identity != ref.Identity() {
@@ -247,12 +253,14 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 	if err != nil {
 		return err
 	}
-	release, err := acquireLocks(resolved)
+	targets := resolved
+	targets.Apps = slices.DeleteFunc(slices.Clone(resolved.Apps), func(app App) bool { return !o.selects(app.Name) })
+	release, err := acquireLocks(targets)
 	if err != nil {
 		return err
 	}
 	defer release()
-	for _, app := range resolved.Apps {
+	for _, app := range targets.Apps {
 		if app.Path != "" {
 			if err := ensureDependencies(ctx, app, o); err != nil {
 				return err
@@ -268,11 +276,11 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 	owners := map[string]string{}
 	for _, app := range prepared.Manifest.Apps {
 		p := app.prepared
-		if p == nil {
+		if p == nil || !o.selects(app.Name) {
 			continue
 		}
 		if _, ok := p.packages["typescript"]; ok {
-			slot, err := nodeSlot(app.Path)
+			slot, _, err := nodeSlot(app.Path)
 			if err != nil {
 				return err
 			}
@@ -296,7 +304,7 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 	}
 	for _, app := range prepared.Manifest.Apps {
 		p := app.prepared
-		if p == nil {
+		if p == nil || !o.selects(app.Name) {
 			continue
 		}
 		for _, language := range slices.Sorted(maps.Keys(p.packages)) {
@@ -338,7 +346,7 @@ func acquireLocks(m Manifest) (func(), error) {
 				return release, err
 			}
 			paths[real] = true
-			if slot, err := nodeSlot(app.Path); err == nil {
+			if slot, _, err := nodeSlot(app.Path); err == nil {
 				paths[slot] = true
 			}
 		}
