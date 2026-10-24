@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""Verify and vendor public SDK tooling archives; never runs their contents."""
+import argparse
+import hashlib
+import re
+import shutil
+from pathlib import Path
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("typescript", type=Path, help="cli-tooling-ts-VERSION.zip with adjacent SHA256SUMS")
+parser.add_argument("python", type=Path, help="cli-tooling-py-VERSION.zip with adjacent SHA256SUMS")
+args = parser.parse_args()
+archives = [args.typescript.resolve(), args.python.resolve()]
+rows = []
+for language, archive in zip(("ts", "py"), archives):
+    if not re.fullmatch(rf"cli-tooling-{language}-[0-9]+\.[0-9]+\.[0-9]+\.zip", archive.name):
+        parser.error(f"unexpected {language} tooling filename: {archive.name}")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    expected = f"{digest}  {archive.name}"
+    if expected not in (archive.parent / "SHA256SUMS").read_text().splitlines():
+        parser.error(f"checksum mismatch: {archive}")
+    rows.append(expected)
+destination = Path(__file__).resolve().parent.parent / "pkg/tooling"
+destination.mkdir(parents=True, exist_ok=True)
+for old in destination.glob("cli-tooling-*.zip"):
+    old.unlink()
+for archive in archives:
+    shutil.copyfile(archive, destination / archive.name)
+(destination / "SHA256SUMS").write_text("\n".join(rows) + "\n")
+print("Vendored " + ", ".join(archive.name for archive in archives))

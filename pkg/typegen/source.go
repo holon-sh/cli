@@ -1,0 +1,201 @@
+package typegen
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/moby/patternmatcher"
+	"github.com/moby/patternmatcher/ignorefile"
+)
+
+func sourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
+	file, err := os.Open(filepath.Join(root, dockerignoreFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return patternmatcher.New(nil)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	patterns, err := ignorefile.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	return patternmatcher.New(patterns)
+}
+
+func generatedSource(root, path string) bool {
+	relative, _ := filepath.Rel(root, path)
+	if slices.ContainsFunc(strings.Split(filepath.ToSlash(relative), "/"), func(part string) bool {
+		return slices.Contains([]string{".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}, part)
+	}) {
+		return true
+	}
+	managed := filepath.Join(root, "holon")
+	if pathInsideContext(path, managed) && legacyManaged(managed) {
+		return true
+	}
+	return path == filepath.Join(managed, "apps") && generatedPython(managed)
+}
+
+func validateBuildContext(app manifestApp) error {
+	info, err := os.Lstat(app.Path)
+	if err != nil {
+		return fmt.Errorf("build context for %s: %w", app.Name, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("build context for %s must be a real directory", app.Name)
+	}
+	return nil
+}
+
+func snapshotSource(app manifestApp, destination string) (string, error) {
+	if err := validateBuildContext(app); err != nil {
+		return "", err
+	}
+	root, err := filepath.EvalSymlinks(app.Path)
+	if err != nil {
+		return "", err
+	}
+	matcher, err := sourceMatcher(root)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.New()
+	err = filepath.WalkDir(root, func(path string, item fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		ignored, err := ignoredSource(root, path, matcher)
+		if err != nil {
+			return err
+		}
+		if ignored {
+			if item.IsDir() && (generatedSource(root, path) || !matcher.Exclusions()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		relative, _ := filepath.Rel(root, path)
+		target := filepath.Join(destination, relative)
+		info, err := item.Info()
+		if err != nil {
+			return err
+		}
+		if destination == "" && item.IsDir() {
+			return nil
+		}
+		if item.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm()|0o700)
+		}
+		if destination != "" {
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+		}
+		_, _ = fmt.Fprintf(hash, "%s\x00%d\x00%d\x00", filepath.ToSlash(relative), info.Mode(), info.Size())
+		if info.Mode()&os.ModeSymlink != 0 {
+			resolved, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return err
+			}
+			if !pathInsideContext(resolved, root) {
+				return fmt.Errorf("source symlink escapes application: %s", relative)
+			}
+			excluded, err := ignoredSource(root, resolved, matcher)
+			if err != nil {
+				return err
+			}
+			if excluded {
+				return fmt.Errorf("source symlink targets an excluded file: %s", relative)
+			}
+			link, _ := filepath.Rel(filepath.Dir(path), resolved)
+			_, _ = io.WriteString(hash, link)
+			if destination == "" {
+				return nil
+			}
+			return os.Symlink(link, target)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("unsupported source entry: %s", relative)
+		}
+		input, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer input.Close()
+		if destination == "" {
+			_, err := io.Copy(hash, input)
+			return err
+		}
+		output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(io.MultiWriter(output, hash), input)
+		return errors.Join(copyErr, output.Close(), os.Chtimes(target, info.ModTime(), info.ModTime()))
+	})
+	if err != nil {
+		return "", err
+	}
+	if destination == "" {
+		return hex.EncodeToString(hash.Sum(nil)), nil
+	}
+	err = os.Remove(filepath.Join(destination, dockerignoreFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		err = nil
+	}
+	return hex.EncodeToString(hash.Sum(nil)), err
+}
+
+func sourceEntry(root string) (string, error) {
+	var metadata struct {
+		Scripts map[string]string `json:"scripts"`
+		Main    string            `json:"main"`
+	}
+	if err := readTypeJSON(filepath.Join(root, "package.json"), &metadata); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	entries := []string{"server.py", "src/server.py", "server.go"}
+	if metadata.Scripts["start"] == "" && metadata.Main == "" {
+		entries = append(entries, "server.ts", "src/server.ts", "server.js", "src/server.js")
+	}
+	var entry string
+	for _, name := range entries {
+		if err := regularNoSymlink(filepath.Join(root, name), "application entrypoint"); errors.Is(err, fs.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return "", err
+		}
+		if entry != "" {
+			return "", errors.New("keep exactly one server entrypoint: server.go at the root, or server.ts, server.js, server.py at the root or in src")
+		}
+		entry = name
+	}
+	return entry, nil
+}
+
+func ignoredSource(root, path string, matcher *patternmatcher.PatternMatcher) (bool, error) {
+	if path == filepath.Join(root, dockerignoreFile) {
+		return false, nil
+	}
+	relative, err := filepath.Rel(root, path)
+	if !filepath.IsLocal(relative) {
+		return true, err
+	}
+	if relative == "." {
+		return false, nil
+	}
+	if generatedSource(root, path) {
+		return true, nil
+	}
+	return matcher.MatchesOrParentMatches(filepath.ToSlash(relative))
+}

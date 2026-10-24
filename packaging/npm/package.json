@@ -1,0 +1,16 @@
+{
+  "name": "@holon/cli",
+  "version": "0.1.0",
+  "description": "Standalone Holon typed-contract CLI",
+  "type": "module",
+  "bin": {"holon": "bin/holon.js"},
+  "files": ["bin/holon.js", "README.md"],
+  "engines": {"node": ">=22"},
+  "publishConfig": {"access": "public"},
+  "optionalDependencies": {
+    "@holon/cli-darwin-arm64": "0.1.0",
+    "@holon/cli-darwin-x64": "0.1.0",
+    "@holon/cli-linux-arm64": "0.1.0",
+    "@holon/cli-linux-x64": "0.1.0"
+  }
+}

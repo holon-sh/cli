@@ -1,0 +1,48 @@
+name: Build mcptype C SDK
+description: Fetch the pinned compiler and build its native C library.
+inputs:
+  static:
+    default: "false"
+    description: Build for static musl linking on Linux
+runs:
+  using: composite
+  steps:
+    - name: Check out mcptype
+      uses: actions/checkout@v7
+      id: source
+      with:
+        repository: hughhan1/mcptype
+        ref: v0.0.6
+        path: .mcptype
+        persist-credentials: false
+    - name: Identify runner image
+      id: runner
+      shell: bash
+      run: echo "image=$RUNNER_OS-$RUNNER_ARCH-$ImageVersion" >> "$GITHUB_OUTPUT"
+    - name: Cache compiled SDK
+      uses: actions/cache@v6
+      id: sdk
+      with:
+        path: dist/mcptype
+        key: mcptype-${{ steps.runner.outputs.image }}-${{ inputs.static }}-${{ steps.source.outputs.commit }}-${{ hashFiles('.github/actions/mcptype/action.yml') }}
+    - name: Build SDK
+      if: steps.sdk.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: .mcptype
+      env:
+        MCPTYPE_STATIC: ${{ inputs.static }}
+      run: |
+        triple=$(rustc -vV | sed -n 's/^host: //p')
+        destination="$GITHUB_WORKSPACE/dist/mcptype"
+        if [ "$RUNNER_OS" = Linux ] && [ "$MCPTYPE_STATIC" = true ]; then
+          triple="${triple%-gnu}-musl"
+          rustup target add "$triple"
+          python3 ffi/package-sdk.py "$destination" "$triple"
+          cp "$(rustc --print target-libdir --target "$triple")/self-contained/libunwind.a" "$destination/lib/"
+          sed -i 's/-lmcptype /-lmcptype -lunwind /' "$destination/lib/pkgconfig/mcptype.pc"
+        else
+          python3 ffi/package-sdk.py "$destination" "$triple"
+        fi
+    - name: Add SDK to pkg-config
+      shell: bash
+      run: echo "PKG_CONFIG_PATH=$GITHUB_WORKSPACE/dist/mcptype/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"

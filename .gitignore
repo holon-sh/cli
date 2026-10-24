@@ -1,0 +1,5 @@
+dist/
+.mcptype/
+.venv/
+__pycache__/
+*.egg-info/
