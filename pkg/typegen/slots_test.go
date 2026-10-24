@@ -208,7 +208,7 @@ func TestCheckDoesNotChangeSourceOrInstalledSlot(t *testing.T) {
 	}
 }
 
-func TestFallbackNodeSlotGenerationAndCheckSnapshot(t *testing.T) {
+func TestFallbackNodeSlotGenerationAndCheck(t *testing.T) {
 	if _, err := typeLanguages["typescript"].localProgram(context.Background()); err != nil {
 		t.Skip(err)
 	}
@@ -216,8 +216,8 @@ func TestFallbackNodeSlotGenerationAndCheckSnapshot(t *testing.T) {
 	const name = "@holon-sh/apps"
 	pkg := filepath.Join(app, "node_modules", name)
 	put(t, app, "package.json", `{"type":"module","devDependencies":{"@holon-sh/apps":"^0.1.0"}}`)
-	put(t, app, "src/index.ts", `export const answer: string = "ok";`)
-	put(t, pkg, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
+	put(t, app, "src/index.ts", `import type { Inputs } from "@holon-sh/apps"; const inputs: Inputs = {};`)
+	put(t, pkg, "package.json", `{"exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
 	var output bytes.Buffer
 	manifest := Manifest{Apps: []App{{Name: "app", Path: app}}}
 	options := Options{NoInstall: true, NoPublished: true, Stdout: &output, Stderr: &output}
@@ -227,23 +227,17 @@ func TestFallbackNodeSlotGenerationAndCheckSnapshot(t *testing.T) {
 	if strings.Contains(output.String(), "npm install") {
 		t.Fatalf("installed a second runtime: %s", &output)
 	}
-	before := read(t, pkg, "generated/index.d.ts")
-	if !strings.Contains(before, mcpcontract.Marker) {
-		t.Fatalf("fallback slot was not generated: %s", before)
+	if !isFile(filepath.Join(pkg, "generated/index.d.ts")) {
+		t.Fatal("generation did not write the fallback slot")
 	}
+	// Check must use fresh declarations in its copy and preserve the stale
+	// installed declarations. Linking the original package would fail the check.
+	const stale = "export interface Inputs { stale: never }"
+	put(t, pkg, "generated/index.d.ts", stale)
 	if err := Check(t.Context(), manifest, options); err != nil {
 		t.Fatalf("check fallback scope: %v\n%s", err, &output)
 	}
-	// Check must replace the fallback slot in its snapshot, not leave a symlink
-	// to the installed package while writing a different package scope.
-	snapshot := t.TempDir()
-	if err := linkNodeModules(app, snapshot, map[string]string{"index.d.ts": "snapshot contract"}, slotOwner("app")); err != nil {
-		t.Fatal(err)
-	}
-	if got := read(t, snapshot, "node_modules/"+name+"/generated/index.d.ts"); got != "snapshot contract" {
-		t.Fatalf("check did not use the fallback snapshot contract: %s", got)
-	}
-	if got := read(t, pkg, "generated/index.d.ts"); got != before {
+	if got := read(t, pkg, "generated/index.d.ts"); got != stale {
 		t.Fatal("checking changed the installed fallback slot")
 	}
 }
