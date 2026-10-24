@@ -22,10 +22,8 @@ func ensureDependencies(ctx context.Context, app App, o Options) error {
 		}
 		hasRuntime := false
 		for _, dependencies := range []map[string]string{pkg.Dependencies, pkg.DevDependencies, pkg.PeerDependencies} {
-			for _, name := range nodePackages {
-				if dependencies[name] != "" {
-					hasRuntime = true
-				}
+			if dependencies[nodePackage] != "" {
+				hasRuntime = true
 			}
 		}
 		if !hasRuntime {

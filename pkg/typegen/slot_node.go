@@ -10,9 +10,7 @@ import (
 	"strings"
 )
 
-const nodePackage = "@holon/apps"
-
-var nodePackages = []string{nodePackage, "@holon-sh/apps"}
+const nodePackage = "@holon-sh/apps"
 
 type slotMetadata struct {
 	Marker      string               `json:"marker"`
@@ -25,27 +23,25 @@ type slotMetadata struct {
 // nodeSlot returns the real slot directory and the import specifier used by the app.
 func nodeSlot(root string) (string, string, error) {
 	for dir := root; ; dir = filepath.Dir(dir) {
-		for _, name := range nodePackages {
-			candidate := filepath.Join(dir, "node_modules", name)
-			real, err := filepath.EvalSymlinks(candidate)
-			if err == nil {
-				var pkg struct {
-					Holon struct {
-						Slot            string `json:"slot"`
-						ContractVersion int    `json:"contractVersion"`
-					} `json:"holon"`
-				}
-				if err := readTypeJSON(filepath.Join(real, "package.json"), &pkg); err != nil {
-					return "", "", err
-				}
-				if pkg.Holon.Slot != "generated" || pkg.Holon.ContractVersion != mcpcontract.Version {
-					return "", "", fmt.Errorf("%s does not declare a compatible holon.slot", candidate)
-				}
-				return real, name, nil
+		candidate := filepath.Join(dir, "node_modules", nodePackage)
+		real, err := filepath.EvalSymlinks(candidate)
+		if err == nil {
+			var pkg struct {
+				Holon struct {
+					Slot            string `json:"slot"`
+					ContractVersion int    `json:"contractVersion"`
+				} `json:"holon"`
 			}
-			if !errors.Is(err, os.ErrNotExist) {
+			if err := readTypeJSON(filepath.Join(real, "package.json"), &pkg); err != nil {
 				return "", "", err
 			}
+			if pkg.Holon.Slot != "generated" || pkg.Holon.ContractVersion != mcpcontract.Version {
+				return "", "", fmt.Errorf("%s does not declare a compatible holon.slot", candidate)
+			}
+			return real, nodePackage, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", "", err
 		}
 		if filepath.Dir(dir) == dir {
 			break

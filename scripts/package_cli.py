@@ -74,6 +74,7 @@ def build_binary(binary: Path, target: Target, version: str) -> None:
 def build_wheel(stage: Path, dist: Path, binary: Path, target: Target, version: str) -> Path:
     project = stage / "pypi"
     shutil.copytree(ROOT / "packaging/pypi", project)
+    shutil.copyfile(ROOT / "LICENSE", project / "LICENSE")
     manifest = project / "pyproject.toml"
     manifest.write_text(manifest.read_text().replace('version = "0.1.0"', f'version = "{python_version(version)}"'))
     destination = project / "holon_cli/bin/holon"
@@ -113,10 +114,12 @@ def build_npm(stage: Path, dist: Path, binary: Path, target: Target, version: st
     (platform / "bin").mkdir(parents=True)
     shutil.copyfile(binary, platform / "bin/holon")
     (platform / "bin/holon").chmod(0o755)
-    manifest = {"name": f"@holon/cli-{target.goos}-{target.npm_arch}", "version": version, "description": "Holon standalone CLI platform binary", "os": [target.goos], "cpu": [target.npm_arch], "files": ["bin/holon"], "exports": {"./bin/holon": "./bin/holon"}, "publishConfig": {"access": "public"}}
+    shutil.copyfile(ROOT / "LICENSE", platform / "LICENSE")
+    manifest = {"name": f"@holon-sh/cli-{target.goos}-{target.npm_arch}", "version": version, "description": "Holon standalone CLI platform binary", "license": "MIT", "os": [target.goos], "cpu": [target.npm_arch], "files": ["bin/holon", "LICENSE"], "exports": {"./bin/holon": "./bin/holon"}, "publishConfig": {"access": "public"}}
     (platform / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
     package = stage / "npm"
     shutil.copytree(ROOT / "packaging/npm", package)
+    shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
     manifest = json.loads((package / "package.json").read_text())
     manifest["version"] = version
     manifest["optionalDependencies"] = {name: version for name in manifest["optionalDependencies"]}

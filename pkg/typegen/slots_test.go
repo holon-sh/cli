@@ -49,10 +49,10 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	store := filepath.Join(root, "store")
 	app := filepath.Join(root, "app")
 	put(t, store, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
-	if err := os.MkdirAll(filepath.Join(app, "node_modules/@holon"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(app, "node_modules/@holon-sh"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(store, filepath.Join(app, "node_modules/@holon/apps")); err != nil {
+	if err := os.Symlink(store, filepath.Join(app, "node_modules/@holon-sh/apps")); err != nil {
 		t.Fatal(err)
 	}
 	resolved, _, err := nodeSlot(app)
@@ -148,14 +148,14 @@ func TestGenerateRejectsSharedNodeSlotBeforeWritingEitherApp(t *testing.T) {
 		t.Skip(err)
 	}
 	root := t.TempDir()
-	pkg := filepath.Join(root, "node_modules/@holon/apps")
+	pkg := filepath.Join(root, "node_modules/@holon-sh/apps")
 	put(t, pkg, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
 	put(t, pkg, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})))
 	put(t, pkg, "generated/index.js", "placeholder")
 	m := Manifest{}
 	for _, name := range []string{"first", "second"} {
 		app := filepath.Join(root, name)
-		put(t, app, "package.json", `{"type":"module","dependencies":{"@holon/apps":"^0.1.0"}}`)
+		put(t, app, "package.json", `{"type":"module","dependencies":{"@holon-sh/apps":"^0.1.0"}}`)
 		m.Apps = append(m.Apps, App{Name: name, Path: app})
 	}
 	err := Generate(context.Background(), m, Options{NoInstall: true})
@@ -172,8 +172,8 @@ func TestCheckDoesNotChangeSourceOrInstalledSlot(t *testing.T) {
 		t.Skip(err)
 	}
 	app := t.TempDir()
-	pkg := filepath.Join(app, "node_modules/@holon/apps")
-	put(t, app, "package.json", `{"type":"module","dependencies":{"@holon/apps":"^0.1.0"}}`)
+	pkg := filepath.Join(app, "node_modules/@holon-sh/apps")
+	put(t, app, "package.json", `{"type":"module","dependencies":{"@holon-sh/apps":"^0.1.0"}}`)
 	put(t, app, "src/index.ts", `export const answer: string = "ok";`)
 	put(t, pkg, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
 	put(t, pkg, "generated/index.js", "foreign marker must survive check")
@@ -208,13 +208,12 @@ func TestCheckDoesNotChangeSourceOrInstalledSlot(t *testing.T) {
 	}
 }
 
-func TestFallbackNodeSlotGenerationAndCheck(t *testing.T) {
+func TestDevDependencyNodeSlotGenerationAndCheck(t *testing.T) {
 	if _, err := typeLanguages["typescript"].localProgram(context.Background()); err != nil {
 		t.Skip(err)
 	}
 	app := t.TempDir()
-	const name = "@holon-sh/apps"
-	pkg := filepath.Join(app, "node_modules", name)
+	pkg := filepath.Join(app, "node_modules", nodePackage)
 	put(t, app, "package.json", `{"type":"module","devDependencies":{"@holon-sh/apps":"^0.1.0"}}`)
 	put(t, app, "src/index.ts", `import type { Inputs } from "@holon-sh/apps"; const inputs: Inputs = {};`)
 	put(t, pkg, "package.json", `{"exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
@@ -222,22 +221,22 @@ func TestFallbackNodeSlotGenerationAndCheck(t *testing.T) {
 	manifest := Manifest{Apps: []App{{Name: "app", Path: app}}}
 	options := Options{NoInstall: true, NoPublished: true, Stdout: &output, Stderr: &output}
 	if err := Generate(t.Context(), manifest, options); err != nil {
-		t.Fatalf("generate fallback scope: %v\n%s", err, &output)
+		t.Fatalf("generate dev dependency slot: %v\n%s", err, &output)
 	}
 	if strings.Contains(output.String(), "npm install") {
 		t.Fatalf("installed a second runtime: %s", &output)
 	}
 	if !isFile(filepath.Join(pkg, "generated/index.d.ts")) {
-		t.Fatal("generation did not write the fallback slot")
+		t.Fatal("generation did not write the slot")
 	}
 	// Check must use fresh declarations in its copy and preserve the stale
 	// installed declarations. Linking the original package would fail the check.
 	const stale = "export interface Inputs { stale: never }"
 	put(t, pkg, "generated/index.d.ts", stale)
 	if err := Check(t.Context(), manifest, options); err != nil {
-		t.Fatalf("check fallback scope: %v\n%s", err, &output)
+		t.Fatalf("check dev dependency slot: %v\n%s", err, &output)
 	}
 	if got := read(t, pkg, "generated/index.d.ts"); got != stale {
-		t.Fatal("checking changed the installed fallback slot")
+		t.Fatal("checking changed the installed slot")
 	}
 }
