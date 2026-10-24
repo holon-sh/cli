@@ -3,7 +3,37 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  tooling:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tooling/typescript/package-lock.json
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.11'
+      - name: Test the TypeScript extractor and runner
+        working-directory: tooling/typescript
+        run: |
+          npm ci
+          npm test
+      - name: Test the Python extractor and runner
+        working-directory: tooling/python
+        run: |
+          uv sync
+          uv run --no-sync ruff check . && uv run --no-sync ruff format --check .
+          uv run --no-sync pytest
+          uv run --no-sync mypy --strict
+      - name: Embedded tooling archives are up to date
+        run: |
+          scripts/build-tooling
+          git diff --exit-code pkg/tooling
   test-package:
+    needs: tooling
     strategy:
       fail-fast: false
       matrix:
