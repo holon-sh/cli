@@ -1,0 +1,691 @@
+{
+  "canonical": [
+    {
+      "input": {
+        "schema": {
+          "type": "object",
+          "description": "schema docs",
+          "required": [
+            "to",
+            "from"
+          ],
+          "properties": {
+            "to": {
+              "type": "string",
+              "title": "recipient"
+            },
+            "from": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "enum": [
+                "z",
+                "a"
+              ],
+              "description": "sender"
+            },
+            "y": {
+              "not": {
+                "type": "string",
+                "$comment": "ignored"
+              }
+            }
+          },
+          "dependentSchemas": {
+            "description": {
+              "required": [
+                "b",
+                "a"
+              ],
+              "$comment": "ignored"
+            }
+          }
+        }
+      },
+      "output": {
+        "canonical": {
+          "type": "object",
+          "required": [
+            "from",
+            "to"
+          ],
+          "properties": {
+            "from": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "enum": [
+                "a",
+                "z"
+              ]
+            },
+            "to": {
+              "type": "string"
+            },
+            "y": {
+              "not": {
+                "type": "string"
+              }
+            }
+          },
+          "dependentSchemas": {
+            "description": {
+              "required": [
+                "a",
+                "b"
+              ]
+            }
+          }
+        },
+        "digest": "sha256:4446cc9118aafd207213d325352d5c2f263b08fff34b5845f754f7edf950005f"
+      }
+    },
+    {
+      "input": {
+        "contract": {
+          "tools": [
+            {
+              "name": "z",
+              "inputSchema": {
+                "type": "object",
+                "description": "ignore"
+              }
+            },
+            {
+              "name": "get",
+              "inputSchema": {
+                "type": "object",
+                "description": "schema docs",
+                "required": [
+                  "to",
+                  "from"
+                ],
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "title": "recipient"
+                  },
+                  "from": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "enum": [
+                      "z",
+                      "a"
+                    ],
+                    "description": "sender"
+                  }
+                }
+              },
+              "outputSchema": {
+                "type": "object",
+                "title": "output"
+              }
+            }
+          ],
+          "resources": [
+            {
+              "uri": "orders://z",
+              "outputSchema": {
+                "type": "object",
+                "description": "ignore"
+              }
+            },
+            {
+              "uri": "orders://a",
+              "outputSchema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "title": "ID"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "canonical": {
+          "tools": [
+            {
+              "name": "get",
+              "inputSchema": {
+                "type": "object",
+                "required": [
+                  "from",
+                  "to"
+                ],
+                "properties": {
+                  "from": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "enum": [
+                      "a",
+                      "z"
+                    ]
+                  },
+                  "to": {
+                    "type": "string"
+                  }
+                }
+              },
+              "outputSchema": {
+                "type": "object"
+              }
+            },
+            {
+              "name": "z",
+              "inputSchema": {
+                "type": "object"
+              }
+            }
+          ],
+          "resources": [
+            {
+              "uri": "orders://a",
+              "outputSchema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            {
+              "uri": "orders://z",
+              "outputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        },
+        "digest": "sha256:a679b54edb6b49a0212556d4fd27af486ed1af5224ed25b2d30e5ba2fa727a3c"
+      }
+    },
+    {
+      "input": {
+        "schema": {
+          "type": "object",
+          "dependentSchemas": {
+            "description": {
+              "required": [
+                "b",
+                "a"
+              ]
+            }
+          },
+          "anyOf": [
+            {
+              "type": "string",
+              "title": "x"
+            },
+            {
+              "properties": {
+                "z": {},
+                "a": {}
+              },
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "output": {
+        "canonical": {
+          "anyOf": [
+            {
+              "properties": {
+                "a": {},
+                "z": {}
+              },
+              "type": "object"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "dependentSchemas": {
+            "description": {
+              "required": [
+                "a",
+                "b"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "digest": "sha256:ce5b4f183ca78963b0c0d8f4a99930827275540f2e1e68068a3931c525897c13"
+      }
+    },
+    {
+      "input": {
+        "metadata": {
+          "version": 1,
+          "identity": {
+            "name": "orders",
+            "version": "1.2.0"
+          },
+          "contract": {
+            "tools": [
+              {
+                "name": "get",
+                "inputSchema": {
+                  "type": "object",
+                  "description": "docs",
+                  "required": [
+                    "b",
+                    "a"
+                  ]
+                }
+              }
+            ],
+            "resources": [
+              {
+                "uri": "orders://summary",
+                "outputSchema": {
+                  "type": "object",
+                  "title": "summary"
+                }
+              }
+            ]
+          },
+          "requires": {
+            "billing": {
+              "identity": {
+                "name": "billing",
+                "version": "2.0.0"
+              },
+              "contract": {
+                "tools": []
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "canonical": {
+          "tools": [
+            {
+              "name": "get",
+              "inputSchema": {
+                "required": [
+                  "a",
+                  "b"
+                ],
+                "type": "object"
+              }
+            }
+          ],
+          "resources": [
+            {
+              "uri": "orders://summary",
+              "outputSchema": {
+                "type": "object"
+              }
+            }
+          ]
+        },
+        "digest": "sha256:33b664de30dcad2d1d24b069249079d7676c10679ce162831323e7e1f126a807"
+      }
+    },
+    {
+      "input": {
+        "metadata": {
+          "version": 1,
+          "identity": {
+            "name": "orders",
+            "version": "1.2.0"
+          }
+        }
+      },
+      "output": {
+        "canonical": null,
+        "digest": null
+      }
+    }
+  ],
+  "changes": [
+    {
+      "input": {
+        "expected": {
+          "identity": {
+            "name": "example/orders",
+            "version": "1"
+          },
+          "contract": {
+            "tools": [
+              {
+                "name": "get",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "before"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            ],
+            "resources": [
+              {
+                "uri": "orders://summary",
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "published": null
+      },
+      "output": {
+        "changes": [
+          {
+            "kind": "no_contract",
+            "text": "no published contract"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "expected": {
+          "identity": {
+            "name": "example/orders",
+            "version": "1"
+          },
+          "contract": {
+            "tools": [
+              {
+                "name": "get",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "before"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            ],
+            "resources": [
+              {
+                "uri": "orders://summary",
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "published": {
+          "version": 1,
+          "identity": {
+            "name": "example/orders",
+            "version": "1"
+          },
+          "contract": {
+            "tools": [
+              {
+                "name": "get",
+                "inputSchema": {
+                  "required": [
+                    "id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "description": "after",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              {
+                "name": "new",
+                "inputSchema": {
+                  "type": "object"
+                }
+              }
+            ],
+            "resources": [
+              {
+                "uri": "orders://summary",
+                "outputSchema": {
+                  "properties": {
+                    "total": {
+                      "type": "number",
+                      "description": "total"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              {
+                "uri": "orders://new",
+                "outputSchema": {
+                  "type": "object"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "output": {
+        "changes": []
+      }
+    },
+    {
+      "input": {
+        "expected": {
+          "identity": {
+            "name": "example/orders",
+            "version": "1"
+          },
+          "contract": {
+            "tools": [
+              {
+                "name": "get",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "before"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "name": "gone",
+                "inputSchema": {
+                  "type": "object"
+                }
+              },
+              {
+                "name": "out_added",
+                "inputSchema": {
+                  "type": "object"
+                }
+              },
+              {
+                "name": "out_changed",
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ],
+            "resources": [
+              {
+                "uri": "orders://summary",
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              {
+                "uri": "orders://gone",
+                "outputSchema": {
+                  "type": "object"
+                }
+              }
+            ]
+          }
+        },
+        "published": {
+          "version": 1,
+          "identity": {
+            "name": "example/orders",
+            "version": "2"
+          },
+          "contract": {
+            "tools": [
+              {
+                "name": "get",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "name": "out_added",
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object"
+                }
+              },
+              {
+                "name": "out_changed",
+                "inputSchema": {
+                  "type": "object"
+                },
+                "outputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            ],
+            "resources": [
+              {
+                "uri": "orders://summary",
+                "outputSchema": {
+                  "type": "array"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "output": {
+        "changes": [
+          {
+            "kind": "identity",
+            "expected": {
+              "name": "example/orders",
+              "version": "1"
+            },
+            "published": {
+              "name": "example/orders",
+              "version": "2"
+            },
+            "text": "identity example/orders@1 expected, example/orders@2 published"
+          },
+          {
+            "kind": "tool_input_changed",
+            "name": "get",
+            "text": "tool get input changed"
+          },
+          {
+            "kind": "tool_removed",
+            "name": "gone",
+            "text": "tool gone removed"
+          },
+          {
+            "kind": "tool_output_changed",
+            "name": "out_added",
+            "text": "tool out_added output changed"
+          },
+          {
+            "kind": "tool_output_changed",
+            "name": "out_changed",
+            "text": "tool out_changed output changed"
+          },
+          {
+            "kind": "resource_removed",
+            "uri": "orders://gone",
+            "text": "resource orders://gone removed"
+          },
+          {
+            "kind": "resource_output_changed",
+            "uri": "orders://summary",
+            "text": "resource orders://summary contents changed"
+          }
+        ]
+      }
+    }
+  ],
+  "invalid": [
+    {"expected":{"identity":{"name":"a","version":"1"},"contract":{"tools":[{"name":"read","inputSchema":{"type":"object"}},{"name":"read","inputSchema":{"type":"object"}}]}},"published":null},
+    {"expected":{"identity":{"name":"a","version":"1"},"contract":{"tools":[{"name":"","inputSchema":{"type":"object"}}]}},"published":null},
+    {"expected":{"identity":{"name":"a","version":"1"},"contract":{"tools":[{"name":"read","inputSchema":{"type":"string"}}]}},"published":null},
+    {"expected":{"identity":{"name":"a","version":"1"},"contract":{"tools":[{"name":"read","inputSchema":{"type":"object"},"outputSchema":null}]}},"published":null},
+    {"expected":{"identity":{"name":"a","version":"1"},"contract":{"tools":[],"resources":[{"uri":"r://a","outputSchema":{}},{"uri":"r://a","outputSchema":{}}]}},"published":null},
+    {"expected":{"identity":{"name":"a","version":"1"},"contract":{"tools":[],"resources":[{"uri":"r://a","outputSchema":[]}]}},"published":null},
+    {"expected":{"identity":{"name":"","version":"1"},"contract":{"tools":[]}},"published":null},
+    {"expected":{"identity":{"name":"a","version":"1"},"contract":{"tools":[]}},"published":{"version":2,"identity":{"name":"a","version":"1"}}},
+    {"expected":{"identity":{"name":"a","version":"1"},"contract":{"tools":[]}},"published":{"version":1,"identity":{"name":"a","version":"1"},"requires":{"":{"identity":{"name":"a","version":"1"},"contract":{"tools":[]}}}}}
+  ]
+}
