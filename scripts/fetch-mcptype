@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""Fetch the pinned npm binding used by Go parity tests and verify its checksum."""
+import hashlib
+import subprocess
+import tempfile
+from pathlib import Path
+
+version = "0.0.6"
+name = f"mcptype-{version}.tgz"
+root = Path(__file__).resolve().parent.parent
+with tempfile.TemporaryDirectory(prefix="mcptype-download-") as stage:
+    subprocess.run(["gh", "release", "download", f"v{version}", "--repo", "hughhan1/mcptype", "--pattern", name, "--pattern", "SHA256SUMS", "--dir", stage], check=True)
+    archive = Path(stage) / name
+    data = archive.read_bytes()
+    row = f"{hashlib.sha256(data).hexdigest()}  {name}"
+    if row not in (Path(stage) / "SHA256SUMS").read_text().splitlines():
+        raise SystemExit("mcptype release checksum mismatch")
+    destination = root / "pkg/mcptype/vendor"
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / name).write_bytes(data)

@@ -1,0 +1,10 @@
+dist/
+.mcptype/
+.venv/
+__pycache__/
+*.egg-info/
+node_modules/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+tooling/python/uv.lock

@@ -1,0 +1,25 @@
+{
+  "name": "cli-tooling-ts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript contract extractor and check runner embedded in the Holon CLI.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "esbuild": "0.28.2",
+    "fflate": "0.8.3",
+    "typescript": "~5.9.3",
+    "zod": "4.6.5"
+  }
+}
