@@ -76,7 +76,12 @@ func LiveContract(ctx context.Context, location string, identity mcpcontract.Ide
 	}
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon-types", Version: "0.0.1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: location, HTTPClient: client}, nil)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		// A remote that cannot be initialized (unreachable, or requiring authentication the
+		// CLI does not have) offers no contract; callers fall back to untyped clients.
+		return nil, remoteUnavailable{err}
 	}
 	defer session.Close()
 	contract := &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}
@@ -197,9 +202,18 @@ func resolveDescriptor(ctx context.Context, d *Descriptor, o Options) (*mcpcontr
 	return metadata, nil
 }
 
+// remoteUnavailable marks a live fetch whose MCP session could not be initialized.
+type remoteUnavailable struct{ error }
+
+func (e remoteUnavailable) Error() string { return "remote MCP server unavailable: " + e.error.Error() }
+func (e remoteUnavailable) Unwrap() error { return e.error }
+
 func contractUnavailable(err error) bool {
 	if errors.As(err, new(rejectedCredential)) {
 		return false
+	}
+	if errors.As(err, new(remoteUnavailable)) {
+		return true
 	}
 	var status HTTPError
 	var transport *url.Error
