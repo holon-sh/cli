@@ -41,12 +41,8 @@ type App struct {
 	Run         json.RawMessage `json:"run,omitempty"`
 	Arguments   json.RawMessage `json:"arguments,omitempty"`
 	unavailable string
-	// inferred holds requires the standalone CLI derived from the app's own source: every
-	// apps.<name> reference that names another listed directory (Directories). Merged into
-	// the descriptor's requires when the graph is resolved; never set for manifest apps.
-	inferred   map[string]Reference
-	descriptor *Descriptor
-	prepared   *preparedTypes
+	descriptor  *Descriptor
+	prepared    *preparedTypes
 }
 type RegistrySource struct {
 	Reference

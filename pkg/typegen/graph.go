@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,7 +16,8 @@ func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest,
 		declarations[app.Name] = app
 	}
 	queue := slices.Clone(o.Apps)
-	if len(queue) == 0 {
+	// Directories can explicitly select no clients; manifest callers retain the all-apps default.
+	if len(queue) == 0 && !(m.pathRequiresOnly && o.Apps != nil) {
 		for _, app := range m.Apps {
 			queue = append(queue, app.Name)
 		}
@@ -35,22 +35,11 @@ func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest,
 			return m, fmt.Errorf("dependency %s must be declared in apps with explicit access.server", name)
 		}
 		var err error
-		if app.Path != "" {
+		// Directories has already parsed and augmented its descriptors. Manifest apps load here.
+		if app.Path != "" && !m.pathRequiresOnly {
 			data, readErr := os.ReadFile(filepath.Join(app.Path, "server.json"))
 			if readErr == nil {
 				app.descriptor, err = ParseDescriptor(data)
-				if err == nil && len(app.inferred) > 0 {
-					requires := maps.Clone(app.descriptor.Requires)
-					if requires == nil {
-						requires = map[string]Reference{}
-					}
-					for dep, ref := range app.inferred {
-						if _, declared := requires[dep]; !declared {
-							requires[dep] = ref
-						}
-					}
-					app.descriptor.Requires = requires
-				}
 			} else if !errors.Is(readErr, os.ErrNotExist) {
 				err = readErr
 			}

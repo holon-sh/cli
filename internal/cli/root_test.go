@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
 func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
@@ -19,7 +22,7 @@ func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
 	if !strings.Contains(output.String(), "standalone types CLI") {
 		t.Fatalf("ambiguous version: %s", &output)
 	}
-	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--project", "x"}, {"types", "contract"}} {
+	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--project", "x"}, {"types", "contract"}} {
 		command = NewCommand("test")
 		command.SetArgs(args)
 		command.SetErr(new(bytes.Buffer))
@@ -80,13 +83,28 @@ func TestTypesCompileNamesBrowserEntryFiles(t *testing.T) {
 	}
 }
 
-func TestCheckShortcutRunsTypesCheck(t *testing.T) {
+func TestProviderOnlyContract(t *testing.T) {
 	dir := t.TempDir()
-	short, canonical := run("check", dir), run("types", "check", dir)
-	if short == nil || canonical == nil || short.Error() != canonical.Error() || !strings.Contains(short.Error(), "no server.json found") {
-		t.Fatalf("holon check = %v, holon types check = %v", short, canonical)
+	for name, data := range map[string]string{
+		"server.json": `{"name":"example.com/provider","version":"1.0.0","description":"Provider"}`,
+		"server.py":   "from mcp.server import MCPServer\nserver = MCPServer('provider')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := run("check", "--no-published"); err == nil || err.Error() != run("types", "check", "--no-published").Error() {
-		t.Fatalf("flags differ between holon check and holon types check: %v", err)
+	var output bytes.Buffer
+	command := NewCommand("test")
+	command.SetOut(&output)
+	command.SetArgs([]string{"types", "generate", "--contract", dir})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var metadata mcpcontract.Metadata
+	if err := json.Unmarshal(output.Bytes(), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Identity.Name != "example.com/provider" || metadata.Contract == nil || len(metadata.Contract.Tools) != 1 || metadata.Contract.Tools[0].Name != "read" {
+		t.Fatalf("provider contract = %s", &output)
 	}
 }

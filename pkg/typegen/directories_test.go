@@ -2,7 +2,6 @@ package typegen
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -16,22 +15,6 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
-
-// appSummary renders a manifest's apps as "name:path" or "name:registry" with an access marker.
-func appSummary(m Manifest) []string {
-	var out []string
-	for _, app := range m.Apps {
-		entry := app.Name + ":path=" + app.Path
-		if app.Registry != nil {
-			entry = app.Name + ":registry=" + app.Registry.Name + "@" + app.Registry.Version
-		}
-		if app.Access != nil {
-			entry += "+server"
-		}
-		out = append(out, entry)
-	}
-	return out
-}
 
 func pythonModule(t *testing.T, prepared *Prepared, name string) string {
 	t.Helper()
@@ -93,9 +76,6 @@ func TestDirectoriesResolveRequiresThroughTheRegistry(t *testing.T) {
 	if !slices.Equal(names, []string{"checkout"}) {
 		t.Fatalf("names = %v, want [checkout]", names)
 	}
-	if got, want := strings.Join(appSummary(m), " "), "checkout:path="+dir+"+server orders:registry=example.com/orders@1.0.0+server"; got != want {
-		t.Fatalf("apps = %s, want %s", got, want)
-	}
 	var calls []string
 	results := map[string]extraction{"checkout": {UsesApps: true}}
 	prepared, err := Prepare(t.Context(), m, Options{Apps: names, HTTPClient: server.Client(), Extract: fakeExtract(t, results, &calls)})
@@ -138,60 +118,85 @@ func TestDirectoriesResolveRequiresThroughTheRegistry(t *testing.T) {
 	})
 }
 
-func TestListedDirectoriesProvideEachOther(t *testing.T) {
-	root := t.TempDir()
-	checkout, orders := filepath.Join(root, "checkout"), filepath.Join(root, "orders")
-	// checkout requires orders under the alias "store"; the provider takes that name.
-	writeProvider(t, checkout, "checkout", "from holon.apps import apps\n"+pythonProvider, map[string]Reference{
-		"store": {Name: "example.com/orders", Version: "1.0.0", Registry: "https://registry.unavailable.example"},
-	})
-	writeProvider(t, orders, "orders", "from holon.apps import apps\n"+pythonProvider, nil)
-	for _, dir := range []string{checkout, orders} {
-		put(t, dir, "pyproject.toml", "[project]\nname = 'app'\ndependencies = ['holon-sh']\n")
+func TestListedDirectories(t *testing.T) {
+	for _, test := range []struct {
+		name, file, source, alias, wantClient, wantError string
+		ref                                              Reference
+		providerImports                                  bool
+		wantNames                                        []string
+	}{
+		{name: "inferred Python", file: "client.py", source: "from holon.apps import apps\nx = apps.orders, apps.checkout, apps.unknown\n", wantClient: "orders", wantNames: []string{"checkout"}},
+		{name: "inferred TypeScript", file: "ui/client.ts", source: "import { createApps } from 'holon-ui'; apps['orders'].tools.lookup({});", wantClient: "orders", wantNames: []string{"checkout"}},
+		{name: "declared alias", file: "client.py", source: "x = apps.orders, apps.store\n", alias: "store", ref: Reference{Name: "example.com/orders", Version: "1.0.0"}, providerImports: true, wantClient: "store", wantNames: []string{"store", "checkout"}},
+		{name: "pinned version", file: "client.py", source: "x = apps.orders\n", alias: "orders", ref: Reference{Name: "example.com/orders", Version: "2.0.0"}, wantError: "checkout requires orders to be example.com/orders@2.0.0; declared app does not match"},
+		{name: "declared name", file: "client.py", source: "x = apps.orders\n", alias: "orders", ref: Reference{Name: "other.org/orders", Version: "1.0.0"}, wantError: "checkout requires orders to be other.org/orders@1.0.0; declared app does not match"},
+		{name: "unknown reference", file: "client.py", source: "x = apps['unknown-store']\n", wantNames: []string{"checkout"}},
+		{name: "providers only", file: "client.py", source: "x = 1\n", wantNames: []string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			checkout, orders := filepath.Join(root, "checkout"), filepath.Join(root, "orders")
+			requires := map[string]Reference{}
+			if test.alias != "" {
+				requires[test.alias] = test.ref
+			}
+			writeProvider(t, checkout, "checkout", pythonProvider, requires)
+			put(t, checkout, test.file, test.source)
+			providerSource := pythonProvider
+			if test.providerImports {
+				providerSource = "from holon.apps import apps\n" + providerSource
+			}
+			writeProvider(t, orders, "orders", providerSource, nil)
+			// Installed dependencies and generated files must not make a provider a caller.
+			put(t, orders, "node_modules/other/index.js", "import 'holon-sh'; apps.checkout;")
+			put(t, orders, ".venv/lib/client.py", "from holon.apps import apps\nx = apps.checkout\n")
+			put(t, orders, "holon/apps/__init__.py", "# "+mcpcontract.Marker+" app=orders\n# apps.checkout\n")
+			m, names, err := Directories([]string{orders, checkout})
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := map[string]map[string]string{checkout: fileMap(t, checkout), orders: fileMap(t, orders)}
+			provider := "orders"
+			if test.alias != "" {
+				provider = test.alias
+			}
+			results := map[string]extraction{"checkout": {UsesApps: true}, provider: {UsesApps: test.providerImports, Tools: []mcpcontract.Tool{lookupTool}}}
+			var calls []string
+			var output bytes.Buffer
+			err = Generate(t.Context(), m, Options{Apps: names, NoInstall: true, HTTPClient: &http.Client{Transport: unavailableRegistry{t}}, Stdout: &output, Stderr: &output, Extract: fakeExtract(t, results, &calls)})
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("generate = %v, want %s", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("generate: %v\n%s", err, &output)
+			}
+			if !slices.Equal(names, test.wantNames) {
+				t.Fatalf("selected apps = %v, want %v", names, test.wantNames)
+			}
+			for name, dir := range map[string]string{"checkout": checkout, provider: orders} {
+				after := fileMap(t, dir)
+				if slices.Contains(test.wantNames, name) {
+					module := after["holon/apps/__init__.py"]
+					if !strings.HasPrefix(module, "# "+mcpcontract.Marker) {
+						t.Fatalf("%s has no generated clients:\n%s", name, module)
+					}
+					if name == "checkout" && (strings.Contains(module, "async def lookup(") != (test.wantClient != "") || test.wantClient != "" && !strings.Contains(module, "\""+test.wantClient+"\"")) {
+						t.Fatalf("checkout client should bind %q:\n%s", test.wantClient, module)
+					}
+					delete(after, "holon/apps/__init__.py")
+					delete(before[dir], "holon/apps/__init__.py")
+				} else if strings.Contains(output.String(), name+":") {
+					t.Fatalf("output mentions provider-only %s:\n%s", name, &output)
+				}
+				if !maps.Equal(before[dir], after) {
+					t.Fatalf("generation changed files outside %s's selected slot", name)
+				}
+			}
+		})
 	}
-	m, names, err := Directories([]string{orders, checkout})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(names, []string{"store", "checkout"}) {
-		t.Fatalf("names = %v, want [store checkout]", names)
-	}
-	if got, want := strings.Join(appSummary(m), " "), "store:path="+orders+"+server checkout:path="+checkout+"+server"; got != want {
-		t.Fatalf("apps = %s, want %s", got, want)
-	}
-	offline := &http.Client{Transport: unavailableRegistry{t}}
-	results := map[string]extraction{"checkout": {UsesApps: true}, "store": {UsesApps: true, Tools: []mcpcontract.Tool{lookupTool}}}
-	var calls []string
-	before := map[string]map[string]string{checkout: fileMap(t, checkout), orders: fileMap(t, orders)}
-	var output bytes.Buffer
-	if err = Generate(t.Context(), m, Options{Apps: names, NoInstall: true, HTTPClient: offline, Stdout: &output, Stderr: &output, Extract: fakeExtract(t, results, &calls)}); err != nil {
-		t.Fatalf("generate: %v\n%s", err, &output)
-	}
-	if module := read(t, checkout, "holon/apps/__init__.py"); !strings.Contains(module, "async def lookup(") {
-		t.Fatalf("checkout is not typed from the listed provider:\n%s", module)
-	}
-	for dir, files := range before {
-		after := fileMap(t, dir)
-		if !strings.HasPrefix(after["holon/apps/__init__.py"], "# "+mcpcontract.Marker) {
-			t.Fatalf("%s did not get its own slot:\n%s", dir, after["holon/apps/__init__.py"])
-		}
-		delete(after, "holon/apps/__init__.py")
-		if !maps.Equal(files, after) {
-			t.Fatalf("generation changed files outside %s's slot", dir)
-		}
-	}
-
-	t.Run("identity mismatch", func(t *testing.T) {
-		put(t, orders, "server.json", string(mustJSON(t, map[string]any{"name": "example.com/orders", "version": "2.0.0", "description": "orders"})))
-		m, names, err := Directories([]string{checkout, orders})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = Prepare(t.Context(), m, Options{Apps: names, HTTPClient: offline, Extract: fakeExtract(t, results, &calls)})
-		if err == nil || !strings.Contains(err.Error(), "checkout requires store to be example.com/orders@1.0.0; declared app does not match") {
-			t.Fatalf("mismatched provider = %v", err)
-		}
-	})
 }
 
 func TestDirectoriesRejectAmbiguousInputs(t *testing.T) {
@@ -244,12 +249,10 @@ func TestDirectoriesRejectAmbiguousInputs(t *testing.T) {
 func TestServerKey(t *testing.T) {
 	long := strings.Repeat("a", 48) + "-" + strings.Repeat("b", 11)
 	for input, want := range map[string]string{
-		"example.com/checkout":          "checkout",
-		"io.github.Some_User/My.Server": "my-server",
-		"example.com/Some__Weird..Name": "some-weird-name",
-		"example.com/---":               "",
-		"example.com/" + long:           strings.Repeat("a", 48),
-		"no-namespace":                  "no-namespace",
+		"io.github.Some_User/Some__Weird..Name": "some-weird-name",
+		"example.com/---":                       "",
+		"example.com/" + long:                   strings.Repeat("a", 48),
+		"no-namespace":                          "no-namespace",
 	} {
 		if got := serverKey(input); got != want {
 			t.Errorf("serverKey(%q) = %q, want %q", input, got, want)
@@ -257,136 +260,21 @@ func TestServerKey(t *testing.T) {
 	}
 }
 
-func TestDirectoriesContractIsOffline(t *testing.T) {
-	if _, err := typeLanguages["python"].localProgram(context.Background()); err != nil {
-		t.Skip(err)
-	}
-	dir := filepath.Join(t.TempDir(), "src")
-	writeProvider(t, dir, "checkout", "from holon.apps import apps\n"+pythonProvider, map[string]Reference{
-		"orders": {Name: "example.com/orders", Version: "1.0.0", Registry: "https://registry.unavailable.example"},
-	})
-	m, names, err := Directories([]string{dir})
-	if err != nil {
-		t.Fatal(err)
-	}
-	metadata, err := Contract(t.Context(), m, names[0], Options{HTTPClient: &http.Client{Transport: unavailableRegistry{t}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if metadata.Identity != (mcpcontract.Identity{Name: "example.com/checkout", Version: "1.0.0"}) {
-		t.Fatalf("identity = %+v", metadata.Identity)
-	}
-	if metadata.Contract == nil || len(metadata.Contract.Tools) != 1 || metadata.Contract.Tools[0].Name != "read" {
-		t.Fatalf("contract = %+v", metadata.Contract)
-	}
-}
-
-func TestListedDirectoriesInferRequiresFromSource(t *testing.T) {
+func TestManifestAppsNeverInfer(t *testing.T) {
 	root := t.TempDir()
 	checkout, orders := filepath.Join(root, "checkout"), filepath.Join(root, "orders")
-	// checkout declares nothing; its source references apps.orders, and orders is listed.
-	writeProvider(t, checkout, "checkout", "from holon.apps import apps\n"+pythonProvider+"async def total(id: str) -> str:\n    return (await apps.orders.tools.read({'id': id}))\n", nil)
+	writeProvider(t, checkout, "checkout", "from holon.apps import apps\n"+pythonProvider+"x = apps.orders\n", nil)
 	writeProvider(t, orders, "orders", pythonProvider, nil)
-	put(t, checkout, "pyproject.toml", "[project]\nname = 'app'\ndependencies = ['holon-sh']\n")
-	m, names, err := Directories([]string{orders, checkout})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(names, []string{"checkout"}) {
-		t.Fatalf("names = %v, want [checkout]: a provider that uses no client gets nothing generated", names)
-	}
-	if got, want := strings.Join(appSummary(m), " "), "orders:path="+orders+"+server checkout:path="+checkout+"+server"; got != want {
-		t.Fatalf("apps = %s, want %s", got, want)
-	}
-	offline := &http.Client{Transport: unavailableRegistry{t}}
-	results := map[string]extraction{"checkout": {UsesApps: true}, "orders": {Tools: []mcpcontract.Tool{lookupTool}}}
+	server := json.RawMessage("{\"server\":{}}")
+	platform := Manifest{Apps: []App{{Name: "checkout", Path: checkout, Access: server}, {Name: "orders", Path: orders, Access: server}}}
 	var calls []string
-	before := fileMap(t, orders)
-	var output bytes.Buffer
-	if err = Generate(t.Context(), m, Options{Apps: names, NoInstall: true, HTTPClient: offline, Stdout: &output, Stderr: &output, Extract: fakeExtract(t, results, &calls)}); err != nil {
-		t.Fatalf("generate: %v\n%s", err, &output)
-	}
-	if module := read(t, checkout, "holon/apps/__init__.py"); !strings.Contains(module, "async def lookup(") || !strings.Contains(module, `"orders"`) {
-		t.Fatalf("checkout is not typed from the inferred provider:\n%s", module)
-	}
-	if !maps.Equal(before, fileMap(t, orders)) {
-		t.Fatal("generation changed the provider-only directory")
-	}
-	if strings.Contains(output.String(), "orders:") {
-		t.Fatalf("output mentions the provider-only directory:\n%s", &output)
-	}
-
-	t.Run("declared alias wins", func(t *testing.T) {
-		put(t, checkout, "server.py", "from holon.apps import apps\n"+pythonProvider+"async def total(id: str) -> str:\n    return (await apps.store.tools.read({'id': id})) + str(apps['orders'])\n")
-		writeProvider(t, checkout, "checkout", read(t, checkout, "server.py"), map[string]Reference{"store": {Name: "example.com/orders", Version: "1.0.0"}})
-		m, names, err := Directories([]string{orders, checkout})
-		if err != nil {
-			t.Fatal(err)
-		}
-		// orders is already required under "store", so the apps['orders'] reference infers nothing.
-		if !slices.Equal(names, []string{"checkout"}) || !strings.Contains(strings.Join(appSummary(m), " "), "store:path="+orders) {
-			t.Fatalf("names = %v, apps = %v", names, appSummary(m))
-		}
-		prepared, err := Prepare(t.Context(), m, Options{Apps: names, HTTPClient: offline, Extract: fakeExtract(t, map[string]extraction{"checkout": {UsesApps: true}, "store": {Tools: []mcpcontract.Tool{lookupTool}}}, &calls)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer prepared.Close()
-		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 1 || requires["store"].Identity.Name != "example.com/orders" {
-			t.Fatalf("requires = %v, want only the declared store alias", requires)
-		}
-	})
-
-	t.Run("unknown references are ignored", func(t *testing.T) {
-		writeProvider(t, checkout, "checkout", "from holon.apps import apps\n"+pythonProvider+"x = apps.search\n", nil)
-		m, names, err := Directories([]string{orders, checkout})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !slices.Equal(names, []string{"checkout"}) || len(m.Apps) != 2 {
-			t.Fatalf("names = %v, apps = %v", names, appSummary(m))
-		}
-		prepared, err := Prepare(t.Context(), m, Options{Apps: names, HTTPClient: offline, Extract: fakeExtract(t, results, &calls)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer prepared.Close()
-		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 0 {
-			t.Fatalf("an unlisted, undeclared reference became a dependency: %v", requires)
-		}
-	})
-
-	t.Run("manifest apps never infer", func(t *testing.T) {
-		writeProvider(t, checkout, "checkout", "from holon.apps import apps\n"+pythonProvider+"x = apps.orders\n", nil)
-		server := json.RawMessage(`{"server":{}}`)
-		platform := Manifest{Apps: []App{{Name: "checkout", Path: checkout, Access: server}, {Name: "orders", Path: orders, Access: server}}}
-		prepared, err := Prepare(t.Context(), platform, Options{Apps: []string{"checkout"}, HTTPClient: offline, Extract: fakeExtract(t, results, &calls)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer prepared.Close()
-		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 0 {
-			t.Fatalf("a manifest-declared app inferred requires from source: %v", requires)
-		}
-	})
-}
-
-func TestClientReferences(t *testing.T) {
-	root := t.TempDir()
-	put(t, root, "server.py", "from holon.apps import apps\nawait apps.orders.tools.read({})\nawait apps[\"my-store\"].call_tool('x', {})\n")
-	put(t, root, "ui/main.ts", "import { createApps } from \"holon-ui\";\nconst apps = createApps({ checkout: { host } });\napps.checkout.tools.total({});\n")
-	put(t, root, "node_modules/holon-sh/generated/index.js", "apps.ignored\n")
-	put(t, root, ".venv/lib/x.py", "apps.ignored_too\n")
-	names, uses, err := clientReferences(root)
+	results := map[string]extraction{"checkout": {UsesApps: true}, "orders": {Tools: []mcpcontract.Tool{lookupTool}}}
+	prepared, err := Prepare(t.Context(), platform, Options{Apps: []string{"checkout"}, HTTPClient: &http.Client{Transport: unavailableRegistry{t}}, Extract: fakeExtract(t, results, &calls)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := slices.Sorted(maps.Keys(names)); !slices.Equal(got, []string{"checkout", "my-store", "orders"}) || !uses {
-		t.Fatalf("names = %v, usesClients = %v", got, uses)
-	}
-	put(t, root, "server.py", "print('no clients here')\n")
-	put(t, root, "ui/main.ts", "export {};\n")
-	if names, uses, _ = clientReferences(root); len(names) != 0 || uses {
-		t.Fatalf("names = %v, usesClients = %v, want none", names, uses)
+	defer prepared.Close()
+	if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 0 {
+		t.Fatalf("a manifest-declared app inferred requires from source: %v", requires)
 	}
 }

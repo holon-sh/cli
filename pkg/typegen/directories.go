@@ -22,19 +22,17 @@ var notAppNameRun = regexp.MustCompile(`[^a-z0-9-]+`)
 // that names another listed directory (by the last segment of its server name) is a dependency
 // on it. It returns the manifest and the names of the listed apps that use generated clients, in
 // argument order; pass them in Options.Apps. A listed directory that references no client and
-// imports none is a provider only and gets nothing generated.
+// imports none is a provider only and gets nothing generated. The returned names are non-nil,
+// including when no app needs clients; pass that empty selection through to Options.Apps.
 func Directories(dirs []string) (Manifest, []string, error) {
 	if len(dirs) == 0 {
 		return Manifest{}, nil, errors.New("no directories given")
 	}
 	type listed struct {
-		dir        string
-		descriptor *Descriptor
-		name       string
-		requires   map[string]Reference // declared plus inferred
-		inferred   map[string]Reference
-		generates  bool
+		App
+		generates bool
 	}
+	server := json.RawMessage(`{"server":{}}`)
 	apps := make([]listed, len(dirs))
 	byServer := map[string]int{}
 	for i, dir := range dirs {
@@ -58,78 +56,75 @@ func Directories(dirs []string) (Manifest, []string, error) {
 			return Manifest{}, nil, fmt.Errorf("%s: %w", path, err)
 		}
 		if j, ok := byServer[descriptor.Name]; ok {
-			return Manifest{}, nil, fmt.Errorf("%s and %s both declare server %s", apps[j].dir, dir, descriptor.Name)
+			return Manifest{}, nil, fmt.Errorf("%s and %s both declare server %s", apps[j].Path, dir, descriptor.Name)
 		}
 		byServer[descriptor.Name] = i
-		apps[i] = listed{dir: dir, descriptor: descriptor}
+		apps[i] = listed{App: App{Path: dir, Access: server, descriptor: descriptor}}
 	}
 	// A client reference to another listed directory is a dependency on it, unless declared.
 	for i := range apps {
-		references, usesClients, err := clientReferences(apps[i].dir)
+		references, usesClients, err := clientReferences(apps[i].Path)
 		if err != nil {
 			return Manifest{}, nil, err
 		}
-		apps[i].requires = maps.Clone(apps[i].descriptor.Requires)
-		if apps[i].requires == nil {
-			apps[i].requires = map[string]Reference{}
+		d := apps[i].descriptor
+		apps[i].generates = usesClients || len(d.Requires) > 0
+		// Declared aliases and providers win, including a provider required under another alias.
+		required := map[string]bool{d.Name: true}
+		for alias, ref := range d.Requires {
+			delete(references, alias)
+			required[ref.Name] = true
 		}
-		for j, other := range apps {
+		for _, other := range apps {
 			key := serverKey(other.descriptor.Name)
-			if j == i || !references[key] {
-				continue
+			if references[key] && !required[other.descriptor.Name] {
+				if d.Requires == nil {
+					d.Requires = map[string]Reference{}
+				}
+				d.Requires[key] = Reference{Name: other.descriptor.Name, Version: other.descriptor.Version}
 			}
-			if slices.ContainsFunc(slices.Collect(maps.Values(apps[i].requires)), func(ref Reference) bool { return ref.Name == other.descriptor.Name }) {
-				continue // already required, possibly under another alias
-			}
-			if apps[i].inferred == nil {
-				apps[i].inferred = map[string]Reference{}
-			}
-			apps[i].inferred[key] = Reference{Name: other.descriptor.Name, Version: other.descriptor.Version}
-			apps[i].requires[key] = apps[i].inferred[key]
 		}
-		apps[i].generates = usesClients || len(apps[i].requires) > 0
 	}
 	// A listed provider takes the alias its callers require it under.
 	requiredBy := map[int]int{}
 	for i, app := range apps {
-		for _, alias := range slices.Sorted(maps.Keys(app.requires)) {
-			j, ok := byServer[app.requires[alias].Name]
+		for _, alias := range slices.Sorted(maps.Keys(app.descriptor.Requires)) {
+			j, ok := byServer[app.descriptor.Requires[alias].Name]
 			if !ok || j == i {
 				continue
 			}
-			if apps[j].name != "" && apps[j].name != alias {
-				return Manifest{}, nil, fmt.Errorf("%s is required as both %s (by %s) and %s (by %s); use one alias", apps[j].dir, apps[j].name, apps[requiredBy[j]].dir, alias, app.dir)
+			if apps[j].Name != "" && apps[j].Name != alias {
+				return Manifest{}, nil, fmt.Errorf("%s is required as both %s (by %s) and %s (by %s); use one alias", apps[j].Path, apps[j].Name, apps[requiredBy[j]].Path, alias, app.Path)
 			}
-			apps[j].name, requiredBy[j] = alias, i
+			apps[j].Name, requiredBy[j] = alias, i
 		}
 	}
-	server := json.RawMessage(`{"server":{}}`)
 	m := Manifest{pathRequiresOnly: true}
-	var names []string
+	names := []string{}
 	owner := map[string]string{}
 	for i := range apps {
-		if apps[i].name == "" {
-			apps[i].name = serverKey(apps[i].descriptor.Name)
+		if apps[i].Name == "" {
+			apps[i].Name = serverKey(apps[i].descriptor.Name)
 		}
-		name := apps[i].name
-		if len(name) > 49 || !appName.MatchString(name) {
-			return Manifest{}, nil, fmt.Errorf("%s: server name %s does not give a valid app name (%q); rename the server", apps[i].dir, apps[i].descriptor.Name, name)
+		name := apps[i].Name
+		if !appName.MatchString(name) {
+			return Manifest{}, nil, fmt.Errorf("%s: server name %s does not give a valid app name (%q); rename the server", apps[i].Path, apps[i].descriptor.Name, name)
 		}
 		if other, ok := owner[name]; ok {
-			return Manifest{}, nil, fmt.Errorf("%s and %s both have the app name %s", other, apps[i].dir, name)
+			return Manifest{}, nil, fmt.Errorf("%s and %s both have the app name %s", other, apps[i].Path, name)
 		}
-		owner[name] = apps[i].dir
+		owner[name] = apps[i].Path
 		if apps[i].generates {
 			names = append(names, name)
 		}
-		m.Apps = append(m.Apps, App{Name: name, Path: apps[i].dir, Access: server, inferred: apps[i].inferred})
+		m.Apps = append(m.Apps, apps[i].App)
 	}
 	for _, app := range apps {
-		for _, alias := range slices.Sorted(maps.Keys(app.requires)) {
+		for _, alias := range slices.Sorted(maps.Keys(app.descriptor.Requires)) {
 			if _, ok := owner[alias]; ok {
 				continue
 			}
-			ref := app.requires[alias]
+			ref := app.descriptor.Requires[alias]
 			ref.Registry = ref.RegistryURL()
 			owner[alias] = ref.Registry
 			m.Apps = append(m.Apps, App{Name: alias, Registry: &RegistrySource{Reference: ref}, Access: server})
