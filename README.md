@@ -25,21 +25,15 @@ files are refused. Two apps cannot share the same installed TypeScript slot.
 
 ## Build and verify
 
-The native compiler SDK is pinned to mcptype 0.0.6. Build it from that source
-checkout, then expose its pkg-config file:
+The CLI is pure Go: the contract compiler (`pkg/mcptype`) is a Go port of mcptype
+0.0.6 whose outputs are checked byte for byte against that compiler's recorded
+answers in `pkg/mcptype/testdata`. Building needs only Go; the tests also need
+Node and Python for the extraction tooling.
 
-```sh
-python3 ffi/package-sdk.py /tmp/mcptype-sdk "$(rustc -vV | sed -n 's/^host: //p')"
-export PKG_CONFIG_PATH=/tmp/mcptype-sdk/lib/pkgconfig
-```
-
-Back in this repository, vendor the public SDK tooling archives and the matching
-npm compiler binding for parity tests:
+Vendor the public SDK tooling archives, then test and build:
 
 ```sh
 scripts/update-tooling ../sdk-ts/dist/cli-tooling-ts-0.1.0.zip ../sdk-py/dist/cli-tooling-py-0.1.0.zip
-scripts/fetch-mcptype
-# Before the GitHub release exists, copy a locally built mcptype-0.0.6.tgz into pkg/mcptype/vendor/.
 go test ./...
 go build -ldflags '-X main.version=0.1.0' -o dist/holon ./cmd/holon
 ```
@@ -56,19 +50,11 @@ python3 scripts/package_cli.py --target darwin_arm64 --version 0.1.0 --binary di
 ```
 
 Supported target names are `darwin_arm64`, `darwin_amd64`, `linux_arm64`, and
-`linux_amd64`. Build Linux binaries with musl and a musl mcptype SDK; the script
-rejects dynamically linked ELF files. Linux wheels have both manylinux 2.17 and
-musllinux 1.2 tags. macOS wheels require macOS 15 or newer. `uv` builds wheels using
-hatchling, and `npm pack` creates the launcher and selected platform package.
-
-A local Linux cross-platform build can use Docker with the pinned compiler
-checkout as an explicit build context:
-
-```sh
-docker buildx build --platform linux/arm64,linux/amd64 --file packaging/Dockerfile --build-context mcptype=../mcptype --output type=local,dest=dist/binaries .
-python3 scripts/package_cli.py --target linux_arm64 --binary dist/binaries/linux_arm64/holon
-python3 scripts/package_cli.py --target linux_amd64 --binary dist/binaries/linux_amd64/holon
-```
+`linux_amd64`. Every target cross-compiles from any host with `CGO_ENABLED=0`, so
+all four can be packaged on one machine; the script still rejects dynamically
+linked ELF files. Linux wheels have both manylinux 2.17 and musllinux 1.2 tags.
+macOS wheels require macOS 15 or newer. `uv` builds wheels using hatchling, and
+`npm pack` creates the launcher and selected platform package.
 
 Each platform build creates `dist/holon_cli-*.whl`, the matching
 `dist/holon-cli-<platform>-0.1.0.tgz`, `dist/holon-cli-0.1.0.tgz`, a direct binary
@@ -87,5 +73,4 @@ For a Python project's development tools, use
 `uv run holon types generate`. CI builds and uploads artifacts for all four
 platforms; it never publishes to npm or PyPI. The `@holon` npm scope remains
 unverified because no authenticated npm session is available; packages retain
-the planned scope until the owner confirms it. Until the owner creates the GitHub
-mcptype 0.0.6 release, use the local compiler artifacts for verification.
+the planned scope until the owner confirms it.

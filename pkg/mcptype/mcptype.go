@@ -1,18 +1,12 @@
+// Package mcptype compares MCP typed contracts and generates typed client packages.
+// It is a Go port of the mcptype compiler (hughhan1/mcptype 0.0.6) and produces the
+// same bytes: canonical forms, digests, change texts and package files.
 package mcptype
-
-/*
-#cgo pkg-config: mcptype
-#include <mcptype.h>
-*/
-import "C"
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"runtime"
-	"unsafe"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
@@ -33,28 +27,98 @@ type CanonicalForm struct {
 
 // Canonical validates document, one of {"contract"}, {"schema"} or {"metadata"}, and returns its canonical form and digest.
 func Canonical(ctx context.Context, document any) (CanonicalForm, error) {
-	var canonical CanonicalForm
-	err := call(ctx, func(r *C.mcptype_request) C.mcptype_response { return C.mcptype_canonical(r) }, document, &canonical)
-	return canonical, err
+	value, err := marshal(ctx, document)
+	if err != nil {
+		return CanonicalForm{}, err
+	}
+	canonical, digest, err := canonicalRequest(value)
+	if err != nil || canonical == nil {
+		return CanonicalForm{}, err
+	}
+	return CanonicalForm{Canonical: encode(canonical), Digest: digest}, nil
+}
+
+// canonicalRequest answers {"contract": Contract}, {"schema": {...}} or {"metadata": Metadata};
+// the canonical form is nil for metadata without a contract.
+func canonicalRequest(value Value) (Value, string, error) {
+	object, err := asObject(value)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(object) != 1 {
+		return nil, "", fmt.Errorf("expected a map with a single key, one of `contract`, `schema`, `metadata`")
+	}
+	variant := sortedKeys(object)[0]
+	contract := func(contract Contract) (Value, string, error) {
+		return canonicalContract(contract).toValue(), digest(contract), nil
+	}
+	switch variant {
+	case "contract":
+		document, err := decodeContract(object[variant])
+		if err != nil {
+			return nil, "", err
+		}
+		return contract(document)
+	case "schema":
+		schema, err := decodeSchema(object[variant])
+		if err != nil {
+			return nil, "", err
+		}
+		form := canonical(schema)
+		return form, hash(form), nil
+	case "metadata":
+		metadata, err := decodeMetadata(object[variant])
+		if err != nil {
+			return nil, "", err
+		}
+		if metadata.Contract == nil {
+			return nil, "", nil
+		}
+		return contract(*metadata.Contract)
+	}
+	return nil, "", fmt.Errorf("unknown variant `%s`, expected one of `contract`, `schema`, `metadata`", variant)
 }
 
 // Changes lists what breaks expected if published is deployed. Empty means compatible.
 func Changes(ctx context.Context, expected mcpcontract.Expectation, published *mcpcontract.Metadata) ([]Change, error) {
-	var result struct {
-		Changes []struct {
-			Kind string `json:"kind"`
-			Name string `json:"name"`
-			URI  string `json:"uri"`
-			Text string `json:"text"`
-		} `json:"changes"`
+	value, err := marshal(ctx, map[string]any{"expected": expected, "published": published})
+	if err != nil {
+		return nil, err
 	}
-	err := call(ctx, func(r *C.mcptype_request) C.mcptype_response { return C.mcptype_changes(r) },
-		map[string]any{"expected": expected, "published": published}, &result)
-	changes := make([]Change, len(result.Changes))
-	for i, change := range result.Changes {
-		changes[i] = Change{Kind: change.Kind, Name: change.Name + change.URI, Text: change.Text}
+	found, err := changesRequest(value)
+	if err != nil {
+		return nil, err
 	}
-	return changes, err
+	result := make([]Change, len(found))
+	for i, change := range found {
+		result[i] = Change{Kind: change.kind, Name: change.name + change.uri, Text: change.text()}
+	}
+	return result, nil
+}
+
+// changesRequest answers {"expected": Expectation, "published": Metadata | null}.
+func changesRequest(value Value) ([]change, error) {
+	object, err := asObject(value)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := requiredField(object, "expected")
+	if err != nil {
+		return nil, err
+	}
+	expected, err := decodeExpectation(raw)
+	if err != nil {
+		return nil, err
+	}
+	var published *Metadata
+	if raw := object["published"]; raw != nil {
+		metadata, err := decodeMetadata(raw)
+		if err != nil {
+			return nil, err
+		}
+		published = &metadata
+	}
+	return changes(expected, published), nil
 }
 
 // GenerateRequest asks for one target's typed client package: node, browser, python or go.
@@ -78,46 +142,26 @@ type GenerateRequest struct {
 
 // Generate returns the package files by relative path.
 func Generate(ctx context.Context, request GenerateRequest) (map[string][]byte, error) {
-	var result struct {
-		Files map[string][]byte `json:"files"`
+	value, err := marshal(ctx, request)
+	if err != nil {
+		return nil, err
 	}
-	err := call(ctx, func(r *C.mcptype_request) C.mcptype_response { return C.mcptype_generate(r) }, request, &result)
-	return result.Files, err
+	decoded, err := decodeGenerateRequest(value)
+	if err != nil {
+		return nil, err
+	}
+	return generate(ctx, decoded)
 }
 
-func call(ctx context.Context, f func(*C.mcptype_request) C.mcptype_response, in, out any) error {
+// marshal takes the request through its JSON wire form, which validates it exactly as the
+// compiler's JSON entry points do.
+func marshal(ctx context.Context, request any) (Value, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
-	input, err := json.Marshal(in)
+	data, err := json.Marshal(request)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	native := C.mcptype_request_create((*C.char)(unsafe.Pointer(unsafe.SliceData(input))), C.size_t(len(input)))
-	runtime.KeepAlive(input)
-	if native == nil {
-		return errors.New("cannot allocate mcptype request")
-	}
-	defer C.mcptype_request_free(native)
-	canceled := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() {
-		C.mcptype_request_cancel(native)
-		close(canceled)
-	})
-	response := f(native)
-	if !stop() {
-		<-canceled
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	output := unsafe.Slice((*byte)(unsafe.Pointer(response.data)), int(response.len))
-	switch response.status {
-	case C.MCPTYPE_OK:
-		return json.Unmarshal(output, out)
-	case C.MCPTYPE_CANCELLED:
-		return context.Canceled
-	default:
-		return fmt.Errorf("mcptype FFI: %s", output)
-	}
+	return decodeJSON(data)
 }

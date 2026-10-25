@@ -1,0 +1,97 @@
+{
+  "tools": [
+    {
+      "name": "select",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "table"
+        ],
+        "properties": {
+          "table": {
+            "type": "string"
+          },
+          "columns": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/LabeledColumn"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "direction": {
+            "$ref": "#/$defs/Direction"
+          }
+        },
+        "$defs": {
+          "LabeledColumn": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "column",
+              "label"
+            ],
+            "properties": {
+              "column": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            }
+          },
+          "Direction": {
+            "enum": [
+              "asc",
+              "desc"
+            ]
+          }
+        }
+      },
+      "outputSchema": {
+        "$ref": "#/definitions/Root",
+        "definitions": {
+          "LabeledColumn": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": "number"
+              }
+            }
+          },
+          "Root": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "columns"
+            ],
+            "properties": {
+              "columns": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/LabeledColumn"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

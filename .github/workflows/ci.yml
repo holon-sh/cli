@@ -29,18 +29,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: '3.12'
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools pkg-config
-      - uses: ./.github/actions/mcptype
-        with:
-          static: 'true'
-      - if: runner.os == 'Linux'
-        run: |
-          echo 'CC=musl-gcc' >> "$GITHUB_ENV"
-          echo 'CGO_LDFLAGS=-static' >> "$GITHUB_ENV"
-      - run: scripts/fetch-mcptype
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - run: go vet ./...
       - run: go test ./...
       - run: python3 scripts/package_cli.py --target '${{ matrix.target }}' --version 0.1.0
       - name: Verify Python launcher

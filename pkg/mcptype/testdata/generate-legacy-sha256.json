@@ -1,0 +1,23 @@
+{
+  "node": {
+    "index.d.ts": "a9a06007db57208905598b0d581c64550d1851509ea6c554ddb51e03158001b4",
+    "index.js": "8c762105b73972a6962c07808875e7e63ae5e20258d53c1378fdff600299e6a3",
+    "package.json": "e75e9ff2426c4a764c50f5a6333e65dc52f4c7002deef714de642e927a729a6b",
+    "resources.d.ts": "1a09bc39dcf9579e3e7522aac6a68b4263fa17f7d7729fe40b2d3b742dbca3bb"
+  },
+  "browser": {
+    "browser-resources.d.ts": "1a09bc39dcf9579e3e7522aac6a68b4263fa17f7d7729fe40b2d3b742dbca3bb",
+    "browser.d.ts": "7cdb51da929301a4f81b8c47855ed5ff6437fc9a917e9abfbd00e2a7a5b352be",
+    "browser.js": "fb6ce652d19c81b76ad037602ef6591a506269a2df0148a692cf090e10538d98",
+    "package.json": "e75e9ff2426c4a764c50f5a6333e65dc52f4c7002deef714de642e927a729a6b"
+  },
+  "python": {
+    "_apps.py": "93f1782b15089999eada50fa3830830745a097913c2dd3e647b80ebb42170c3b",
+    "package.json": "3762b3123f77bd80cb24439d502d0237f201c8f950666ccb5d1fd8ec0c0f7ee0"
+  },
+  "go": {
+    "clients.go": "60b9bfb3d9e7ce1061dc174711abab7385356d41ee9340e423d02a7c280f2035",
+    "package.json": "782a54646657be228f9014f8c977def5a50f81dca51b19872b0312cc4ded9b6b",
+    "types.go": "d08130f1120873484bbfa51349ba0c56b74099abca9d725fbdc166c3d0f55497"
+  }
+}
