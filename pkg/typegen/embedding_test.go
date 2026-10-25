@@ -100,9 +100,11 @@ func TestPreparedSlotWritersAndGenerateExtractOnce(t *testing.T) {
 	app := filepath.Join(root, "app")
 	writeProvider(t, app, "app", "from holon.apps import apps\n"+pythonProvider, map[string]Reference{"other": {Name: "example.com/other", Version: "1.0.0"}})
 	put(t, app, "pyproject.toml", "[project]\nname = 'app'\ndependencies = ['holon-sh']\n")
-	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	pkg := filepath.Join(app, "node_modules", nodePackage)
+	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1","holon-ui":"^0.0.1"}}`)
+	pkg := filepath.Join(app, "node_modules/holon-sh")
 	put(t, pkg, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
+	uiPkg := filepath.Join(app, "node_modules/holon-ui")
+	put(t, uiPkg, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
 	other := filepath.Join(root, "other")
 	writeProvider(t, other, "other", pythonProvider, nil)
 	manifest := Manifest{Apps: []App{{Name: "app", Path: app}, {Name: "other", Path: other, Access: json.RawMessage(`{"server":{}}`)}}}
@@ -123,7 +125,7 @@ func TestPreparedSlotWritersAndGenerateExtractOnce(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(stage, "holon/client.py")); !os.IsNotExist(err) {
 		t.Fatalf("legacy managed runtime was not migrated: %v", err)
 	}
-	stagedPkg := filepath.Join(stage, "node_modules", nodePackage)
+	stagedPkg := filepath.Join(stage, "node_modules/holon-sh")
 	if err = os.MkdirAll(stagedPkg, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +138,17 @@ func TestPreparedSlotWritersAndGenerateExtractOnce(t *testing.T) {
 	}
 	if err = prepared.WriteNodeSlot("app", stagedPkg); err != nil {
 		t.Fatalf("rewriting an identical slot: %v", err)
+	}
+	stagedUI := filepath.Join(stage, "node_modules/holon-ui")
+	if err = os.MkdirAll(stagedUI, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err = prepared.WriteBrowserSlot("app", stagedUI); err != nil {
+		t.Fatal(err)
+	}
+	marker = slotMetadata{}
+	if err = readTypeJSON(filepath.Join(stagedUI, "generated/holon-generated.json"), &marker); err != nil || marker.App != "app" || marker.Digests["app"] == "" {
+		t.Fatalf("browser slot marker = %+v, %v", marker, err)
 	}
 	for _, test := range []struct{ name, want string }{{"other", "no prepared sources"}, {"missing", "unknown app"}} {
 		if err := prepared.WriteNodeSlot(test.name, t.TempDir()); err == nil || !strings.Contains(err.Error(), test.want) {
@@ -155,7 +168,7 @@ func TestPreparedSlotWritersAndGenerateExtractOnce(t *testing.T) {
 	if !slices.Equal(calls, []string{"python"}) {
 		t.Fatalf("generate extracted %v, want one Python batch", calls)
 	}
-	if got, want := output.String(), "app: generated python types\napp: generated typescript types\n"; got != want {
+	if got, want := output.String(), "app: generated browser types\napp: generated python types\napp: generated typescript types\n"; got != want {
 		t.Fatalf("generate output = %q, want %q", got, want)
 	}
 	if read(t, app, "holon/apps/__init__.py") != read(t, stage, "holon/apps/__init__.py") {
@@ -165,6 +178,20 @@ func TestPreparedSlotWritersAndGenerateExtractOnce(t *testing.T) {
 		if read(t, pkg, "generated/"+name) != read(t, stagedPkg, "generated/"+name) {
 			t.Fatalf("Generate and WriteNodeSlot wrote different %s", name)
 		}
+		if read(t, uiPkg, "generated/"+name) != read(t, stagedUI, "generated/"+name) {
+			t.Fatalf("Generate and WriteBrowserSlot wrote different %s", name)
+		}
+	}
+
+	// An app that does not declare holon-ui has no browser clients.
+	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
+	nodeOnly, err := Prepare(t.Context(), manifest, Options{Apps: []string{"app"}, Extract: fakeExtract(t, results, &calls)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nodeOnly.Close()
+	if err := nodeOnly.WriteBrowserSlot("app", t.TempDir()); err == nil || !strings.Contains(err.Error(), "no browser clients") {
+		t.Fatalf("WriteBrowserSlot without holon-ui = %v", err)
 	}
 }
 

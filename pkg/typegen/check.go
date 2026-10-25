@@ -102,7 +102,17 @@ func typeCheck(ctx context.Context, app App, prepared *Prepared, o Options) erro
 	if err != nil {
 		return err
 	}
-	for _, language := range slices.Sorted(maps.Keys(p.packages)) {
+	languages := map[string]bool{}
+	slots := map[string]map[string]string{}
+	for kind, files := range p.packages {
+		if pkg, ok := slotPackages[kind]; ok {
+			// Every TypeScript kind is linked into one snapshot and checked by one typescript run.
+			slots[pkg] = files
+			kind = "typescript"
+		}
+		languages[kind] = true
+	}
+	for _, language := range slices.Sorted(maps.Keys(languages)) {
 		l, ok := typeLanguages[language]
 		if !ok {
 			continue
@@ -117,7 +127,7 @@ func typeCheck(ctx context.Context, app App, prepared *Prepared, o Options) erro
 			if strings.HasSuffix(entry, ".py") {
 				entry = ""
 			}
-			if err = linkNodeModules(app.Path, p.root, p.packages[language], p.slot); err != nil {
+			if err = linkNodeModules(app.Path, p.root, slots, p.slot); err != nil {
 				return fmt.Errorf("%s: %w", app.Name, err)
 			}
 		case "python":
@@ -164,22 +174,29 @@ func pythonEnvironment(app, fallback string) string {
 	}
 	return fallback
 }
-func linkNodeModules(source, destination string, files map[string]string, meta slotMetadata) error {
-	pkg, name, err := nodeSlot(source)
-	if err != nil {
-		return err
+
+// linkNodeModules copies each slot package (by name) that source resolves into destination's node_modules
+// with its generated files, then symlinks the rest of source's node_modules chain beside them.
+// The copies come first so that the symlink pass never links an installed slot package.
+func linkNodeModules(source, destination string, slots map[string]map[string]string, meta slotMetadata) error {
+	for _, pkg := range slices.Sorted(maps.Keys(slots)) {
+		installed, name, err := nodeSlot(source, pkg)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(destination, "node_modules", name)
+		if err = copyTree(installed, target); err != nil {
+			return err
+		}
+		// The copied slot is exclusively ours; replace any prior app's files in this snapshot.
+		if err = os.RemoveAll(filepath.Join(target, "generated")); err != nil {
+			return err
+		}
+		if err = writeNodeSlot(target, pkg, slots[pkg], meta); err != nil {
+			return err
+		}
 	}
-	target := filepath.Join(destination, "node_modules", name)
-	if err = copyTree(pkg, target); err != nil {
-		return err
-	}
-	// The copied slot is exclusively ours; replace any prior app's files in this snapshot.
-	if err = os.RemoveAll(filepath.Join(target, "generated")); err != nil {
-		return err
-	}
-	if err = writeNodeSlot(target, files, meta); err != nil {
-		return err
-	}
+	var err error
 	var link func(string, string) error
 	link = func(from, to string) error {
 		entries, err := os.ReadDir(from)
