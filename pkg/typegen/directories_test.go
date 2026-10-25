@@ -71,12 +71,7 @@ func TestDirectoriesResolveRequiresThroughTheRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(names, []string{"checkout"}) {
-		t.Fatalf("names = %v, want [checkout]", names)
-	}
-	var calls []string
-	results := map[string]extraction{"checkout": {UsesApps: true}}
-	prepared, err := Prepare(t.Context(), m, Options{Apps: names, HTTPClient: server.Client(), Extract: fakeExtract(t, results, &calls)})
+	prepared, err := Prepare(t.Context(), m, Options{Apps: names, HTTPClient: server.Client()})
 	if err != nil {
 		t.Fatalf("a registry dependency's own requires blocked generation: %v", err)
 	}
@@ -91,7 +86,7 @@ func TestDirectoriesResolveRequiresThroughTheRegistry(t *testing.T) {
 	t.Run("platform manifest still expands every app", func(t *testing.T) {
 		platform := m
 		platform.pathRequiresOnly = false
-		_, err := Prepare(t.Context(), platform, Options{Apps: names, HTTPClient: server.Client(), Extract: fakeExtract(t, results, &calls)})
+		_, err := Prepare(t.Context(), platform, Options{Apps: names, HTTPClient: server.Client()})
 		if err == nil || !strings.Contains(err.Error(), "must be declared in apps") {
 			t.Fatalf("undeclared transitive dependency = %v, want a declaration error", err)
 		}
@@ -104,14 +99,18 @@ func TestListedDirectories(t *testing.T) {
 		ref                                              Reference
 		providerImports                                  bool
 		wantNames                                        []string
+		selected                                         []string
 	}{
-		{name: "inferred Python", file: "client.py", source: "from holon.apps import apps\nx = apps.orders, apps.checkout, apps.unknown\n", wantClient: "orders", wantNames: []string{"checkout"}},
-		{name: "inferred TypeScript", file: "ui/client.ts", source: "import { createApps } from 'holon-ui'; apps['orders'].tools.lookup({});", wantClient: "orders", wantNames: []string{"checkout"}},
+		{name: "inferred Python", file: "client.py", source: "from holon.apps import apps\nx = apps . orders, apps.checkout, apps.unknown\n", wantClient: "orders", wantNames: []string{"checkout"}},
+		{name: "indexed Python", file: "client.py", source: "x = apps [\n'orders'\n]\n", wantClient: "orders", wantNames: []string{"checkout"}},
+		{name: "inferred TypeScript", file: "ui/client.ts", source: "import { createApps } from 'holon-ui'; apps /* client */ . orders.tools.lookup({});", wantClient: "orders", wantNames: []string{"checkout"}},
+		{name: "indexed TypeScript", file: "client.ts", source: "apps /* client */ ['orders'].tools.lookup({});", wantClient: "orders", wantNames: []string{"checkout"}},
 		{name: "declared alias", file: "client.py", source: "x = apps.orders, apps.store\n", alias: "store", ref: Reference{Name: "example.com/orders", Version: "1.0.0"}, providerImports: true, wantClient: "store", wantNames: []string{"store", "checkout"}},
 		{name: "pinned version", file: "client.py", source: "x = apps.orders\n", alias: "orders", ref: Reference{Name: "example.com/orders", Version: "2.0.0"}, wantError: "checkout requires orders to be example.com/orders@2.0.0; declared app does not match"},
 		{name: "declared name", file: "client.py", source: "x = apps.orders\n", alias: "orders", ref: Reference{Name: "other.org/orders", Version: "1.0.0"}, wantError: "checkout requires orders to be other.org/orders@1.0.0; declared app does not match"},
 		{name: "unknown reference", file: "client.py", source: "x = apps['unknown-store']\n", wantNames: []string{"checkout"}},
-		{name: "providers only", file: "client.py", source: "x = 1\n", wantNames: []string{}},
+		{name: "providers only", file: "client.py", source: "text = 'from holon.apps import apps; apps.orders'\n# apps.orders\n", wantNames: []string{}},
+		{name: "unknown selection", file: "client.py", source: "x = 1\n", selected: []string{"missing"}, wantError: "dependency missing must be declared in apps"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -127,23 +126,24 @@ func TestListedDirectories(t *testing.T) {
 				providerSource = "from holon.apps import apps\n" + providerSource
 			}
 			writeProvider(t, orders, "orders", providerSource, nil)
-			// Installed dependencies and generated files must not make a provider a caller.
 			put(t, orders, "node_modules/other/index.js", "import 'holon-sh'; apps.checkout;")
 			put(t, orders, ".venv/lib/client.py", "from holon.apps import apps\nx = apps.checkout\n")
 			put(t, orders, "holon/apps/__init__.py", "# "+mcpcontract.Marker+" app=orders\n# apps.checkout\n")
+			put(t, orders, "example.ts", "// import 'holon-sh'; apps.checkout\nconst text = 'apps.checkout';")
 			m, names, err := Directories([]string{orders, checkout})
 			if err != nil {
 				t.Fatal(err)
+			}
+			if test.selected != nil {
+				names = test.selected
 			}
 			before := map[string]map[string]string{checkout: fileMap(t, checkout), orders: fileMap(t, orders)}
 			provider := "orders"
 			if test.alias != "" {
 				provider = test.alias
 			}
-			results := map[string]extraction{"checkout": {UsesApps: true}, provider: {UsesApps: test.providerImports, Tools: []mcpcontract.Tool{lookupTool}}}
-			var calls []string
 			var output bytes.Buffer
-			err = Generate(t.Context(), m, Options{Apps: names, NoInstall: true, HTTPClient: &http.Client{Transport: unavailableRegistry{t}}, Stdout: &output, Stderr: &output, Extract: fakeExtract(t, results, &calls)})
+			err = Generate(t.Context(), m, Options{Apps: names, NoInstall: true, HTTPClient: &http.Client{Transport: unavailableRegistry{t}}, Stdout: &output, Stderr: &output})
 			if test.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantError) {
 					t.Fatalf("generate = %v, want %s", err, test.wantError)
@@ -153,9 +153,6 @@ func TestListedDirectories(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generate: %v\n%s", err, &output)
 			}
-			if !slices.Equal(names, test.wantNames) {
-				t.Fatalf("selected apps = %v, want %v", names, test.wantNames)
-			}
 			for name, dir := range map[string]string{"checkout": checkout, provider: orders} {
 				after := fileMap(t, dir)
 				if slices.Contains(test.wantNames, name) {
@@ -163,7 +160,7 @@ func TestListedDirectories(t *testing.T) {
 					if !strings.HasPrefix(module, "# "+mcpcontract.Marker) {
 						t.Fatalf("%s has no generated clients:\n%s", name, module)
 					}
-					if name == "checkout" && (strings.Contains(module, "async def lookup(") != (test.wantClient != "") || test.wantClient != "" && !strings.Contains(module, "\""+test.wantClient+"\"")) {
+					if name == "checkout" && (strings.Contains(module, "async def read(") != (test.wantClient != "") || test.wantClient != "" && !strings.Contains(module, "\""+test.wantClient+"\"")) {
 						t.Fatalf("checkout client should bind %q:\n%s", test.wantClient, module)
 					}
 					delete(after, "holon/apps/__init__.py")
@@ -207,7 +204,7 @@ func TestDirectoriesRejectAmbiguousInputs(t *testing.T) {
 		{"no server.json", []string{orders, filepath.Join(root, "empty")}, []string{filepath.Join(root, "empty") + ": no server.json found", "pass DIR..."}},
 		{"file", []string{filepath.Join(root, "file")}, []string{"is not a directory"}},
 		{"malformed server.json", []string{filepath.Join(root, "malformed")}, []string{filepath.Join(root, "malformed", "server.json") + ": "}},
-		{"provider under two aliases", []string{checkout, billing, orders}, []string{orders + " is required as both", checkout, billing}},
+		{"provider under two aliases", []string{checkout, billing, orders}, []string{orders + " is required as both store and orders", "use one alias"}},
 		{"same derived name", []string{orders, otherOrders}, []string{orders, otherOrders, "app name orders"}},
 		{"same server twice", []string{orders, orders}, []string{"both declare server example.com/orders"}},
 		{"invalid derived name", []string{digit}, []string{digit, "example.com/9lives", "does not give a valid app name"}},
@@ -232,7 +229,6 @@ func TestServerKey(t *testing.T) {
 		"io.github.Some_User/Some__Weird..Name": "some-weird-name",
 		"example.com/---":                       "",
 		"example.com/" + long:                   strings.Repeat("a", 48),
-		"no-namespace":                          "no-namespace",
 	} {
 		if got := serverKey(input); got != want {
 			t.Errorf("serverKey(%q) = %q, want %q", input, got, want)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 # extract.py sits beside this file, both in the source tree and in the tooling bundle.
-from extract import extract
+from extract import client_usage, extract
 
 
 def check(config: dict[str, Any], verify_only: bool) -> None:
@@ -36,6 +37,12 @@ def check(config: dict[str, Any], verify_only: bool) -> None:
 
 
 MODES: dict[str, Callable[[dict[str, Any]], object]] = {
+    "clients": lambda config: {
+        name: client_usage(
+            ast.parse(Path(path).read_text(), filename=path) for path in paths
+        )
+        for name, paths in config.items()
+    },
     "extract": lambda config: {
         app["name"]: extract(app["path"], app["entry"]) for app in config["apps"]
     },

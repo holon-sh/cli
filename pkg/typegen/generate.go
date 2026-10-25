@@ -40,7 +40,7 @@ type Options struct {
 }
 
 func (o Options) selects(name string) bool {
-	return len(o.Apps) == 0 || slices.Contains(o.Apps, name)
+	return o.Apps == nil || slices.Contains(o.Apps, name)
 }
 
 func (o Options) defaults() Options {
@@ -91,7 +91,15 @@ func (p *Prepared) Metadata() map[string]*mcpcontract.Metadata {
 // Prepare snapshots local sources, resolves required contracts and generates portable client files.
 func Prepare(ctx context.Context, manifest Manifest, options Options) (*Prepared, error) {
 	o := options.defaults()
-	manifest, err := resolveManifestGraph(ctx, manifest, o)
+	var usage map[string]clientUsage
+	if manifest.pathRequiresOnly {
+		var err error
+		usage, err = inspectClients(ctx, manifest, o)
+		if err != nil {
+			return nil, err
+		}
+	}
+	manifest, err := resolveManifestGraph(ctx, manifest, &o, usage)
 	if err != nil {
 		return nil, err
 	}
@@ -132,11 +140,11 @@ func prepareResolved(ctx context.Context, manifest Manifest, o Options) (_ *Prep
 			p.packages[p.language] = nil
 		}
 		if isFile(filepath.Join(p.root, "package.json")) {
-			kinds, err := typeScriptKinds(p.root)
-			if err != nil {
+			var pkg packageJSON
+			if err := readTypeJSON(filepath.Join(p.root, "package.json"), &pkg); err != nil {
 				return nil, err
 			}
-			for _, kind := range kinds {
+			for _, kind := range pkg.kinds(nil) {
 				p.packages[kind] = nil
 			}
 		}
@@ -305,7 +313,11 @@ func currentSources(m Manifest) error {
 // Generate installs missing public runtimes and writes only marked generation slots.
 func Generate(ctx context.Context, m Manifest, options Options) error {
 	o := options.defaults()
-	resolved, err := resolveManifestGraph(ctx, m, o)
+	usage, err := inspectClients(ctx, m, o)
+	if err != nil {
+		return err
+	}
+	resolved, err := resolveManifestGraph(ctx, m, &o, usage)
 	if err != nil {
 		return err
 	}
@@ -318,7 +330,7 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 	defer release()
 	for _, app := range targets.Apps {
 		if app.Path != "" {
-			if err := ensureDependencies(ctx, app, o); err != nil {
+			if err := ensureDependencies(ctx, app, usage[app.Name].Imports, o); err != nil {
 				return err
 			}
 		}

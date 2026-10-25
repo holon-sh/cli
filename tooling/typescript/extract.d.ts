@@ -13,3 +13,4 @@ export type Extraction = {
 } | { diagnostic: string; usesApps: boolean; tools?: undefined; resources?: undefined; sources?: undefined };
 /** Analyze an MCP handler without executing application initialization. */
 export declare function extract(root: string, entry?: string): Extraction;
+export declare function clientUsage(paths: string[]): { usesApps: boolean; references: string[]; imports: string[] };

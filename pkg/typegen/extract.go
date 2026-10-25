@@ -7,6 +7,7 @@ import (
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,11 +25,12 @@ type extraction struct {
 type typeLanguage struct {
 	runner          string
 	programs, probe []string
+	extensions      []string
 }
 
 var typeLanguages = map[string]typeLanguage{
-	"typescript": {"runner.mjs", []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
-	"python":     {"runner.py", []string{"python3.15", "python3.14", "python3.13", "python3.12", "python3.11", "python3"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
+	"typescript": {"runner.mjs", []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}, []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"}},
+	"python":     {"runner.py", []string{"python3.15", "python3.14", "python3.13", "python3.12", "python3.11", "python3"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}, []string{".py"}},
 }
 
 func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
@@ -36,6 +38,9 @@ func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
 		if exec.CommandContext(ctx, program, l.probe...).Run() == nil {
 			return program, nil
 		}
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
 	}
 	return "", fmt.Errorf("install a supported interpreter (%s)", strings.Join(l.programs, ", "))
 }
@@ -71,16 +76,6 @@ func analysisEntry(root string) (string, string, error) {
 }
 func extractTypes(ctx context.Context, root string, apps []App, o Options) (map[string]extraction, error) {
 	results := map[string]extraction{}
-	extract := o.Extract
-	if extract == nil {
-		env, err := commandenv.Environ(o.Env)
-		if err != nil {
-			return nil, err
-		}
-		extract = func(ctx context.Context, language, tooling, config, output string) error {
-			return hostExtract(ctx, language, tooling, config, output, env, o)
-		}
-	}
 	for language := range typeLanguages {
 		var entries []map[string]string
 		for _, app := range apps {
@@ -91,40 +86,46 @@ func extractTypes(ctx context.Context, root string, apps []App, o Options) (map[
 		if len(entries) == 0 {
 			continue
 		}
-		config := filepath.Join(root, language+".json")
-		output := filepath.Join(root, language+"-output.json")
-		if err := writeJSON(config, map[string]any{"apps": entries}); err != nil {
-			return nil, err
-		}
-		if err := extract(ctx, language, filepath.Join(root, "tooling"), config, output); err != nil {
-			return nil, err
-		}
 		var found map[string]extraction
-		if err := readTypeJSON(output, &found); err != nil {
+		if err := runTypeTool(ctx, root, language, "extract", map[string]any{"apps": entries}, &found, o); err != nil {
 			return nil, err
 		}
-		for name, result := range found {
-			results[name] = result
-		}
+		maps.Copy(results, found)
 	}
 	return results, nil
 }
 
-// hostExtract runs the extractor with the host's interpreter.
-func hostExtract(ctx context.Context, language, tooling, config, output string, env []string, o Options) error {
-	l := typeLanguages[language]
-	program, err := l.localProgram(ctx)
-	if err != nil {
+func runTypeTool(ctx context.Context, root, language, mode string, request, result any, o Options) error {
+	config := filepath.Join(root, language+"-"+mode+".json")
+	output := filepath.Join(root, language+"-"+mode+"-output.json")
+	tooling := filepath.Join(root, "tooling")
+	if err := writeJSON(config, request); err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, program, filepath.Join(tooling, language, l.runner), "extract", config, output)
-	command.Env = env
-	command.Stdout = o.Stderr
-	command.Stderr = o.Stderr
-	if err = command.Run(); err != nil {
-		return fmt.Errorf("prepare MCP types with %s: %w", program, err)
+	if mode == "extract" && o.Extract != nil {
+		if err := o.Extract(ctx, language, tooling, config, output); err != nil {
+			return err
+		}
+	} else {
+		env, err := commandenv.Environ(o.Env)
+		if err != nil {
+			return err
+		}
+		l := typeLanguages[language]
+		program, err := l.localProgram(ctx)
+		if err != nil {
+			return err
+		}
+		command := exec.CommandContext(ctx, program, filepath.Join(tooling, language, l.runner), mode, config, output)
+		command.Env, command.Stdout, command.Stderr = env, o.Stderr, o.Stderr
+		if err = command.Run(); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("prepare MCP types with %s: %w", program, err)
+		}
 	}
-	return nil
+	return readTypeJSON(output, result)
 }
 func isFile(path string) bool {
 	info, err := os.Stat(path)
