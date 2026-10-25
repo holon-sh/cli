@@ -1,6 +1,6 @@
 import ts from "typescript";
 import { z } from "zod";
-import { readFileSync, existsSync, realpathSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { resolve, dirname, relative, extname, sep } from "node:path";
 import { validator } from "./validate.mjs";
 import { createHash } from "node:crypto";
@@ -80,15 +80,20 @@ export function extract(root, entry) {
   }
 }
 
-// Ignore installed dependencies: only the application's own imports select typed generation.
-function usesApps(root) {
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (["node_modules", ".git", ".holon", ".holon-types"].includes(entry.name)) continue;
-    const path = resolve(root, entry.name);
-    if (entry.isDirectory() && usesApps(path)) return true;
-    if (entry.isFile() && /\.[cm]?[jt]sx?$/.test(entry.name) && /(?:@holon-sh\/apps|holon-sh|holon-ui)(?:[\/"'])/.test(readFileSync(path, "utf8"))) return true;
+export function clientUsage(paths) {
+  const references = new Set(), imports = new Set();
+  for (const path of paths) {
+    const source = readFileSync(path, "utf8");
+    const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+    for (const imported of ts.preProcessFile(source, true, true).importedFiles) imports.add(imported.fileName);
+    function visit(node) {
+      if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "apps") references.add(node.name.text);
+      if (ts.isElementAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "apps" && ts.isStringLiteralLike(node.argumentExpression)) references.add(node.argumentExpression.text);
+      ts.forEachChild(node, visit);
+    }
+    visit(file);
   }
-  return false;
+  return { references: [...references], imports: [...imports], usesApps: references.size > 0 || [...imports].some(specifier => ["holon-sh", "holon-ui", "@holon-sh/apps"].some(pkg => specifier === pkg || specifier.startsWith(pkg + "/"))) };
 }
 
 class Analyzer {
@@ -100,7 +105,7 @@ class Analyzer {
     this.calls = new Set();
     this.analyzedFunctions = new Set();
     this.blocks = [];
-    this.usesApps = usesApps(this.root);
+    this.usesApps = clientUsage(ts.sys.readDirectory(this.root, [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"], ["node_modules", ".git", ".holon", ".holon-types"])).usesApps;
     this.steps = 0;
   }
   fail(node, message) {
@@ -122,7 +127,6 @@ class Analyzer {
     for (const statement of file.statements) {
       if (ts.isImportDeclaration(statement)) {
         const specifier = statement.moduleSpecifier.text;
-        if (/^(?:@holon-sh\/apps|holon-sh|holon-ui)(?:\/|$)/.test(specifier)) this.usesApps = true;
         const clause = statement.importClause;
         if (!clause) {
           if (specifier.startsWith(".")) this.module(this.resolveImport(dirname(path), specifier, statement));

@@ -11,18 +11,25 @@ import (
 	"slices"
 )
 
-func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest, error) {
+func resolveManifestGraph(ctx context.Context, m Manifest, o *Options, usage map[string]clientUsage) (Manifest, error) {
+	if len(o.Apps) == 0 {
+		o.Apps = make([]string, 0, len(m.Apps))
+		for _, app := range m.Apps {
+			o.Apps = append(o.Apps, app.Name)
+		}
+	}
+	if m.pathRequiresOnly {
+		var err error
+		m, err = inferDirectoryClients(m, o, usage)
+		if err != nil {
+			return m, err
+		}
+	}
 	declarations := map[string]App{}
 	for _, app := range m.Apps {
 		declarations[app.Name] = app
 	}
 	queue := slices.Clone(o.Apps)
-	// Directories can explicitly select no clients; manifest callers retain the all-apps default.
-	if len(queue) == 0 && !(m.pathRequiresOnly && o.Apps != nil) {
-		for _, app := range m.Apps {
-			queue = append(queue, app.Name)
-		}
-	}
 	nodes := map[string]App{}
 	selections := map[string]Reference{}
 	for len(queue) > 0 {

@@ -4,12 +4,14 @@ import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import ts from "typescript";
-import { extract } from "./extract.mjs";
+import { clientUsage, extract } from "./extract.mjs";
 
 const [mode, configPath, output] = process.argv.slice(2);
 const config = JSON.parse(readFileSync(configPath, "utf8"));
 const assets = dirname(process.argv[1]);
-if (mode === "extract") {
+if (mode === "clients") {
+  writeFileSync(output, JSON.stringify(Object.fromEntries(Object.entries(config).map(([name, paths]) => [name, clientUsage(paths)]))));
+} else if (mode === "extract") {
   const results = Object.fromEntries(config.apps.map(app => [app.name, extract(app.path, app.entry)]));
   writeFileSync(output, JSON.stringify(results));
 } else if (mode === "check" || mode === "verify") {

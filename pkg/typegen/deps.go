@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/holon-sh/cli/internal/commandenv"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,79 +38,18 @@ func typeScriptKinds(dir string) ([]string, error) {
 	return kinds, nil
 }
 
-var runtimeImport = regexp.MustCompile(`(?:^|["'\s])(holon-sh|holon-ui|@holon-sh/apps)(?:/([\w./-]*))?["']`)
-
-func walkSources(root string, ext *regexp.Regexp, fn func(data []byte)) error {
-	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if path != root && (strings.HasPrefix(entry.Name(), ".holon") || generatedSource(root, path)) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !entry.Type().IsRegular() || !ext.MatchString(entry.Name()) {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		fn(data)
-		return nil
-	})
-}
-
-var scriptSource = regexp.MustCompile(`\.[cm]?[jt]sx?$`)
-
-// importedRuntimes scans the app's own JavaScript and TypeScript sources (not installed dependencies) for
-// holon-sh and holon-ui imports, like the extractor's usesApps. legacyBrowser reports an import of
-// holon-sh/browser or holon-sh/browser-runtime, which moved to holon-ui.
-func importedRuntimes(root string) (packages map[string]bool, legacyBrowser bool, err error) {
-	packages = map[string]bool{}
-	err = walkSources(root, scriptSource, func(data []byte) {
-		for _, match := range runtimeImport.FindAllSubmatch(data, -1) {
-			name, subpath := string(match[1]), string(match[2])
-			if name == "holon-sh" && slices.Contains([]string{"browser", "browser-runtime"}, subpath) {
-				legacyBrowser = true
-			}
-			packages[name] = true
-		}
-	})
-	return packages, legacyBrowser, err
-}
-
-var (
-	clientSource    = regexp.MustCompile(`\.(py|[cm]?[jt]sx?)$`)
-	clientReference = regexp.MustCompile(`\bapps(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[\s*["']([^"'\s]+)["']\s*\])`)
-	clientImport    = regexp.MustCompile(`\bholon\.apps\b|["'](?:holon-sh|holon-ui)(?:/[\w./-]*)?["']`)
-)
-
-func clientReferences(root string) (names map[string]bool, usesClients bool, err error) {
-	names = map[string]bool{}
-	err = walkSources(root, clientSource, func(data []byte) {
-		if clientImport.Match(data) {
-			usesClients = true
-		}
-		for _, match := range clientReference.FindAllSubmatch(data, -1) {
-			names[string(match[1])+string(match[2])] = true
-		}
-	})
-	return names, usesClients || len(names) > 0, err
-}
-
-func ensureDependencies(ctx context.Context, app App, o Options) error {
+func ensureDependencies(ctx context.Context, app App, imports []string, o Options) error {
 	if isFile(filepath.Join(app.Path, "package.json")) {
 		var pkg packageJSON
 		if err := readTypeJSON(filepath.Join(app.Path, "package.json"), &pkg); err != nil {
 			return err
 		}
-		imported, legacy, err := importedRuntimes(app.Path)
-		if err != nil {
-			return err
+		imported := map[string]bool{}
+		for _, specifier := range imports {
+			name, _, _ := strings.Cut(specifier, "/")
+			imported[name] = true
 		}
+		legacy := slices.Contains(imports, "holon-sh/browser") || slices.Contains(imports, "holon-sh/browser-runtime")
 		if legacy {
 			return fmt.Errorf("%s imports holon-sh/browser, which moved to the holon-ui package; depend on holon-ui and import from \"holon-ui\"", app.Name)
 		}

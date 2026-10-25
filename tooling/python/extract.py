@@ -3,8 +3,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import os
-import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Never
@@ -74,25 +73,27 @@ class ExtractionError(ValueError):
     pass
 
 
-def uses_generated_imports(source: str) -> bool:
-    """Whether a source imports the application's generated namespace portion."""
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return bool(
-            re.search(
-                r"(?m)^\s*(?:from\s+holon\.apps\b|import[^\n]*\bholon\.apps\b)",
-                source,
-            )
-        )
-    return any(
-        isinstance(node, ast.ImportFrom)
-        and node.level == 0
-        and node.module == "holon.apps"
-        or isinstance(node, ast.Import)
-        and any(alias.name == "holon.apps" for alias in node.names)
-        for node in ast.walk(tree)
-    )
+def client_usage(trees: Iterable[ast.AST]) -> dict[str, Any]:
+    references: set[str] = set()
+    imports: set[str] = set()
+    for tree in trees:
+        for node in ast.walk(tree):
+            match node:
+                case ast.Attribute(value=ast.Name(id="apps"), attr=name):
+                    references.add(name)
+                case ast.Subscript(
+                    value=ast.Name(id="apps"), slice=ast.Constant(value=str(name))
+                ):
+                    references.add(name)
+                case ast.ImportFrom(module=str(module), level=0):
+                    imports.add(module)
+                case ast.Import(names=names):
+                    imports.update(alias.name for alias in names)
+    return {
+        "references": sorted(references),
+        "imports": sorted(imports),
+        "usesApps": bool(references) or "holon.apps" in imports,
+    }
 
 
 class Analyzer:
@@ -733,9 +734,7 @@ def extract(root: str | Path, entry: str) -> dict[str, Any]:
             analyzer.sources[str(path.relative_to(analyzer.root))] = hashlib.sha256(
                 source.encode()
             ).hexdigest()
-            uses_apps |= uses_generated_imports(source)
-        for path in paths:
-            analyzer.tree(path)
+        uses_apps = client_usage(analyzer.tree(path) for path in paths)["usesApps"]
         catalog = analyzer.extract((analyzer.root / entry).resolve())
         return {**catalog, "usesApps": uses_apps, "sources": analyzer.sources}
     except (
