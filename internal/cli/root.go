@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func NewCommand(version string) *cobra.Command {
@@ -106,18 +105,17 @@ func NewCommand(version string) *cobra.Command {
 	// (the JSON form of mcptype.GenerateRequest, from a file or stdin) into a directory.
 	var out string
 	compile := &cobra.Command{Use: "compile [REQUEST.json]", Short: "Compile a generate request into package files", Hidden: true, Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		var data []byte
-		var err error
+		input := cmd.InOrStdin()
 		if len(args) == 1 && args[0] != "-" {
-			data, err = os.ReadFile(args[0])
-		} else {
-			data, err = io.ReadAll(cmd.InOrStdin())
-		}
-		if err != nil {
-			return err
+			file, err := os.Open(args[0])
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			input = file
 		}
 		var request mcptype.GenerateRequest
-		decoder := json.NewDecoder(strings.NewReader(string(data)))
+		decoder := json.NewDecoder(input)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&request); err != nil {
 			return fmt.Errorf("generate request: %w", err)
@@ -130,7 +128,7 @@ func NewCommand(version string) *cobra.Command {
 			if !filepath.IsLocal(name) {
 				return fmt.Errorf("generated file name %q escapes the output directory", name)
 			}
-			path := filepath.Join(out, filepath.FromSlash(name))
+			path := filepath.Join(out, name)
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				return err
 			}

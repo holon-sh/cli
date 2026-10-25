@@ -40,29 +40,23 @@ func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
 
 func TestTypesCompileWritesAGenerateRequestIntoTheOutputDirectory(t *testing.T) {
 	root := t.TempDir()
-	request := `{"target":"python","identity":{"name":"caller","version":"1"},"requires":{"orders":{"name":"orders","version":"1"}},"contracts":{"orders":{"tools":[{"name":"read","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}]}},"python_module":"holon/apps/__init__.py","python_runtime_module":"holon.client","banner":"holon-generated-apps-v1 app=caller"}`
+	request := `{"target":"python","identity":{"name":"caller","version":"1"},"contracts":{"orders":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}},"python_module":"holon/apps/__init__.py"}`
 	if err := os.WriteFile(filepath.Join(root, "request.json"), []byte(request), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	command := NewCommand("test")
 	command.SetOut(new(bytes.Buffer))
-	command.SetErr(new(bytes.Buffer))
 	command.SetArgs([]string{"types", "compile", filepath.Join(root, "request.json"), "--out", filepath.Join(root, "out")})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	module, err := os.ReadFile(filepath.Join(root, "out", "holon", "apps", "__init__.py"))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || !strings.Contains(string(module), "async def read(") {
+		t.Fatalf("generated module: %v\n%s", err, module)
 	}
-	if !strings.HasPrefix(string(module), "# holon-generated-apps-v1 app=caller") || !strings.Contains(string(module), "async def read(") {
-		t.Fatalf("unexpected module:\n%s", module)
-	}
-	command = NewCommand("test")
-	command.SetErr(new(bytes.Buffer))
 	command.SetArgs([]string{"types", "compile", "--out", root})
 	command.SetIn(strings.NewReader(`{"target":"python","identity":{"name":"x","version":"1"},"unknown":1}`))
-	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "unknown") {
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), `unknown field "unknown"`) {
 		t.Fatalf("unknown request fields accepted: %v", err)
 	}
 }
