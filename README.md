@@ -43,41 +43,18 @@ def lookup(id: str) -> Order:
     ...
 ```
 
-### 1. Declare the dependency
+### 1. Generate the client
 
-Each server has a `server.json` in the MCP Registry format. In the caller's, add `requires` under the `sh.holon` metadata. The key is the name you will use in code; the value is the provider's registry name and version.
-
-`examples/checkout/server.json`:
-
-```json
-{
-  "name": "io.github.holon-sh/checkout",
-  "version": "1.0.0",
-  "description": "Check out orders",
-  "_meta": {
-    "io.modelcontextprotocol.registry/publisher-provided": {
-      "sh.holon": {
-        "requires": {
-          "orders": { "name": "io.github.holon-sh/orders", "version": "1.0.0" }
-        }
-      }
-    }
-  }
-}
-```
-
-### 2. Generate the client
-
-List the caller and the provider directory. Directories listed together resolve each other's `requires` by `server.json` name.
+List the caller and the provider directory. `checkout`'s source refers to `apps.orders`, and a listed directory whose `server.json` is named `.../orders` satisfies that, so nothing has to be declared.
 
 ```sh
 cd checkout
 holon types generate . ../orders
 ```
 
-The CLI finds each server's entry file by convention (`server.py` or `server.ts`, at the root or in `src/`), reads its tools, and writes the client: `node_modules/holon-sh/generated/` for TypeScript, `holon/apps/__init__.py` for Python. It also adds the runtime to the project if it is missing.
+The CLI finds each server's entry file by convention (`server.py` or `server.ts`, at the root or in `src/`), reads its tools, and writes the client into `node_modules/holon-sh/generated/` (TypeScript) or `holon/apps/__init__.py` (Python). It adds the runtime to the project if it is missing. `orders` uses no client, so it is left untouched.
 
-### 3. Call the tool
+### 2. Call the tool
 
 `examples/checkout/server.ts`:
 
@@ -104,7 +81,7 @@ export default createMcpHandler(createServer);
 
 The argument and the result of `lookup` are typed from the provider's schemas. A misspelled field is a type error; a tool error throws `ToolCallError`. The same call from Python is `await apps.orders.tools.lookup({"id": id})`; see the [Python SDK](https://github.com/holon-sh/sdk-py).
 
-### 4. Run it
+### 3. Run it
 
 The client needs the provider's URL. Set the variable named after the dependency:
 
@@ -115,7 +92,7 @@ ORDERS_MCP_URL=http://127.0.0.1:3001/mcp npm run serve
 
 Authentication, custom HTTP clients and test fixtures are explicit bindings; see the runtime docs.
 
-### 5. Add a view
+### 4. Add a view
 
 `checkout` also ships a browser view, [`examples/checkout/ui/main.ts`](examples/checkout/ui/main.ts), that calls its own `total` tool through the MCP Apps host. Because `checkout`'s `package.json` declares `holon-ui`, the same `holon types generate` run writes a browser client into `node_modules/holon-ui/generated/`:
 
@@ -132,7 +109,7 @@ const { total } = await apps.checkout.tools.total({ id: "A-1" });
 
 `npm run build` bundles the view into one HTML file, which `server.ts` serves as an MCP App resource with `appView`. See the [UI SDK](https://github.com/holon-sh/sdk-ui).
 
-### 6. Catch breaking changes in CI
+### 5. Catch breaking changes in CI
 
 ```sh
 holon types check . ../orders
@@ -142,7 +119,26 @@ This regenerates the clients into a temporary copy of each app and runs the lang
 
 ## Call a server you don't own
 
-A `requires` entry that matches none of the listed directories is looked up in the [MCP Registry](https://registry.modelcontextprotocol.io) by name and version. The CLI takes the contract from the first source the record offers: a published contract document (below), a contract stored beside the server's container image, or a live `tools/list` against the server. If none is available, generation still succeeds with an untyped client for that dependency and a note on stderr.
+A dependency that is not a listed directory is declared in the caller's `server.json`, under the `sh.holon` metadata, by its [MCP Registry](https://registry.modelcontextprotocol.io) name and version. The key is the name you use in code:
+
+```json
+{
+  "name": "io.github.holon-sh/checkout",
+  "version": "1.0.0",
+  "description": "Check out orders",
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "sh.holon": {
+        "requires": {
+          "search": { "name": "io.github.acme/search", "version": "2.1.0" }
+        }
+      }
+    }
+  }
+}
+```
+
+The CLI takes the contract from the first source the registry record offers: a published contract document (below), a contract stored beside the server's container image, or a live `tools/list` against the server. If none is available, generation still succeeds with an untyped client for that dependency and a note on stderr. A `requires` entry also pins a listed directory to an exact version, when you want that.
 
 ## Publish your server's contract
 

@@ -1,14 +1,5 @@
 {
   "name": "io.github.holon-sh/checkout",
   "version": "1.0.0",
-  "description": "Check out orders",
-  "_meta": {
-    "io.modelcontextprotocol.registry/publisher-provided": {
-      "sh.holon": {
-        "requires": {
-          "orders": { "name": "io.github.holon-sh/orders", "version": "1.0.0" }
-        }
-      }
-    }
-  }
+  "description": "Check out orders"
 }
