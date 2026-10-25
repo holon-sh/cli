@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/spf13/cobra"
 	"io"
+	"os"
+	"path/filepath"
 )
 
 func NewCommand(version string) *cobra.Command {
@@ -97,5 +100,46 @@ func NewCommand(version string) *cobra.Command {
 	contract.Flags().StringVar(&name, "name", "", "Registry server identity (namespace/name)")
 	contract.Flags().StringVar(&release, "version", "", "Exact provider version")
 	types.AddCommand(contract)
+
+	// Plumbing for the SDK repositories' test fixtures: compile one generate request
+	// (the JSON form of mcptype.GenerateRequest, from a file or stdin) into a directory.
+	var out string
+	compile := &cobra.Command{Use: "compile [REQUEST.json]", Short: "Compile a generate request into package files", Hidden: true, Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		input := cmd.InOrStdin()
+		if len(args) == 1 && args[0] != "-" {
+			file, err := os.Open(args[0])
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			input = file
+		}
+		var request mcptype.GenerateRequest
+		decoder := json.NewDecoder(input)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil {
+			return fmt.Errorf("generate request: %w", err)
+		}
+		files, err := mcptype.Generate(cmd.Context(), request)
+		if err != nil {
+			return err
+		}
+		for name, content := range files {
+			if !filepath.IsLocal(name) {
+				return fmt.Errorf("generated file name %q escapes the output directory", name)
+			}
+			path := filepath.Join(out, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(path, content, 0o644); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "compiled %d file(s) into %s\n", len(files), out)
+		return nil
+	}}
+	compile.Flags().StringVar(&out, "out", ".", "Directory that receives the generated files")
+	types.AddCommand(compile)
 	return root
 }
