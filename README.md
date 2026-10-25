@@ -136,3 +136,16 @@ const { total } = result.structuredContent as { total: number }; // unchecked
 ```
 
 </details>
+
+## Embedding
+
+The `github.com/holon-sh/cli/pkg/cli` package exports `NewCommand(version)` for the
+standalone executable and `NewTypesCommand()` for hosts that add their own commands:
+
+```go
+root.AddCommand(cli.NewTypesCommand())
+```
+
+Each call creates an independent Cobra command tree. The shared `types` commands
+operate on server directories and do not need a platform installation. The standalone
+root also registers `check` as a shortcut; an embedding host can keep its own root commands.

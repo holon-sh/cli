@@ -180,11 +180,11 @@ func pythonEnvironment(app, fallback string) string {
 // The copies come first so that the symlink pass never links an installed slot package.
 func linkNodeModules(source, destination string, slots map[string]map[string]string, meta slotMetadata) error {
 	for _, pkg := range slices.Sorted(maps.Keys(slots)) {
-		installed, name, err := nodeSlot(source, pkg)
+		installed, err := InstalledRuntime(source, pkg)
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(destination, "node_modules", name)
+		target := filepath.Join(destination, "node_modules", pkg)
 		if err = copyTree(installed, target); err != nil {
 			return err
 		}

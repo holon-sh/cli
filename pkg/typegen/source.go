@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/moby/patternmatcher"
 	"github.com/moby/patternmatcher/ignorefile"
 )
@@ -40,7 +41,7 @@ func generatedSource(root, path string) bool {
 		return true
 	}
 	managed := filepath.Join(root, "holon")
-	if pathInsideContext(path, managed) && legacyManaged(managed) {
+	if pathInsideContext(path, managed) && mcpcontract.Managed(managed) {
 		return true
 	}
 	return path == filepath.Join(managed, "apps") && generatedPython(managed)

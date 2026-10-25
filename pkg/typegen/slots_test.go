@@ -62,7 +62,7 @@ func testNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T, pkg st
 	if err := os.Symlink(store, filepath.Join(app, "node_modules", pkg)); err != nil {
 		t.Fatal(err)
 	}
-	resolved, _, err := nodeSlot(app, pkg)
+	resolved, err := InstalledRuntime(app, pkg)
 	if err != nil {
 		t.Fatal(err)
 	}

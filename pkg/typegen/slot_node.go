@@ -22,8 +22,8 @@ type slotMetadata struct {
 	Digests     map[string]string    `json:"digests,omitempty"`
 }
 
-// nodeSlot returns the real directory of the installed package pkg that root resolves and its import specifier.
-func nodeSlot(root, pkg string) (string, string, error) {
+// InstalledRuntime resolves a Node runtime package from root and verifies its generated-slot contract.
+func InstalledRuntime(root, pkg string) (string, error) {
 	for dir := root; ; dir = filepath.Dir(dir) {
 		candidate := filepath.Join(dir, "node_modules", pkg)
 		real, err := filepath.EvalSymlinks(candidate)
@@ -35,21 +35,21 @@ func nodeSlot(root, pkg string) (string, string, error) {
 				} `json:"holon"`
 			}
 			if err := readTypeJSON(filepath.Join(real, "package.json"), &manifest); err != nil {
-				return "", "", err
+				return "", err
 			}
 			if manifest.Holon.Slot != "generated" || manifest.Holon.ContractVersion != mcpcontract.Version {
-				return "", "", fmt.Errorf("%s does not declare a compatible holon.slot", candidate)
+				return "", fmt.Errorf("%s does not declare a compatible holon.slot", candidate)
 			}
-			return real, pkg, nil
+			return real, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
-			return "", "", err
+			return "", err
 		}
 		if filepath.Dir(dir) == dir {
 			break
 		}
 	}
-	return "", "", fmt.Errorf("%s is not installed for %s; install it before generating types", pkg, root)
+	return "", fmt.Errorf("%s is not installed for %s; install it before generating types", pkg, root)
 }
 func validateNodeSlot(pkgDir, pkg string, meta slotMetadata) error {
 	directory := filepath.Join(pkgDir, "generated")

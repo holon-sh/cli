@@ -1,4 +1,4 @@
-package cli
+package cli_test
 
 import (
 	"bytes"
@@ -8,12 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/holon-sh/cli/pkg/cli"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
 func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
 	var output bytes.Buffer
-	command := NewCommand("0.0.1")
+	command := cli.NewCommand("0.0.1")
 	command.SetOut(&output)
 	command.SetArgs([]string{"--version"})
 	if err := command.Execute(); err != nil {
@@ -23,7 +24,7 @@ func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
 		t.Fatalf("ambiguous version: %s", &output)
 	}
 	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--project", "x"}, {"types", "contract"}} {
-		command = NewCommand("test")
+		command = cli.NewCommand("test")
 		command.SetArgs(args)
 		command.SetErr(new(bytes.Buffer))
 		if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "unknown") {
@@ -33,7 +34,7 @@ func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
 }
 
 func run(args ...string) error {
-	command := NewCommand("test")
+	command := cli.NewCommand("test")
 	command.SetArgs(args)
 	command.SetOut(new(bytes.Buffer))
 	command.SetErr(new(bytes.Buffer))
@@ -59,7 +60,7 @@ func TestCommandsRequireAServerJSONInEveryDirectory(t *testing.T) {
 
 func TestTypesCompileNamesBrowserEntryFiles(t *testing.T) {
 	root := t.TempDir()
-	command := NewCommand("test")
+	command := cli.NewCommand("test")
 	command.SetOut(new(bytes.Buffer))
 	command.SetIn(strings.NewReader(`{"target":"browser","identity":{"name":"checkout","version":"1.0.0"},"contracts":{"orders":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}},"browser_runtime_specifier":"../runtime.mjs","protocol_specifier":"holon-core/protocol","entry":"index"}`))
 	command.SetArgs([]string{"types", "compile", "--out", root})
@@ -94,7 +95,7 @@ func TestProviderOnlyContract(t *testing.T) {
 		}
 	}
 	var output bytes.Buffer
-	command := NewCommand("test")
+	command := cli.NewCommand("test")
 	command.SetOut(&output)
 	command.SetArgs([]string{"types", "generate", "--contract", dir})
 	if err := command.Execute(); err != nil {

@@ -1,16 +1,18 @@
+// Package cli provides the portable Holon commands for standalone and extended executables.
 package cli
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/spf13/cobra"
-	"io"
-	"os"
-	"path/filepath"
 )
 
 // appDirs returns the application directories: args, or the working directory when there are none.
@@ -43,7 +45,7 @@ func printContract(cmd *cobra.Command, manifest typegen.Manifest, app string) er
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
-	return &cobra.Command{Use: "check [DIR...]", Short: short, Long: "Type-check apps against their typed contracts in temporary source copies.\n\nholon check and holon types check are the same command.", RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: "check [DIR...]", Short: short, Long: "Type-check apps against their typed contracts in temporary source copies.", RunE: func(cmd *cobra.Command, args []string) error {
 		manifest, names, err := typegen.Directories(appDirs(args))
 		if err != nil {
 			return err
@@ -52,12 +54,19 @@ func newCheck(short string) *cobra.Command {
 	}}
 }
 
+// NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string) *cobra.Command {
 	root := &cobra.Command{Use: "holon", Short: "Generate and check typed MCP clients for MCP server directories", Version: version + " (standalone types CLI)", SilenceUsage: true, SilenceErrors: true}
 	root.SetVersionTemplate("holon {{.Version}}\n")
+	root.AddCommand(NewTypesCommand(), newCheck("Shortcut for holon types check"))
+	return root
+}
+
+// NewTypesCommand builds an independent types command tree that can be added to a host CLI.
+// It has no installation, project, or control-plane dependencies.
+func NewTypesCommand() *cobra.Command {
 	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
 	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
-	root.AddCommand(types)
 	var noInstall, quiet, contract bool
 	generate := &cobra.Command{Use: "generate [DIR...]", Short: "Generate types in installed SDK slots", RunE: func(cmd *cobra.Command, args []string) error {
 		if contract && len(args) > 1 {
@@ -81,7 +90,6 @@ func NewCommand(version string) *cobra.Command {
 	generate.Flags().BoolVar(&quiet, "quiet", false, "Suppress generation progress")
 	types.AddCommand(generate)
 	types.AddCommand(newCheck("Type-check apps against their typed contracts in temporary source copies"))
-	root.AddCommand(newCheck("Shortcut for holon types check"))
 
 	// Plumbing for the SDK repositories' test fixtures: compile one generate request
 	// (the JSON form of mcptype.GenerateRequest, from a file or stdin) into a directory.
@@ -123,5 +131,5 @@ func NewCommand(version string) *cobra.Command {
 	}}
 	compile.Flags().StringVar(&out, "out", ".", "Directory that receives the generated files")
 	types.AddCommand(compile)
-	return root
+	return types
 }

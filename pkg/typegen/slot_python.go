@@ -5,19 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-func legacyManaged(directory string) bool {
-	var pkg struct {
-		Holon string `json:"holon"`
-	}
-	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
-	return err == nil && json.Unmarshal(data, &pkg) == nil && pkg.Holon == mcpcontract.Marker
-}
 func legacyManagedFiles(files map[string]string) bool {
 	var pkg struct {
 		Holon string `json:"holon"`
@@ -42,7 +36,7 @@ func validatePythonSlot(root string) error {
 		}
 	}
 	holon := filepath.Join(root, "holon")
-	if legacyManaged(holon) {
+	if mcpcontract.Managed(holon) {
 		return nil
 	}
 	if _, err := os.Lstat(filepath.Join(holon, "__init__.py")); err == nil {
@@ -62,7 +56,7 @@ func writePythonSlot(root string, files map[string]string) error {
 		return err
 	}
 	holon := filepath.Join(root, "holon")
-	if legacyManaged(holon) {
+	if mcpcontract.Managed(holon) {
 		if err := os.RemoveAll(holon); err != nil {
 			return err
 		}

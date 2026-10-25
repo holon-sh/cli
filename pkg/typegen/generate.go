@@ -323,7 +323,7 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 	}
 	targets := resolved
 	targets.Apps = slices.DeleteFunc(slices.Clone(resolved.Apps), func(app App) bool { return !o.selects(app.Name) })
-	release, err := acquireLocks(targets)
+	release, err := AcquireLocks(targets)
 	if err != nil {
 		return err
 	}
@@ -353,7 +353,7 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 				continue
 			}
 			pkg := slotPackages[kind]
-			slot, _, err := nodeSlot(app.Path, pkg)
+			slot, err := InstalledRuntime(app.Path, pkg)
 			if err != nil {
 				return err
 			}
@@ -385,7 +385,7 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 		if p == nil || !o.selects(app.Name) {
 			continue
 		}
-		for _, language := range slices.Sorted(maps.Keys(p.packages)) {
+		for _, language := range prepared.Languages(app.Name) {
 			var err error
 			switch language {
 			case "typescript":
@@ -401,6 +401,17 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 				return err
 			}
 			fmt.Fprintf(o.Stdout, "%s: generated %s types\n", app.Name, language)
+		}
+	}
+	return nil
+}
+
+// Languages reports the generated client languages for a selected app, in stable order.
+// It returns no languages for an unknown or unprepared app.
+func (p *Prepared) Languages(app string) []string {
+	for _, a := range p.Manifest.Apps {
+		if a.Name == app && a.prepared != nil && p.options.selects(app) {
+			return slices.Sorted(maps.Keys(a.prepared.packages))
 		}
 	}
 	return nil
@@ -464,7 +475,10 @@ func (p *Prepared) WriteGoSlot(app, root string) error {
 	}
 	return writeGoSlot(root, files)
 }
-func acquireLocks(m Manifest) (func(), error) {
+
+// AcquireLocks locks app source directories and installed runtime slots until the returned release
+// function is called. A failure releases every acquired lock.
+func AcquireLocks(m Manifest) (func(), error) {
 	var locks []*flock.Flock
 	release := func() {
 		for _, lock := range locks {
@@ -489,7 +503,7 @@ func acquireLocks(m Manifest) (func(), error) {
 			}
 			paths[real] = true
 			for _, pkg := range slotPackages {
-				if slot, _, err := nodeSlot(app.Path, pkg); err == nil {
+				if slot, err := InstalledRuntime(app.Path, pkg); err == nil {
 					paths[slot] = true
 				}
 			}

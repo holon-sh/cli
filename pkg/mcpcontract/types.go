@@ -1,5 +1,5 @@
 // Package mcpcontract holds the typed-contract wire format Holon publishes in image
-// metadata, without logic: comparison and generation live in mcptype.
+// metadata and helpers for generated files. Comparison and generation live in mcptype.
 package mcpcontract
 
 import (
@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -75,4 +76,14 @@ type Metadata struct {
 	Identity Identity               `json:"identity"`
 	Contract *Contract              `json:"contract,omitempty"`
 	Requires map[string]Expectation `json:"requires,omitempty"`
+}
+
+// Managed reports whether directory is a package Holon generated before the public runtimes: the
+// legacy Python holon/ copy or a Go holon/ client package, both marked in package.json.
+func Managed(directory string) bool {
+	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
+	var pkg struct {
+		Holon string `json:"holon"`
+	}
+	return err == nil && json.Unmarshal(data, &pkg) == nil && pkg.Holon == Marker
 }
