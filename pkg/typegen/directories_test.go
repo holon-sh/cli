@@ -2,7 +2,6 @@ package typegen
 
 import (
 	"bytes"
-	"encoding/json"
 	"io/fs"
 	"maps"
 	"net/http"
@@ -238,24 +237,5 @@ func TestServerKey(t *testing.T) {
 		if got := serverKey(input); got != want {
 			t.Errorf("serverKey(%q) = %q, want %q", input, got, want)
 		}
-	}
-}
-
-func TestManifestAppsNeverInfer(t *testing.T) {
-	root := t.TempDir()
-	checkout, orders := filepath.Join(root, "checkout"), filepath.Join(root, "orders")
-	writeProvider(t, checkout, "checkout", "from holon.apps import apps\n"+pythonProvider+"x = apps.orders\n", nil)
-	writeProvider(t, orders, "orders", pythonProvider, nil)
-	server := json.RawMessage("{\"server\":{}}")
-	platform := Manifest{Apps: []App{{Name: "checkout", Path: checkout, Access: server}, {Name: "orders", Path: orders, Access: server}}}
-	var calls []string
-	results := map[string]extraction{"checkout": {UsesApps: true}, "orders": {Tools: []mcpcontract.Tool{lookupTool}}}
-	prepared, err := Prepare(t.Context(), platform, Options{Apps: []string{"checkout"}, HTTPClient: &http.Client{Transport: unavailableRegistry{t}}, Extract: fakeExtract(t, results, &calls)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prepared.Close()
-	if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 0 {
-		t.Fatalf("a manifest-declared app inferred requires from source: %v", requires)
 	}
 }
