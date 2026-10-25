@@ -28,21 +28,27 @@ func TestGenerateOnlyWritesSelectedApps(t *testing.T) {
 	}
 	root := t.TempDir()
 	caller, provider := filepath.Join(root, "caller"), filepath.Join(root, "provider")
-	writeProvider(t, caller, "caller", "from holon.apps import apps\n"+pythonProvider, map[string]Reference{
+	inventory := filepath.Join(root, "inventory")
+	writeProvider(t, caller, "caller", "from holon.apps import apps\n"+pythonProvider+"unused = apps.inventory\n", map[string]Reference{
 		"provider": {Name: "example.com/provider", Version: "1.0.0"},
 	})
 	writeProvider(t, provider, "provider", pythonProvider, nil)
+	writeProvider(t, inventory, "inventory", pythonProvider, nil)
 	put(t, caller, "pyproject.toml", "[project]\nname = 'caller'\n")
 	put(t, provider, "pyproject.toml", "[project]\nname = 'provider'\n")
 	old := "# " + mcpcontract.Marker + " app=provider\n# previous generated content\n"
 	put(t, provider, "holon/apps/__init__.py", old)
-	manifest := Manifest{Apps: []App{{Name: "caller", Path: caller}, {Name: "provider", Path: provider, Access: json.RawMessage(`{"server":{}}`)}}}
+	manifest := Manifest{Apps: []App{
+		{Name: "caller", Path: caller},
+		{Name: "provider", Path: provider, Access: json.RawMessage(`{"server":{}}`)},
+		{Name: "inventory", Path: inventory, Access: json.RawMessage(`{"server":{}}`)},
+	}}
 	var output bytes.Buffer
 	if err := Generate(t.Context(), manifest, Options{Apps: []string{"caller"}, NoInstall: true, Stdout: &output, Stderr: &output}); err != nil {
 		t.Fatalf("generate: %v\n%s", err, &output)
 	}
-	if module := read(t, caller, "holon/apps/__init__.py"); !strings.Contains(module, "async def read(") {
-		t.Fatalf("caller did not get the extracted provider contract:\n%s", module)
+	if module := read(t, caller, "holon/apps/__init__.py"); !strings.Contains(module, "async def read(") || strings.Contains(module, "inventory") {
+		t.Fatalf("caller must get only its explicitly required provider's client:\n%s", module)
 	}
 	if read(t, provider, "holon/apps/__init__.py") != old {
 		t.Fatal("generation changed the dependency's slot")

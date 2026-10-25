@@ -77,12 +77,21 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest) (ma
 		resourcesEntry = entry + "-resources"
 	}
 	var files map[string]string
-	if request.target == "browser" {
+	switch {
+	case request.target == "browser" && request.own != nil:
+		// The view's own server is reachable through the MCP Apps host that embeds the page, so the
+		// module exports ready clients for it and the App they connect through.
+		own := quoted(*request.own)
+		files = map[string]string{
+			entry + ".js":   fmt.Sprintf("import { bindApps, hostApps } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\nconst identity = %s, contracts = %s;\nexport const { apps, view } = hostApps(identity, contracts, %s);\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", browserRuntime, browserRuntime, &identity, &contracts, own),
+			entry + ".d.ts": types(resourcesEntry) + bindingTypes + exposeTypes + fmt.Sprintf("import type { App } from \"@modelcontextprotocol/ext-apps\";\nexport declare const apps: Pick<Apps, %s>;\nexport declare const view: App;\n", own),
+		}
+	case request.target == "browser":
 		files = map[string]string{
 			entry + ".js":   fmt.Sprintf("import { bindApps } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", browserRuntime, browserRuntime, bound),
 			entry + ".d.ts": types(resourcesEntry) + bindingTypes + exposeTypes,
 		}
-	} else {
+	default:
 		files = map[string]string{
 			entry + ".js":   fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\nexport const apps = create(%s, %s);\n%s", runtime, runtime, &identity, &contracts, bound),
 			entry + ".d.ts": types(resourcesEntry) + "export declare const apps: Apps;\n" + bindingTypes,

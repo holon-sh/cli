@@ -109,13 +109,8 @@ const result = await client.callTool({
 In [`examples/checkout/ui/main.ts`](examples/checkout/ui/main.ts), an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) view invokes a tool as
 
 ```typescript
-import { App } from "@modelcontextprotocol/ext-apps";
-import { createApps } from "holon-ui";
+import { apps } from "holon-ui";
 
-const view = new App({ name: "checkout-view", version: "1.0.0" });
-await view.connect();
-
-const apps = createApps({ checkout: { host: view } });
 const { total } = await apps.checkout.tools.total({ id }); // { total: number }
 ```
 

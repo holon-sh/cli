@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,7 +17,8 @@ func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest,
 		declarations[app.Name] = app
 	}
 	queue := slices.Clone(o.Apps)
-	if len(queue) == 0 {
+	// Directories can explicitly select no clients; manifest callers retain the all-apps default.
+	if len(queue) == 0 && !(m.pathRequiresOnly && o.Apps != nil) {
 		for _, app := range m.Apps {
 			queue = append(queue, app.Name)
 		}
@@ -34,7 +36,7 @@ func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest,
 			return m, fmt.Errorf("dependency %s must be declared in apps with explicit access.server", name)
 		}
 		var err error
-		if app.Path != "" {
+		if app.Path != "" && !m.pathRequiresOnly {
 			data, readErr := os.ReadFile(filepath.Join(app.Path, "server.json"))
 			if readErr == nil {
 				app.descriptor, err = ParseDescriptor(data)
@@ -93,13 +95,7 @@ func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest,
 		m.Apps = append(m.Apps, a)
 	}
 	slices.SortFunc(m.Apps, func(a, b App) int {
-		if a.Name < b.Name {
-			return -1
-		}
-		if a.Name > b.Name {
-			return 1
-		}
-		return 0
+		return cmp.Compare(a.Name, b.Name)
 	})
 	return m, nil
 }

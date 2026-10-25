@@ -141,6 +141,9 @@ type GenerateRequest struct {
 	// Entry names the TypeScript entry point files: "index" gives index.js, index.d.ts and resources.d.ts.
 	// Empty means index for node and browser for browser.
 	Entry string `json:"entry,omitempty"`
+	// Own, for browser targets, is the contracts key of the app's own server. The module then exports
+	// apps and view: clients bound to the MCP Apps host that embeds the page, connected on first use.
+	Own string `json:"own,omitempty"`
 }
 
 // Generate returns the package files by relative path.

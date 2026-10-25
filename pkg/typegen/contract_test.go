@@ -3,11 +3,8 @@ package typegen
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"maps"
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -44,7 +41,10 @@ def read(id: str) -> str:
 	for name, content := range files {
 		put(t, app, name, content)
 	}
-	manifest := Manifest{Apps: []App{{Name: "provider", Path: app}, {Name: "unavailable", Registry: &RegistrySource{Reference: reference}}}}
+	manifest, _, err := Directories([]string{app})
+	if err != nil {
+		t.Fatal(err)
+	}
 	metadata, err := Contract(context.Background(), manifest, "provider", Options{HTTPClient: &http.Client{Transport: unavailableRegistry{t}}})
 	if err != nil {
 		t.Fatal(err)
@@ -58,28 +58,7 @@ def read(id: str) -> str:
 	if len(metadata.Requires) != 0 {
 		t.Fatalf("provider document contains caller expectations: %+v", metadata.Requires)
 	}
-	actual := map[string]string{}
-	err = filepath.WalkDir(app, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		relative, err := filepath.Rel(app, path)
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		actual[filepath.ToSlash(relative)] = string(data)
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	actual := fileMap(t, app)
 	if !maps.Equal(files, actual) {
 		t.Fatalf("contract discovery changed provider files: before %v; after %v", files, actual)
 	}
