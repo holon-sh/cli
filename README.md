@@ -61,7 +61,7 @@ In [`examples/checkout/server.ts`](examples/checkout/server.ts), it invokes a to
 ```typescript
 import { apps } from "holon-sh";
 
-const order = await apps.orders.tools.lookup({ id }); // { id: string; total: number }, validated
+const order = await apps.orders.tools.lookup({ id }); // { id: string; total: number }
 ```
 
 as opposed to
@@ -70,8 +70,13 @@ as opposed to
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 const client = new Client({ name: "checkout", version: "1.0.0" });
-await client.connect(new StreamableHTTPClientTransport(new URL("http://localhost:3001/mcp")));
-const result = await client.callTool({ name: "lookup", arguments: { id } });
+await client.connect(
+  new StreamableHTTPClientTransport(new URL("http://localhost:3001/mcp")),
+);
+const result = await client.callTool({
+  name: "lookup",
+  arguments: { id },
+});
 const order = result.structuredContent as { id: string; total: number }; // unchecked
 ```
 
@@ -82,7 +87,7 @@ import { apps } from "holon-sh";
 
 const result = await apps.context7.callTool({
   name: "resolve-library-id",                 // tool names are checked
-  arguments: { libraryName: library, query }, // arguments are typed and validated
+  arguments: { libraryName: library, query }, // arguments are typed
 });
 ```
 
@@ -92,8 +97,13 @@ as opposed to
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 const client = new Client({ name: "checkout", version: "1.0.0" });
-await client.connect(new StreamableHTTPClientTransport(new URL("https://mcp.context7.com/mcp")));
-const result = await client.callTool({ name: "resolve-library-id", arguments: { libraryName: library, query } }); // unchecked
+await client.connect(
+  new StreamableHTTPClientTransport(new URL("https://mcp.context7.com/mcp")),
+);
+const result = await client.callTool({
+  name: "resolve-library-id",                 // unchecked
+  arguments: { libraryName: library, query }, // unchecked
+});
 ```
 
 In [`examples/checkout/ui/main.ts`](examples/checkout/ui/main.ts), an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) view invokes a tool as
