@@ -20,24 +20,45 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 
 ## Call another MCP server with types
 
-`checkout` is an MCP server that wants to call the `lookup` tool of `orders`, another MCP server in the same repository. `orders` needs nothing from these packages: its type hints (Python) or Zod schemas (TypeScript) are its contract, and the CLI reads them from source without running the server.
+The walkthrough uses the two servers in [`examples/`](examples): `orders`, a Python MCP server with a `lookup` tool, and `checkout`, a TypeScript MCP server that calls it. `orders` needs nothing from these packages. Its type hints are its contract, and the CLI reads them from source without running the server.
+
+`examples/orders/server.py`:
+
+```python
+from mcp.server import MCPServer
+from pydantic import BaseModel
+
+
+class Order(BaseModel):
+    id: str
+    total: float
+
+
+server = MCPServer("orders")
+
+
+@server.tool()
+def lookup(id: str) -> Order:
+    """Look up an order by id."""
+    ...
+```
 
 ### 1. Declare the dependency
 
 Each server has a `server.json` in the MCP Registry format. In the caller's, add `requires` under the `sh.holon` metadata. The key is the name you will use in code; the value is the provider's registry name and version.
 
-`checkout/server.json`:
+`examples/checkout/server.json`:
 
 ```json
 {
-  "name": "io.github.example/checkout",
+  "name": "io.github.holon-sh/checkout",
   "version": "1.0.0",
   "description": "Check out orders",
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "sh.holon": {
         "requires": {
-          "orders": { "name": "io.github.example/orders", "version": "1.0.0" }
+          "orders": { "name": "io.github.holon-sh/orders", "version": "1.0.0" }
         }
       }
     }
@@ -50,50 +71,66 @@ Each server has a `server.json` in the MCP Registry format. In the caller's, add
 List the caller and the provider directory. Directories listed together resolve each other's `requires` by `server.json` name.
 
 ```sh
-cd checkout
+cd examples/checkout
 holon types generate . ../orders
 ```
 
-The CLI finds each server's entry file by convention (`server.py` or `server.ts`, at the root or in `src/`), reads its tools, and writes the client: `holon/apps/__init__.py` for Python, `node_modules/holon-sh/generated/` for TypeScript. It also adds the runtime to the project if it is missing.
+The CLI finds each server's entry file by convention (`server.py` or `server.ts`, at the root or in `src/`), reads its tools, and writes the client: `node_modules/holon-sh/generated/` for TypeScript, `holon/apps/__init__.py` for Python. It also adds the runtime to the project if it is missing.
 
 ### 3. Call the tool
 
-Python:
-
-```python
-from mcp.server import MCPServer
-from holon.apps import apps
-
-server = MCPServer("checkout")
-
-@server.tool()
-async def total(id: str) -> float:
-    order = await apps.orders.tools.lookup({"id": id})
-    return order["total"]
-```
-
-TypeScript:
+`examples/checkout/server.ts`:
 
 ```typescript
+import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { apps } from "holon-sh";
+import { z } from "zod";
 
-export async function total(id: string): Promise<number> {
-  const order = await apps.orders.tools.lookup({ id });
-  return order.total;
+function createServer() {
+  const server = new McpServer({ name: "checkout", version: "1.0.0" });
+  server.registerTool(
+    "total",
+    { inputSchema: z.object({ id: z.string() }), outputSchema: z.object({ total: z.number() }) },
+    async ({ id }) => {
+      const order = await apps.orders.tools.lookup({ id });
+      return { content: [{ type: "text", text: String(order.total) }], structuredContent: { total: order.total } };
+    },
+  );
+  return server;
 }
+
+export default createMcpHandler(createServer);
 ```
 
-The argument and the result are typed from the provider's schemas. A misspelled field is a type error; a tool error raises `ToolCallError`.
+The argument and the result of `lookup` are typed from the provider's schemas. A misspelled field is a type error; a tool error throws `ToolCallError`. The same call from Python is `await apps.orders.tools.lookup({"id": id})`; see the [Python SDK](https://github.com/holon-sh/sdk-py).
 
 ### 4. Run it
 
 The client needs the provider's URL. Set the variable named after the dependency:
 
 ```sh
-ORDERS_MCP_URL=http://127.0.0.1:3001/mcp uv run python server.py
+(cd ../orders && uv run python server.py) &
+ORDERS_MCP_URL=http://127.0.0.1:3001/mcp npm run serve
 ```
 
 Authentication, custom HTTP clients and test fixtures are explicit bindings; see the runtime docs.
+
+### 5. Add a view
+
+`checkout` also ships a browser view, [`examples/checkout/ui/main.ts`](examples/checkout/ui/main.ts), that calls its own `total` tool through the MCP Apps host. Because `checkout`'s `package.json` declares `holon-ui`, the same `holon types generate` run writes a browser client into `node_modules/holon-ui/generated/`:
+
+```typescript
+import { App } from "@modelcontextprotocol/ext-apps";
+import { createApps } from "holon-ui";
+
+const view = new App({ name: "checkout-view", version: "1.0.0" });
+await view.connect();
+
+const apps = createApps({ checkout: { host: view } });
+const { total } = await apps.checkout.tools.total({ id: "A-1" });
+```
+
+`npm run build` bundles the view into one HTML file, which `server.ts` serves as an MCP App resource with `appView`. See the [UI SDK](https://github.com/holon-sh/sdk-ui).
 
 ## Catch breaking changes in CI
 
