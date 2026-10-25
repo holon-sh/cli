@@ -115,7 +115,7 @@ def build_npm(stage: Path, dist: Path, binary: Path, target: Target, version: st
     shutil.copyfile(binary, platform / "bin/holon")
     (platform / "bin/holon").chmod(0o755)
     shutil.copyfile(ROOT / "LICENSE", platform / "LICENSE")
-    manifest = {"name": f"@holon-sh/cli-{target.goos}-{target.npm_arch}", "version": version, "description": "Holon standalone CLI platform binary", "license": "MIT", "os": [target.goos], "cpu": [target.npm_arch], "files": ["bin/holon", "LICENSE"], "exports": {"./bin/holon": "./bin/holon"}, "publishConfig": {"access": "public"}}
+    manifest = {"name": f"@holon-sh/cli-{target.goos}-{target.npm_arch}", "version": version, "description": "Holon standalone CLI platform binary", "repository": {"type": "git", "url": "git+https://github.com/holon-sh/cli.git"}, "license": "MIT", "os": [target.goos], "cpu": [target.npm_arch], "files": ["bin/holon", "LICENSE"], "exports": {"./bin/holon": "./bin/holon"}, "publishConfig": {"access": "public"}}
     (platform / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
     package = stage / "npm"
     shutil.copytree(ROOT / "packaging/npm", package)

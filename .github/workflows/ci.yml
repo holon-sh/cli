@@ -1,5 +1,13 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_call:
+    inputs:
+      version:
+        description: Version stamped into the binaries and packages
+        type: string
+        default: "0.1.0"
 permissions:
   contents: read
 jobs:
@@ -48,6 +56,8 @@ jobs:
             target: darwin_amd64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      HOLON_VERSION: ${{ inputs.version || '0.1.0' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -72,11 +82,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - run: go test ./...
-      - run: python3 scripts/package_cli.py --target '${{ matrix.target }}' --version 0.1.0
+      - run: python3 scripts/package_cli.py --target '${{ matrix.target }}' --version "$HOLON_VERSION"
       - name: Verify Python launcher
         run: |
           uv venv .venv
-          uv pip install --no-cache --no-index --find-links dist holon-cli==0.1.0
+          uv pip install --no-cache --no-index dist/holon_cli-*.whl
           uv run --no-project holon --version
       - name: Verify npm launcher
         run: |

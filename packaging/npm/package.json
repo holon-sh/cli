@@ -2,6 +2,7 @@
   "name": "@holon-sh/cli",
   "version": "0.1.0",
   "description": "Standalone Holon typed-contract CLI",
+  "repository": {"type": "git", "url": "git+https://github.com/holon-sh/cli.git"},
   "license": "MIT",
   "type": "module",
   "bin": {"holon": "bin/holon.js"},
