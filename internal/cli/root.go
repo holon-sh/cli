@@ -21,16 +21,42 @@ func appDirs(args []string) []string {
 	return args
 }
 
+// printContract prints the app's own contract document, without caller expectations, and writes no files.
+func printContract(cmd *cobra.Command, manifest typegen.Manifest, app string) error {
+	metadata, err := typegen.Contract(cmd.Context(), manifest, app, typegen.Options{Stderr: cmd.ErrOrStderr()})
+	if err != nil {
+		return err
+	}
+	if metadata == nil || metadata.Contract == nil {
+		return fmt.Errorf("%s has no statically extracted contract", app)
+	}
+	document := struct {
+		Version  int                   `json:"version"`
+		Identity mcpcontract.Identity  `json:"identity"`
+		Contract *mcpcontract.Contract `json:"contract"`
+	}{mcpcontract.Version, metadata.Identity, metadata.Contract}
+	encoder := json.NewEncoder(cmd.OutOrStdout())
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(document)
+}
+
 func NewCommand(version string) *cobra.Command {
 	root := &cobra.Command{Use: "holon", Short: "Generate and check typed MCP clients for MCP server directories", Version: version + " (standalone types CLI)", SilenceUsage: true, SilenceErrors: true}
 	root.SetVersionTemplate("holon {{.Version}}\n")
-	types := &cobra.Command{Use: "types", Short: "Generate clients and inspect MCP contracts"}
+	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
+	types := &cobra.Command{Use: "types", Short: "Generate typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	root.AddCommand(types)
-	var noInstall, quiet bool
+	var noInstall, quiet, contract bool
 	generate := &cobra.Command{Use: "generate [DIR...]", Short: "Generate types in installed SDK slots", RunE: func(cmd *cobra.Command, args []string) error {
+		if contract && len(args) > 1 {
+			return errors.New("--contract takes at most one DIR")
+		}
 		manifest, names, err := typegen.Directories(appDirs(args))
 		if err != nil {
 			return err
+		}
+		if contract {
+			return printContract(cmd, manifest, names[0])
 		}
 		stdout := cmd.OutOrStdout()
 		if quiet {
@@ -38,6 +64,7 @@ func NewCommand(version string) *cobra.Command {
 		}
 		return typegen.Generate(cmd.Context(), manifest, typegen.Options{Apps: names, NoInstall: noInstall, Stdout: stdout, Stderr: cmd.ErrOrStderr()})
 	}}
+	generate.Flags().BoolVar(&contract, "contract", false, "Print the app's language-neutral MCP contract document instead of generating; writes nothing")
 	generate.Flags().BoolVar(&noInstall, "no-install", false, "Print missing runtime installation commands without running them")
 	generate.Flags().BoolVar(&quiet, "quiet", false, "Suppress generation progress")
 	types.AddCommand(generate)
@@ -49,52 +76,6 @@ func NewCommand(version string) *cobra.Command {
 		return typegen.Check(cmd.Context(), manifest, typegen.Options{Apps: names, NoPublished: true, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
 	}}
 	root.AddCommand(check)
-	var url, name, release string
-	contract := &cobra.Command{Use: "contract [DIR] | --url URL --name NAME --version VERSION", Short: "Print a language-neutral MCP contract document", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		var metadata *mcpcontract.Metadata
-		if url != "" {
-			if len(args) != 0 {
-				return errors.New("DIR and --url are mutually exclusive")
-			}
-			if name == "" || release == "" {
-				return errors.New("--url requires --name and --version")
-			}
-			var err error
-			metadata, err = typegen.LiveContract(cmd.Context(), url, mcpcontract.Identity{Name: name, Version: release}, nil)
-			if err != nil {
-				return err
-			}
-		} else {
-			if name != "" || release != "" {
-				return errors.New("--name and --version require --url")
-			}
-			m, names, err := typegen.Directories(appDirs(args))
-			if err != nil {
-				return err
-			}
-			app := names[0]
-			metadata, err = typegen.Contract(cmd.Context(), m, app, typegen.Options{Stderr: cmd.ErrOrStderr()})
-			if err != nil {
-				return err
-			}
-			if metadata == nil || metadata.Contract == nil {
-				return fmt.Errorf("%s has no statically extracted contract", app)
-			}
-		}
-		// Provider documents contain one contract, without caller expectations.
-		document := struct {
-			Version  int                   `json:"version"`
-			Identity mcpcontract.Identity  `json:"identity"`
-			Contract *mcpcontract.Contract `json:"contract"`
-		}{mcpcontract.Version, metadata.Identity, metadata.Contract}
-		encoder := json.NewEncoder(cmd.OutOrStdout())
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(document)
-	}}
-	contract.Flags().StringVar(&url, "url", "", "Fetch schemas from a Streamable HTTP MCP endpoint")
-	contract.Flags().StringVar(&name, "name", "", "Registry server identity (namespace/name)")
-	contract.Flags().StringVar(&release, "version", "", "Exact provider version")
-	types.AddCommand(contract)
 
 	// Plumbing for the SDK repositories' test fixtures: compile one generate request
 	// (the JSON form of mcptype.GenerateRequest, from a file or stdin) into a directory.

@@ -8,17 +8,6 @@ import (
 	"testing"
 )
 
-func TestContractFlagsRequireAnExplicitRemoteIdentity(t *testing.T) {
-	for _, args := range [][]string{{"types", "contract", "--url", "https://example.com/mcp"}, {"types", "contract", "app", "--url", "https://example.com/mcp", "--name", "example.com/app", "--version", "1"}, {"types", "contract", "--name", "example.com/app"}} {
-		command := NewCommand("test")
-		command.SetArgs(args)
-		command.SetOut(new(bytes.Buffer))
-		command.SetErr(new(bytes.Buffer))
-		if err := command.Execute(); err == nil {
-			t.Fatalf("accepted conflicting/missing flags: %v", args)
-		}
-	}
-}
 func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
 	var output bytes.Buffer
 	command := NewCommand("0.0.1")
@@ -30,7 +19,7 @@ func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
 	if !strings.Contains(output.String(), "standalone types CLI") {
 		t.Fatalf("ambiguous version: %s", &output)
 	}
-	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--project", "x"}} {
+	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--project", "x"}, {"types", "contract"}} {
 		command = NewCommand("test")
 		command.SetArgs(args)
 		command.SetErr(new(bytes.Buffer))
@@ -54,14 +43,14 @@ func TestCommandsRequireAServerJSONInEveryDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(app, "server.json"), []byte(server), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"types", "generate", empty}, {"types", "generate", app, empty}, {"check", app, empty}, {"types", "contract", empty}} {
+	for _, args := range [][]string{{"types", "generate", empty}, {"types", "generate", app, empty}, {"check", app, empty}, {"types", "generate", "--contract", empty}} {
 		err := run(args...)
 		if err == nil || !strings.Contains(err.Error(), empty+": no server.json found") || !strings.Contains(err.Error(), "pass DIR...") {
 			t.Fatalf("%v = %v", args, err)
 		}
 	}
-	if err := run("types", "contract", app, empty); err == nil || !strings.Contains(err.Error(), "accepts at most 1 arg") {
-		t.Fatalf("contract with two directories = %v", err)
+	if err := run("types", "generate", "--contract", app, app); err == nil || !strings.Contains(err.Error(), "--contract takes at most one DIR") {
+		t.Fatalf("--contract with two directories = %v", err)
 	}
 }
 
