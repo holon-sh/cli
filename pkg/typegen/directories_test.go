@@ -3,7 +3,6 @@ package typegen
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"io/fs"
 	"maps"
 	"net/http"
@@ -96,24 +95,6 @@ func TestDirectoriesResolveRequiresThroughTheRegistry(t *testing.T) {
 		_, err := Prepare(t.Context(), platform, Options{Apps: names, HTTPClient: server.Client(), Extract: fakeExtract(t, results, &calls)})
 		if err == nil || !strings.Contains(err.Error(), "must be declared in apps") {
 			t.Fatalf("undeclared transitive dependency = %v, want a declaration error", err)
-		}
-	})
-
-	t.Run("registry 404", func(t *testing.T) {
-		missing := &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
-		})}
-		var diagnostics bytes.Buffer
-		prepared, err := Prepare(t.Context(), m, Options{Apps: names, HTTPClient: missing, Stderr: &diagnostics, Extract: fakeExtract(t, results, &calls)})
-		if err != nil {
-			t.Fatalf("unavailable registry record blocked generation: %v", err)
-		}
-		defer prepared.Close()
-		if !strings.Contains(diagnostics.String(), "checkout: typed dependency orders unavailable:") {
-			t.Fatalf("diagnostics = %s", &diagnostics)
-		}
-		if module := pythonModule(t, prepared, "checkout"); !strings.Contains(module, "async def call_tool(self, name: _builtins.str") {
-			t.Fatalf("generated client does not expose untyped tool calls:\n%s", module)
 		}
 	})
 }

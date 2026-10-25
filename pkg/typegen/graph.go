@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -35,7 +36,6 @@ func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest,
 			return m, fmt.Errorf("dependency %s must be declared in apps with explicit access.server", name)
 		}
 		var err error
-		// Directories has already parsed and augmented its descriptors. Manifest apps load here.
 		if app.Path != "" && !m.pathRequiresOnly {
 			data, readErr := os.ReadFile(filepath.Join(app.Path, "server.json"))
 			if readErr == nil {
@@ -95,13 +95,7 @@ func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest,
 		m.Apps = append(m.Apps, a)
 	}
 	slices.SortFunc(m.Apps, func(a, b App) int {
-		if a.Name < b.Name {
-			return -1
-		}
-		if a.Name > b.Name {
-			return 1
-		}
-		return 0
+		return cmp.Compare(a.Name, b.Name)
 	})
 	return m, nil
 }

@@ -13,13 +13,11 @@ import (
 	"strings"
 )
 
-// packageJSON is the part of an app's package.json that selects its runtimes.
 type packageJSON struct {
 	PackageManager                                  string `json:"packageManager"`
 	Dependencies, DevDependencies, PeerDependencies map[string]string
 }
 
-// declares reports whether any dependency section names pkg.
 func (p packageJSON) declares(pkg string) bool {
 	return p.Dependencies[pkg] != "" || p.DevDependencies[pkg] != "" || p.PeerDependencies[pkg] != ""
 }
@@ -43,8 +41,6 @@ func typeScriptKinds(dir string) ([]string, error) {
 
 var runtimeImport = regexp.MustCompile(`(?:^|["'\s])(holon-sh|holon-ui|@holon-sh/apps)(?:/([\w./-]*))?["']`)
 
-// walkSources calls fn with every regular source file of the app at root whose name matches ext,
-// skipping installed dependencies, virtual environments and generated code.
 func walkSources(root string, ext *regexp.Regexp, fn func(data []byte)) error {
 	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -93,10 +89,6 @@ var (
 	clientImport    = regexp.MustCompile(`\bholon\.apps\b|["'](?:holon-sh|holon-ui)(?:/[\w./-]*)?["']`)
 )
 
-// clientReferences scans the app's own Python, JavaScript and TypeScript sources for the clients it
-// uses: the names referenced as apps.<name> or apps["<name>"], and whether it imports the generated
-// module at all (holon.apps in Python, holon-sh or holon-ui in TypeScript). Any reference
-// selects the app for generation, even if it names an unknown client for the checker to reject.
 func clientReferences(root string) (names map[string]bool, usesClients bool, err error) {
 	names = map[string]bool{}
 	err = walkSources(root, clientSource, func(data []byte) {

@@ -14,16 +14,11 @@ import (
 
 var notAppNameRun = regexp.MustCompile(`[^a-z0-9-]+`)
 
-// Directories describes MCP server directories, each containing a server.json, as a Manifest for
-// the standalone CLI. Every directory becomes a path app. A requires entry whose server name
-// matches another listed directory's server.json is provided by that directory, which is then
-// named by the requiring alias; every other requires entry becomes a registry app. Requires need
-// not be declared between listed directories: an apps.<name> reference in a directory's source
-// that names another listed directory (by the last segment of its server name) is a dependency
-// on it. It returns the manifest and the names of the listed apps that use generated clients, in
-// argument order; pass them in Options.Apps. A listed directory that references no client and
-// imports none is a provider only and gets nothing generated. The returned names are non-nil,
-// including when no app needs clients; pass that empty selection through to Options.Apps.
+// Directories builds a standalone manifest from server.json files. Listed servers satisfy
+// declared dependencies and source references; other dependencies come from their registries.
+// Declared aliases and versions take precedence. Pass the returned names to Options.Apps:
+// they select directories that import or reference clients or declare requires, in argument
+// order. An empty, non-nil selection leaves every provider untouched.
 func Directories(dirs []string) (Manifest, []string, error) {
 	if len(dirs) == 0 {
 		return Manifest{}, nil, errors.New("no directories given")
@@ -61,7 +56,6 @@ func Directories(dirs []string) (Manifest, []string, error) {
 		byServer[descriptor.Name] = i
 		apps[i] = listed{App: App{Path: dir, Access: server, descriptor: descriptor}}
 	}
-	// A client reference to another listed directory is a dependency on it, unless declared.
 	for i := range apps {
 		references, usesClients, err := clientReferences(apps[i].Path)
 		if err != nil {
@@ -69,7 +63,6 @@ func Directories(dirs []string) (Manifest, []string, error) {
 		}
 		d := apps[i].descriptor
 		apps[i].generates = usesClients || len(d.Requires) > 0
-		// Declared aliases and providers win, including a provider required under another alias.
 		required := map[string]bool{d.Name: true}
 		for alias, ref := range d.Requires {
 			delete(references, alias)
@@ -85,7 +78,6 @@ func Directories(dirs []string) (Manifest, []string, error) {
 			}
 		}
 	}
-	// A listed provider takes the alias its callers require it under.
 	requiredBy := map[int]int{}
 	for i, app := range apps {
 		for _, alias := range slices.Sorted(maps.Keys(app.descriptor.Requires)) {
@@ -133,9 +125,7 @@ func Directories(dirs []string) (Manifest, []string, error) {
 	return m, names, nil
 }
 
-// serverKey derives an app's client name from its registry server name: the last "/" segment,
-// lowercased, each run of characters outside [a-z0-9-] replaced with "-", trimmed of "-" and
-// truncated to 49 characters (example.com/checkout → checkout, io.github.x/My.Server → my-server).
+// serverKey normalizes the final server-name segment to a client name of at most 49 characters.
 func serverKey(serverName string) string {
 	name := serverName[strings.LastIndex(serverName, "/")+1:]
 	name = strings.Trim(notAppNameRun.ReplaceAllString(strings.ToLower(name), "-"), "-")
