@@ -1,0 +1,100 @@
+name: Publish dev release
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel (only "dev" is supported)
+        type: string
+        default: dev
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      python_version: ${{ steps.version.outputs.python_version }}
+    steps:
+      - name: Validate channel
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          if [ "$CHANNEL" != dev ]; then
+            echo "::error::Unsupported channel '$CHANNEL'; only 'dev' can be published from this workflow."
+            exit 1
+          fi
+      - name: Compute the dev version
+        id: version
+        env:
+          VERSION: 0.0.1-dev.${{ github.run_number }}
+        run: |
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "python_version=${VERSION/-dev./.dev}" >> "$GITHUB_OUTPUT"
+  build:
+    needs: check
+    uses: ./.github/workflows/ci.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      PYTHON_VERSION: ${{ needs.check.outputs.python_version }}
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Update npm for trusted publishing
+        run: npm install -g npm@11
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: holon-cli-*
+          merge-multiple: true
+          path: dist
+      - name: Check that every platform package was built
+        run: |
+          ls -l dist
+          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            test -f "dist/holon-sh-cli-$platform-$VERSION.tgz"
+          done
+          test -f "dist/holon-sh-cli-$VERSION.tgz"
+          test "$(ls dist/holon_cli-"$PYTHON_VERSION"-py3-none-*.whl | wc -l)" -eq 4
+      - name: Publish npm packages under the dev tag (platforms first)
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" > "$HOME/.npmrc"
+            export NODE_AUTH_TOKEN="$NPM_TOKEN"
+          fi
+          for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            npm publish "dist/holon-sh-cli-$platform-$VERSION.tgz" --tag dev --access public --provenance
+          done
+          npm publish "dist/holon-sh-cli-$VERSION.tgz" --tag dev --access public --provenance
+      - name: Publish wheels to PyPI
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          if [ -n "$PYPI_TOKEN" ]; then
+            export UV_PUBLISH_TOKEN="$PYPI_TOKEN"
+          fi
+          uv publish --trusted-publishing automatic dist/holon_cli-*.whl
+      - name: Summarize
+        run: |
+          {
+            echo "## holon CLI $VERSION (dev)"
+            echo
+            echo '```sh'
+            echo "npm install -g @holon-sh/cli@$VERSION"
+            echo "npm install -g @holon-sh/cli@dev"
+            echo "uv tool install holon-cli==$PYTHON_VERSION"
+            echo "pip install holon-cli==$PYTHON_VERSION"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

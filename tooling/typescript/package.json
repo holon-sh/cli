@@ -1,6 +1,6 @@
 {
   "name": "cli-tooling-ts",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "private": true,
   "description": "TypeScript contract extractor and check runner embedded in the Holon CLI.",
   "license": "MIT",

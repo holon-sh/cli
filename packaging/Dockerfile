@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,targe
 WORKDIR /src
 COPY . .
 ENV CGO_ENABLED=1 CC=musl-gcc CGO_LDFLAGS=-static PKG_CONFIG_PATH=/opt/mcptype/lib/pkgconfig
-ARG VERSION=0.1.0
+ARG VERSION=0.0.1
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build,id=cli-go-${TARGETARCH} \
     go build -trimpath -buildvcs=false -tags netgo,osusergo \
       -ldflags "-s -w -X main.version=${VERSION} -linkmode external -extldflags -static" -o /out/holon ./cmd/holon

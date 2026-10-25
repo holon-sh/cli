@@ -74,7 +74,7 @@ func LiveContract(ctx context.Context, location string, identity mcpcontract.Ide
 	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" {
 		return nil, errors.New("MCP URL must be an HTTP(S) URL without credentials or a fragment")
 	}
-	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon-types", Version: "0.1.0"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: location, HTTPClient: client}, nil)
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon-types", Version: "0.0.1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: location, HTTPClient: client}, nil)
 	if err != nil {
 		return nil, err
 	}

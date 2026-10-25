@@ -19,7 +19,7 @@ func TestContractFlagsRequireAnExplicitRemoteIdentity(t *testing.T) {
 }
 func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
 	var output bytes.Buffer
-	command := NewCommand("0.1.0")
+	command := NewCommand("0.0.1")
 	command.SetOut(&output)
 	command.SetArgs([]string{"--version"})
 	if err := command.Execute(); err != nil {

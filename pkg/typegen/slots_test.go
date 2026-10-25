@@ -155,7 +155,7 @@ func TestGenerateRejectsSharedNodeSlotBeforeWritingEitherApp(t *testing.T) {
 	m := Manifest{}
 	for _, name := range []string{"first", "second"} {
 		app := filepath.Join(root, name)
-		put(t, app, "package.json", `{"type":"module","dependencies":{"@holon-sh/apps":"^0.1.0"}}`)
+		put(t, app, "package.json", `{"type":"module","dependencies":{"@holon-sh/apps":"^0.0.1"}}`)
 		m.Apps = append(m.Apps, App{Name: name, Path: app})
 	}
 	err := Generate(context.Background(), m, Options{NoInstall: true})
@@ -173,7 +173,7 @@ func TestCheckDoesNotChangeSourceOrInstalledSlot(t *testing.T) {
 	}
 	app := t.TempDir()
 	pkg := filepath.Join(app, "node_modules/@holon-sh/apps")
-	put(t, app, "package.json", `{"type":"module","dependencies":{"@holon-sh/apps":"^0.1.0"}}`)
+	put(t, app, "package.json", `{"type":"module","dependencies":{"@holon-sh/apps":"^0.0.1"}}`)
 	put(t, app, "src/index.ts", `export const answer: string = "ok";`)
 	put(t, pkg, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
 	put(t, pkg, "generated/index.js", "foreign marker must survive check")
@@ -214,7 +214,7 @@ func TestDevDependencyNodeSlotGenerationAndCheck(t *testing.T) {
 	}
 	app := t.TempDir()
 	pkg := filepath.Join(app, "node_modules", nodePackage)
-	put(t, app, "package.json", `{"type":"module","devDependencies":{"@holon-sh/apps":"^0.1.0"}}`)
+	put(t, app, "package.json", `{"type":"module","devDependencies":{"@holon-sh/apps":"^0.0.1"}}`)
 	put(t, app, "src/index.ts", `import type { Inputs } from "@holon-sh/apps"; const inputs: Inputs = {};`)
 	put(t, pkg, "package.json", `{"exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
 	var output bytes.Buffer

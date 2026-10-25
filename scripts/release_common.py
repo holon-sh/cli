@@ -28,13 +28,13 @@ class Target(NamedTuple):
 
 
 TARGETS = tuple(Target(os, arch) for os in ("darwin", "linux") for arch in ("amd64", "arm64"))
-VERSION_PATTERN = r"[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?"
+VERSION_PATTERN = r"[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc|dev)\.[0-9]+)?"
 
 
 def python_version(version: str) -> str:
     if not re.fullmatch(VERSION_PATTERN, version):
-        raise ValueError("version must be X.Y.Z or X.Y.Z-{alpha,beta,rc}.N")
-    return re.sub(r"-(alpha|beta|rc)\.([0-9]+)$", lambda match: {"alpha": "a", "beta": "b", "rc": "rc"}[match[1]] + match[2], version)
+        raise ValueError("version must be X.Y.Z or X.Y.Z-{alpha,beta,rc,dev}.N")
+    return re.sub(r"-(alpha|beta|rc|dev)\.([0-9]+)$", lambda match: {"alpha": "a", "beta": "b", "rc": "rc", "dev": ".dev"}[match[1]] + match[2], version)
 
 
 def sha256(path: Path) -> str:

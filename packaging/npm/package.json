@@ -1,7 +1,8 @@
 {
   "name": "@holon-sh/cli",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Standalone Holon typed-contract CLI",
+  "repository": {"type": "git", "url": "git+https://github.com/holon-sh/cli.git"},
   "license": "MIT",
   "type": "module",
   "bin": {"holon": "bin/holon.js"},
@@ -9,9 +10,9 @@
   "engines": {"node": ">=22"},
   "publishConfig": {"access": "public"},
   "optionalDependencies": {
-    "@holon-sh/cli-darwin-arm64": "0.1.0",
-    "@holon-sh/cli-darwin-x64": "0.1.0",
-    "@holon-sh/cli-linux-arm64": "0.1.0",
-    "@holon-sh/cli-linux-x64": "0.1.0"
+    "@holon-sh/cli-darwin-arm64": "0.0.1",
+    "@holon-sh/cli-darwin-x64": "0.0.1",
+    "@holon-sh/cli-linux-arm64": "0.0.1",
+    "@holon-sh/cli-linux-x64": "0.0.1"
   }
 }
