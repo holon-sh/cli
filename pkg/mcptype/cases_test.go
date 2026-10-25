@@ -185,6 +185,8 @@ func parityCases(t *testing.T) []parityCase {
         {"name": "then", "inputSchema": {"type": "object", "additionalProperties": false}}
     ], "resources": [{"uri": "orders://summary", "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}}]}`
 	legacyContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}}`
+	// The CLI adds a browser app's own contract under the reserved key self.
+	selfContracts := `{"orders": ` + order + `, "self": {"tools": [{"name": "status", "inputSchema": {"type": "object", "additionalProperties": false}}]}}`
 	runtime := `{"runtime.mjs": "` + base64.StdEncoding.EncodeToString([]byte("export {};\n")) + `", "browser-runtime.mjs": "` + base64.StdEncoding.EncodeToString([]byte("export {};\n")) + `", "nested/bytes.dat": "` + base64.StdEncoding.EncodeToString([]byte{0, 128, 255, '\n'}) + `"}`
 	for _, target := range []string{"node", "browser", "python", "go"} {
 		add("legacy-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}, "payments": {"name": "payments", "version": "2.0.0"}}, "contracts": `+legacyContracts+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "package_fields": {"holon": "holon-generated-apps-v1"}, "go_module": "example.com/runtime"}`)
@@ -200,6 +202,7 @@ func parityCases(t *testing.T) []parityCase {
 		add("slot-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+legacyContracts+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
 		add("slot-sink-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
 	}
+	add("slot-browser-index", "generate", `{"target": "browser", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+selfContracts+`, "banner": "holon-generated-apps-v1 app=checkout", "browser_runtime_specifier": "../runtime.mjs", "protocol_specifier": "holon-core/protocol", "entry": "index"}`)
 	add("slot-node-runtime-only", "generate", `{"target": "node", "identity": {"name": "a", "version": "1"}, "runtime_specifier": "@holon/apps/runtime.mjs", "protocol": "type X = 1;"}`)
 	add("slot-browser-only", "generate", `{"target": "browser", "identity": {"name": "a", "version": "1"}, "browser_runtime_specifier": "./x.mjs"}`)
 	add("slot-python-module-only", "generate", `{"target": "python", "identity": {"name": "a", "version": "1"}, "python_module": "apps.py"}`)
@@ -218,6 +221,8 @@ func parityCases(t *testing.T) []parityCase {
 		{"python-runtime-relative", `"python_runtime_module": ".client"`},
 		{"python-runtime-keyword", `"python_runtime_module": "holon.class"`},
 		{"banner-newline", `"banner": "marker\nimport os"`},
+		{"entry-empty", `"entry": ""`},
+		{"entry-separator", `"entry": "a/b"`},
 		{"binding-empty", `"contracts": {"": {"tools": []}}`},
 		{"unknown-field", `"unknown": true`},
 		{"bad-target", `"target": "wasm"`},

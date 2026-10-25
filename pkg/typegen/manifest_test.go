@@ -67,3 +67,15 @@ func TestDescriptorTypesIsProviderMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestDescriptorReservesSelfAlias(t *testing.T) {
+	data := `{"name":"example.com/app","version":"1.0.0","description":"App","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"self":{"name":"example.com/other","version":"1.0.0"}}}}}}`
+	if _, err := ParseDescriptor([]byte(data)); err == nil || !strings.Contains(err.Error(), `"self" is reserved for the app's own server`) {
+		t.Fatalf("self alias = %v, want a reserved-name error", err)
+	}
+	dir := t.TempDir()
+	put(t, dir, "server.json", data)
+	if _, _, err := Directories([]string{dir}); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("standalone accepted self alias: %v", err)
+	}
+}

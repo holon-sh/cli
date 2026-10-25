@@ -32,9 +32,11 @@ type generateRequest struct {
 	packageFields Object
 	// Go: import path of the runtime module.
 	goModule *string
+	// Node and browser: base name of the entry point files (<entry>.js, <entry>.d.ts) instead of index or browser.
+	entry *string
 }
 
-var generateFields = []string{"target", "identity", "requires", "contracts", "runtime", "protocol", "runtime_specifier", "browser_runtime_specifier", "protocol_specifier", "python_module", "python_runtime_module", "banner", "package_fields", "go_module"}
+var generateFields = []string{"target", "identity", "requires", "contracts", "runtime", "protocol", "runtime_specifier", "browser_runtime_specifier", "protocol_specifier", "python_module", "python_runtime_module", "banner", "package_fields", "go_module", "entry"}
 
 func decodeGenerateRequest(value Value) (generateRequest, error) {
 	object, err := asObject(value)
@@ -103,7 +105,7 @@ func decodeGenerateRequest(value Value) (generateRequest, error) {
 	for name, target := range map[string]**string{
 		"protocol": &request.protocol, "runtime_specifier": &request.runtimeSpecifier, "browser_runtime_specifier": &request.browserRuntimeSpecifier,
 		"protocol_specifier": &request.protocolSpecifier, "python_module": &request.pythonModule, "python_runtime_module": &request.pythonRuntimeModule,
-		"banner": &request.banner, "go_module": &request.goModule,
+		"banner": &request.banner, "go_module": &request.goModule, "entry": &request.entry,
 	} {
 		if *target, err = optionalString(object, name); err != nil {
 			return generateRequest{}, err
@@ -171,6 +173,9 @@ func (r generateRequest) validate() error {
 		if strings.TrimSpace(*option.value) == "" || strings.ContainsFunc(*option.value, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) {
 			return fmt.Errorf("%s must be nonempty and contain no line breaks or control characters", option.name)
 		}
+	}
+	if entry := r.entry; entry != nil && (!relative(*entry) || strings.ContainsAny(*entry, "/\\:") || strings.ContainsFunc(*entry, unicode.IsControl)) {
+		return errors.New("entry must be a nonempty file name without separators or control characters")
 	}
 	if path := r.pythonModule; path != nil && (!relative(*path) || strings.ContainsAny(*path, "\\:") || strings.ContainsFunc(*path, unicode.IsControl) || !strings.HasSuffix(*path, ".py")) {
 		return errors.New("python_module must be a relative, normalized .py path")

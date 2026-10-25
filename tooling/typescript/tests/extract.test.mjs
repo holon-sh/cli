@@ -138,7 +138,7 @@ export default handler(() => {const s = new Server({name:"x",version:"1"}); cons
 });
 
 test("recognizes generated app imports", t => {
-  for (const specifier of ["holon-sh", "holon-sh/browser", "@holon-sh/apps", "@holon-sh/apps/browser"]) {
+  for (const specifier of ["holon-sh", "holon-sh/browser", "holon-ui", "holon-ui/runtime", "@holon-sh/apps", "@holon-sh/apps/browser"]) {
     const root = fixture(t, `import {apps} from "${specifier}"; export default {};`);
     assert.equal(extract(root, "server.ts").usesApps, true, specifier);
   }

@@ -19,6 +19,9 @@ const RegistryOrigin = "https://registry.modelcontextprotocol.io"
 const PublisherMetadata = "io.modelcontextprotocol.registry/publisher-provided"
 const MaxDescriptorBytes = 1 << 20
 
+// ownContract is the reserved key under which generated clients expose the app's own server.
+const ownContract = "self"
+
 var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`)
 var wildcardVersion = regexp.MustCompile(`(^|\.)[xX](\.|$)`)
 
@@ -130,6 +133,9 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 	for name, ref := range d.Requires {
 		if len(name) > 49 || !appName.MatchString(name) {
 			return nil, fmt.Errorf("invalid dependency name %q", name)
+		}
+		if name == ownContract {
+			return nil, fmt.Errorf("sh.holon.requires: %q is reserved for the app's own server; rename the dependency", ownContract)
 		}
 		if err := ref.Validate(); err != nil {
 			return nil, fmt.Errorf("dependency %s: %w", name, err)

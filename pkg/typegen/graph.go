@@ -53,7 +53,7 @@ func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest,
 			return m, fmt.Errorf("%s descriptor: %w", name, err)
 		}
 		nodes[name] = app
-		if app.descriptor != nil {
+		if app.descriptor != nil && (!m.pathRequiresOnly || app.Path != "") {
 			for dep, ref := range app.descriptor.Requires {
 				ref.Registry = ref.RegistryURL()
 				if old, ok := selections[dep]; ok && old != ref {
@@ -65,7 +65,7 @@ func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest,
 		}
 	}
 	for name, app := range nodes {
-		if app.descriptor == nil {
+		if app.descriptor == nil || m.pathRequiresOnly && app.Path == "" {
 			continue
 		}
 		for dep, ref := range app.descriptor.Requires {

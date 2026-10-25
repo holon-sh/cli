@@ -10,7 +10,9 @@ import (
 	"strings"
 )
 
-const nodePackage = "holon-sh"
+// Client kinds a TypeScript app can receive, by the installed package that owns the slot:
+// typescript is the Node runtime holon-sh, browser is the browser runtime holon-ui.
+var slotPackages = map[string]string{"typescript": "holon-sh", "browser": "holon-ui"}
 
 type slotMetadata struct {
 	Marker      string               `json:"marker"`
@@ -20,25 +22,25 @@ type slotMetadata struct {
 	Digests     map[string]string    `json:"digests,omitempty"`
 }
 
-// nodeSlot returns the real slot directory and the import specifier used by the app.
-func nodeSlot(root string) (string, string, error) {
+// nodeSlot returns the real directory of the installed package pkg that root resolves and its import specifier.
+func nodeSlot(root, pkg string) (string, string, error) {
 	for dir := root; ; dir = filepath.Dir(dir) {
-		candidate := filepath.Join(dir, "node_modules", nodePackage)
+		candidate := filepath.Join(dir, "node_modules", pkg)
 		real, err := filepath.EvalSymlinks(candidate)
 		if err == nil {
-			var pkg struct {
+			var manifest struct {
 				Holon struct {
 					Slot            string `json:"slot"`
 					ContractVersion int    `json:"contractVersion"`
 				} `json:"holon"`
 			}
-			if err := readTypeJSON(filepath.Join(real, "package.json"), &pkg); err != nil {
+			if err := readTypeJSON(filepath.Join(real, "package.json"), &manifest); err != nil {
 				return "", "", err
 			}
-			if pkg.Holon.Slot != "generated" || pkg.Holon.ContractVersion != mcpcontract.Version {
+			if manifest.Holon.Slot != "generated" || manifest.Holon.ContractVersion != mcpcontract.Version {
 				return "", "", fmt.Errorf("%s does not declare a compatible holon.slot", candidate)
 			}
-			return real, nodePackage, nil
+			return real, pkg, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return "", "", err
@@ -47,10 +49,10 @@ func nodeSlot(root string) (string, string, error) {
 			break
 		}
 	}
-	return "", "", fmt.Errorf("%s is not installed for %s; install it before generating types", nodePackage, root)
+	return "", "", fmt.Errorf("%s is not installed for %s; install it before generating types", pkg, root)
 }
-func validateNodeSlot(pkg string, meta slotMetadata) error {
-	directory := filepath.Join(pkg, "generated")
+func validateNodeSlot(pkgDir, pkg string, meta slotMetadata) error {
+	directory := filepath.Join(pkgDir, "generated")
 	if info, err := os.Lstat(directory); err == nil {
 		if !info.IsDir() {
 			return fmt.Errorf("refusing foreign generated slot %s", directory)
@@ -73,7 +75,7 @@ func validateNodeSlot(pkg string, meta slotMetadata) error {
 		return fmt.Errorf("refusing foreign generated slot %s", directory)
 	}
 	if !old.Placeholder && (old.App != meta.App) {
-		return fmt.Errorf("%s is owned by app %s; install a separate %s for each app", directory, old.App, nodePackage)
+		return fmt.Errorf("%s is owned by app %s; install a separate %s for each app", directory, old.App, pkg)
 	}
 	for _, entry := range entries {
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -82,18 +84,18 @@ func validateNodeSlot(pkg string, meta slotMetadata) error {
 	}
 	return nil
 }
-func writeNodeSlot(pkg string, files map[string]string, meta slotMetadata) error {
-	if err := validateNodeSlot(pkg, meta); err != nil {
+func writeNodeSlot(pkgDir, pkg string, files map[string]string, meta slotMetadata) error {
+	if err := validateNodeSlot(pkgDir, pkg, meta); err != nil {
 		return err
 	}
-	directory := filepath.Join(pkg, "generated")
+	directory := filepath.Join(pkgDir, "generated")
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
 	}
 	files = cloneFiles(files)
 	files["holon-generated.json"] = string(data) + "\n"
-	return replaceDirectory(pkg, directory, files)
+	return replaceDirectory(pkgDir, directory, files)
 }
 
 // replaceDirectory atomically replaces directory, inside parent, with exactly files.

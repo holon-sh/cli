@@ -45,6 +45,12 @@ func slotOwner(name string) slotMetadata {
 }
 
 func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
+	for _, pkg := range []string{"holon-sh", "holon-ui"} {
+		t.Run(pkg, func(t *testing.T) { testNodeSlotResolvesSymlinkAndPreservesForeignContents(t, pkg) })
+	}
+}
+
+func testNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T, pkg string) {
 	root := t.TempDir()
 	store := filepath.Join(root, "store")
 	app := filepath.Join(root, "app")
@@ -52,10 +58,10 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(app, "node_modules/@holon-sh"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(store, filepath.Join(app, "node_modules/holon-sh")); err != nil {
+	if err := os.Symlink(store, filepath.Join(app, "node_modules", pkg)); err != nil {
 		t.Fatal(err)
 	}
-	resolved, _, err := nodeSlot(app)
+	resolved, _, err := nodeSlot(app, pkg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,18 +70,18 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 		t.Fatalf("slot = %s, want %s", resolved, real)
 	}
 	put(t, store, "generated/index.js", "user content")
-	if err := writeNodeSlot(resolved, map[string]string{"index.js": "generated"}, slotOwner("one")); err == nil {
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err == nil {
 		t.Fatal("overwrote foreign slot")
 	}
 	if got := read(t, store, "generated/index.js"); got != "user content" {
 		t.Fatalf("foreign contents changed: %s", got)
 	}
 	put(t, store, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})))
-	if err := writeNodeSlot(resolved, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := os.Stat(filepath.Join(store, "generated/index.js"))
-	if err := writeNodeSlot(resolved, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := os.Stat(filepath.Join(store, "generated/index.js"))
@@ -84,11 +90,11 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	}
 	updated := slotOwner("one")
 	updated.Identity.Version = "2"
-	if err := writeNodeSlot(resolved, map[string]string{"index.js": "version two"}, updated); err != nil {
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "version two"}, updated); err != nil {
 		t.Fatalf("same app cannot regenerate after a version bump: %v", err)
 	}
-	if err := writeNodeSlot(resolved, map[string]string{"index.js": "other"}, slotOwner("two")); err == nil {
-		t.Fatal("shared package was reassigned to another app")
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "other"}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
+		t.Fatalf("shared package was reassigned to another app: %v", err)
 	}
 	if got := read(t, store, "generated/index.js"); got != "version two" {
 		t.Fatal("other app overwrote owner")
@@ -173,10 +179,14 @@ func TestCheckDoesNotChangeSourceOrInstalledSlot(t *testing.T) {
 	}
 	app := t.TempDir()
 	pkg := filepath.Join(app, "node_modules/holon-sh")
-	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
+	ui := filepath.Join(app, "node_modules/holon-ui")
+	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1","holon-ui":"^0.0.1"}}`)
 	put(t, app, "src/index.ts", `export const answer: string = "ok";`)
+	put(t, app, "src/view.ts", `import type { Inputs } from "holon-ui"; export const inputs: Inputs = {};`)
 	put(t, pkg, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
 	put(t, pkg, "generated/index.js", "foreign marker must survive check")
+	put(t, ui, "package.json", `{"exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
+	put(t, ui, "generated/index.d.ts", "export interface Inputs { stale: never }")
 	contents := func() map[string]string {
 		files := map[string]string{}
 		err := filepath.WalkDir(app, func(path string, entry fs.DirEntry, err error) error {
@@ -213,7 +223,7 @@ func TestDevDependencyNodeSlotGenerationAndCheck(t *testing.T) {
 		t.Skip(err)
 	}
 	app := t.TempDir()
-	pkg := filepath.Join(app, "node_modules", nodePackage)
+	pkg := filepath.Join(app, "node_modules/holon-sh")
 	put(t, app, "package.json", `{"type":"module","devDependencies":{"holon-sh":"^0.0.1"}}`)
 	put(t, app, "src/index.ts", `import type { Inputs } from "holon-sh"; const inputs: Inputs = {};`)
 	put(t, pkg, "package.json", `{"exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
@@ -238,5 +248,97 @@ func TestDevDependencyNodeSlotGenerationAndCheck(t *testing.T) {
 	}
 	if got := read(t, pkg, "generated/index.d.ts"); got != stale {
 		t.Fatal("checking changed the installed slot")
+	}
+}
+
+// slotPackage installs a minimal placeholder runtime package that declares a generation slot.
+func slotPackage(t *testing.T, app, pkg string) string {
+	t.Helper()
+	dir := filepath.Join(app, "node_modules", pkg)
+	put(t, dir, "package.json", `{"name":"`+pkg+`","holon":{"slot":"generated","contractVersion":1}}`)
+	put(t, dir, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})))
+	return dir
+}
+
+// typeScriptCaller writes a TypeScript app requiring a Python orders provider, with the given package.json.
+func typeScriptCaller(t *testing.T, packageJSON string) (Manifest, func(context.Context, string, string, string, string) error) {
+	t.Helper()
+	root := t.TempDir()
+	app, orders := filepath.Join(root, "app"), filepath.Join(root, "orders")
+	writeProvider(t, orders, "orders", pythonProvider, nil)
+	put(t, app, "package.json", packageJSON)
+	put(t, app, "server.ts", "export default {};\n")
+	put(t, app, "server.json", string(mustJSON(t, map[string]any{
+		"name": "example.com/app", "version": "1.0.0", "description": "app",
+		"_meta": map[string]any{PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]Reference{"orders": {Name: "example.com/orders", Version: "1.0.0"}}}}},
+	})))
+	manifest := Manifest{Apps: []App{{Name: "app", Path: app}, {Name: "orders", Path: orders, Access: json.RawMessage(`{"server":{}}`)}}}
+	own := mcpcontract.Tool{Name: "status", Input: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
+	results := map[string]extraction{"app": {UsesApps: true, Tools: []mcpcontract.Tool{own}}, "orders": {Tools: []mcpcontract.Tool{lookupTool}}}
+	var calls []string
+	return manifest, fakeExtract(t, results, &calls)
+}
+
+func TestGenerateWritesDeclaredSlots(t *testing.T) {
+	manifest, extract := typeScriptCaller(t, `{"type":"module","dependencies":{"holon-sh":"^0.0.1","holon-ui":"^0.0.1"}}`)
+	app := manifest.Apps[0].Path
+	node, ui := slotPackage(t, app, "holon-sh"), slotPackage(t, app, "holon-ui")
+	var output bytes.Buffer
+	if err := Generate(t.Context(), manifest, Options{Apps: []string{"app"}, NoInstall: true, Stdout: &output, Extract: extract}); err != nil {
+		t.Fatalf("generate: %v\n%s", err, &output)
+	}
+	if got, want := output.String(), "app: generated browser types\napp: generated typescript types\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	browser := read(t, ui, "generated/index.js")
+	for _, want := range []string{`import { bindApps } from "../runtime.mjs";`, "exposeTools", `"self":{"tools":[{"name":"status"`, `"lookup"`} {
+		if !strings.Contains(browser, want) {
+			t.Fatalf("holon-ui index.js lacks %s:\n%s", want, browser)
+		}
+	}
+	declarations := read(t, ui, "generated/index.d.ts")
+	for _, want := range []string{`from "holon-core/protocol"`, `from "./resources.js"`, "exposeTools"} {
+		if !strings.Contains(declarations, want) {
+			t.Fatalf("holon-ui index.d.ts lacks %s:\n%s", want, declarations)
+		}
+	}
+	// The app's own server is exposed under the reserved key self, not its app name.
+	if !strings.Contains(declarations, `"self": {`) || strings.Contains(browser, `"app":{`) {
+		t.Fatalf("own contract is not keyed self:\n%s\n%s", browser, declarations)
+	}
+	if !isFile(filepath.Join(ui, "generated/resources.d.ts")) {
+		t.Fatal("holon-ui slot has no resources.d.ts")
+	}
+	nodeIndex := read(t, node, "generated/index.js")
+	for _, want := range []string{`import { createApps as create, bindApps } from "../runtime.mjs";`, "export const apps = create(", `"lookup"`} {
+		if !strings.Contains(nodeIndex, want) {
+			t.Fatalf("holon-sh index.js lacks %s:\n%s", want, nodeIndex)
+		}
+	}
+	if strings.Contains(nodeIndex, `"status"`) || isFile(filepath.Join(node, "generated/browser.js")) {
+		t.Fatal("holon-sh slot received browser clients")
+	}
+	for _, pkg := range []string{node, ui} {
+		var marker slotMetadata
+		if err := readTypeJSON(filepath.Join(pkg, "generated/holon-generated.json"), &marker); err != nil || marker.App != "app" || marker.Placeholder {
+			t.Fatalf("%s marker = %+v, %v", pkg, marker, err)
+		}
+	}
+}
+
+func TestGenerateUIOnlyApp(t *testing.T) {
+	manifest, extract := typeScriptCaller(t, `{"type":"module","dependencies":{"holon-ui":"^0.0.1"}}`)
+	app := manifest.Apps[0].Path
+	put(t, app, "view.ts", `import { createApps } from "holon-ui";`)
+	ui := slotPackage(t, app, "holon-ui")
+	var output bytes.Buffer
+	if err := Generate(t.Context(), manifest, Options{Apps: []string{"app"}, NoInstall: true, Stdout: &output, Extract: extract}); err != nil {
+		t.Fatalf("generate without holon-sh: %v\n%s", err, &output)
+	}
+	if got, want := output.String(), "app: generated browser types\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if !isFile(filepath.Join(ui, "generated/index.js")) {
+		t.Fatal("holon-ui slot was not written")
 	}
 }

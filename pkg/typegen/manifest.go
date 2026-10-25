@@ -22,6 +22,9 @@ var appName = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 type Manifest struct {
 	Apps []App `json:"apps"`
 	file string
+	// pathRequiresOnly expands and checks requires only for path apps, the listed directories
+	// (standalone mode); registry dependencies' own requires are not followed.
+	pathRequiresOnly bool
 }
 type App struct {
 	Name        string          `json:"name"`
