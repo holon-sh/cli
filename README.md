@@ -64,7 +64,8 @@ import { apps } from "holon-sh";
 const order = await apps.orders.tools.lookup({ id }); // { id: string; total: number }
 ```
 
-as opposed to
+<details>
+<summary>Without <code>holon</code></summary>
 
 ```typescript
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
@@ -80,6 +81,8 @@ const result = await client.callTool({
 const order = result.structuredContent as { id: string; total: number }; // unchecked
 ```
 
+</details>
+
 In [`examples/checkout/server.ts`](examples/checkout/server.ts), it invokes a tool from a remote server as
 
 ```typescript
@@ -91,7 +94,8 @@ const result = await apps.context7.callTool({
 });
 ```
 
-as opposed to
+<details>
+<summary>Without <code>holon</code></summary>
 
 ```typescript
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
@@ -106,6 +110,8 @@ const result = await client.callTool({
 });
 ```
 
+</details>
+
 In [`examples/checkout/ui/main.ts`](examples/checkout/ui/main.ts), an [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) view invokes a tool as
 
 ```typescript
@@ -114,7 +120,8 @@ import { apps } from "holon-ui";
 const { total } = await apps.checkout.tools.total({ id }); // { total: number }
 ```
 
-as opposed to
+<details>
+<summary>Without <code>holon</code></summary>
 
 ```typescript
 import { App } from "@modelcontextprotocol/ext-apps";
@@ -125,3 +132,5 @@ await view.connect();
 const result = await view.callServerTool({ name: "total", arguments: { id } });
 const { total } = result.structuredContent as { total: number }; // unchecked
 ```
+
+</details>
