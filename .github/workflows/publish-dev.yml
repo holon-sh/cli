@@ -78,6 +78,8 @@ jobs:
             npm publish "dist/holon-types-$platform-$VERSION.tgz" --tag dev --access public --provenance
           done
           npm publish "dist/holon-types-$VERSION.tgz" --tag dev --access public --provenance
+      # PyPI: add a pending (trusted) publisher for holon-types (owner holon-sh, repository cli,
+      # workflow publish-dev.yml, no environment), or store an API token as the PYPI_TOKEN secret.
       - name: Publish wheels to PyPI
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
