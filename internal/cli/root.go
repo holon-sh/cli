@@ -68,7 +68,7 @@ func NewCommand(version string) *cobra.Command {
 			return err
 		}
 		if contract {
-			return printContract(cmd, manifest, names[0])
+			return printContract(cmd, manifest, manifest.Apps[0].Name)
 		}
 		stdout := cmd.OutOrStdout()
 		if quiet {
