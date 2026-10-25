@@ -1,0 +1,66 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release (without the leading v); creates the tag
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        env:
+          TAG: ${{ github.ref_name }}
+          INPUT: ${{ inputs.version }}
+        run: |
+          version="${INPUT:-${TAG#v}}"
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::'$version' is not a semantic version"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+  build:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: holon-types-*
+          path: artifacts
+      - name: Collect the binaries
+        run: |
+          mkdir release
+          for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
+            cp "artifacts/holon-types-$target/holon_${VERSION}_$target.tar.gz" release/
+          done
+          (cd release && sha256sum holon_*.tar.gz > SHA256SUMS && cat SHA256SUMS)
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.version) }}
+        run: |
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" --repo "$REPO" --title "holon $VERSION" --target "$GITHUB_SHA" $prerelease \
+            --notes "Install with \`curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sh\`, or download the archive for your platform below." \
+            release/holon_*.tar.gz release/SHA256SUMS
