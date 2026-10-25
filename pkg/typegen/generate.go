@@ -190,7 +190,7 @@ func prepareResolved(ctx context.Context, manifest Manifest, o Options) (_ *Prep
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", app.Name, err)
 			}
-			p.slot.Digests[ownContract] = canonical.Digest
+			p.slot.Digests[app.Name] = canonical.Digest
 		}
 		if app.descriptor != nil {
 			for _, name := range slices.Sorted(maps.Keys(app.descriptor.Requires)) {
@@ -229,7 +229,7 @@ func prepareResolved(ctx context.Context, manifest Manifest, o Options) (_ *Prep
 			}
 		}
 		for language := range p.packages {
-			files, err := generateTypes(ctx, language, request, app.Name, p.metadata.Contract, o.GoModule)
+			files, err := generateTypes(ctx, language, request, p.metadata.Contract, o.GoModule)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", app.Name, err)
 			}
@@ -247,17 +247,21 @@ func prepareResolved(ctx context.Context, manifest Manifest, o Options) (_ *Prep
 	}
 	return &Prepared{Manifest: manifest, root: root, options: o, resolved: resolved}, nil
 }
-func generateTypes(ctx context.Context, language string, request mcptype.GenerateRequest, name string, own *mcpcontract.Contract, goModule string) (map[string]string, error) {
+func generateTypes(ctx context.Context, language string, request mcptype.GenerateRequest, own *mcpcontract.Contract, goModule string) (map[string]string, error) {
 	switch language {
 	case "typescript":
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
 	case "browser":
-		// Browser views also call their own server, so its contract joins the dependencies under the
-		// reserved key self, whatever the app is named.
+		// Browser views also call their own server, so its contract joins the dependencies under its
+		// server key (example.com/checkout → checkout), independent of any manifest name.
 		request.Target, request.BrowserRuntimeSpecifier, request.ProtocolSpecifier, request.Entry = "browser", "../runtime.mjs", "holon-core/protocol", "index"
 		if own != nil {
+			key := serverKey(request.Identity.Name)
+			if _, taken := request.Requires[key]; taken {
+				return nil, fmt.Errorf("own server %s and requires alias %s share the client name %s; rename the alias", request.Identity.Name, key, key)
+			}
 			request.Contracts = maps.Clone(request.Contracts)
-			request.Contracts[ownContract] = own
+			request.Contracts[key] = own
 		}
 	case "python":
 		request.Target = "python"

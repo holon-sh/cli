@@ -76,7 +76,7 @@ func Directories(dirs []string) (Manifest, []string, error) {
 	owner := map[string]string{}
 	for i := range apps {
 		if apps[i].name == "" {
-			apps[i].name = sanitizeAppName(apps[i].descriptor.Name[strings.LastIndex(apps[i].descriptor.Name, "/")+1:])
+			apps[i].name = serverKey(apps[i].descriptor.Name)
 		}
 		name := apps[i].name
 		if len(name) > 49 || !appName.MatchString(name) {
@@ -103,9 +103,11 @@ func Directories(dirs []string) (Manifest, []string, error) {
 	return m, names, nil
 }
 
-// sanitizeAppName lowercases name, replaces each run of characters outside [a-z0-9-] with "-",
-// trims "-" from both ends, and truncates to 49 characters.
-func sanitizeAppName(name string) string {
+// serverKey derives an app's client name from its registry server name: the last "/" segment,
+// lowercased, each run of characters outside [a-z0-9-] replaced with "-", trimmed of "-" and
+// truncated to 49 characters (example.com/checkout → checkout, io.github.x/My.Server → my-server).
+func serverKey(serverName string) string {
+	name := serverName[strings.LastIndex(serverName, "/")+1:]
 	name = strings.Trim(notAppNameRun.ReplaceAllString(strings.ToLower(name), "-"), "-")
 	return strings.TrimRight(name[:min(len(name), 49)], "-")
 }
