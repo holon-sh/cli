@@ -43,7 +43,7 @@ func TestCommandsRequireAServerJSONInEveryDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(app, "server.json"), []byte(server), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"types", "generate", empty}, {"types", "generate", app, empty}, {"check", app, empty}, {"types", "generate", "--contract", empty}} {
+	for _, args := range [][]string{{"types", "generate", empty}, {"types", "generate", app, empty}, {"check", app, empty}, {"types", "check", app, empty}, {"types", "generate", "--contract", empty}} {
 		err := run(args...)
 		if err == nil || !strings.Contains(err.Error(), empty+": no server.json found") || !strings.Contains(err.Error(), "pass DIR...") {
 			t.Fatalf("%v = %v", args, err)
@@ -77,5 +77,16 @@ func TestTypesCompileNamesBrowserEntryFiles(t *testing.T) {
 	declarations, err := os.ReadFile(filepath.Join(root, "index.d.ts"))
 	if err != nil || !strings.Contains(string(declarations), `from "./resources.js"`) || !strings.Contains(string(declarations), `from "holon-core/protocol"`) {
 		t.Fatalf("index.d.ts: %v\n%s", err, declarations)
+	}
+}
+
+func TestCheckShortcutRunsTypesCheck(t *testing.T) {
+	dir := t.TempDir()
+	short, canonical := run("check", dir), run("types", "check", dir)
+	if short == nil || canonical == nil || short.Error() != canonical.Error() || !strings.Contains(short.Error(), "no server.json found") {
+		t.Fatalf("holon check = %v, holon types check = %v", short, canonical)
+	}
+	if err := run("check", "--no-published"); err == nil || err.Error() != run("types", "check", "--no-published").Error() {
+		t.Fatalf("flags differ between holon check and holon types check: %v", err)
 	}
 }

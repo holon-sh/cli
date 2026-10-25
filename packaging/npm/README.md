@@ -5,7 +5,7 @@ The standalone Holon CLI generates and checks typed MCP clients.
 ```sh
 cd my-mcp-server            # a directory with server.json
 holon types generate        # or: holon types generate ./checkout ./orders
-holon check
+holon types check           # holon check is the same command
 holon types generate --contract
 ```
 

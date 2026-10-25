@@ -40,11 +40,23 @@ func printContract(cmd *cobra.Command, manifest typegen.Manifest, app string) er
 	return encoder.Encode(document)
 }
 
+// newCheck builds the check command; it is registered as "holon types check" and as the
+// "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
+func newCheck(short string) *cobra.Command {
+	return &cobra.Command{Use: "check [DIR...]", Short: short, Long: "Type-check apps against their typed contracts in temporary source copies.\n\nholon check and holon types check are the same command.", RunE: func(cmd *cobra.Command, args []string) error {
+		manifest, names, err := typegen.Directories(appDirs(args))
+		if err != nil {
+			return err
+		}
+		return typegen.Check(cmd.Context(), manifest, typegen.Options{Apps: names, NoPublished: true, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
+	}}
+}
+
 func NewCommand(version string) *cobra.Command {
 	root := &cobra.Command{Use: "holon", Short: "Generate and check typed MCP clients for MCP server directories", Version: version + " (standalone types CLI)", SilenceUsage: true, SilenceErrors: true}
 	root.SetVersionTemplate("holon {{.Version}}\n")
 	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
-	types := &cobra.Command{Use: "types", Short: "Generate typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	root.AddCommand(types)
 	var noInstall, quiet, contract bool
 	generate := &cobra.Command{Use: "generate [DIR...]", Short: "Generate types in installed SDK slots", RunE: func(cmd *cobra.Command, args []string) error {
@@ -68,14 +80,8 @@ func NewCommand(version string) *cobra.Command {
 	generate.Flags().BoolVar(&noInstall, "no-install", false, "Print missing runtime installation commands without running them")
 	generate.Flags().BoolVar(&quiet, "quiet", false, "Suppress generation progress")
 	types.AddCommand(generate)
-	check := &cobra.Command{Use: "check [DIR...]", Short: "Type-check apps against their typed contracts in temporary source copies", RunE: func(cmd *cobra.Command, args []string) error {
-		manifest, names, err := typegen.Directories(appDirs(args))
-		if err != nil {
-			return err
-		}
-		return typegen.Check(cmd.Context(), manifest, typegen.Options{Apps: names, NoPublished: true, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
-	}}
-	root.AddCommand(check)
+	types.AddCommand(newCheck("Type-check apps against their typed contracts in temporary source copies"))
+	root.AddCommand(newCheck("Shortcut for holon types check"))
 
 	// Plumbing for the SDK repositories' test fixtures: compile one generate request
 	// (the JSON form of mcptype.GenerateRequest, from a file or stdin) into a directory.
