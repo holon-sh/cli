@@ -20,7 +20,7 @@ git clone https://github.com/holon-sh/cli && cd cli/examples
 (cd checkout && npm install)
 ```
 
-### 1. Generate the client
+### Generate the client
 
 Run the following to generate a type-safe client that `checkout` can use to invoke `orders`:
 
@@ -29,7 +29,7 @@ cd checkout
 holon types generate . ../orders
 ```
 
-### 2. Call the tool
+### Call the tool
 
 In [`examples/checkout/server.ts`](examples/checkout/server.ts), this allows us to write the following:
 
@@ -54,7 +54,7 @@ const result = await client.callTool({ name: "lookup", arguments: { id } });
 const order = result.structuredContent as { id: string; total: number }; // unchecked
 ```
 
-### 3. Add a view
+### Add a view
 
 In [`examples/checkout/ui/main.ts`](examples/checkout/ui/main.ts), the view calls `checkout`'s own tool through the MCP Apps host:
 
@@ -74,7 +74,7 @@ const result = await view.callServerTool({ name: "total", arguments: { id } });
 const { total } = result.structuredContent as { total: number }; // unchecked
 ```
 
-### 4. Check in CI
+### Check in CI
 
 ```sh
 holon types check . ../orders
