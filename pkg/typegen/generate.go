@@ -140,11 +140,11 @@ func prepareResolved(ctx context.Context, manifest Manifest, o Options) (_ *Prep
 			p.packages[p.language] = nil
 		}
 		if isFile(filepath.Join(p.root, "package.json")) {
-			kinds, err := typeScriptKinds(p.root)
-			if err != nil {
+			var pkg packageJSON
+			if err := readTypeJSON(filepath.Join(p.root, "package.json"), &pkg); err != nil {
 				return nil, err
 			}
-			for _, kind := range kinds {
+			for _, kind := range pkg.kinds(nil) {
 				p.packages[kind] = nil
 			}
 		}

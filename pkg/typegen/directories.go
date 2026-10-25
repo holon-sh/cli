@@ -49,7 +49,6 @@ func Directories(dirs []string) (Manifest, []string, error) {
 		byServer[descriptor.Name] = i
 		apps[i] = App{Path: dir, Access: server, descriptor: descriptor}
 	}
-	requiredBy := map[int]int{}
 	for i, app := range apps {
 		for _, alias := range slices.Sorted(maps.Keys(app.descriptor.Requires)) {
 			j, ok := byServer[app.descriptor.Requires[alias].Name]
@@ -57,12 +56,11 @@ func Directories(dirs []string) (Manifest, []string, error) {
 				continue
 			}
 			if apps[j].Name != "" && apps[j].Name != alias {
-				return Manifest{}, nil, fmt.Errorf("%s is required as both %s (by %s) and %s (by %s); use one alias", apps[j].Path, apps[j].Name, apps[requiredBy[j]].Path, alias, app.Path)
+				return Manifest{}, nil, fmt.Errorf("%s is required as both %s and %s (by %s); use one alias", apps[j].Path, apps[j].Name, alias, app.Path)
 			}
-			apps[j].Name, requiredBy[j] = alias, i
+			apps[j].Name = alias
 		}
 	}
-	m := Manifest{pathRequiresOnly: true}
 	names := []string{}
 	owner := map[string]string{}
 	for i := range apps {
@@ -78,8 +76,8 @@ func Directories(dirs []string) (Manifest, []string, error) {
 		}
 		owner[name] = apps[i].Path
 		names = append(names, name)
-		m.Apps = append(m.Apps, apps[i])
 	}
+	m := Manifest{Apps: apps, pathRequiresOnly: true}
 	for _, app := range apps {
 		for _, alias := range slices.Sorted(maps.Keys(app.descriptor.Requires)) {
 			if _, ok := owner[alias]; ok {

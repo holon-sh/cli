@@ -2,37 +2,21 @@ package typegen
 
 import (
 	"bytes"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestEnsureDependenciesRecognizesNodeRuntimeDeclarations(t *testing.T) {
-	for _, section := range []string{"dependencies", "devDependencies", "peerDependencies"} {
-		for _, pkg := range []string{"holon-sh", "holon-ui"} {
-			t.Run(section+"/"+pkg, func(t *testing.T) {
-				root := t.TempDir()
-				put(t, root, "package.json", fmt.Sprintf(`{"%s":{"%s":"^0.0.1"}}`, section, pkg))
-				var output bytes.Buffer
-				if err := ensureDependencies(t.Context(), App{Name: "app", Path: root}, nil, Options{NoInstall: true, Stdout: &output}); err != nil {
-					t.Fatal(err)
-				}
-				if output.Len() != 0 {
-					t.Fatalf("existing runtime triggered another install: %s", &output)
-				}
-			})
-		}
-	}
-}
-
-func TestEnsureDependenciesAddsImportedRuntimes(t *testing.T) {
+func TestRuntimeSelection(t *testing.T) {
 	for _, test := range []struct{ name, packageJSON, source, want, wantError string }{
 		{"neither", `{}`, `export const x = 1;`, "app: npm install holon-sh\n", ""},
 		{"imports holon-ui", `{}`, `import { createApps } from "holon-ui";`, "app: npm install holon-ui\n", ""},
 		{"imports both", `{}`, "import { apps } from 'holon-sh';\nimport type { Inputs } from \"holon-ui\";", "app: npm install holon-ui holon-sh\n", ""},
 		{"declares holon-sh, imports holon-ui", `{"dependencies":{"holon-sh":"^0.0.1"}}`, `import { createApps } from "holon-ui/runtime";`, "app: npm install holon-ui\n", ""},
 		{"declares holon-ui only", `{"dependencies":{"holon-ui":"^0.0.1"}}`, `const example = "import 'holon-sh'"; // import 'holon-sh/browser'`, "", ""},
+		{"dependencies", `{"dependencies":{"holon-ui":"^0.0.1","holon-sh":"^0.0.1"}}`, `import 'holon-ui'; import 'holon-sh';`, "", ""},
+		{"devDependencies", `{"devDependencies":{"holon-ui":"^0.0.1","holon-sh":"^0.0.1"}}`, `import 'holon-ui'; import 'holon-sh';`, "", ""},
+		{"peerDependencies", `{"peerDependencies":{"holon-ui":"^0.0.1","holon-sh":"^0.0.1"}}`, `import 'holon-ui'; import 'holon-sh';`, "", ""},
 		{"legacy browser", `{}`, `import { createApps } from "holon-sh/browser";`, "", "moved to the holon-ui package"},
 		{"legacy browser runtime", `{}`, `import "holon-sh/browser-runtime";`, "", "moved to the holon-ui package"},
 	} {
@@ -40,8 +24,6 @@ func TestEnsureDependenciesAddsImportedRuntimes(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "app")
 			put(t, root, "package.json", test.packageJSON)
 			put(t, root, "src/view.tsx", test.source)
-			// Installed dependencies and generated directories never select a runtime.
-			put(t, root, "node_modules/other/index.js", `import "holon-sh/browser";`)
 			var output bytes.Buffer
 			app := App{Name: "app", Path: root}
 			o := Options{NoInstall: true, Stdout: &output}

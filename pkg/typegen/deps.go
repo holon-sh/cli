@@ -21,21 +21,15 @@ func (p packageJSON) declares(pkg string) bool {
 	return p.Dependencies[pkg] != "" || p.DevDependencies[pkg] != "" || p.PeerDependencies[pkg] != ""
 }
 
-// typeScriptKinds returns the TypeScript client kinds an app with a package.json in dir receives: typescript
-// when it declares holon-sh or neither runtime, and browser when it declares holon-ui.
-func typeScriptKinds(dir string) ([]string, error) {
-	var pkg packageJSON
-	if err := readTypeJSON(filepath.Join(dir, "package.json"), &pkg); err != nil {
-		return nil, err
-	}
+func (p packageJSON) kinds(imported map[string]bool) []string {
 	var kinds []string
-	if pkg.declares(slotPackages["browser"]) {
+	if p.declares(slotPackages["browser"]) || imported[slotPackages["browser"]] {
 		kinds = append(kinds, "browser")
 	}
-	if pkg.declares(slotPackages["typescript"]) || len(kinds) == 0 {
+	if p.declares(slotPackages["typescript"]) || imported[slotPackages["typescript"]] || len(kinds) == 0 {
 		kinds = append(kinds, "typescript")
 	}
-	return kinds, nil
+	return kinds
 }
 
 func ensureDependencies(ctx context.Context, app App, imports []string, o Options) error {
@@ -53,15 +47,12 @@ func ensureDependencies(ctx context.Context, app App, imports []string, o Option
 		if legacy {
 			return fmt.Errorf("%s imports holon-sh/browser, which moved to the holon-ui package; depend on holon-ui and import from \"holon-ui\"", app.Name)
 		}
-		// Add each runtime the app imports but does not declare; an app that names neither gets holon-sh.
 		var missing []string
-		for _, runtime := range []string{"holon-ui", "holon-sh"} {
-			if !pkg.declares(runtime) && imported[runtime] {
+		for _, kind := range pkg.kinds(imported) {
+			runtime := slotPackages[kind]
+			if !pkg.declares(runtime) {
 				missing = append(missing, runtime)
 			}
-		}
-		if !pkg.declares("holon-sh") && !pkg.declares("holon-ui") && !imported["holon-sh"] && !imported["holon-ui"] {
-			missing = []string{"holon-sh"}
 		}
 		if len(missing) > 0 {
 			manager, _, _ := strings.Cut(pkg.PackageManager, "@")
@@ -94,8 +85,7 @@ func ensureDependencies(ctx context.Context, app App, imports []string, o Option
 			}
 		}
 	}
-	entry, language, err := analysisEntry(app.Path)
-	_ = entry
+	_, language, err := analysisEntry(app.Path)
 	if err != nil {
 		return err
 	}
