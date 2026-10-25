@@ -25,23 +25,76 @@ func Check(ctx context.Context, m Manifest, o Options) error {
 		return err
 	}
 	defer prepared.Close()
-	for _, app := range prepared.Manifest.Apps {
-		if p := app.prepared; p != nil && o.selects(app.Name) {
-			if p.diagnostic != "" {
-				fmt.Fprintf(o.Stdout, "%s: %s\n", app.Name, p.diagnostic)
-			}
-			if err = typeCheck(ctx, app, prepared, o); err != nil {
-				return err
-			}
-		}
+	if err = prepared.TypeCheck(ctx); err != nil {
+		return err
 	}
 	if !o.NoPublished {
-		if err = checkPublishedTypes(ctx, prepared.Manifest, o); err != nil {
+		if err = prepared.CheckPublished(ctx); err != nil {
 			return err
 		}
 	}
 	fmt.Fprintln(o.Stdout, "Typed contracts check passed.")
 	return nil
+}
+
+// TypeCheck type-checks each selected app's snapshot against its freshly generated clients, linked
+// beside the app's installed dependencies. Apps and installed slots are never modified. Go callers are not checked.
+func (p *Prepared) TypeCheck(ctx context.Context) error {
+	for _, app := range p.Manifest.Apps {
+		if t := app.prepared; t != nil && p.options.selects(app.Name) {
+			if t.diagnostic != "" {
+				fmt.Fprintf(p.options.Stdout, "%s: %s\n", app.Name, t.diagnostic)
+			}
+			if err := typeCheck(ctx, app, p, p.options); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Published returns the contracts that each selected path app's descriptor last published
+// (sh.holon.types or its OCI package), using Options.Credential; an app without one maps to nil.
+func (p *Prepared) Published(ctx context.Context) (map[string]*mcpcontract.Metadata, error) {
+	published := map[string]*mcpcontract.Metadata{}
+	for _, app := range p.Manifest.Apps {
+		if app.prepared == nil || !p.options.selects(app.Name) {
+			continue
+		}
+		metadata, err := publishedTypeMetadata(ctx, app, p.options)
+		if err != nil {
+			return nil, fmt.Errorf("%s published contract: %w", app.Name, err)
+		}
+		published[app.Name] = metadata
+	}
+	return published, nil
+}
+
+// CheckPublished reports selected apps whose extracted contracts break their published contracts
+// or the expectations that other published apps hold of them.
+func (p *Prepared) CheckPublished(ctx context.Context) error {
+	return checkPublishedTypes(ctx, p, p.options)
+}
+
+// CheckConfig is the runner's check configuration ({entry, sources, check}) for app's own language,
+// for a type check inside an image build against the dependencies installed there. Paths are relative
+// to the app directory. It reports false for apps without a runner (Go, unanalysed or unselected apps).
+func (p *Prepared) CheckConfig(app string) (map[string]any, bool) {
+	for _, a := range p.Manifest.Apps {
+		t := a.prepared
+		if a.Name != app || t == nil || !p.options.selects(app) {
+			continue
+		}
+		if _, ok := typeLanguages[t.language]; !ok {
+			return nil, false
+		}
+		sources := maps.Clone(t.sources)
+		if sources == nil {
+			sources = map[string]string{}
+		}
+		return map[string]any{"entry": t.entry, "sources": sources, "check": t.usesApps || hasContract(t.metadata)}, true
+	}
+	return nil, false
 }
 func typeCheck(ctx context.Context, app App, prepared *Prepared, o Options) error {
 	p := app.prepared
@@ -50,7 +103,10 @@ func typeCheck(ctx context.Context, app App, prepared *Prepared, o Options) erro
 		return err
 	}
 	for _, language := range slices.Sorted(maps.Keys(p.packages)) {
-		l := typeLanguages[language]
+		l, ok := typeLanguages[language]
+		if !ok {
+			continue
+		}
 		program, err := l.localProgram(ctx)
 		if err != nil {
 			return err
@@ -186,6 +242,9 @@ func publishedTypeMetadata(ctx context.Context, app App, o Options) (*mcpcontrac
 	}
 	var httpError HTTPError
 	var registryError *errcode.ErrorResponse
+	if errors.As(err, new(rejectedCredential)) {
+		return nil, err
+	}
 	if errors.Is(err, errdef.ErrNotFound) || errors.As(err, &httpError) && (httpError == 401 || httpError == 403 || httpError == 404) || errors.As(err, &registryError) && (registryError.StatusCode == 401 || registryError.StatusCode == 403 || registryError.StatusCode == 404) {
 		return nil, nil
 	}
@@ -194,17 +253,11 @@ func publishedTypeMetadata(ctx context.Context, app App, o Options) (*mcpcontrac
 	}
 	return metadata, err
 }
-func checkPublishedTypes(ctx context.Context, m Manifest, o Options) error {
-	published := map[string]*mcpcontract.Metadata{}
-	for _, app := range m.Apps {
-		if app.prepared == nil || !o.selects(app.Name) {
-			continue
-		}
-		metadata, err := publishedTypeMetadata(ctx, app, o)
-		if err != nil {
-			return fmt.Errorf("%s published contract: %w", app.Name, err)
-		}
-		published[app.Name] = metadata
+func checkPublishedTypes(ctx context.Context, prepared *Prepared, o Options) error {
+	m := prepared.Manifest
+	published, err := prepared.Published(ctx)
+	if err != nil {
+		return err
 	}
 	var problems []string
 	for _, app := range m.Apps {

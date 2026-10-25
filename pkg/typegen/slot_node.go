@@ -93,6 +93,12 @@ func writeNodeSlot(pkg string, files map[string]string, meta slotMetadata) error
 	}
 	files = cloneFiles(files)
 	files["holon-generated.json"] = string(data) + "\n"
+	return replaceDirectory(pkg, directory, files)
+}
+
+// replaceDirectory atomically replaces directory, inside parent, with exactly files.
+// An identical directory is left untouched.
+func replaceDirectory(parent, directory string, files map[string]string) error {
 	same := true
 	for name, content := range files {
 		old, err := os.ReadFile(filepath.Join(directory, name))
@@ -107,7 +113,7 @@ func writeNodeSlot(pkg string, files map[string]string, meta slotMetadata) error
 			return nil
 		}
 	}
-	temp, err := os.MkdirTemp(pkg, ".holon-generated-")
+	temp, err := os.MkdirTemp(parent, ".holon-generated-")
 	if err != nil {
 		return err
 	}
@@ -120,7 +126,7 @@ func writeNodeSlot(pkg string, files map[string]string, meta slotMetadata) error
 			return err
 		}
 	}
-	backup, err := os.MkdirTemp(pkg, ".holon-previous-")
+	backup, err := os.MkdirTemp(parent, ".holon-previous-")
 	if err != nil {
 		return err
 	}

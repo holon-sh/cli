@@ -71,11 +71,17 @@ func analysisEntry(root string) (string, string, error) {
 }
 func extractTypes(ctx context.Context, root string, apps []App, o Options) (map[string]extraction, error) {
 	results := map[string]extraction{}
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
-		return nil, err
+	extract := o.Extract
+	if extract == nil {
+		env, err := commandenv.Environ(o.Env)
+		if err != nil {
+			return nil, err
+		}
+		extract = func(ctx context.Context, language, tooling, config, output string) error {
+			return hostExtract(ctx, language, tooling, config, output, env, o)
+		}
 	}
-	for language, l := range typeLanguages {
+	for language := range typeLanguages {
 		var entries []map[string]string
 		for _, app := range apps {
 			if p := app.prepared; p != nil && p.language == language {
@@ -85,24 +91,16 @@ func extractTypes(ctx context.Context, root string, apps []App, o Options) (map[
 		if len(entries) == 0 {
 			continue
 		}
-		program, err := l.localProgram(ctx)
-		if err != nil {
-			return nil, err
-		}
 		config := filepath.Join(root, language+".json")
 		output := filepath.Join(root, language+"-output.json")
-		if err = writeJSON(config, map[string]any{"apps": entries}); err != nil {
+		if err := writeJSON(config, map[string]any{"apps": entries}); err != nil {
 			return nil, err
 		}
-		command := exec.CommandContext(ctx, program, filepath.Join(root, "tooling", language, l.runner), "extract", config, output)
-		command.Env = env
-		command.Stdout = o.Stderr
-		command.Stderr = o.Stderr
-		if err = command.Run(); err != nil {
-			return nil, fmt.Errorf("prepare MCP types with %s: %w", program, err)
+		if err := extract(ctx, language, filepath.Join(root, "tooling"), config, output); err != nil {
+			return nil, err
 		}
 		var found map[string]extraction
-		if err = readTypeJSON(output, &found); err != nil {
+		if err := readTypeJSON(output, &found); err != nil {
 			return nil, err
 		}
 		for name, result := range found {
@@ -110,6 +108,23 @@ func extractTypes(ctx context.Context, root string, apps []App, o Options) (map[
 		}
 	}
 	return results, nil
+}
+
+// hostExtract runs the extractor with the host's interpreter.
+func hostExtract(ctx context.Context, language, tooling, config, output string, env []string, o Options) error {
+	l := typeLanguages[language]
+	program, err := l.localProgram(ctx)
+	if err != nil {
+		return err
+	}
+	command := exec.CommandContext(ctx, program, filepath.Join(tooling, language, l.runner), "extract", config, output)
+	command.Env = env
+	command.Stdout = o.Stderr
+	command.Stderr = o.Stderr
+	if err = command.Run(); err != nil {
+		return fmt.Errorf("prepare MCP types with %s: %w", program, err)
+	}
+	return nil
 }
 func isFile(path string) bool {
 	info, err := os.Stat(path)
