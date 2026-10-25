@@ -1,30 +1,24 @@
 # holon
 
-Typed clients for MCP servers that call other MCP servers.
+`holon` generates typed clients for MCP servers. This allows invoking an MCP server as a function call your type checker understands.
 
-Every MCP server already describes its tools with JSON Schema. `holon` turns those schemas into a typed client inside your own server's project, so calling another server is a function call your type checker understands, validated at runtime on the way in and on the way out. When a server you depend on changes a field, you find out at compile time, not from a production error.
+This is currently supported via the following SDKs:
 
-It works for Python and TypeScript servers, with no framework, manifest or hosting platform required.
+| SDK | Description |
+|---|---|
+| [Python](https://github.com/holon-sh/sdk-py) | `holon-sh` on PyPI. The runtime the generated Python client imports. |
+| [TypeScript](https://github.com/holon-sh/sdk-ts) | `holon-sh` on npm. The runtime the generated Node.js client imports. |
+| [UI](https://github.com/holon-sh/sdk-ui) | `holon-ui` on npm. The runtime for browser pages: MCP Apps views and WebMCP. |
 
-## The pieces
-
-| Piece | What it is | Docs |
-|---|---|---|
-| `holon` CLI | Generates and checks the clients. One static binary per platform, needed only while developing. Published on PyPI as `holon-types`. | this page |
-| `holon-sh` (PyPI) | The runtime the generated Python client imports. | [holon-sh/sdk-py](https://github.com/holon-sh/sdk-py) |
-| `holon-sh` (npm) | The runtime the generated Node.js client imports. | [holon-sh/sdk-ts](https://github.com/holon-sh/sdk-ts) |
-| `holon-ui` (npm) | The runtime for browser pages: MCP Apps views and WebMCP. | [holon-sh/sdk-ui](https://github.com/holon-sh/sdk-ui) |
-
-You install the CLI once. The runtime is added to each project by the first `holon types generate`.
+You install the CLI once; the first `holon types generate` adds the runtime to each project.
 
 ## Install
 
 ```sh
-uv tool install --prerelease allow holon-types    # or: pipx install --pip-args=--pre holon-types
-holon --version
+go install github.com/holon-sh/cli/cmd/holon@latest
 ```
 
-The CLI reads your source with the interpreter your project already has (Python 3.11+ or Node.js 22+) and installs nothing else.
+The CLI is also on PyPI as `holon-types` (`uv tool install --prerelease allow holon-types`).
 
 ## Call another MCP server with types
 
