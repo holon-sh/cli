@@ -77,13 +77,13 @@ def build_wheel(stage: Path, dist: Path, binary: Path, target: Target, version: 
     shutil.copyfile(ROOT / "LICENSE", project / "LICENSE")
     manifest = project / "pyproject.toml"
     manifest.write_text(manifest.read_text().replace('version = "0.0.1"', f'version = "{python_version(version)}"'))
-    destination = project / "holon_cli/bin/holon"
+    destination = project / "holon_types/bin/holon"
     destination.parent.mkdir(parents=True)
     shutil.copyfile(binary, destination)
     destination.chmod(0o755)
     subprocess.run(["uv", "build", "--wheel", "--out-dir", str(stage / "wheels"), str(project)], check=True)
     original = next((stage / "wheels").glob("*.whl"))
-    wheel = dist / f"holon_cli-{python_version(version)}-py3-none-{target.wheel_platform}.whl"
+    wheel = dist / f"holon_types-{python_version(version)}-py3-none-{target.wheel_platform}.whl"
     with zipfile.ZipFile(original) as archive:
         entries = {name: archive.read(name) for name in archive.namelist()}
     metadata = next(name for name in entries if name.endswith(".dist-info/WHEEL"))
@@ -104,7 +104,7 @@ def build_wheel(stage: Path, dist: Path, binary: Path, target: Target, version: 
         for name, data in entries.items():
             info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = (0o100755 if name == "holon_cli/bin/holon" else 0o100644) << 16
+            info.external_attr = (0o100755 if name == "holon_types/bin/holon" else 0o100644) << 16
             archive.writestr(info, data)
     return wheel
 
@@ -115,7 +115,7 @@ def build_npm(stage: Path, dist: Path, binary: Path, target: Target, version: st
     shutil.copyfile(binary, platform / "bin/holon")
     (platform / "bin/holon").chmod(0o755)
     shutil.copyfile(ROOT / "LICENSE", platform / "LICENSE")
-    manifest = {"name": f"@holon-sh/cli-{target.goos}-{target.npm_arch}", "version": version, "description": "Holon standalone CLI platform binary", "repository": {"type": "git", "url": "git+https://github.com/holon-sh/cli.git"}, "license": "MIT", "os": [target.goos], "cpu": [target.npm_arch], "files": ["bin/holon", "LICENSE"], "exports": {"./bin/holon": "./bin/holon"}, "publishConfig": {"access": "public"}}
+    manifest = {"name": f"@holon-sh/types-{target.goos}-{target.npm_arch}", "version": version, "description": "Holon standalone CLI platform binary", "repository": {"type": "git", "url": "git+https://github.com/holon-sh/cli.git"}, "license": "MIT", "os": [target.goos], "cpu": [target.npm_arch], "files": ["bin/holon", "LICENSE"], "exports": {"./bin/holon": "./bin/holon"}, "publishConfig": {"access": "public"}}
     (platform / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
     package = stage / "npm"
     shutil.copytree(ROOT / "packaging/npm", package)

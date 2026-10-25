@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
-name = "holon-cli"
+name = "holon-types"
 version = "0.0.1"
 description = "Standalone Holon typed-contract CLI"
 readme = "README.md"
@@ -11,8 +11,8 @@ license = "MIT"
 requires-python = ">=3.11"
 
 [project.scripts]
-holon = "holon_cli:main"
+holon = "holon_types:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["holon_cli"]
-artifacts = ["holon_cli/bin/holon"]
+packages = ["holon_types"]
+artifacts = ["holon_types/bin/holon"]

@@ -86,7 +86,7 @@ jobs:
       - name: Verify Python launcher
         run: |
           uv venv .venv
-          uv pip install --no-cache --no-index dist/holon_cli-*.whl
+          uv pip install --no-cache --no-index dist/holon_types-*.whl
           uv run --no-project holon --version
       - name: Verify npm launcher
         run: |
@@ -95,9 +95,9 @@ jobs:
           /tmp/holon-npm-smoke/node_modules/.bin/holon --version
       - uses: actions/upload-artifact@v4
         with:
-          name: holon-cli-${{ matrix.target }}
+          name: holon-types-${{ matrix.target }}
           path: |
             dist/holon_*.tar.gz
-            dist/holon_cli-*.whl
-            dist/holon-sh-cli-*.tgz
+            dist/holon_types-*.whl
+            dist/holon-sh-types-*.tgz
             dist/SHA256SUMS

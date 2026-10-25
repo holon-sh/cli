@@ -1,4 +1,4 @@
-"""Launch the platform binary bundled in the holon-cli wheel."""
+"""Launch the platform binary bundled in the holon-types wheel."""
 
 import os
 import sys
