@@ -169,3 +169,30 @@ func TestLiveContractUsesSuppliedIdentityAndAdvertisedSchemas(t *testing.T) {
 		t.Fatalf("resource schemas: %v", outputs)
 	}
 }
+
+func TestLiveContractAuthProtectedRemoteIsUnavailableNotFatal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="example"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	identity := mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"}
+	_, err := LiveContract(context.Background(), server.URL, identity, server.Client())
+	if err == nil {
+		t.Fatal("expected the live fetch to fail")
+	}
+	if !contractUnavailable(err) {
+		t.Fatalf("auth-protected remote must be classified as unavailable, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "remote MCP server unavailable") {
+		t.Fatalf("unexpected error text: %v", err)
+	}
+	descriptor := &Descriptor{Name: identity.Name, Version: identity.Version, Remotes: []Transport{{Type: "streamable-http", URL: server.URL}}}
+	metadata, diagnostic, err := resolveRequired(context.Background(), "orders", Reference{Name: identity.Name, Version: identity.Version}, nil, map[string]App{"orders": {Name: "orders", descriptor: descriptor}}, Options{HTTPClient: server.Client()})
+	if err != nil {
+		t.Fatalf("resolution must not fail on an auth-protected remote: %v", err)
+	}
+	if metadata != nil || !strings.Contains(diagnostic, "unavailable") {
+		t.Fatalf("expected an untyped client with a diagnostic, got metadata=%v diagnostic=%q", metadata, diagnostic)
+	}
+}
