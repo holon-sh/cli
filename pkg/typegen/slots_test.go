@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -269,9 +270,10 @@ func typeScriptCaller(t *testing.T, packageJSON string) (Manifest, func(context.
 	put(t, app, "package.json", packageJSON)
 	put(t, app, "server.ts", "export default {};\n")
 	put(t, app, "server.json", string(mustJSON(t, map[string]any{
-		"name": "example.com/app", "version": "1.0.0", "description": "app",
+		"name": "example.com/checkout", "version": "1.0.0", "description": "app",
 		"_meta": map[string]any{PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]Reference{"orders": {Name: "example.com/orders", Version: "1.0.0"}}}}},
 	})))
+	// The manifest name (app) differs from the server key (checkout) on purpose.
 	manifest := Manifest{Apps: []App{{Name: "app", Path: app}, {Name: "orders", Path: orders, Access: json.RawMessage(`{"server":{}}`)}}}
 	own := mcpcontract.Tool{Name: "status", Input: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
 	results := map[string]extraction{"app": {UsesApps: true, Tools: []mcpcontract.Tool{own}}, "orders": {Tools: []mcpcontract.Tool{lookupTool}}}
@@ -291,7 +293,7 @@ func TestGenerateWritesDeclaredSlots(t *testing.T) {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 	browser := read(t, ui, "generated/index.js")
-	for _, want := range []string{`import { bindApps } from "../runtime.mjs";`, "exposeTools", `"self":{"tools":[{"name":"status"`, `"lookup"`} {
+	for _, want := range []string{`import { bindApps } from "../runtime.mjs";`, "exposeTools", `"checkout":{"tools":[{"name":"status"`, `"lookup"`} {
 		if !strings.Contains(browser, want) {
 			t.Fatalf("holon-ui index.js lacks %s:\n%s", want, browser)
 		}
@@ -302,9 +304,9 @@ func TestGenerateWritesDeclaredSlots(t *testing.T) {
 			t.Fatalf("holon-ui index.d.ts lacks %s:\n%s", want, declarations)
 		}
 	}
-	// The app's own server is exposed under the reserved key self, not its app name.
-	if !strings.Contains(declarations, `"self": {`) || strings.Contains(browser, `"app":{`) {
-		t.Fatalf("own contract is not keyed self:\n%s\n%s", browser, declarations)
+	// The app's own server is keyed by its server.json name, not its manifest name.
+	if !strings.Contains(declarations, `"checkout": {`) || strings.Contains(browser, `"app":{`) {
+		t.Fatalf("own contract is not keyed checkout:\n%s\n%s", browser, declarations)
 	}
 	if !isFile(filepath.Join(ui, "generated/resources.d.ts")) {
 		t.Fatal("holon-ui slot has no resources.d.ts")
@@ -340,5 +342,27 @@ func TestGenerateUIOnlyApp(t *testing.T) {
 	}
 	if !isFile(filepath.Join(ui, "generated/index.js")) {
 		t.Fatal("holon-ui slot was not written")
+	}
+}
+
+func TestBrowserOwnKeyCollidingWithAnAliasIsAnError(t *testing.T) {
+	root := t.TempDir()
+	app, inventory := filepath.Join(root, "app"), filepath.Join(root, "inventory")
+	writeProvider(t, inventory, "inventory", pythonProvider, nil)
+	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-ui":"^0.0.1"}}`)
+	put(t, app, "server.ts", "export default {};\n")
+	// The app's server key is store, and it also requires a different server under the alias store.
+	put(t, app, "server.json", string(mustJSON(t, map[string]any{
+		"name": "example.com/store", "version": "1.0.0", "description": "app",
+		"_meta": map[string]any{PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]Reference{"store": {Name: "example.com/inventory", Version: "1.0.0"}}}}},
+	})))
+	slotPackage(t, app, "holon-ui")
+	manifest := Manifest{Apps: []App{{Name: "app", Path: app}, {Name: "store", Path: inventory, Access: json.RawMessage(`{"server":{}}`)}}}
+	own := mcpcontract.Tool{Name: "status", Input: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
+	var calls []string
+	extract := fakeExtract(t, map[string]extraction{"app": {UsesApps: true, Tools: []mcpcontract.Tool{own}}, "store": {Tools: []mcpcontract.Tool{lookupTool}}}, &calls)
+	err := Generate(t.Context(), manifest, Options{Apps: []string{"app"}, NoInstall: true, Stdout: io.Discard, Extract: extract})
+	if err == nil || !strings.Contains(err.Error(), "own server example.com/store and requires alias store share the client name store") {
+		t.Fatalf("own key overwrote a dependency: %v", err)
 	}
 }

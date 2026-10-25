@@ -240,17 +240,18 @@ func TestDirectoriesRejectAmbiguousInputs(t *testing.T) {
 	}
 }
 
-func TestSanitizeAppName(t *testing.T) {
+func TestServerKey(t *testing.T) {
 	long := strings.Repeat("a", 48) + "-" + strings.Repeat("b", 11)
 	for input, want := range map[string]string{
-		"checkout":          "checkout",
-		"My.Server":         "my-server",
-		"Some__Weird..Name": "some-weird-name",
-		"---":               "",
-		long:                strings.Repeat("a", 48),
+		"example.com/checkout":          "checkout",
+		"io.github.Some_User/My.Server": "my-server",
+		"example.com/Some__Weird..Name": "some-weird-name",
+		"example.com/---":               "",
+		"example.com/" + long:           strings.Repeat("a", 48),
+		"no-namespace":                  "no-namespace",
 	} {
-		if got := sanitizeAppName(input); got != want {
-			t.Errorf("sanitizeAppName(%q) = %q, want %q", input, got, want)
+		if got := serverKey(input); got != want {
+			t.Errorf("serverKey(%q) = %q, want %q", input, got, want)
 		}
 	}
 }
