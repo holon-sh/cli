@@ -137,10 +137,6 @@ await client.connect(new StreamableHTTPClientTransport(new URL("https://mcp.cont
 const result = await client.callTool({ name: "resolve-library-id", arguments: { libraryName: library, query } }); // unchecked
 ```
 
-```sh
-CONTEXT7_MCP_URL=https://mcp.context7.com/mcp ORDERS_MCP_URL=http://localhost:3001/mcp npm run serve
-```
-
 ### Add a view
 
 In [`examples/checkout/ui/main.ts`](examples/checkout/ui/main.ts), the view calls `checkout`'s own tool through the MCP Apps host:
