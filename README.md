@@ -10,17 +10,25 @@ This is currently supported via the following SDKs:
 | [TypeScript](https://github.com/holon-sh/sdk-ts) | `holon-sh` on npm. The runtime the generated Node.js client imports. |
 | [UI](https://github.com/holon-sh/sdk-ui) | `holon-ui` on npm. The runtime for browser pages: MCP Apps views and WebMCP. |
 
-You install the CLI once; the first `holon types generate` adds the runtime to each project.
-
 ## Install
 
 ```sh
-go install github.com/holon-sh/cli/cmd/holon@latest
+curl -fsSL https://raw.githubusercontent.com/holon-sh/cli/main/install.sh | sh
 ```
 
-## Call another MCP server with types
+This downloads the binary for your platform (macOS or Linux, arm64 or x86-64) into `~/.local/bin`. Set `HOLON_INSTALL_DIR` to choose another directory, or pick an archive from the [releases page](https://github.com/holon-sh/cli/releases).
 
-The walkthrough uses the two servers in [`examples/`](examples): `orders`, a Python MCP server with a `lookup` tool, and `checkout`, a TypeScript MCP server that calls it. `orders` needs nothing from these packages. Its type hints are its contract, and the CLI reads them from source without running the server.
+## Tutorial
+
+The repository ships the tutorial's servers in [`examples/`](examples): `orders`, a Python MCP server with one tool, and `checkout`, a TypeScript MCP server that calls it and serves a browser view. You need [uv](https://docs.astral.sh/uv/) and Node.js 22 or newer.
+
+```sh
+git clone https://github.com/holon-sh/cli && cd cli/examples
+(cd orders && uv sync)
+(cd checkout && npm install)
+```
+
+`orders` needs nothing from these packages. Its type hints are its contract, and the CLI reads them from source without running the server.
 
 `examples/orders/server.py`:
 
@@ -71,7 +79,7 @@ Each server has a `server.json` in the MCP Registry format. In the caller's, add
 List the caller and the provider directory. Directories listed together resolve each other's `requires` by `server.json` name.
 
 ```sh
-cd examples/checkout
+cd checkout
 holon types generate . ../orders
 ```
 
@@ -132,7 +140,7 @@ const { total } = await apps.checkout.tools.total({ id: "A-1" });
 
 `npm run build` bundles the view into one HTML file, which `server.ts` serves as an MCP App resource with `appView`. See the [UI SDK](https://github.com/holon-sh/sdk-ui).
 
-## Catch breaking changes in CI
+### 6. Catch breaking changes in CI
 
 ```sh
 holon types check . ../orders
@@ -171,12 +179,6 @@ Callers keep declaring only your name and version. Republish the document when a
 Flags for `generate`: `--no-install` prints the command that would add a missing runtime instead of running it; `--quiet` silences progress.
 
 Generated files start with a marker line and are rewritten on every run; do not edit them. Commit them or regenerate in CI, whichever suits your project.
-
-## Where to go next
-
-- [Python runtime](https://github.com/holon-sh/sdk-py): tool results, errors, explicit bindings with auth, serving MCP App views.
-- [Node.js runtime](https://github.com/holon-sh/sdk-ts): the same for TypeScript, plus typed resources.
-- [Browser runtime](https://github.com/holon-sh/sdk-ui): calling your own server from an MCP Apps view, exposing tools to a WebMCP agent.
 
 ## License
 
