@@ -17,8 +17,12 @@ var notAppNameRun = regexp.MustCompile(`[^a-z0-9-]+`)
 // Directories describes MCP server directories, each containing a server.json, as a Manifest for
 // the standalone CLI. Every directory becomes a path app. A requires entry whose server name
 // matches another listed directory's server.json is provided by that directory, which is then
-// named by the requiring alias; every other requires entry becomes a registry app. It returns the
-// manifest and the listed apps' names, in argument order; pass them in Options.Apps.
+// named by the requiring alias; every other requires entry becomes a registry app. Requires need
+// not be declared between listed directories: an apps.<name> reference in a directory's source
+// that names another listed directory (by the last segment of its server name) is a dependency
+// on it. It returns the manifest and the names of the listed apps that use generated clients, in
+// argument order; pass them in Options.Apps. A listed directory that references no client and
+// imports none is a provider only and gets nothing generated.
 func Directories(dirs []string) (Manifest, []string, error) {
 	if len(dirs) == 0 {
 		return Manifest{}, nil, errors.New("no directories given")
@@ -27,6 +31,9 @@ func Directories(dirs []string) (Manifest, []string, error) {
 		dir        string
 		descriptor *Descriptor
 		name       string
+		requires   map[string]Reference // declared plus inferred
+		inferred   map[string]Reference
+		generates  bool
 	}
 	apps := make([]listed, len(dirs))
 	byServer := map[string]int{}
@@ -56,11 +63,37 @@ func Directories(dirs []string) (Manifest, []string, error) {
 		byServer[descriptor.Name] = i
 		apps[i] = listed{dir: dir, descriptor: descriptor}
 	}
+	// A client reference to another listed directory is a dependency on it, unless declared.
+	for i := range apps {
+		references, usesClients, err := clientReferences(apps[i].dir)
+		if err != nil {
+			return Manifest{}, nil, err
+		}
+		apps[i].requires = maps.Clone(apps[i].descriptor.Requires)
+		if apps[i].requires == nil {
+			apps[i].requires = map[string]Reference{}
+		}
+		for j, other := range apps {
+			key := serverKey(other.descriptor.Name)
+			if j == i || !references[key] {
+				continue
+			}
+			if slices.ContainsFunc(slices.Collect(maps.Values(apps[i].requires)), func(ref Reference) bool { return ref.Name == other.descriptor.Name }) {
+				continue // already required, possibly under another alias
+			}
+			if apps[i].inferred == nil {
+				apps[i].inferred = map[string]Reference{}
+			}
+			apps[i].inferred[key] = Reference{Name: other.descriptor.Name, Version: other.descriptor.Version}
+			apps[i].requires[key] = apps[i].inferred[key]
+		}
+		apps[i].generates = usesClients || len(apps[i].requires) > 0
+	}
 	// A listed provider takes the alias its callers require it under.
 	requiredBy := map[int]int{}
 	for i, app := range apps {
-		for _, alias := range slices.Sorted(maps.Keys(app.descriptor.Requires)) {
-			j, ok := byServer[app.descriptor.Requires[alias].Name]
+		for _, alias := range slices.Sorted(maps.Keys(app.requires)) {
+			j, ok := byServer[app.requires[alias].Name]
 			if !ok || j == i {
 				continue
 			}
@@ -72,7 +105,7 @@ func Directories(dirs []string) (Manifest, []string, error) {
 	}
 	server := json.RawMessage(`{"server":{}}`)
 	m := Manifest{pathRequiresOnly: true}
-	names := make([]string, len(apps))
+	var names []string
 	owner := map[string]string{}
 	for i := range apps {
 		if apps[i].name == "" {
@@ -86,15 +119,17 @@ func Directories(dirs []string) (Manifest, []string, error) {
 			return Manifest{}, nil, fmt.Errorf("%s and %s both have the app name %s", other, apps[i].dir, name)
 		}
 		owner[name] = apps[i].dir
-		names[i] = name
-		m.Apps = append(m.Apps, App{Name: name, Path: apps[i].dir, Access: server})
+		if apps[i].generates {
+			names = append(names, name)
+		}
+		m.Apps = append(m.Apps, App{Name: name, Path: apps[i].dir, Access: server, inferred: apps[i].inferred})
 	}
 	for _, app := range apps {
-		for _, alias := range slices.Sorted(maps.Keys(app.descriptor.Requires)) {
+		for _, alias := range slices.Sorted(maps.Keys(app.requires)) {
 			if _, ok := owner[alias]; ok {
 				continue
 			}
-			ref := app.descriptor.Requires[alias]
+			ref := app.requires[alias]
 			ref.Registry = ref.RegistryURL()
 			owner[alias] = ref.Registry
 			m.Apps = append(m.Apps, App{Name: alias, Registry: &RegistrySource{Reference: ref}, Access: server})

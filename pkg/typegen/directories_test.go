@@ -3,6 +3,7 @@ package typegen
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"io/fs"
 	"maps"
@@ -277,5 +278,115 @@ func TestDirectoriesContractIsOffline(t *testing.T) {
 	}
 	if metadata.Contract == nil || len(metadata.Contract.Tools) != 1 || metadata.Contract.Tools[0].Name != "read" {
 		t.Fatalf("contract = %+v", metadata.Contract)
+	}
+}
+
+func TestListedDirectoriesInferRequiresFromSource(t *testing.T) {
+	root := t.TempDir()
+	checkout, orders := filepath.Join(root, "checkout"), filepath.Join(root, "orders")
+	// checkout declares nothing; its source references apps.orders, and orders is listed.
+	writeProvider(t, checkout, "checkout", "from holon.apps import apps\n"+pythonProvider+"async def total(id: str) -> str:\n    return (await apps.orders.tools.read({'id': id}))\n", nil)
+	writeProvider(t, orders, "orders", pythonProvider, nil)
+	put(t, checkout, "pyproject.toml", "[project]\nname = 'app'\ndependencies = ['holon-sh']\n")
+	m, names, err := Directories([]string{orders, checkout})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(names, []string{"checkout"}) {
+		t.Fatalf("names = %v, want [checkout]: a provider that uses no client gets nothing generated", names)
+	}
+	if got, want := strings.Join(appSummary(m), " "), "orders:path="+orders+"+server checkout:path="+checkout+"+server"; got != want {
+		t.Fatalf("apps = %s, want %s", got, want)
+	}
+	offline := &http.Client{Transport: unavailableRegistry{t}}
+	results := map[string]extraction{"checkout": {UsesApps: true}, "orders": {Tools: []mcpcontract.Tool{lookupTool}}}
+	var calls []string
+	before := fileMap(t, orders)
+	var output bytes.Buffer
+	if err = Generate(t.Context(), m, Options{Apps: names, NoInstall: true, HTTPClient: offline, Stdout: &output, Stderr: &output, Extract: fakeExtract(t, results, &calls)}); err != nil {
+		t.Fatalf("generate: %v\n%s", err, &output)
+	}
+	if module := read(t, checkout, "holon/apps/__init__.py"); !strings.Contains(module, "async def lookup(") || !strings.Contains(module, `"orders"`) {
+		t.Fatalf("checkout is not typed from the inferred provider:\n%s", module)
+	}
+	if !maps.Equal(before, fileMap(t, orders)) {
+		t.Fatal("generation changed the provider-only directory")
+	}
+	if strings.Contains(output.String(), "orders:") {
+		t.Fatalf("output mentions the provider-only directory:\n%s", &output)
+	}
+
+	t.Run("declared alias wins", func(t *testing.T) {
+		put(t, checkout, "server.py", "from holon.apps import apps\n"+pythonProvider+"async def total(id: str) -> str:\n    return (await apps.store.tools.read({'id': id})) + str(apps['orders'])\n")
+		writeProvider(t, checkout, "checkout", read(t, checkout, "server.py"), map[string]Reference{"store": {Name: "example.com/orders", Version: "1.0.0"}})
+		m, names, err := Directories([]string{orders, checkout})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// orders is already required under "store", so the apps['orders'] reference infers nothing.
+		if !slices.Equal(names, []string{"checkout"}) || !strings.Contains(strings.Join(appSummary(m), " "), "store:path="+orders) {
+			t.Fatalf("names = %v, apps = %v", names, appSummary(m))
+		}
+		prepared, err := Prepare(t.Context(), m, Options{Apps: names, HTTPClient: offline, Extract: fakeExtract(t, map[string]extraction{"checkout": {UsesApps: true}, "store": {Tools: []mcpcontract.Tool{lookupTool}}}, &calls)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer prepared.Close()
+		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 1 || requires["store"].Identity.Name != "example.com/orders" {
+			t.Fatalf("requires = %v, want only the declared store alias", requires)
+		}
+	})
+
+	t.Run("unknown references are ignored", func(t *testing.T) {
+		writeProvider(t, checkout, "checkout", "from holon.apps import apps\n"+pythonProvider+"x = apps.search\n", nil)
+		m, names, err := Directories([]string{orders, checkout})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(names, []string{"checkout"}) || len(m.Apps) != 2 {
+			t.Fatalf("names = %v, apps = %v", names, appSummary(m))
+		}
+		prepared, err := Prepare(t.Context(), m, Options{Apps: names, HTTPClient: offline, Extract: fakeExtract(t, results, &calls)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer prepared.Close()
+		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 0 {
+			t.Fatalf("an unlisted, undeclared reference became a dependency: %v", requires)
+		}
+	})
+
+	t.Run("manifest apps never infer", func(t *testing.T) {
+		writeProvider(t, checkout, "checkout", "from holon.apps import apps\n"+pythonProvider+"x = apps.orders\n", nil)
+		server := json.RawMessage(`{"server":{}}`)
+		platform := Manifest{Apps: []App{{Name: "checkout", Path: checkout, Access: server}, {Name: "orders", Path: orders, Access: server}}}
+		prepared, err := Prepare(t.Context(), platform, Options{Apps: []string{"checkout"}, HTTPClient: offline, Extract: fakeExtract(t, results, &calls)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer prepared.Close()
+		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 0 {
+			t.Fatalf("a manifest-declared app inferred requires from source: %v", requires)
+		}
+	})
+}
+
+func TestClientReferences(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "server.py", "from holon.apps import apps\nawait apps.orders.tools.read({})\nawait apps[\"my-store\"].call_tool('x', {})\n")
+	put(t, root, "ui/main.ts", "import { createApps } from \"holon-ui\";\nconst apps = createApps({ checkout: { host } });\napps.checkout.tools.total({});\n")
+	put(t, root, "node_modules/holon-sh/generated/index.js", "apps.ignored\n")
+	put(t, root, ".venv/lib/x.py", "apps.ignored_too\n")
+	names, uses, err := clientReferences(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := slices.Sorted(maps.Keys(names)); !slices.Equal(got, []string{"checkout", "my-store", "orders"}) || !uses {
+		t.Fatalf("names = %v, usesClients = %v", got, uses)
+	}
+	put(t, root, "server.py", "print('no clients here')\n")
+	put(t, root, "ui/main.ts", "export {};\n")
+	if names, uses, _ = clientReferences(root); len(names) != 0 || uses {
+		t.Fatalf("names = %v, usesClients = %v, want none", names, uses)
 	}
 }

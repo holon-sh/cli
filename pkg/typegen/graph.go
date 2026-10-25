@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -38,6 +39,18 @@ func resolveManifestGraph(ctx context.Context, m Manifest, o Options) (Manifest,
 			data, readErr := os.ReadFile(filepath.Join(app.Path, "server.json"))
 			if readErr == nil {
 				app.descriptor, err = ParseDescriptor(data)
+				if err == nil && len(app.inferred) > 0 {
+					requires := maps.Clone(app.descriptor.Requires)
+					if requires == nil {
+						requires = map[string]Reference{}
+					}
+					for dep, ref := range app.inferred {
+						if _, declared := requires[dep]; !declared {
+							requires[dep] = ref
+						}
+					}
+					app.descriptor.Requires = requires
+				}
 			} else if !errors.Is(readErr, os.ErrNotExist) {
 				err = readErr
 			}

@@ -43,13 +43,10 @@ func typeScriptKinds(dir string) ([]string, error) {
 
 var runtimeImport = regexp.MustCompile(`(?:^|["'\s])(holon-sh|holon-ui|@holon-sh/apps)(?:/([\w./-]*))?["']`)
 
-// importedRuntimes scans the app's own JavaScript and TypeScript sources (not installed dependencies) for
-// holon-sh and holon-ui imports, like the extractor's usesApps. legacyBrowser reports an import of
-// holon-sh/browser or holon-sh/browser-runtime, which moved to holon-ui.
-func importedRuntimes(root string) (packages map[string]bool, legacyBrowser bool, err error) {
-	packages = map[string]bool{}
-	source := regexp.MustCompile(`\.[cm]?[jt]sx?$`)
-	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+// walkSources calls fn with every regular source file of the app at root whose name matches ext,
+// skipping installed dependencies, virtual environments and generated code.
+func walkSources(root string, ext *regexp.Regexp, fn func(data []byte)) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -59,13 +56,26 @@ func importedRuntimes(root string) (packages map[string]bool, legacyBrowser bool
 			}
 			return nil
 		}
-		if !entry.Type().IsRegular() || !source.MatchString(entry.Name()) {
+		if !entry.Type().IsRegular() || !ext.MatchString(entry.Name()) {
 			return nil
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
+		fn(data)
+		return nil
+	})
+}
+
+var scriptSource = regexp.MustCompile(`\.[cm]?[jt]sx?$`)
+
+// importedRuntimes scans the app's own JavaScript and TypeScript sources (not installed dependencies) for
+// holon-sh and holon-ui imports, like the extractor's usesApps. legacyBrowser reports an import of
+// holon-sh/browser or holon-sh/browser-runtime, which moved to holon-ui.
+func importedRuntimes(root string) (packages map[string]bool, legacyBrowser bool, err error) {
+	packages = map[string]bool{}
+	err = walkSources(root, scriptSource, func(data []byte) {
 		for _, match := range runtimeImport.FindAllSubmatch(data, -1) {
 			name, subpath := string(match[1]), string(match[2])
 			if name == "holon-sh" && slices.Contains([]string{"browser", "browser-runtime"}, subpath) {
@@ -73,9 +83,30 @@ func importedRuntimes(root string) (packages map[string]bool, legacyBrowser bool
 			}
 			packages[name] = true
 		}
-		return nil
 	})
 	return packages, legacyBrowser, err
+}
+
+var (
+	clientSource    = regexp.MustCompile(`\.(py|[cm]?[jt]sx?)$`)
+	clientReference = regexp.MustCompile(`\bapps(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[\s*["']([^"'\s]+)["']\s*\])`)
+	clientImport    = regexp.MustCompile(`\bholon\.apps\b|["'](?:holon-sh|holon-ui)(?:/[\w./-]*)?["']`)
+)
+
+// clientReferences scans the app's own Python, JavaScript and TypeScript sources for the clients it
+// uses: the names referenced as apps.<name> or apps["<name>"], and whether it imports the generated
+// module at all (holon.apps in Python, holon-sh or holon-ui in TypeScript).
+func clientReferences(root string) (names map[string]bool, usesClients bool, err error) {
+	names = map[string]bool{}
+	err = walkSources(root, clientSource, func(data []byte) {
+		if clientImport.Match(data) {
+			usesClients = true
+		}
+		for _, match := range clientReference.FindAllSubmatch(data, -1) {
+			names[string(match[1])+string(match[2])] = true
+		}
+	})
+	return names, usesClients, err
 }
 
 func ensureDependencies(ctx context.Context, app App, o Options) error {
