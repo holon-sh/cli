@@ -262,6 +262,7 @@ func generateTypes(ctx context.Context, language string, request mcptype.Generat
 			}
 			request.Contracts = maps.Clone(request.Contracts)
 			request.Contracts[key] = own
+			request.Own = key
 		}
 	case "python":
 		request.Target = "python"

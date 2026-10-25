@@ -202,7 +202,7 @@ func parityCases(t *testing.T) []parityCase {
 		add("slot-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+legacyContracts+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
 		add("slot-sink-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
 	}
-	add("slot-browser-index", "generate", `{"target": "browser", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+ownContracts+`, "banner": "holon-generated-apps-v1 app=checkout", "browser_runtime_specifier": "../runtime.mjs", "protocol_specifier": "holon-core/protocol", "entry": "index"}`)
+	add("slot-browser-index", "generate", `{"target": "browser", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+ownContracts+`, "banner": "holon-generated-apps-v1 app=checkout", "browser_runtime_specifier": "../runtime.mjs", "protocol_specifier": "holon-core/protocol", "entry": "index", "own": "checkout"}`)
 	add("slot-node-runtime-only", "generate", `{"target": "node", "identity": {"name": "a", "version": "1"}, "runtime_specifier": "@holon/apps/runtime.mjs", "protocol": "type X = 1;"}`)
 	add("slot-browser-only", "generate", `{"target": "browser", "identity": {"name": "a", "version": "1"}, "browser_runtime_specifier": "./x.mjs"}`)
 	add("slot-python-module-only", "generate", `{"target": "python", "identity": {"name": "a", "version": "1"}, "python_module": "apps.py"}`)
@@ -223,6 +223,7 @@ func parityCases(t *testing.T) []parityCase {
 		{"banner-newline", `"banner": "marker\nimport os"`},
 		{"entry-empty", `"entry": ""`},
 		{"entry-separator", `"entry": "a/b"`},
+		{"own-unknown", `"target": "browser", "contracts": {"orders": {"tools": []}}, "own": "a"`},
 		{"binding-empty", `"contracts": {"": {"tools": []}}`},
 		{"unknown-field", `"unknown": true`},
 		{"bad-target", `"target": "wasm"`},

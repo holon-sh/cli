@@ -54,3 +54,6 @@ export interface PageAnnotations { title?: string; readOnlyHint?: boolean; destr
 export interface PageTool<S extends PageSchema = PageSchema> { description: string; inputSchema: S; annotations?: PageAnnotations; execute: (args: PageInput<S>) => unknown }
 export interface PageHost { registerTool(name: string, config: { description: string; inputSchema: PageSchema; annotations?: PageAnnotations }, callback: (args: any, extra: any) => any): { remove(): void } }
 export declare function registerPageTools<S extends { [name: string]: PageSchema }>(tools: { [K in keyof S]: PageTool<S[K]> }, options?: { view?: PageHost; signal?: AbortSignal }): Promise<boolean>;
+import type { App } from "@modelcontextprotocol/ext-apps";
+export declare const apps: Pick<Apps, "checkout">;
+export declare const view: App;

@@ -293,13 +293,13 @@ func TestGenerateWritesDeclaredSlots(t *testing.T) {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 	browser := read(t, ui, "generated/index.js")
-	for _, want := range []string{`import { bindApps } from "../runtime.mjs";`, "exposeTools", `"checkout":{"tools":[{"name":"status"`, `"lookup"`} {
+	for _, want := range []string{`import { bindApps, hostApps } from "../runtime.mjs";`, "exposeTools", `hostApps(identity, contracts, "checkout")`, `"checkout":{"tools":[{"name":"status"`, `"lookup"`} {
 		if !strings.Contains(browser, want) {
 			t.Fatalf("holon-ui index.js lacks %s:\n%s", want, browser)
 		}
 	}
 	declarations := read(t, ui, "generated/index.d.ts")
-	for _, want := range []string{`from "holon-core/protocol"`, `from "./resources.js"`, "exposeTools"} {
+	for _, want := range []string{`from "holon-core/protocol"`, `from "./resources.js"`, "exposeTools", `export declare const apps: Pick<Apps, "checkout">;`, `export declare const view: App;`} {
 		if !strings.Contains(declarations, want) {
 			t.Fatalf("holon-ui index.d.ts lacks %s:\n%s", want, declarations)
 		}
