@@ -19,6 +19,22 @@ function createServer() {
     },
   );
 
+  server.registerTool(
+    "docs",
+    {
+      description: "Find documentation for a library, through the public Context7 MCP server",
+      inputSchema: z.object({ library: z.string(), query: z.string() }),
+    },
+    async ({ library, query }) => {
+      const result = await apps.context7.callTool({
+        name: "resolve-library-id",
+        arguments: { libraryName: library, query },
+      });
+      if (result.resultType !== "complete") throw new Error("Context7 asked for more input");
+      return { content: result.content, isError: result.isError };
+    },
+  );
+
   server.registerResource(
     ...appView("Checkout", "ui://checkout/index.html", new URL("./dist/index.html", import.meta.url)),
   );

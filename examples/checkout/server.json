@@ -1,5 +1,14 @@
 {
   "name": "io.github.holon-sh/checkout",
   "version": "1.0.0",
-  "description": "Check out orders"
+  "description": "Check out orders",
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "sh.holon": {
+        "requires": {
+          "context7": { "name": "io.github.upstash/context7", "version": "4.4.4" }
+        }
+      }
+    }
+  }
 }
