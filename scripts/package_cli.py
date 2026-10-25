@@ -70,6 +70,8 @@ def build_wheel(stage: Path, dist: Path, binary: Path, target: Target, version: 
     project = stage / "pypi"
     shutil.copytree(ROOT / "packaging/pypi", project)
     shutil.copyfile(ROOT / "LICENSE", project / "LICENSE")
+    # The repository README (the tutorial) is the PyPI long description.
+    shutil.copyfile(ROOT / "README.md", project / "README.md")
     manifest = project / "pyproject.toml"
     manifest.write_text(manifest.read_text().replace('version = "0.0.1"', f'version = "{python_version(version)}"'))
     destination = project / "holon_types/bin/holon"
