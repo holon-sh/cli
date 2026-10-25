@@ -2,13 +2,7 @@
 
 `holon` generates typed clients for MCP servers. This allows invoking an MCP server as a function call your type checker understands.
 
-This is currently supported via the following SDKs:
-
-| SDK | Description |
-|---|---|
-| [Python](https://github.com/holon-sh/sdk-py) | `holon-sh` on PyPI. The runtime the generated Python client imports. |
-| [TypeScript](https://github.com/holon-sh/sdk-ts) | `holon-sh` on npm. The runtime the generated Node.js client imports. |
-| [UI](https://github.com/holon-sh/sdk-ui) | `holon-ui` on npm. The runtime for browser pages: MCP Apps views and WebMCP. |
+This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk-py), [TypeScript SDK](https://github.com/holon-sh/sdk-ts), and [UI SDK](https://github.com/holon-sh/sdk-ui).
 
 ## Install
 
@@ -16,11 +10,9 @@ This is currently supported via the following SDKs:
 curl -fsSL https://raw.githubusercontent.com/holon-sh/cli/main/install.sh | sh
 ```
 
-This downloads the binary for your platform (macOS or Linux, arm64 or x86-64) into `~/.local/bin`. Set `HOLON_INSTALL_DIR` to choose another directory, or pick an archive from the [releases page](https://github.com/holon-sh/cli/releases).
-
 ## Tutorial
 
-The repository ships the tutorial's servers in [`examples/`](examples): `orders`, a Python MCP server with one tool, and `checkout`, a TypeScript MCP server that calls it and serves a browser view. You need [uv](https://docs.astral.sh/uv/) and Node.js 22 or newer.
+[`examples/`](examples) contains a Python `orders` MCP and a TypeScript `checkout` MCP that calls it and renders a UI.
 
 ```sh
 git clone https://github.com/holon-sh/cli && cd cli/examples
