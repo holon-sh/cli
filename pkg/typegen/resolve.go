@@ -198,6 +198,9 @@ func resolveDescriptor(ctx context.Context, d *Descriptor, o Options) (*mcpcontr
 }
 
 func contractUnavailable(err error) bool {
+	if errors.As(err, new(rejectedCredential)) {
+		return false
+	}
 	var status HTTPError
 	var transport *url.Error
 	var registry *errcode.ErrorResponse

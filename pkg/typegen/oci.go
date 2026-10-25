@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/distribution/reference"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -19,6 +20,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 	"oras.land/oras-go/v2/registry/remote/retry"
 
 	"github.com/holon-sh/cli/internal/commandenv"
@@ -35,16 +37,24 @@ func fetchImageJSON(ctx context.Context, source content.Fetcher, descriptor ocis
 	return json.Unmarshal(data, value)
 }
 
-func imageRepository(name string, extraEnv []string, client *http.Client) (*remote.Repository, error) {
+// rejectedCredential is a registry's 401 for a credential that Options.Credential supplied.
+type rejectedCredential struct{ error }
+
+func (e rejectedCredential) Unwrap() error { return e.error }
+
+// imageRepository authenticates with supplied, then Docker-stored, credentials. The returned
+// function reports whether supplied returned a credential for the repository's registry.
+func imageRepository(name string, extraEnv []string, client *http.Client, supplied auth.CredentialFunc) (*remote.Repository, func() bool, error) {
+	var used atomic.Bool
 	repository, err := remote.NewRepository(name)
 	if err != nil {
-		return nil, err
+		return nil, used.Load, err
 	}
 	authClient := &auth.Client{Client: cmp.Or(client, retry.DefaultClient), Cache: auth.NewCache()}
 	repository.Client = authClient
 	env, err := commandenv.Environ(extraEnv)
 	if err != nil {
-		return nil, err
+		return nil, used.Load, err
 	}
 	configDir := commandenv.Value(env, "DOCKER_CONFIG")
 	if configDir == "" {
@@ -52,17 +62,28 @@ func imageRepository(name string, extraEnv []string, client *http.Client) (*remo
 		if home == "" {
 			home, err = os.UserHomeDir()
 			if err != nil {
-				return nil, err
+				return nil, used.Load, err
 			}
 		}
 		configDir = filepath.Join(home, ".docker")
 	}
 	store, err := credentials.NewStore(filepath.Join(configDir, "config.json"), credentials.StoreOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("read source registry credentials: %w", err)
+		return nil, used.Load, fmt.Errorf("read source registry credentials: %w", err)
 	}
-	authClient.Credential = credentials.Credential(store)
-	return repository, nil
+	stored := credentials.Credential(store)
+	authClient.Credential = stored
+	if supplied != nil {
+		authClient.Credential = func(ctx context.Context, host string) (auth.Credential, error) {
+			credential, err := supplied(ctx, host)
+			if err != nil || credential != auth.EmptyCredential {
+				used.Store(true)
+				return credential, err
+			}
+			return stored(ctx, host)
+		}
+	}
+	return repository, used.Load, nil
 }
 
 func readTypeMetadata(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor) (*mcpcontract.Metadata, error) {
@@ -122,13 +143,21 @@ func resolveTypeMetadata(ctx context.Context, image string, o Options) (*mcpcont
 	if err != nil {
 		return nil, err
 	}
-	repository, err := imageRepository(named.Name(), o.Env, o.HTTPClient)
+	repository, supplied, err := imageRepository(named.Name(), o.Env, o.HTTPClient, o.Credential)
 	if err != nil {
 		return nil, err
 	}
+	rejected := func(err error) error {
+		var response *errcode.ErrorResponse
+		if supplied() && errors.As(err, &response) && response.StatusCode == http.StatusUnauthorized {
+			return rejectedCredential{fmt.Errorf("%s rejected the supplied registry credential: %w", reference.Domain(named), err)}
+		}
+		return err
+	}
 	descriptor, err := repository.Resolve(ctx, image)
 	if err != nil {
-		return nil, fmt.Errorf("resolve dependency contract for %s: %w", image, err)
+		return nil, fmt.Errorf("resolve dependency contract for %s: %w", image, rejected(err))
 	}
-	return readTypeMetadata(ctx, repository, descriptor)
+	metadata, err := readTypeMetadata(ctx, repository, descriptor)
+	return metadata, rejected(err)
 }

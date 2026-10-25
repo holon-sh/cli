@@ -13,9 +13,11 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"oras.land/oras-go/v2/registry/remote/auth"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -26,6 +28,15 @@ type Options struct {
 	Stdout, Stderr io.Writer
 	NoInstall      bool
 	NoPublished    bool
+	// Credential authenticates OCI registry requests ahead of the Docker credential store. A registry
+	// that rejects a credential it returned (HTTP 401) fails resolution instead of leaving clients untyped.
+	Credential auth.CredentialFunc
+	// Extract runs one language's extractor: the runner under toolingDir/<language> reads configPath and
+	// writes outputPath. It defaults to the host's Node.js or Python interpreter.
+	Extract func(ctx context.Context, language, toolingDir, configPath, outputPath string) error
+	// GoModule is the runtime module that generated Go clients import. When set, apps with a server.go
+	// entrypoint receive a holon/ Go client package for their dependencies; their own contracts are not extracted.
+	GoModule string
 }
 
 func (o Options) selects(name string) bool {
@@ -59,13 +70,16 @@ type Prepared struct {
 	Manifest Manifest
 	root     string
 	options  Options
+	// resolved holds the contracts of non-path dependencies, by app name.
+	resolved map[string]*mcpcontract.Metadata
 }
 
 func (p *Prepared) Close() error { return os.RemoveAll(p.root) }
 
-// Metadata returns extracted contracts by manifest app name.
+// Metadata returns contracts by manifest app name: extracted ones for path apps, and the resolved
+// image, registry or remote contracts of the dependencies that selected apps require.
 func (p *Prepared) Metadata() map[string]*mcpcontract.Metadata {
-	result := map[string]*mcpcontract.Metadata{}
+	result := maps.Clone(p.resolved)
 	for _, app := range p.Manifest.Apps {
 		if app.prepared != nil {
 			result[app.Name] = app.prepared.metadata
@@ -75,12 +89,17 @@ func (p *Prepared) Metadata() map[string]*mcpcontract.Metadata {
 }
 
 // Prepare snapshots local sources, resolves required contracts and generates portable client files.
-func Prepare(ctx context.Context, manifest Manifest, options Options) (_ *Prepared, err error) {
+func Prepare(ctx context.Context, manifest Manifest, options Options) (*Prepared, error) {
 	o := options.defaults()
-	manifest, err = resolveManifestGraph(ctx, manifest, o)
+	manifest, err := resolveManifestGraph(ctx, manifest, o)
 	if err != nil {
 		return nil, err
 	}
+	return prepareResolved(ctx, manifest, o)
+}
+
+// prepareResolved prepares a manifest whose dependency graph and descriptors are already resolved.
+func prepareResolved(ctx context.Context, manifest Manifest, o Options) (_ *Prepared, err error) {
 	root, err := os.MkdirTemp("", "holon-types-")
 	if err != nil {
 		return nil, err
@@ -106,6 +125,9 @@ func Prepare(ctx context.Context, manifest Manifest, options Options) (_ *Prepar
 		if p.entry, p.language, err = analysisEntry(p.root); err != nil {
 			return nil, err
 		}
+		if o.GoModule != "" && strings.HasSuffix(p.entry, ".go") {
+			p.language = "go"
+		}
 		if p.language != "" {
 			p.packages[p.language] = nil
 		}
@@ -119,6 +141,11 @@ func Prepare(ctx context.Context, manifest Manifest, options Options) (_ *Prepar
 	}
 	metadata := map[string]*mcpcontract.Metadata{}
 	declared := map[string]App{}
+	type resolution struct {
+		metadata   *mcpcontract.Metadata
+		diagnostic string
+	}
+	external := map[string]resolution{}
 	for _, app := range manifest.Apps {
 		declared[app.Name] = app
 		p := app.prepared
@@ -126,6 +153,10 @@ func Prepare(ctx context.Context, manifest Manifest, options Options) (_ *Prepar
 			continue
 		}
 		result, ok := results[app.Name]
+		if p.language == "go" {
+			// Go callers are typed from their requires; their own contract is not extracted.
+			result = extraction{UsesApps: app.descriptor != nil && len(app.descriptor.Requires) > 0, Diagnostic: "Go source contracts are not statically extracted; its clients are untyped"}
+		}
 		p.sources = result.Sources
 		p.usesApps = result.UsesApps
 		p.diagnostic = result.Diagnostic
@@ -159,10 +190,18 @@ func Prepare(ctx context.Context, manifest Manifest, options Options) (_ *Prepar
 			for _, name := range slices.Sorted(maps.Keys(app.descriptor.Requires)) {
 				ref := app.descriptor.Requires[name]
 				request.Requires[name] = ref.Identity()
-				actual, diagnostic, err := resolveRequired(ctx, name, ref, metadata, declared, o)
-				if err != nil {
-					return nil, fmt.Errorf("%s typed dependency %s: %w", app.Name, name, err)
+				r, cached := external[name]
+				if !cached {
+					actual, diagnostic, err := resolveRequired(ctx, name, ref, metadata, declared, o)
+					if err != nil {
+						return nil, fmt.Errorf("%s typed dependency %s: %w", app.Name, name, err)
+					}
+					r = resolution{actual, diagnostic}
+					if declared[name].Path == "" {
+						external[name] = r
+					}
 				}
+				actual, diagnostic := r.metadata, r.diagnostic
 				if actual == nil || actual.Contract == nil {
 					if p.usesApps {
 						fmt.Fprintf(o.Stderr, "%s: typed dependency %s unavailable: %s\n", app.Name, name, diagnostic)
@@ -184,7 +223,7 @@ func Prepare(ctx context.Context, manifest Manifest, options Options) (_ *Prepar
 			}
 		}
 		for language := range p.packages {
-			files, err := generateTypes(ctx, language, request, app.Name, p.metadata.Contract)
+			files, err := generateTypes(ctx, language, request, app.Name, p.metadata.Contract, o.GoModule)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", app.Name, err)
 			}
@@ -194,9 +233,15 @@ func Prepare(ctx context.Context, manifest Manifest, options Options) (_ *Prepar
 	if err = currentSources(manifest); err != nil {
 		return nil, err
 	}
-	return &Prepared{Manifest: manifest, root: root, options: o}, nil
+	resolved := map[string]*mcpcontract.Metadata{}
+	for name, r := range external {
+		if r.metadata != nil {
+			resolved[name] = r.metadata
+		}
+	}
+	return &Prepared{Manifest: manifest, root: root, options: o, resolved: resolved}, nil
 }
-func generateTypes(ctx context.Context, language string, request mcptype.GenerateRequest, name string, own *mcpcontract.Contract) (map[string]string, error) {
+func generateTypes(ctx context.Context, language string, request mcptype.GenerateRequest, name string, own *mcpcontract.Contract, goModule string) (map[string]string, error) {
 	var requests []mcptype.GenerateRequest
 	switch language {
 	case "typescript":
@@ -215,6 +260,13 @@ func generateTypes(ctx context.Context, language string, request mcptype.Generat
 		request.Target = "python"
 		request.PythonModule = "holon/apps/__init__.py"
 		request.PythonRuntimeModule = "holon.client"
+		requests = []mcptype.GenerateRequest{request}
+	case "go":
+		// The package matches the Holon platform's: unbannered, marked by package.json.
+		request.Target = "go"
+		request.Banner = ""
+		request.GoModule = goModule
+		request.PackageFields = map[string]any{"holon": mcpcontract.Marker}
 		requests = []mcptype.GenerateRequest{request}
 	default:
 		return nil, fmt.Errorf("unsupported language %s", language)
@@ -267,7 +319,7 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 			}
 		}
 	}
-	prepared, err := Prepare(ctx, m, o)
+	prepared, err := prepareResolved(ctx, resolved, o)
 	if err != nil {
 		return err
 	}
@@ -298,6 +350,11 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 				return err
 			}
 		}
+		if _, ok := p.packages["go"]; ok {
+			if err := validateGoSlot(app.Path); err != nil {
+				return err
+			}
+		}
 	}
 	if err := currentSources(prepared.Manifest); err != nil {
 		return err
@@ -309,10 +366,13 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 		}
 		for _, language := range slices.Sorted(maps.Keys(p.packages)) {
 			var err error
-			if language == "typescript" {
-				err = writeNodeSlot(slots[app.Name], p.packages[language], p.slot)
-			} else {
-				err = writePythonSlot(app.Path, p.packages[language])
+			switch language {
+			case "typescript":
+				err = prepared.WriteNodeSlot(app.Name, slots[app.Name])
+			case "python":
+				err = prepared.WritePythonSlot(app.Name, app.Path)
+			case "go":
+				err = prepared.WriteGoSlot(app.Name, app.Path)
 			}
 			if err != nil {
 				return err
@@ -321,6 +381,55 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 		}
 	}
 	return nil
+}
+
+// files returns the generated files of one selected path app for one language.
+func (p *Prepared) files(name, language string) (*preparedTypes, map[string]string, error) {
+	for _, app := range p.Manifest.Apps {
+		if app.Name != name {
+			continue
+		}
+		if app.prepared == nil || !p.options.selects(name) {
+			return nil, nil, fmt.Errorf("%s has no prepared sources; select a path app", name)
+		}
+		files, ok := app.prepared.packages[language]
+		if !ok || files == nil {
+			return nil, nil, fmt.Errorf("%s has no %s clients", name, language)
+		}
+		return app.prepared, files, nil
+	}
+	return nil, nil, fmt.Errorf("unknown app %q", name)
+}
+
+// WriteNodeSlot writes app's TypeScript clients and their holon-generated.json marker into
+// pkgDir/generated, where pkgDir is an installed holon-sh package or a copy staged for an image.
+// It refuses slots that are unmarked, symlinked or owned by another app, and leaves an identical slot untouched.
+func (p *Prepared) WriteNodeSlot(app, pkgDir string) error {
+	prepared, files, err := p.files(app, "typescript")
+	if err != nil {
+		return err
+	}
+	return writeNodeSlot(pkgDir, files, prepared.slot)
+}
+
+// WritePythonSlot writes app's holon/apps/__init__.py under root, an application directory or its
+// staged copy. A legacy Holon-managed holon/ package is replaced; user files in the namespace are refused.
+func (p *Prepared) WritePythonSlot(app, root string) error {
+	_, files, err := p.files(app, "python")
+	if err != nil {
+		return err
+	}
+	return writePythonSlot(root, files)
+}
+
+// WriteGoSlot writes app's holon/ Go client package under root. It requires Options.GoModule and
+// replaces only an absent or Holon-marked holon/ directory.
+func (p *Prepared) WriteGoSlot(app, root string) error {
+	_, files, err := p.files(app, "go")
+	if err != nil {
+		return err
+	}
+	return writeGoSlot(root, files)
 }
 func acquireLocks(m Manifest) (func(), error) {
 	var locks []*flock.Flock

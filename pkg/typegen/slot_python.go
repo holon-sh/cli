@@ -18,6 +18,12 @@ func legacyManaged(directory string) bool {
 	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
 	return err == nil && json.Unmarshal(data, &pkg) == nil && pkg.Holon == mcpcontract.Marker
 }
+func legacyManagedFiles(files map[string]string) bool {
+	var pkg struct {
+		Holon string `json:"holon"`
+	}
+	return json.Unmarshal([]byte(files["package.json"]), &pkg) == nil && pkg.Holon == mcpcontract.Marker
+}
 func generatedPython(directory string) bool {
 	data, err := os.ReadFile(filepath.Join(directory, "apps", "__init__.py"))
 	return err == nil && bytes.HasPrefix(data, []byte("# "+mcpcontract.Marker+" app="))
