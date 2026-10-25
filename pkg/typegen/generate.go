@@ -190,7 +190,7 @@ func prepareResolved(ctx context.Context, manifest Manifest, o Options) (_ *Prep
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", app.Name, err)
 			}
-			p.slot.Digests[app.Name] = canonical.Digest
+			p.slot.Digests[ownContract] = canonical.Digest
 		}
 		if app.descriptor != nil {
 			for _, name := range slices.Sorted(maps.Keys(app.descriptor.Requires)) {
@@ -252,11 +252,12 @@ func generateTypes(ctx context.Context, language string, request mcptype.Generat
 	case "typescript":
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
 	case "browser":
-		// Browser views also call their own server, so its contract joins the dependencies.
+		// Browser views also call their own server, so its contract joins the dependencies under the
+		// reserved key self, whatever the app is named.
 		request.Target, request.BrowserRuntimeSpecifier, request.ProtocolSpecifier, request.Entry = "browser", "../runtime.mjs", "holon-core/protocol", "index"
 		if own != nil {
 			request.Contracts = maps.Clone(request.Contracts)
-			request.Contracts[name] = own
+			request.Contracts[ownContract] = own
 		}
 	case "python":
 		request.Target = "python"

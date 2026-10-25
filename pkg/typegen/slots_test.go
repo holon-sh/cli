@@ -291,7 +291,7 @@ func TestGenerateWritesDeclaredSlots(t *testing.T) {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 	browser := read(t, ui, "generated/index.js")
-	for _, want := range []string{`import { bindApps } from "../runtime.mjs";`, "exposeTools", `"status"`, `"lookup"`} {
+	for _, want := range []string{`import { bindApps } from "../runtime.mjs";`, "exposeTools", `"self":{"tools":[{"name":"status"`, `"lookup"`} {
 		if !strings.Contains(browser, want) {
 			t.Fatalf("holon-ui index.js lacks %s:\n%s", want, browser)
 		}
@@ -301,6 +301,10 @@ func TestGenerateWritesDeclaredSlots(t *testing.T) {
 		if !strings.Contains(declarations, want) {
 			t.Fatalf("holon-ui index.d.ts lacks %s:\n%s", want, declarations)
 		}
+	}
+	// The app's own server is exposed under the reserved key self, not its app name.
+	if !strings.Contains(declarations, `"self": {`) || strings.Contains(browser, `"app":{`) {
+		t.Fatalf("own contract is not keyed self:\n%s\n%s", browser, declarations)
 	}
 	if !isFile(filepath.Join(ui, "generated/resources.d.ts")) {
 		t.Fatal("holon-ui slot has no resources.d.ts")

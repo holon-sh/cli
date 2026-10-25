@@ -4,63 +4,39 @@ import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } 
 export { ToolCallError } from "holon-core/protocol";
 export type { Resources };
 export interface Inputs {
-  "empty": {
-  };
-  "mysql": {
-    "select": { "columns"?: (Array<string> | Array<{ "column": string; "label": string; }> | null); "direction"?: ("asc" | "desc"); "table": string; };
-  };
   "orders": {
     "get_order": { "count"?: number; "orderId": string; };
     "then": {  };
   };
-  "with-hyphen": {
-    "get_order": { "count"?: number; "orderId": string; };
-    "then": {  };
+  "self": {
+    "status": {  };
   };
 }
 export interface Outputs {
-  "empty": {
-  };
-  "mysql": {
-    "select": { "columns": Array<{ "value": number; }>; };
-  };
   "orders": {
     "get_order": { "total": number; [key: string]: unknown; };
     "then": unknown;
   };
-  "with-hyphen": {
-    "get_order": { "total": number; [key: string]: unknown; };
-    "then": unknown;
+  "self": {
+    "status": unknown;
   };
 }
 export interface InputTypes {
-  "empty": {
-  };
-  "mysql": {
-    "select": { "Direction": ("asc" | "desc"); "LabeledColumn": { "column": string; "label": string; }; };
-  };
   "orders": {
     "get_order": {  };
     "then": {  };
   };
-  "with-hyphen": {
-    "get_order": {  };
-    "then": {  };
+  "self": {
+    "status": {  };
   };
 }
 export interface OutputTypes {
-  "empty": {
-  };
-  "mysql": {
-    "select": { "LabeledColumn": { "value": number; }; "Root": { "columns": Array<{ "value": number; }>; }; };
-  };
   "orders": {
     "get_order": {  };
     "then": {  };
   };
-  "with-hyphen": {
-    "get_order": {  };
-    "then": {  };
+  "self": {
+    "status": {  };
   };
 }
 

@@ -12,6 +12,10 @@ holon types generate --contract
 Directories listed together resolve each other's `requires` by the
 `server.json` name; everything else comes from the MCP registry.
 
+Your own server is `self`: generated browser clients (`holon-ui`) expose the
+app's own contract under that key, for example `createApps({ self: { host } })`,
+so `self` cannot be used as a `requires` alias.
+
 This package bundles the native `holon` executable. Supported platforms are
 macOS 15 or newer and Linux, on arm64 and x86-64. Node 22+ or Python 3.11+ is
 required to analyze applications written in the corresponding language.
