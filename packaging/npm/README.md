@@ -1,9 +1,9 @@
-# holon-cli
+# holon-types
 
 The standalone Holon CLI generates and checks typed MCP clients.
 
 ```sh
-uv tool install holon-cli
+uv tool install holon-types
 holon types generate
 holon check --no-published
 ```
@@ -19,13 +19,13 @@ builds are published only when the repository owner dispatches
 ## Dev releases
 
 Dev builds are versioned `0.0.1-dev.<run number>` and published under the npm
-`dev` dist-tag (never `latest`), as `@holon-sh/cli` plus the
-`@holon-sh/cli-<os>-<arch>` platform packages. The version is set inside the
+`dev` dist-tag (never `latest`), as `@holon-sh/types` plus the
+`@holon-sh/types-<os>-<arch>` platform packages. The version is set inside the
 workflow run; the repository stays at `0.0.1`.
 
 ```sh
-npm install -g @holon-sh/cli@dev
-npm install -g @holon-sh/cli@0.0.1-dev.12   # exact version from the job summary
+npm install -g @holon-sh/types@dev
+npm install -g @holon-sh/types@0.0.1-dev.12   # exact version from the job summary
 ```
 
 Maintainers: configure a trusted publisher on npmjs.com for each of the five
