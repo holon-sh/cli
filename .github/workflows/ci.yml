@@ -7,7 +7,7 @@ on:
       version:
         description: Version stamped into the binaries and packages
         type: string
-        default: "0.1.0"
+        default: "0.0.1"
 permissions:
   contents: read
 jobs:
@@ -57,7 +57,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
-      HOLON_VERSION: ${{ inputs.version || '0.1.0' }}
+      HOLON_VERSION: ${{ inputs.version || '0.0.1' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

@@ -10,7 +10,7 @@ func TestEnsureDependenciesRecognizesNodeRuntimeDeclarations(t *testing.T) {
 	for _, section := range []string{"dependencies", "devDependencies", "peerDependencies"} {
 		t.Run(section, func(t *testing.T) {
 			root := t.TempDir()
-			put(t, root, "package.json", fmt.Sprintf(`{"%s":{"%s":"^0.1.0"}}`, section, nodePackage))
+			put(t, root, "package.json", fmt.Sprintf(`{"%s":{"%s":"^0.0.1"}}`, section, nodePackage))
 			var output bytes.Buffer
 			if err := ensureDependencies(t.Context(), App{Name: "app", Path: root}, Options{NoInstall: true, Stdout: &output}); err != nil {
 				t.Fatal(err)
