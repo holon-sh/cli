@@ -42,9 +42,8 @@ export interface OutputTypes {
 
 export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };
 export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
-export interface HostBinding { host: { callServerTool(params: { name: string; arguments?: Record<string, unknown> }, options?: { signal?: AbortSignal }): Promise<unknown>; readServerResource(params: { uri: string }, options?: { signal?: AbortSignal }): Promise<unknown> } }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
-export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding | HostBinding }, options?: CreateOptions): Pick<Apps,K>;
+export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 export interface ExposeOptions { signal?: AbortSignal; execute?: (name: string, args: Record<string, unknown>) => Promise<unknown> }
 export declare function exposeTools(app: Apps[keyof Apps], options?: ExposeOptions): Promise<boolean>;
 export type PageResult<I> = { readonly value: I; readonly issues?: undefined } | { readonly issues: ReadonlyArray<{ readonly message: string }> };
@@ -54,6 +53,5 @@ export interface PageAnnotations { title?: string; readOnlyHint?: boolean; destr
 export interface PageTool<S extends PageSchema = PageSchema> { description: string; inputSchema: S; annotations?: PageAnnotations; execute: (args: PageInput<S>) => unknown }
 export interface PageHost { registerTool(name: string, config: { description: string; inputSchema: PageSchema; annotations?: PageAnnotations }, callback: (args: any, extra: any) => any): { remove(): void } }
 export declare function registerPageTools<S extends { [name: string]: PageSchema }>(tools: { [K in keyof S]: PageTool<S[K]> }, options?: { view?: PageHost; signal?: AbortSignal }): Promise<boolean>;
-import type { App } from "@modelcontextprotocol/ext-apps";
-export declare const apps: Pick<Apps, "checkout">;
-export declare const view: App;
+import { App as HostApp } from "@modelcontextprotocol/ext-apps";
+export declare class App extends HostApp { readonly tools: Apps["checkout"]["tools"]; readonly resources: Apps["checkout"]["resources"]; readonly callTool: Apps["checkout"]["callTool"] }

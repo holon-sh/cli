@@ -142,7 +142,7 @@ type GenerateRequest struct {
 	// Empty means index for node and browser for browser.
 	Entry string `json:"entry,omitempty"`
 	// Own, for browser targets, is the contracts key of the app's own server. The module then exports
-	// apps and view: clients bound to the MCP Apps host that embeds the page, connected on first use.
+	// App: the ext-apps App with that server's tools and resources typed, called through the host.
 	Own string `json:"own,omitempty"`
 }
 
