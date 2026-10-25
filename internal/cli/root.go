@@ -13,16 +13,22 @@ import (
 	"path/filepath"
 )
 
+// appDirs returns the application directories: args, or the working directory when there are none.
+func appDirs(args []string) []string {
+	if len(args) == 0 {
+		return []string{"."}
+	}
+	return args
+}
+
 func NewCommand(version string) *cobra.Command {
-	var project string
-	root := &cobra.Command{Use: "holon", Short: "Generate and check portable MCP application types", Version: version + " (standalone types CLI)", SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "holon", Short: "Generate and check typed MCP clients for MCP server directories", Version: version + " (standalone types CLI)", SilenceUsage: true, SilenceErrors: true}
 	root.SetVersionTemplate("holon {{.Version}}\n")
-	root.PersistentFlags().StringVarP(&project, "project", "p", "", "Path to holon.yaml")
 	types := &cobra.Command{Use: "types", Short: "Generate clients and inspect MCP contracts"}
 	root.AddCommand(types)
 	var noInstall, quiet bool
-	generate := &cobra.Command{Use: "generate [APP...]", Short: "Generate types in installed SDK slots", RunE: func(cmd *cobra.Command, args []string) error {
-		manifest, err := typegen.LoadManifest(project)
+	generate := &cobra.Command{Use: "generate [DIR...]", Short: "Generate types in installed SDK slots", RunE: func(cmd *cobra.Command, args []string) error {
+		manifest, names, err := typegen.Directories(appDirs(args))
 		if err != nil {
 			return err
 		}
@@ -30,27 +36,25 @@ func NewCommand(version string) *cobra.Command {
 		if quiet {
 			stdout = io.Discard
 		}
-		return typegen.Generate(cmd.Context(), manifest, typegen.Options{Apps: args, NoInstall: noInstall, Stdout: stdout, Stderr: cmd.ErrOrStderr()})
+		return typegen.Generate(cmd.Context(), manifest, typegen.Options{Apps: names, NoInstall: noInstall, Stdout: stdout, Stderr: cmd.ErrOrStderr()})
 	}}
 	generate.Flags().BoolVar(&noInstall, "no-install", false, "Print missing runtime installation commands without running them")
 	generate.Flags().BoolVar(&quiet, "quiet", false, "Suppress generation progress")
 	types.AddCommand(generate)
-	var noPublished bool
-	check := &cobra.Command{Use: "check [APP...]", Short: "Check typed contracts in temporary source copies", RunE: func(cmd *cobra.Command, args []string) error {
-		manifest, err := typegen.LoadManifest(project)
+	check := &cobra.Command{Use: "check [DIR...]", Short: "Type-check apps against their typed contracts in temporary source copies", RunE: func(cmd *cobra.Command, args []string) error {
+		manifest, names, err := typegen.Directories(appDirs(args))
 		if err != nil {
 			return err
 		}
-		return typegen.Check(cmd.Context(), manifest, typegen.Options{Apps: args, NoPublished: noPublished, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
+		return typegen.Check(cmd.Context(), manifest, typegen.Options{Apps: names, NoPublished: true, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
 	}}
-	check.Flags().BoolVar(&noPublished, "no-published", false, "Skip comparison with published contracts")
 	root.AddCommand(check)
 	var url, name, release string
-	contract := &cobra.Command{Use: "contract [APP]", Short: "Print a language-neutral MCP contract document", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	contract := &cobra.Command{Use: "contract [DIR] | --url URL --name NAME --version VERSION", Short: "Print a language-neutral MCP contract document", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		var metadata *mcpcontract.Metadata
 		if url != "" {
 			if len(args) != 0 {
-				return errors.New("APP and --url are mutually exclusive")
+				return errors.New("DIR and --url are mutually exclusive")
 			}
 			if name == "" || release == "" {
 				return errors.New("--url requires --name and --version")
@@ -64,26 +68,17 @@ func NewCommand(version string) *cobra.Command {
 			if name != "" || release != "" {
 				return errors.New("--name and --version require --url")
 			}
-			m, err := typegen.LoadManifest(project)
+			m, names, err := typegen.Directories(appDirs(args))
 			if err != nil {
 				return err
 			}
-			if len(args) == 0 {
-				for _, app := range m.Apps {
-					if app.Path != "" {
-						args = append(args, app.Name)
-					}
-				}
-				if len(args) != 1 {
-					return errors.New("choose one APP to print its contract")
-				}
-			}
-			metadata, err = typegen.Contract(cmd.Context(), m, args[0], typegen.Options{Stderr: cmd.ErrOrStderr()})
+			app := names[0]
+			metadata, err = typegen.Contract(cmd.Context(), m, app, typegen.Options{Stderr: cmd.ErrOrStderr()})
 			if err != nil {
 				return err
 			}
 			if metadata == nil || metadata.Contract == nil {
-				return fmt.Errorf("%s has no statically extracted contract", args[0])
+				return fmt.Errorf("%s has no statically extracted contract", app)
 			}
 		}
 		// Provider documents contain one contract, without caller expectations.

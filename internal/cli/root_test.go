@@ -30,33 +30,37 @@ func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
 	if !strings.Contains(output.String(), "standalone types CLI") {
 		t.Fatalf("ambiguous version: %s", &output)
 	}
-	command = NewCommand("test")
-	command.SetArgs([]string{"check", "--emit"})
-	command.SetErr(new(bytes.Buffer))
-	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "unknown flag") {
-		t.Fatalf("legacy emit flag accepted: %v", err)
+	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--project", "x"}} {
+		command = NewCommand("test")
+		command.SetArgs(args)
+		command.SetErr(new(bytes.Buffer))
+		if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "unknown") {
+			t.Fatalf("removed flag accepted: %v: %v", args, err)
+		}
 	}
 }
 
-func TestTypesCompileWritesAGenerateRequestIntoTheOutputDirectory(t *testing.T) {
-	root := t.TempDir()
-	request := `{"target":"python","identity":{"name":"caller","version":"1"},"contracts":{"orders":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}},"python_module":"holon/apps/__init__.py"}`
-	if err := os.WriteFile(filepath.Join(root, "request.json"), []byte(request), 0o644); err != nil {
-		t.Fatal(err)
-	}
+func run(args ...string) error {
 	command := NewCommand("test")
+	command.SetArgs(args)
 	command.SetOut(new(bytes.Buffer))
-	command.SetArgs([]string{"types", "compile", filepath.Join(root, "request.json"), "--out", filepath.Join(root, "out")})
-	if err := command.Execute(); err != nil {
+	command.SetErr(new(bytes.Buffer))
+	return command.Execute()
+}
+
+func TestCommandsRequireAServerJSONInEveryDirectory(t *testing.T) {
+	empty, app := t.TempDir(), t.TempDir()
+	server := `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout"}`
+	if err := os.WriteFile(filepath.Join(app, "server.json"), []byte(server), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	module, err := os.ReadFile(filepath.Join(root, "out", "holon", "apps", "__init__.py"))
-	if err != nil || !strings.Contains(string(module), "async def read(") {
-		t.Fatalf("generated module: %v\n%s", err, module)
+	for _, args := range [][]string{{"types", "generate", empty}, {"types", "generate", app, empty}, {"check", app, empty}, {"types", "contract", empty}} {
+		err := run(args...)
+		if err == nil || !strings.Contains(err.Error(), empty+": no server.json found") || !strings.Contains(err.Error(), "pass DIR...") {
+			t.Fatalf("%v = %v", args, err)
+		}
 	}
-	command.SetArgs([]string{"types", "compile", "--out", root})
-	command.SetIn(strings.NewReader(`{"target":"python","identity":{"name":"x","version":"1"},"unknown":1}`))
-	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), `unknown field "unknown"`) {
-		t.Fatalf("unknown request fields accepted: %v", err)
+	if err := run("types", "contract", app, empty); err == nil || !strings.Contains(err.Error(), "accepts at most 1 arg") {
+		t.Fatalf("contract with two directories = %v", err)
 	}
 }

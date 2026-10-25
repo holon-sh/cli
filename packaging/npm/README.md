@@ -3,10 +3,14 @@
 The standalone Holon CLI generates and checks typed MCP clients.
 
 ```sh
-uv tool install holon-types
-holon types generate
-holon check --no-published
+cd my-mcp-server            # a directory with server.json
+holon types generate        # or: holon types generate ./checkout ./orders
+holon check
+holon types contract
 ```
+
+Directories listed together resolve each other's `requires` by the
+`server.json` name; everything else comes from the MCP registry.
 
 This package bundles the native `holon` executable. Supported platforms are
 macOS 15 or newer and Linux, on arm64 and x86-64. Node 22+ or Python 3.11+ is
