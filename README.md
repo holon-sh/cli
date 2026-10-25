@@ -38,7 +38,7 @@ import { apps } from "holon-sh";
 
 // ...
 
-const order = await apps.orders.tools.lookup({ id }); // { id: string; total: number }
+const order = await apps.orders.tools.lookup({ id }); // { id: string; total: number }, validated
 ```
 
 as opposed to:
@@ -49,7 +49,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 // ...
 
 const client = new Client({ name: "checkout", version: "1.0.0" });
-await client.connect(new StreamableHTTPClientTransport(new URL(process.env.ORDERS_MCP_URL!)));
+await client.connect(new StreamableHTTPClientTransport(new URL("http://localhost:3001/mcp")));
 const result = await client.callTool({ name: "lookup", arguments: { id } });
 const order = result.structuredContent as { id: string; total: number }; // unchecked
 ```
@@ -84,18 +84,18 @@ Fails when a provider's schema no longer matches the caller's code.
 
 ## Call a server you don't own
 
-Declare it in `server.json` by its [MCP Registry](https://registry.modelcontextprotocol.io) name and version:
+Declare it in `server.json` by its [MCP Registry](https://registry.modelcontextprotocol.io) name and version. [Context7](https://context7.com) serves library documentation and needs no API key:
 
 ```json
 {
-  "name": "io.github.holon-sh/checkout",
+  "name": "io.github.holon-sh/docs",
   "version": "1.0.0",
-  "description": "Check out orders",
+  "description": "Look up library docs",
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "sh.holon": {
         "requires": {
-          "search": { "name": "io.github.acme/search", "version": "2.1.0" }
+          "context7": { "name": "io.github.upstash/context7", "version": "4.4.4" }
         }
       }
     }
@@ -103,7 +103,27 @@ Declare it in `server.json` by its [MCP Registry](https://registry.modelcontextp
 }
 ```
 
-The contract comes from the registry record: a published contract document, one stored beside the container image, or a live `tools/list`. With none, the client is untyped.
+```sh
+holon types generate
+```
+
+```typescript
+import { apps } from "holon-sh";
+
+// ...
+
+const result = await apps.context7.callTool({
+  name: "resolve-library-id",                           // tool names are checked
+  arguments: { libraryName: "zod", query: "parse a schema" }, // arguments are typed and validated
+});
+result.content; // [{ type: "text", text: "Available Libraries: ..." }]
+```
+
+```sh
+CONTEXT7_MCP_URL=https://mcp.context7.com/mcp npm run serve
+```
+
+The contract comes from the registry record: a published contract document, one stored beside the container image, or a live `tools/list` against the server. Context7 is the last case: its inputs are typed, but it publishes no output schema, so results are read from `content`. With no contract at all, the client is untyped.
 
 ## Publish your server's contract
 
