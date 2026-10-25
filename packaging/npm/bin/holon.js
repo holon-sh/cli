@@ -7,12 +7,12 @@ if (!["darwin", "linux"].includes(platform) || !["arm64", "x64"].includes(arch))
   console.error(`holon: unsupported platform ${platform}-${arch}`);
   process.exit(1);
 }
-const name = `@holon-sh/types-${platform}-${arch}`;
+const name = `holon-types-${platform}-${arch}`;
 let binary;
 try {
   binary = createRequire(import.meta.url).resolve(`${name}/bin/holon`);
 } catch {
-  console.error(`holon: missing ${name}; reinstall @holon-sh/types with optional dependencies enabled`);
+  console.error(`holon: missing ${name}; reinstall holon-types with optional dependencies enabled`);
   process.exit(1);
 }
 const child = spawnSync(binary, process.argv.slice(2), { stdio: "inherit" });

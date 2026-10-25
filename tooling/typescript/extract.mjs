@@ -86,7 +86,7 @@ function usesApps(root) {
     if (["node_modules", ".git", ".holon", ".holon-types"].includes(entry.name)) continue;
     const path = resolve(root, entry.name);
     if (entry.isDirectory() && usesApps(path)) return true;
-    if (entry.isFile() && /\.[cm]?[jt]sx?$/.test(entry.name) && /@holon-sh\/apps(?:[\/"'])/.test(readFileSync(path, "utf8"))) return true;
+    if (entry.isFile() && /\.[cm]?[jt]sx?$/.test(entry.name) && /(?:@holon-sh\/apps|holon-sh)(?:[\/"'])/.test(readFileSync(path, "utf8"))) return true;
   }
   return false;
 }
@@ -122,7 +122,7 @@ class Analyzer {
     for (const statement of file.statements) {
       if (ts.isImportDeclaration(statement)) {
         const specifier = statement.moduleSpecifier.text;
-        if (/^@holon-sh\/apps(?:\/|$)/.test(specifier)) this.usesApps = true;
+        if (/^(?:@holon-sh\/apps|holon-sh)(?:\/|$)/.test(specifier)) this.usesApps = true;
         const clause = statement.importClause;
         if (!clause) {
           if (specifier.startsWith(".")) this.module(this.resolveImport(dirname(path), specifier, statement));

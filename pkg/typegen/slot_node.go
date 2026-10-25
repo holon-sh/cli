@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const nodePackage = "@holon-sh/apps"
+const nodePackage = "holon-sh"
 
 type slotMetadata struct {
 	Marker      string               `json:"marker"`
