@@ -128,11 +128,17 @@ func prepareResolved(ctx context.Context, manifest Manifest, o Options) (_ *Prep
 		if o.GoModule != "" && strings.HasSuffix(p.entry, ".go") {
 			p.language = "go"
 		}
-		if p.language != "" {
+		if p.language != "" && p.language != "typescript" {
 			p.packages[p.language] = nil
 		}
 		if isFile(filepath.Join(p.root, "package.json")) {
-			p.packages["typescript"] = nil
+			kinds, err := typeScriptKinds(p.root)
+			if err != nil {
+				return nil, err
+			}
+			for _, kind := range kinds {
+				p.packages[kind] = nil
+			}
 		}
 	}
 	results, err := extractTypes(ctx, root, manifest.Apps, o)
@@ -242,44 +248,36 @@ func prepareResolved(ctx context.Context, manifest Manifest, o Options) (_ *Prep
 	return &Prepared{Manifest: manifest, root: root, options: o, resolved: resolved}, nil
 }
 func generateTypes(ctx context.Context, language string, request mcptype.GenerateRequest, name string, own *mcpcontract.Contract, goModule string) (map[string]string, error) {
-	var requests []mcptype.GenerateRequest
 	switch language {
 	case "typescript":
-		request.ProtocolSpecifier = "../protocol.js"
-		node, browser := request, request
-		node.Target = "node"
-		node.RuntimeSpecifier = "../runtime.mjs"
-		browser.Target = "browser"
-		browser.BrowserRuntimeSpecifier = "../browser-runtime.mjs"
+		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
+	case "browser":
+		// Browser views also call their own server, so its contract joins the dependencies.
+		request.Target, request.BrowserRuntimeSpecifier, request.ProtocolSpecifier, request.Entry = "browser", "../runtime.mjs", "holon-core/protocol", "index"
 		if own != nil {
-			browser.Contracts = maps.Clone(request.Contracts)
-			browser.Contracts[name] = own
+			request.Contracts = maps.Clone(request.Contracts)
+			request.Contracts[name] = own
 		}
-		requests = []mcptype.GenerateRequest{node, browser}
 	case "python":
 		request.Target = "python"
 		request.PythonModule = "holon/apps/__init__.py"
 		request.PythonRuntimeModule = "holon.client"
-		requests = []mcptype.GenerateRequest{request}
 	case "go":
 		// The package matches the Holon platform's: unbannered, marked by package.json.
 		request.Target = "go"
 		request.Banner = ""
 		request.GoModule = goModule
 		request.PackageFields = map[string]any{"holon": mcpcontract.Marker}
-		requests = []mcptype.GenerateRequest{request}
 	default:
 		return nil, fmt.Errorf("unsupported language %s", language)
 	}
-	files := map[string]string{}
-	for _, r := range requests {
-		generated, err := mcptype.Generate(ctx, r)
-		if err != nil {
-			return nil, err
-		}
-		for name, data := range generated {
-			files[name] = string(data)
-		}
+	generated, err := mcptype.Generate(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	files := make(map[string]string, len(generated))
+	for name, data := range generated {
+		files[name] = string(data)
 	}
 	return files, nil
 }
@@ -324,24 +322,29 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 		return err
 	}
 	defer prepared.Close()
-	slots := map[string]string{}
+	type slotKey struct{ kind, app string }
+	slots := map[slotKey]string{}
 	owners := map[string]string{}
 	for _, app := range prepared.Manifest.Apps {
 		p := app.prepared
 		if p == nil || !o.selects(app.Name) {
 			continue
 		}
-		if _, ok := p.packages["typescript"]; ok {
-			slot, _, err := nodeSlot(app.Path)
+		for _, kind := range slices.Sorted(maps.Keys(slotPackages)) {
+			if _, ok := p.packages[kind]; !ok {
+				continue
+			}
+			pkg := slotPackages[kind]
+			slot, _, err := nodeSlot(app.Path, pkg)
 			if err != nil {
 				return err
 			}
 			if prior, ok := owners[slot]; ok {
-				return fmt.Errorf("apps %s and %s share %s; install a separate %s for each app (avoid hoisting this package)", prior, app.Name, slot, nodePackage)
+				return fmt.Errorf("apps %s and %s share %s; install a separate %s for each app (avoid hoisting this package)", prior, app.Name, slot, pkg)
 			}
 			owners[slot] = app.Name
-			slots[app.Name] = slot
-			if err = validateNodeSlot(slot, p.slot); err != nil {
+			slots[slotKey{kind, app.Name}] = slot
+			if err = validateNodeSlot(slot, pkg, p.slot); err != nil {
 				return err
 			}
 		}
@@ -368,7 +371,9 @@ func Generate(ctx context.Context, m Manifest, options Options) error {
 			var err error
 			switch language {
 			case "typescript":
-				err = prepared.WriteNodeSlot(app.Name, slots[app.Name])
+				err = prepared.WriteNodeSlot(app.Name, slots[slotKey{language, app.Name}])
+			case "browser":
+				err = prepared.WriteBrowserSlot(app.Name, slots[slotKey{language, app.Name}])
 			case "python":
 				err = prepared.WritePythonSlot(app.Name, app.Path)
 			case "go":
@@ -409,7 +414,17 @@ func (p *Prepared) WriteNodeSlot(app, pkgDir string) error {
 	if err != nil {
 		return err
 	}
-	return writeNodeSlot(pkgDir, files, prepared.slot)
+	return writeNodeSlot(pkgDir, slotPackages["typescript"], files, prepared.slot)
+}
+
+// WriteBrowserSlot writes app's browser clients into pkgDir/generated, where pkgDir is an installed
+// holon-ui package or a copy staged for an image. Same refusals as WriteNodeSlot.
+func (p *Prepared) WriteBrowserSlot(app, pkgDir string) error {
+	prepared, files, err := p.files(app, "browser")
+	if err != nil {
+		return err
+	}
+	return writeNodeSlot(pkgDir, slotPackages["browser"], files, prepared.slot)
 }
 
 // WritePythonSlot writes app's holon/apps/__init__.py under root, an application directory or its
@@ -455,8 +470,10 @@ func acquireLocks(m Manifest) (func(), error) {
 				return release, err
 			}
 			paths[real] = true
-			if slot, _, err := nodeSlot(app.Path); err == nil {
-				paths[slot] = true
+			for _, pkg := range slotPackages {
+				if slot, _, err := nodeSlot(app.Path, pkg); err == nil {
+					paths[slot] = true
+				}
 			}
 		}
 	}

@@ -138,6 +138,9 @@ type GenerateRequest struct {
 	PythonRuntimeModule     string                           `json:"python_runtime_module,omitempty"`
 	Banner                  string                           `json:"banner,omitempty"`
 	GoModule                string                           `json:"go_module,omitempty"`
+	// Entry names the TypeScript entry point files: "index" gives index.js, index.d.ts and resources.d.ts.
+	// Empty means index for node and browser for browser.
+	Entry string `json:"entry,omitempty"`
 }
 
 // Generate returns the package files by relative path.

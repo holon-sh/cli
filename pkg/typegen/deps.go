@@ -4,29 +4,104 @@ import (
 	"context"
 	"fmt"
 	"github.com/holon-sh/cli/internal/commandenv"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
+// packageJSON is the part of an app's package.json that selects its runtimes.
+type packageJSON struct {
+	PackageManager                                  string `json:"packageManager"`
+	Dependencies, DevDependencies, PeerDependencies map[string]string
+}
+
+// declares reports whether any dependency section names pkg.
+func (p packageJSON) declares(pkg string) bool {
+	return p.Dependencies[pkg] != "" || p.DevDependencies[pkg] != "" || p.PeerDependencies[pkg] != ""
+}
+
+// typeScriptKinds returns the TypeScript client kinds an app with a package.json in dir receives: typescript
+// when it declares holon-sh or neither runtime, and browser when it declares holon-ui.
+func typeScriptKinds(dir string) ([]string, error) {
+	var pkg packageJSON
+	if err := readTypeJSON(filepath.Join(dir, "package.json"), &pkg); err != nil {
+		return nil, err
+	}
+	var kinds []string
+	if pkg.declares(slotPackages["browser"]) {
+		kinds = append(kinds, "browser")
+	}
+	if pkg.declares(slotPackages["typescript"]) || len(kinds) == 0 {
+		kinds = append(kinds, "typescript")
+	}
+	return kinds, nil
+}
+
+var runtimeImport = regexp.MustCompile(`(?:^|["'\s])(holon-sh|holon-ui|@holon-sh/apps)(?:/([\w./-]*))?["']`)
+
+// importedRuntimes scans the app's own JavaScript and TypeScript sources (not installed dependencies) for
+// holon-sh and holon-ui imports, like the extractor's usesApps. legacyBrowser reports an import of
+// holon-sh/browser or holon-sh/browser-runtime, which moved to holon-ui.
+func importedRuntimes(root string) (packages map[string]bool, legacyBrowser bool, err error) {
+	packages = map[string]bool{}
+	source := regexp.MustCompile(`\.[cm]?[jt]sx?$`)
+	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path != root && (strings.HasPrefix(entry.Name(), ".holon") || generatedSource(root, path)) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !entry.Type().IsRegular() || !source.MatchString(entry.Name()) {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, match := range runtimeImport.FindAllSubmatch(data, -1) {
+			name, subpath := string(match[1]), string(match[2])
+			if name == "holon-sh" && slices.Contains([]string{"browser", "browser-runtime"}, subpath) {
+				legacyBrowser = true
+			}
+			packages[name] = true
+		}
+		return nil
+	})
+	return packages, legacyBrowser, err
+}
+
 func ensureDependencies(ctx context.Context, app App, o Options) error {
 	if isFile(filepath.Join(app.Path, "package.json")) {
-		var pkg struct {
-			PackageManager                                  string `json:"packageManager"`
-			Dependencies, DevDependencies, PeerDependencies map[string]string
-		}
+		var pkg packageJSON
 		if err := readTypeJSON(filepath.Join(app.Path, "package.json"), &pkg); err != nil {
 			return err
 		}
-		hasRuntime := false
-		for _, dependencies := range []map[string]string{pkg.Dependencies, pkg.DevDependencies, pkg.PeerDependencies} {
-			if dependencies[nodePackage] != "" {
-				hasRuntime = true
+		imported, legacy, err := importedRuntimes(app.Path)
+		if err != nil {
+			return err
+		}
+		if legacy {
+			return fmt.Errorf("%s imports holon-sh/browser, which moved to the holon-ui package; depend on holon-ui and import from \"holon-ui\"", app.Name)
+		}
+		// Add each runtime the app imports but does not declare; an app that names neither gets holon-sh.
+		var missing []string
+		for _, runtime := range []string{"holon-ui", "holon-sh"} {
+			if !pkg.declares(runtime) && imported[runtime] {
+				missing = append(missing, runtime)
 			}
 		}
-		if !hasRuntime {
+		if !pkg.declares("holon-sh") && !pkg.declares("holon-ui") && !imported["holon-sh"] && !imported["holon-ui"] {
+			missing = []string{"holon-sh"}
+		}
+		if len(missing) > 0 {
 			manager, _, _ := strings.Cut(pkg.PackageManager, "@")
 			if manager == "" {
 				manager = "npm"
@@ -52,7 +127,7 @@ func ensureDependencies(ctx context.Context, app App, o Options) error {
 			default:
 				return fmt.Errorf("unsupported package manager %q", manager)
 			}
-			if err := installDependency(ctx, app.Path, manager, []string{verb, nodePackage}, o); err != nil {
+			if err := installDependency(ctx, app.Path, manager, append([]string{verb}, missing...), o); err != nil {
 				return err
 			}
 		}

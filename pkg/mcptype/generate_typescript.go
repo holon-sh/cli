@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// The @holon-sh/apps-style package: index.* for Node, browser.* for browsers.
+// The @holon-sh/apps-style package: index.* for Node, browser.* for browsers, unless the request names the entry.
 
 const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
 export interface HostBinding { host: { callServerTool(params: { name: string; arguments?: Record<string, unknown> }, options?: { signal?: AbortSignal }): Promise<unknown>; readServerResource(params: { uri: string }, options?: { signal?: AbortSignal }): Promise<unknown> } }
@@ -67,20 +67,28 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest) (ma
 	bound := fmt.Sprintf("export function createApps(bindings,options){return bindApps(%s,%s,bindings,options)}\n", &identity, &contracts)
 	runtime := quoted(valueOr(request.runtimeSpecifier, "./runtime.mjs"))
 	browserRuntime := quoted(valueOr(request.browserRuntimeSpecifier, "./browser-runtime.mjs"))
+	entry := "index"
+	if request.target == "browser" {
+		entry = "browser"
+	}
+	entry = valueOr(request.entry, entry)
+	resourcesEntry := "resources"
+	if entry != "index" {
+		resourcesEntry = entry + "-resources"
+	}
 	var files map[string]string
 	if request.target == "browser" {
 		files = map[string]string{
-			"browser.js":             fmt.Sprintf("import { bindApps } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", browserRuntime, browserRuntime, bound),
-			"browser.d.ts":           types("browser-resources") + bindingTypes + exposeTypes,
-			"browser-resources.d.ts": resources,
+			entry + ".js":   fmt.Sprintf("import { bindApps } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", browserRuntime, browserRuntime, bound),
+			entry + ".d.ts": types(resourcesEntry) + bindingTypes + exposeTypes,
 		}
 	} else {
 		files = map[string]string{
-			"index.js":       fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\nexport const apps = create(%s, %s);\n%s", runtime, runtime, &identity, &contracts, bound),
-			"index.d.ts":     types("resources") + "export declare const apps: Apps;\n" + bindingTypes,
-			"resources.d.ts": resources,
+			entry + ".js":   fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\nexport const apps = create(%s, %s);\n%s", runtime, runtime, &identity, &contracts, bound),
+			entry + ".d.ts": types(resourcesEntry) + "export declare const apps: Apps;\n" + bindingTypes,
 		}
 	}
+	files[resourcesEntry+".d.ts"] = resources
 	if !request.slot() {
 		files["package.json"] = packageJSON(request.packageFields)
 	}

@@ -64,3 +64,29 @@ func TestCommandsRequireAServerJSONInEveryDirectory(t *testing.T) {
 		t.Fatalf("contract with two directories = %v", err)
 	}
 }
+
+func TestTypesCompileNamesBrowserEntryFiles(t *testing.T) {
+	root := t.TempDir()
+	command := NewCommand("test")
+	command.SetOut(new(bytes.Buffer))
+	command.SetIn(strings.NewReader(`{"target":"browser","identity":{"name":"checkout","version":"1.0.0"},"contracts":{"orders":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}},"browser_runtime_specifier":"../runtime.mjs","protocol_specifier":"holon-core/protocol","entry":"index"}`))
+	command.SetArgs([]string{"types", "compile", "--out", root})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if got := strings.Join(names, " "); got != "index.d.ts index.js resources.d.ts" {
+		t.Fatalf("compiled files = %s", got)
+	}
+	declarations, err := os.ReadFile(filepath.Join(root, "index.d.ts"))
+	if err != nil || !strings.Contains(string(declarations), `from "./resources.js"`) || !strings.Contains(string(declarations), `from "holon-core/protocol"`) {
+		t.Fatalf("index.d.ts: %v\n%s", err, declarations)
+	}
+}
