@@ -4,39 +4,39 @@ import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } 
 export { ToolCallError } from "holon-core/protocol";
 export type { Resources };
 export interface Inputs {
+  "checkout": {
+    "status": {  };
+  };
   "orders": {
     "get_order": { "count"?: number; "orderId": string; };
     "then": {  };
   };
-  "self": {
-    "status": {  };
-  };
 }
 export interface Outputs {
+  "checkout": {
+    "status": unknown;
+  };
   "orders": {
     "get_order": { "total": number; [key: string]: unknown; };
     "then": unknown;
   };
-  "self": {
-    "status": unknown;
-  };
 }
 export interface InputTypes {
+  "checkout": {
+    "status": {  };
+  };
   "orders": {
     "get_order": {  };
     "then": {  };
-  };
-  "self": {
-    "status": {  };
   };
 }
 export interface OutputTypes {
+  "checkout": {
+    "status": {  };
+  };
   "orders": {
     "get_order": {  };
     "then": {  };
-  };
-  "self": {
-    "status": {  };
   };
 }
 

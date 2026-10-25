@@ -133,7 +133,7 @@ func TestPreparedSlotWritersAndGenerateExtractOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	var marker slotMetadata
-	if err = readTypeJSON(filepath.Join(stagedPkg, "generated/holon-generated.json"), &marker); err != nil || marker.App != "app" || marker.Digests["self"] == "" {
+	if err = readTypeJSON(filepath.Join(stagedPkg, "generated/holon-generated.json"), &marker); err != nil || marker.App != "app" || marker.Digests["app"] == "" {
 		t.Fatalf("node slot marker = %+v, %v", marker, err)
 	}
 	if err = prepared.WriteNodeSlot("app", stagedPkg); err != nil {
@@ -147,7 +147,7 @@ func TestPreparedSlotWritersAndGenerateExtractOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker = slotMetadata{}
-	if err = readTypeJSON(filepath.Join(stagedUI, "generated/holon-generated.json"), &marker); err != nil || marker.App != "app" || marker.Digests["self"] == "" {
+	if err = readTypeJSON(filepath.Join(stagedUI, "generated/holon-generated.json"), &marker); err != nil || marker.App != "app" || marker.Digests["app"] == "" {
 		t.Fatalf("browser slot marker = %+v, %v", marker, err)
 	}
 	for _, test := range []struct{ name, want string }{{"other", "no prepared sources"}, {"missing", "unknown app"}} {
