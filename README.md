@@ -110,7 +110,7 @@ const order = result.structuredContent as { id: string; total: number }; // unch
 
 ### Call a server you don't own
 
-[`examples/checkout/server.json`](examples/checkout/server.json) declares [Context7](https://context7.com), a public documentation server that needs no API key, by its [MCP Registry](https://registry.modelcontextprotocol.io) name and version:
+[`examples/checkout/server.json`](examples/checkout/server.json) declares [Context7](https://context7.com), a public documentation server:
 
 ```json
 "sh.holon": {
@@ -120,13 +120,21 @@ const order = result.structuredContent as { id: string; total: number }; // unch
 }
 ```
 
-The same `holon types generate` resolves it through the registry, so `checkout`'s `docs` tool can write:
+`holon` allows us to write:
 
 ```typescript
 const result = await apps.context7.callTool({
   name: "resolve-library-id",                 // tool names are checked
   arguments: { libraryName: library, query }, // arguments are typed and validated
 });
+```
+
+as opposed to:
+
+```typescript
+const client = new Client({ name: "checkout", version: "1.0.0" });
+await client.connect(new StreamableHTTPClientTransport(new URL("https://mcp.context7.com/mcp")));
+const result = await client.callTool({ name: "resolve-library-id", arguments: { libraryName: library, query } }); // unchecked
 ```
 
 ```sh
@@ -151,24 +159,4 @@ as opposed to:
 ```typescript
 const result = await view.callServerTool({ name: "total", arguments: { id } });
 const { total } = result.structuredContent as { total: number }; // unchecked
-```
-
-### Check in CI
-
-```sh
-holon types check . ../orders
-```
-
-Fails when a provider's schema no longer matches the caller's code.
-
-## Publish your server's contract
-
-```sh
-holon types generate --contract > contract.json
-```
-
-Host the file and reference it from `server.json`:
-
-```json
-"sh.holon": { "types": "https://example.com/orders/1.0.0/contract.json" }
 ```
