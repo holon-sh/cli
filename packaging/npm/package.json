@@ -1,5 +1,5 @@
 {
-  "name": "@holon-sh/types",
+  "name": "holon-types",
   "version": "0.0.1",
   "description": "Standalone Holon typed-contract CLI",
   "repository": {"type": "git", "url": "git+https://github.com/holon-sh/cli.git"},
@@ -10,9 +10,9 @@
   "engines": {"node": ">=22"},
   "publishConfig": {"access": "public"},
   "optionalDependencies": {
-    "@holon-sh/types-darwin-arm64": "0.0.1",
-    "@holon-sh/types-darwin-x64": "0.0.1",
-    "@holon-sh/types-linux-arm64": "0.0.1",
-    "@holon-sh/types-linux-x64": "0.0.1"
+    "holon-types-darwin-arm64": "0.0.1",
+    "holon-types-darwin-x64": "0.0.1",
+    "holon-types-linux-arm64": "0.0.1",
+    "holon-types-linux-x64": "0.0.1"
   }
 }

@@ -88,5 +88,5 @@ jobs:
           path: |
             dist/holon_*.tar.gz
             dist/holon_types-*.whl
-            dist/holon-sh-types-*.tgz
+            dist/holon-types-*.tgz
             dist/SHA256SUMS
