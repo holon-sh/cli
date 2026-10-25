@@ -18,8 +18,6 @@ You install the CLI once; the first `holon types generate` adds the runtime to e
 go install github.com/holon-sh/cli/cmd/holon@latest
 ```
 
-The CLI is also on PyPI as `holon-types` (`uv tool install --prerelease allow holon-types`).
-
 ## Call another MCP server with types
 
 `checkout` is an MCP server that wants to call the `lookup` tool of `orders`, another MCP server in the same repository. `orders` needs nothing from these packages: its type hints (Python) or Zod schemas (TypeScript) are its contract, and the CLI reads them from source without running the server.
