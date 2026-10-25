@@ -31,7 +31,7 @@ def write_tarball(binary: Path, archive: Path) -> None:
 
 
 def verify_binary(binary: Path, target: Target) -> None:
-    """Never label a dynamic Linux executable as compatible with musl."""
+    """Never label a dynamic Linux executable as compatible with musl, or a macOS one with macOS 15."""
     data = binary.read_bytes()
     if target.goos == "darwin":
         if data[:4] != b"\xcf\xfa\xed\xfe":
@@ -61,14 +61,9 @@ def verify_binary(binary: Path, target: Target) -> None:
 
 
 def build_binary(binary: Path, target: Target, version: str) -> None:
-    env = os.environ | {"CGO_ENABLED": "1", "GOOS": target.goos, "GOARCH": target.goarch}
-    flags = f"-s -w -X main.version={version}"
-    if target.goos == "linux":
-        env |= {"CC": env.get("CC", "musl-gcc"), "CGO_LDFLAGS": "-static"}
-        flags += " -linkmode external -extldflags -static"
-    else:
-        env |= {"MACOSX_DEPLOYMENT_TARGET": "15.0", "CGO_CFLAGS": "-O2 -mmacosx-version-min=15.0", "CGO_LDFLAGS": "-mmacosx-version-min=15.0"}
-    subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-tags", "netgo,osusergo", "-ldflags", flags, "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
+    """Cross-compile from any host: the CLI is pure Go, so the binary is static without a C toolchain."""
+    env = os.environ | {"CGO_ENABLED": "0", "GOOS": target.goos, "GOARCH": target.goarch}
+    subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
 
 
 def build_wheel(stage: Path, dist: Path, binary: Path, target: Target, version: str) -> Path:
