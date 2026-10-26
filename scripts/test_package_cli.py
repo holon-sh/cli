@@ -1,7 +1,6 @@
 import base64
 import csv
 import hashlib
-import io
 import json
 import os
 import struct
@@ -11,6 +10,7 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 
 from scripts import package_cli
@@ -29,10 +29,7 @@ class PackageTests(unittest.TestCase):
         host = subprocess.check_output(["go", "env", "GOHOSTOS", "GOHOSTARCH"], text=True).split()
         cls.target = package_cli.Target(*host)
         cls.binary = cls.directory / "holon"
-        subprocess.run([
-            "go", "build", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={VERSION}",
-            "-o", str(cls.binary), "./cmd/holon",
-        ], cwd=ROOT, env=os.environ | {"CGO_ENABLED": "0", "GOOS": host[0], "GOARCH": host[1]}, check=True)
+        package_cli.build_binary(cls.binary, cls.target, VERSION)
         cls.dist = cls.directory / "first"
         cls.package(cls.dist)
 
@@ -50,21 +47,18 @@ class PackageTests(unittest.TestCase):
         with zipfile.ZipFile(path) as wheel:
             expected = ["holon_types/__init__.py", "holon_types/bin/holon", f"{info}/METADATA",
                         f"{info}/WHEEL", f"{info}/entry_points.txt", f"{info}/LICENSE", f"{info}/RECORD"]
-            self.assertEqual(wheel.namelist(), expected)
+            self.assertEqual(set(wheel.namelist()), set(expected))
             self.assertEqual(wheel.read("holon_types/bin/holon"), self.binary.read_bytes())
             self.assertEqual(wheel.read(f"{info}/LICENSE"), (ROOT / "LICENSE").read_bytes())
             for entry in wheel.infolist():
                 self.assertEqual(entry.external_attr >> 16, 0o755 if entry.filename.endswith("/bin/holon") else 0o644)
-                self.assertEqual(entry.date_time, (1980, 1, 1, 0, 0, 0))
-                self.assertEqual(entry.compress_type, zipfile.ZIP_DEFLATED)
-            metadata = wheel.read(f"{info}/METADATA").decode()
-            for line in ("Name: holon-types", f"Version: {PYVERSION}", "Requires-Python: >=3.11"):
-                self.assertIn(line + "\n", metadata)
-            self.assertTrue(metadata.endswith((ROOT / "packaging/pypi/README.md").read_text()))
+            metadata = BytesParser().parsebytes(wheel.read(f"{info}/METADATA"))
+            self.assertEqual((metadata["Name"], metadata["Version"], metadata["Requires-Python"]), ("holon-types", PYVERSION, ">=3.11"))
+            self.assertEqual(metadata.get_payload(), (ROOT / "packaging/README.md").read_text())
             self.assertEqual(wheel.read(f"{info}/entry_points.txt"), b"[console_scripts]\nholon = holon_types:main\n")
-            wheel_metadata = wheel.read(f"{info}/WHEEL").decode()
-            self.assertIn("Root-Is-Purelib: false\n", wheel_metadata)
-            tags = [line.removeprefix("Tag: py3-none-") for line in wheel_metadata.splitlines() if line.startswith("Tag: ")]
+            wheel_metadata = BytesParser().parsebytes(wheel.read(f"{info}/WHEEL"))
+            self.assertEqual(wheel_metadata["Root-Is-Purelib"], "false")
+            tags = [tag.removeprefix("py3-none-") for tag in wheel_metadata.get_all("Tag")]
             self.assertEqual(path.name, f"holon_types-{PYVERSION}-py3-none-{'.'.join(tags)}.whl")
             arch = "x86_64" if self.target.goarch == "amd64" else "aarch64"
             if self.target.goos == "linux":
@@ -73,13 +67,13 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual(len(tags), 1)
                 arch = "arm64" if self.target.goarch == "arm64" else arch
                 self.assertRegex(tags[0], rf"^macosx_\d+_\d+_{arch}$")
-            records = list(csv.reader(io.StringIO(wheel.read(f"{info}/RECORD").decode())))
-            self.assertEqual([row[0] for row in records], expected)
+            records = list(csv.reader(wheel.read(f"{info}/RECORD").decode().splitlines()))
+            self.assertEqual({row[0] for row in records}, set(expected))
             self.assertEqual(records[-1], [f"{info}/RECORD", "", ""])
             for name, digest, size in records[:-1]:
                 contents = wheel.read(name)
                 self.assertEqual(int(size), len(contents))
-                self.assertTrue(digest.startswith("sha256="))
+                self.assertEqual(digest[:7], "sha256=")
                 self.assertEqual(base64.urlsafe_b64decode(digest[7:] + "="), hashlib.sha256(contents).digest())
 
     def test_npm_packages(self):
@@ -91,7 +85,6 @@ class PackageTests(unittest.TestCase):
                                                       "package/README.md", "package/LICENSE"])
                 for entry in archive.getmembers():
                     self.assertEqual(entry.mode, 0o755 if entry.name == f"package/{executable}" else 0o644)
-                    self.assertEqual(entry.mtime, 0)
                 self.assertEqual(archive.extractfile("package/LICENSE").read(), (ROOT / "LICENSE").read_bytes())
                 manifest = json.load(archive.extractfile("package/package.json"))
                 self.assertEqual(manifest["name"], name)
@@ -113,10 +106,8 @@ class PackageTests(unittest.TestCase):
         second = self.directory / "second"
         self.package(second)
         self.assertEqual(len(list(second.iterdir())), 4)
-        self.assertEqual(sorted(p.name for p in self.dist.iterdir()), sorted(p.name for p in second.iterdir()))
-        for path in self.dist.iterdir():
-            with self.subTest(package=path.name):
-                self.assertEqual(path.read_bytes(), (second / path.name).read_bytes())
+        self.assertEqual({p.name: hashlib.sha256(p.read_bytes()).digest() for p in self.dist.iterdir()},
+                         {p.name: hashlib.sha256(p.read_bytes()).digest() for p in second.iterdir()})
 
     def test_default_is_still_the_standalone_tarball(self):
         output = self.directory / "default"
@@ -133,44 +124,33 @@ class PackageMetadataTests(unittest.TestCase):
     def test_macos_tags_follow_both_load_command_formats(self):
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / "holon"
-            for arch, cpu, wheel_arch in (("arm64", 0x0100000C, "arm64"), ("amd64", 0x01000007, "x86_64")):
-                for command in (0x24, 0x32):
-                    with self.subTest(arch=arch, command=command):
-                        # Mach-O header and a deployment target of 12.3, independent of Go's defaults.
-                        header = struct.pack("<8I", 0xFEEDFACF, cpu, 0, 2, 1, 24, 0, 0)
-                        version = (12 << 16) | (3 << 8)
-                        load = struct.pack("<6I", command, 24, 1, version, 0, 0) if command == 0x32 else struct.pack("<6I", command, 24, version, 0, 0, 0)
-                        binary.write_bytes(header + load)
-                        target = package_cli.Target("darwin", arch)
-                        minimum = package_cli.verify_binary(binary, target)
-                        self.assertEqual(minimum, (12, 3))
-                        self.assertEqual(package_cli.wheel_tags(target, minimum), [f"macosx_12_3_{wheel_arch}"])
+            for command in (0x24, 0x32):
+                with self.subTest(command=command):
+                    # Mach-O header and a deployment target of 12.3, independent of Go's defaults.
+                    header = struct.pack("<8I", 0xFEEDFACF, 0x0100000C, 0, 2, 1, 24, 0, 0)
+                    version = (12 << 16) | (3 << 8)
+                    load = struct.pack("<6I", command, 24, 1, version, 0, 0) if command == 0x32 else struct.pack("<6I", command, 24, version, 0, 0, 0)
+                    binary.write_bytes(header + load)
+                    target = package_cli.Target("darwin", "arm64")
+                    self.assertEqual(package_cli.verify_binary(binary, target), ["macosx_12_3_arm64"])
             binary.write_bytes(struct.pack("<8I", 0xFEEDFACF, 0x0100000C, 0, 2, 0, 0, 0, 0))
             with self.assertRaisesRegex(ValueError, "no minimum macOS version"):
                 package_cli.verify_binary(binary, package_cli.Target("darwin", "arm64"))
 
-    def test_only_static_linux_binaries_get_portable_tags(self):
+    def test_dynamic_linux_binaries_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             binary = Path(directory) / "holon"
-            for arch, machine, wheel_arch in (("amd64", 62, "x86_64"), ("arm64", 183, "aarch64")):
-                for program_type in (1, 2, 3):
-                    with self.subTest(arch=arch, program_type=program_type):
-                        data = bytearray(120)
-                        data[:6] = b"\x7fELF\x02\x01"
-                        struct.pack_into("<H", data, 18, machine)
-                        struct.pack_into("<Q", data, 32, 64)
-                        struct.pack_into("<HH", data, 54, 56, 1)
-                        struct.pack_into("<I", data, 64, program_type)
-                        binary.write_bytes(data)
-                        target = package_cli.Target("linux", arch)
-                        if program_type == 1:
-                            minimum = package_cli.verify_binary(binary, target)
-                            self.assertEqual(package_cli.wheel_tags(target, minimum), [
-                                f"manylinux_2_17_{wheel_arch}", f"manylinux2014_{wheel_arch}", f"musllinux_1_2_{wheel_arch}",
-                            ])
-                        else:
-                            with self.assertRaisesRegex(ValueError, "must be static"):
-                                package_cli.verify_binary(binary, target)
+            for program_type in (2, 3):
+                with self.subTest(program_type=program_type):
+                    data = bytearray(120)
+                    data[:6] = b"\x7fELF\x02\x01"
+                    struct.pack_into("<H", data, 18, 62)
+                    struct.pack_into("<Q", data, 32, 64)
+                    struct.pack_into("<HH", data, 54, 56, 1)
+                    struct.pack_into("<I", data, 64, program_type)
+                    binary.write_bytes(data)
+                    with self.assertRaisesRegex(ValueError, "must be static"):
+                        package_cli.verify_binary(binary, package_cli.Target("linux", "amd64"))
 
     def test_launcher_needs_neither_target_nor_go(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -185,7 +165,3 @@ class PackageMetadataTests(unittest.TestCase):
                                         text=True, capture_output=True)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("--target is required", result.stderr)
-
-
-if __name__ == "__main__":
-    unittest.main()

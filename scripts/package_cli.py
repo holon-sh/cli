@@ -44,15 +44,16 @@ TARGETS = tuple(Target(os, arch) for os in ("darwin", "linux") for arch in ("amd
 VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc|dev)\.[0-9]+)?")
 
 
-def write_tarball(binary: Path, archive: Path) -> None:
-    info = tarfile.TarInfo("holon")
-    info.size, info.mode, info.mtime = binary.stat().st_size, 0o755, 0
-    with archive.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar, binary.open("rb") as source:
-        tar.addfile(info, source)
+def write_tarball(archive: Path, entries: list[tuple[str, bytes, int]]) -> None:
+    with archive.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar:
+        for name, data, mode in entries:
+            entry = tarfile.TarInfo(name)
+            entry.size, entry.mode, entry.mtime = len(data), mode, 0
+            tar.addfile(entry, io.BytesIO(data))
 
 
-def verify_binary(binary: Path, target: Target) -> tuple[int, int] | None:
-    """Never label a dynamic Linux executable as compatible with musl, or a macOS one with macOS 15."""
+def verify_binary(binary: Path, target: Target) -> list[str]:
+    """Return verified wheel tags: never label dynamic Linux as musl-compatible or guess macOS support."""
     data = binary.read_bytes()
     if target.goos == "darwin":
         if data[:4] != b"\xcf\xfa\xed\xfe":
@@ -72,7 +73,8 @@ def verify_binary(binary: Path, target: Target) -> tuple[int, int] | None:
             offset += size
         if minimum is None:
             raise ValueError("Mach-O binary has no minimum macOS version")
-        return minimum >> 16, (minimum >> 8) & 0xFF
+        arch = "x86_64" if target.goarch == "amd64" else "arm64"
+        return [f"macosx_{minimum >> 16}_{(minimum >> 8) & 0xFF}_{arch}"]
     if data[:6] != b"\x7fELF\x02\x01":
         raise ValueError("expected a little-endian 64-bit ELF binary")
     if struct.unpack_from("<H", data, 18)[0] != {"arm64": 183, "amd64": 62}[target.goarch]:
@@ -82,6 +84,8 @@ def verify_binary(binary: Path, target: Target) -> tuple[int, int] | None:
     for index in range(count):
         if struct.unpack_from("<I", data, offset + index * size)[0] in (2, 3):
             raise ValueError("Linux binaries must be static (no PT_DYNAMIC or PT_INTERP)")
+    arch = "x86_64" if target.goarch == "amd64" else "aarch64"
+    return [f"manylinux_2_17_{arch}", f"manylinux2014_{arch}", f"musllinux_1_2_{arch}"]
 
 
 def build_binary(binary: Path, target: Target, version: str) -> None:
@@ -92,22 +96,7 @@ def build_binary(binary: Path, target: Target, version: str) -> None:
 
 def python_version(version: str) -> str:
     """Translate the CLI's prerelease version into PEP 440."""
-    if "-" not in version:
-        return version
-    release, prerelease = version.split("-")
-    kind, number = prerelease.split(".")
-    suffix = {"alpha": "a", "beta": "b", "rc": "rc", "dev": ".dev"}[kind]
-    return f"{release}{suffix}{number}"
-
-
-def wheel_tags(target: Target, minimum_macos: tuple[int, int] | None) -> list[str]:
-    arch = "x86_64" if target.goarch == "amd64" else "aarch64"
-    if target.goos == "linux":
-        return [f"manylinux_2_17_{arch}", f"manylinux2014_{arch}", f"musllinux_1_2_{arch}"]
-    if minimum_macos is None:
-        raise ValueError("macOS wheel requires the binary's minimum OS version")
-    major, minor = minimum_macos
-    return [f"macosx_{major}_{minor}_{'arm64' if target.goarch == 'arm64' else arch}"]
+    return version.replace("-alpha.", "a").replace("-beta.", "b").replace("-rc.", "rc").replace("-dev.", ".dev")
 
 
 def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None:
@@ -122,7 +111,7 @@ def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None
         "License: MIT\n"
         "Requires-Python: >=3.11\n"
         "Description-Content-Type: text/markdown\n\n"
-        + (ROOT / "packaging/pypi/README.md").read_text()
+        + (ROOT / "packaging/README.md").read_text()
     )
     wheel = "Wheel-Version: 1.0\nGenerator: holon-package-cli\nRoot-Is-Purelib: false\n"
     wheel += "".join(f"Tag: py3-none-{tag}\n" for tag in tags)
@@ -151,25 +140,20 @@ def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None
 
 
 def write_npm_package(archive: Path, manifest: dict, executable: str, data: bytes, readme: Path) -> None:
-    entries = [
-        ("package.json", (json.dumps(manifest, indent=2) + "\n").encode(), 0o644),
-        (executable, data, 0o755),
-        ("README.md", readme.read_bytes(), 0o644),
-        ("LICENSE", (ROOT / "LICENSE").read_bytes(), 0o644),
-    ]
-    with archive.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar:
-        for name, contents, mode in entries:
-            entry = tarfile.TarInfo(f"package/{name}")
-            entry.size, entry.mode, entry.mtime = len(contents), mode, 0
-            tar.addfile(entry, io.BytesIO(contents))
+    write_tarball(archive, [
+        ("package/package.json", (json.dumps(manifest, indent=2) + "\n").encode(), 0o644),
+        (f"package/{executable}", data, 0o755),
+        ("package/README.md", readme.read_bytes(), 0o644),
+        ("package/LICENSE", (ROOT / "LICENSE").read_bytes(), 0o644),
+    ])
 
 
 def write_npm_launcher(dist: Path, version: str) -> None:
     source = ROOT / "packaging/npm/launcher"
     manifest = json.loads((source / "package.json").read_text())
     manifest["version"] = version
-    manifest["optionalDependencies"] = dict.fromkeys(manifest["optionalDependencies"], version)
-    write_npm_package(dist / f"holon-types-{version}.tgz", manifest, "bin/holon.js", (source / "bin/holon.js").read_bytes(), source / "README.md")
+    manifest["optionalDependencies"] = {target.npm_name: version for target in TARGETS}
+    write_npm_package(dist / f"holon-types-{version}.tgz", manifest, "bin/holon.js", (source / "bin/holon.js").read_bytes(), ROOT / "packaging/README.md")
 
 
 def write_npm_platform(binary: Path, dist: Path, version: str, target: Target) -> None:
@@ -181,8 +165,6 @@ def write_npm_platform(binary: Path, dist: Path, version: str, target: Target) -
         "license": "MIT",
         "os": [target.goos],
         "cpu": [target.npm_cpu],
-        "files": ["bin/holon", "README.md", "LICENSE"],
-        "publishConfig": {"access": "public"},
     }
     write_npm_package(dist / f"{target.npm_name}-{version}.tgz", manifest, "bin/holon", binary.read_bytes(), ROOT / "packaging/npm/platform/README.md")
 
@@ -210,11 +192,11 @@ def main() -> None:
         binary = args.binary or Path(directory) / "holon"
         if args.binary is None:
             build_binary(binary, target, args.version)
-        minimum_macos = verify_binary(binary, target)
+        tags = verify_binary(binary, target)
         if "tarball" in formats:
-            write_tarball(binary, dist / f"holon_{args.version}_{target.platform}.tar.gz")
+            write_tarball(dist / f"holon_{args.version}_{target.platform}.tar.gz", [("holon", binary.read_bytes(), 0o755)])
         if "wheel" in formats:
-            write_wheel(binary, dist, args.version, wheel_tags(target, minimum_macos))
+            write_wheel(binary, dist, args.version, tags)
         if "npm-platform" in formats:
             write_npm_platform(binary, dist, args.version, target)
         if "npm-launcher" in formats:

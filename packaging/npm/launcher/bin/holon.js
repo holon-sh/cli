@@ -3,14 +3,11 @@ import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { delimiter, dirname } from "node:path";
 
-const platforms = { darwin: "darwin", linux: "linux" };
-const cpus = { arm64: "arm64", x64: "x64" };
-
 function locate() {
   if (process.env.HOLON_BINARY) return process.env.HOLON_BINARY;
-  const os = platforms[process.platform], cpu = cpus[process.arch];
-  if (!os || !cpu) fail(`unsupported platform ${process.platform}-${process.arch}; macOS and Linux on arm64 and x86-64 are supported`);
-  const name = `holon-types-${os}-${cpu}`;
+  const { platform, arch } = process;
+  if (!["darwin", "linux"].includes(platform) || !["arm64", "x64"].includes(arch)) fail(`unsupported platform ${platform}-${arch}; macOS and Linux on arm64 and x86-64 are supported`);
+  const name = `holon-types-${platform}-${arch}`;
   try {
     return createRequire(import.meta.url).resolve(`${name}/bin/holon`);
   } catch {
