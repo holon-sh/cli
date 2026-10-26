@@ -71,21 +71,6 @@ await apps.context7.call_tool("resolve-library", libraryName="Next.js", query="a
 # error: No overload variant of "call_tool" of "Context7App" matches argument types "str", "str", "str"  [call-overload]
 ```
 
-Tool arguments are keywords; an existing dict can be passed with `**arguments`. Optional request controls are a separate positional `CallOptions` dict, so a tool can still have fields named `name`, `timeout`, or `options`:
-
-```python
-await apps.context7.call_tool(
-    "resolve-library-id",
-    {"timeout": 5.0},
-    libraryName="Next.js",
-    query="app router",
-)
-```
-
-`call_tool` returns the full MCP result. For tool names that are Python identifiers, `apps.<app>.tools.<tool>(**arguments)` returns structured output and raises on tool errors or additional input requests. Non-identifier field names work through `**{"field-name": value}`; hyphenated tool names use `call_tool`.
-
-When upgrading, update both the CLI and the [Python runtime](https://github.com/holon-sh/sdk-py), then regenerate clients with `holon types generate` or `holon types check`. Replace positional input dicts with keywords or `**arguments`, and move `timeout`, `input_responses`, `request_state`, and `meta` into the positional options dict.
-
 </details>
 
 <details open>
