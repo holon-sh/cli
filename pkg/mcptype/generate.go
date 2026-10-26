@@ -29,15 +29,13 @@ type generateRequest struct {
 	pythonModule, pythonRuntimeModule *string
 	// First-line comment on generated source files (not JSON or copied runtime files).
 	banner *string
-	// Extra package.json fields.
-	packageFields Object
 	// Go: import path of the runtime module.
 	goModule *string
 	// Node and browser: base name of the entry point files (<entry>.js, <entry>.d.ts) instead of index or browser.
 	entry *string
 }
 
-var generateFields = []string{"target", "identity", "requires", "contracts", "runtime", "protocol", "runtime_specifier", "browser_runtime_specifier", "protocol_specifier", "python_module", "python_runtime_module", "banner", "package_fields", "go_module", "entry"}
+var generateFields = []string{"target", "identity", "requires", "contracts", "runtime", "protocol", "runtime_specifier", "browser_runtime_specifier", "protocol_specifier", "python_module", "python_runtime_module", "banner", "go_module", "entry"}
 
 func decodeGenerateRequest(value Value) (generateRequest, error) {
 	object, err := asObject(value)
@@ -49,7 +47,7 @@ func decodeGenerateRequest(value Value) (generateRequest, error) {
 			return generateRequest{}, fmt.Errorf("unknown field `%s`", key)
 		}
 	}
-	request := generateRequest{requires: map[string]Identity{}, contracts: map[string]Contract{}, runtime: map[string][]byte{}, packageFields: Object{}}
+	request := generateRequest{requires: map[string]Identity{}, contracts: map[string]Contract{}, runtime: map[string][]byte{}}
 	raw, err := requiredField(object, "target")
 	if err != nil {
 		return generateRequest{}, err
@@ -112,11 +110,7 @@ func decodeGenerateRequest(value Value) (generateRequest, error) {
 			return generateRequest{}, err
 		}
 	}
-	if raw, ok := object["package_fields"]; ok {
-		if request.packageFields, err = asObject(raw); err != nil {
-			return generateRequest{}, err
-		}
-	}
+
 	return request, nil
 }
 
@@ -192,11 +186,6 @@ func (r generateRequest) validate() error {
 		return errors.New("go_module is required for the go target")
 	}
 	return nil
-}
-
-// slot reports whether the package fills an installed package's generation slot instead of being one itself.
-func (r generateRequest) slot() bool {
-	return r.runtimeSpecifier != nil || r.browserRuntimeSpecifier != nil || r.pythonModule != nil
 }
 
 // untyped lists declared aliases without a contract: their clients call tools by name, unvalidated.

@@ -140,26 +140,20 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	}
 }
 
-func TestPythonSlotMigratesManagedRuntimeAndProtectsUserFiles(t *testing.T) {
+func TestPythonSlotProtectsUserFiles(t *testing.T) {
 	content := "# " + mcpcontract.Marker + " app=orders\napps = object()\n"
 	files := map[string]string{"holon/apps/__init__.py": content}
-	t.Run("legacy", func(t *testing.T) {
-		root := t.TempDir()
-		put(t, root, "holon/package.json", `{"holon":"holon-generated-apps-v1"}`)
-		put(t, root, "holon/__init__.py", "legacy")
-		put(t, root, "holon/client.py", "legacy runtime")
-		if err := writePythonSlot(root, files); err != nil {
-			t.Fatal(err)
-		}
-		for _, name := range []string{"holon/__init__.py", "holon/client.py", "holon/package.json"} {
-			if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
-				t.Fatalf("legacy %s remains: %v", name, err)
-			}
-		}
-		if got := read(t, root, "holon/apps/__init__.py"); got != content {
-			t.Fatal("wrong generated module")
-		}
-	})
+
+	root := t.TempDir()
+	put(t, root, "holon/package.json", `{"holon":"holon-generated-apps-v1"}`)
+	put(t, root, "holon/__init__.py", "legacy runtime")
+	if err := writePythonSlot(root, files); err == nil {
+		t.Fatal("legacy marker authorized runtime replacement")
+	}
+	if read(t, root, "holon/__init__.py") != "legacy runtime" {
+		t.Fatal("legacy runtime changed")
+	}
+
 	for _, name := range []string{"holon.py", "holon/__init__.py", "holon/apps/__init__.py"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()

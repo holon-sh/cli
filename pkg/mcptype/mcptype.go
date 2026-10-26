@@ -70,16 +70,16 @@ func canonicalRequest(value Value) (Value, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		if metadata.Contract == nil {
+		if metadata.Schema == nil {
 			return nil, "", nil
 		}
-		return contract(*metadata.Contract)
+		return contract(*metadata.Schema)
 	}
 	return nil, "", fmt.Errorf("unknown variant `%s`, expected one of `contract`, `schema`, `metadata`", variant)
 }
 
 // Changes lists what breaks expected if published is deployed. Empty means compatible.
-func Changes(ctx context.Context, expected mcpcontract.Expectation, published *mcpcontract.Metadata) ([]Change, error) {
+func Changes(ctx context.Context, expected *mcpcontract.Metadata, published *mcpcontract.Metadata) ([]Change, error) {
 	value, err := marshal(ctx, map[string]any{"expected": expected, "published": published})
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func Changes(ctx context.Context, expected mcpcontract.Expectation, published *m
 	return changesRequest(value)
 }
 
-// changesRequest answers {"expected": Expectation, "published": Metadata | null}.
+// changesRequest answers {"expected": Metadata, "published": Metadata | null}.
 func changesRequest(value Value) ([]Change, error) {
 	object, err := asObject(value)
 	if err != nil {
@@ -97,7 +97,7 @@ func changesRequest(value Value) ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
-	expected, err := decodeExpectation(raw)
+	expected, err := decodeMetadata(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,10 @@ func changesRequest(value Value) ([]Change, error) {
 		}
 		published = &metadata
 	}
-	return changes(expected, published), nil
+	if expected.Schema == nil {
+		return nil, fmt.Errorf("expected document has no schema")
+	}
+	return changes(&expected, published), nil
 }
 
 // GenerateRequest asks for one target's typed client package: node, browser, python or go.
@@ -121,7 +124,6 @@ type GenerateRequest struct {
 	Contracts               map[string]*mcpcontract.Contract `json:"contracts,omitempty"`
 	Runtime                 map[string][]byte                `json:"runtime,omitempty"`
 	Protocol                string                           `json:"protocol,omitempty"`
-	PackageFields           map[string]any                   `json:"package_fields,omitempty"`
 	RuntimeSpecifier        string                           `json:"runtime_specifier,omitempty"`
 	BrowserRuntimeSpecifier string                           `json:"browser_runtime_specifier,omitempty"`
 	ProtocolSpecifier       string                           `json:"protocol_specifier,omitempty"`

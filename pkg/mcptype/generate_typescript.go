@@ -82,14 +82,9 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	var files map[string]string
 	switch {
 	case request.target == "browser":
-		// Legacy (pre-slot) packages keep the host binding form their consumers were built against.
-		bindings := browserBindingTypes
-		if !request.slot() {
-			bindings = bindingTypes
-		}
 		files = map[string]string{
 			entry + ".js":   fmt.Sprintf("import { bindApps } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", browserRuntime, browserRuntime, bound),
-			entry + ".d.ts": types(resourcesEntry) + bindings + exposeTypes,
+			entry + ".d.ts": types(resourcesEntry) + browserBindingTypes + exposeTypes,
 		}
 	default:
 		files = map[string]string{
@@ -98,9 +93,6 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		}
 	}
 	files[resourcesEntry+".d.ts"] = resources
-	if !request.slot() {
-		files["package.json"] = packageJSON(request.packageFields)
-	}
 	return files, nil
 }
 
@@ -121,26 +113,4 @@ func untypedTypeScript(request generateRequest) string {
 		return ""
 	}
 	return fmt.Sprintf(" & {%s };\nexport type UntypedClient = Omit<ToolClient<Record<string, Record<string, unknown>>, Record<never, never>, Record<never, never>>, \"tools\"> & { readonly tools: Record<never, never> }", aliases.String())
-}
-
-// packageJSON is package.json with two-space indentation and the extra fields between type and exports.
-func packageJSON(fields Object) string {
-	var text strings.Builder
-	text.WriteString("{\n  \"name\": \"@holon-sh/apps\",\n  \"version\": \"0.0.0\",\n  \"private\": true,\n  \"type\": \"module\",\n")
-	for _, name := range sortedKeys(fields) {
-		fmt.Fprintf(&text, "  %s: %s,\n", quoted(name), strings.ReplaceAll(encodePretty(fields[name]), "\n", "\n  "))
-	}
-	text.WriteString(`  "exports": {
-    ".": {
-      "types": "./index.d.ts",
-      "import": "./index.js"
-    },
-    "./browser": {
-      "types": "./browser.d.ts",
-      "import": "./browser.js"
-    }
-  }
-}
-`)
-	return text.String()
 }

@@ -45,7 +45,7 @@ func generatePythonPackage(request generateRequest, catalogs map[string]catalog)
 		clients = "_AllClients"
 		untyped = fmt.Sprintf("\n%s\n\nclass _AllClients(_Clients, _typing.Protocol):%s\n", pythonUntyped, members.String())
 	}
-	header := strings.ReplaceAll(pythonHeader, "from .client import", fmt.Sprintf("from %s import", valueOr(request.pythonRuntimeModule, ".client")))
+	header := strings.ReplaceAll(pythonHeader, "from .client import", fmt.Sprintf("from %s import", valueOr(request.pythonRuntimeModule, "holon.client")))
 	module := strings.Join([]string{
 		header,
 		declarations + untyped,
@@ -53,10 +53,8 @@ func generatePythonPackage(request generateRequest, catalogs map[string]catalog)
 		fmt.Sprintf("apps = _typing.cast(%s, _Apps(_identity, _contracts))", clients),
 		fmt.Sprintf("def create_apps(bindings: _typing.Mapping[str, _Binding]) -> %s:\n    return _typing.cast(%s, _Apps(_identity, _contracts, bindings))", clients, clients),
 	}, "\n\n")
-	files := map[string]string{valueOr(request.pythonModule, "_apps.py"): module + "\n"}
-	if !request.slot() {
-		files["package.json"] = pythonDumps(request.packageFields)
-	}
+	files := map[string]string{valueOr(request.pythonModule, "holon/apps/__init__.py"): module + "\n"}
+
 	return files
 }
 

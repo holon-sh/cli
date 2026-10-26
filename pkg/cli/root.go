@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/spf13/cobra"
 )
@@ -141,14 +140,9 @@ func printContract(cmd *cobra.Command, arg string) error {
 	if err != nil {
 		return err
 	}
-	document := struct {
-		Version  int                   `json:"version"`
-		Identity mcpcontract.Identity  `json:"identity"`
-		Contract *mcpcontract.Contract `json:"contract"`
-	}{mcpcontract.Version, metadata.Identity, metadata.Contract}
 	encoder := json.NewEncoder(cmd.OutOrStdout())
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(document)
+	return encoder.Encode(metadata)
 }
 
 // generateProject resolves the client directory and generates its declared slots from -s

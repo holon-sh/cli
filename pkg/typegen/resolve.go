@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -20,6 +19,15 @@ import (
 // extracted from its snapshot, a registry, endpoint or image source is fetched, and a supplied
 // contract is validated and returned as given.
 func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.Metadata, error) {
+	document, err := ResolveDocument(ctx, source, options)
+	if err != nil || document == nil {
+		return nil, err
+	}
+	return document.Metadata, nil
+}
+
+// ResolveDocument resolves a source while retaining the original blob bytes.
+func ResolveDocument(ctx context.Context, source Source, options Options) (*Document, error) {
 	o := options.defaults()
 	if err := source.validate(); err != nil {
 		return nil, err
@@ -45,54 +53,52 @@ func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.
 		if err != nil {
 			return nil, err
 		}
-		return prepared.contract(ctx, results["source"])
+		metadata, err := prepared.contract(ctx, results["source"])
+		if err != nil {
+			return nil, err
+		}
+		return NewDocument(ctx, metadata)
 	case source.Registry != nil:
 		return resolveRegistry(ctx, *source.Registry, o)
 	case source.Endpoint != "":
 		return liveContract(ctx, source.Endpoint, nil, o.HTTPClient)
 	case source.Image != "":
 		return resolveTypeMetadata(ctx, source.Image, o)
+	case source.Document != nil:
+		return ParseDocument(ctx, source.Document.Data)
 	default:
-		if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": source.Contract}); err != nil {
-			return nil, err
-		}
-		return source.Contract, nil
+		return NewDocument(ctx, source.Contract)
 	}
 }
 
-// resolveRegistry fetches a registry record and its contract: its sh.holon.types document, then
-// its first OCI package's contract artifact, then its first streamable-http remote's schemas.
+// resolveRegistry fetches a registry record, then its first OCI package's
+// contract document or its first streamable-http remote's schemas.
 // A package error is an error; a package without a contract artifact falls through to the remote.
-func resolveRegistry(ctx context.Context, ref Reference, o Options) (*mcpcontract.Metadata, error) {
+func resolveRegistry(ctx context.Context, ref Reference, o Options) (*Document, error) {
 	d, err := (Client{HTTP: o.HTTPClient, Origin: ref.RegistryURL()}).Get(ctx, ref.Name, ref.Version)
 	if err != nil {
 		return nil, fmt.Errorf("%s@%s: %w", ref.Name, ref.Version, err)
 	}
-	var metadata *mcpcontract.Metadata
-	switch {
-	case d.Types != "":
-		metadata, err = fetchContract(ctx, d.Types, o)
-	default:
-		for _, pkg := range d.Packages {
-			if pkg.RegistryType == "oci" {
-				if metadata, err = resolveTypeMetadata(ctx, pkg.Identifier, o); err != nil {
-					err = fmt.Errorf("package %s: %w", pkg.Identifier, err)
-				}
+	var metadata *Document
+	for _, pkg := range d.Packages {
+		if pkg.RegistryType == "oci" {
+			if metadata, err = resolveTypeMetadata(ctx, pkg.Identifier, o); err != nil {
+				err = fmt.Errorf("package %s: %w", pkg.Identifier, err)
+			}
+			break
+		}
+	}
+	if err == nil && metadata == nil {
+		for _, transport := range d.Remotes {
+			if transport.Type == "streamable-http" {
+				identity := d.Identity()
+				metadata, err = liveContract(ctx, transport.URL, &identity, o.HTTPClient)
 				break
 			}
 		}
-		if err == nil && metadata == nil {
-			for _, transport := range d.Remotes {
-				if transport.Type == "streamable-http" {
-					identity := d.Identity()
-					metadata, err = liveContract(ctx, transport.URL, &identity, o.HTTPClient)
-					break
-				}
-			}
-		}
-		if err == nil && metadata == nil {
-			return nil, fmt.Errorf("%s@%s publishes neither a sh.holon.types contract, an OCI package with a contract, nor a streamable-http remote", ref.Name, ref.Version)
-		}
+	}
+	if err == nil && metadata == nil {
+		return nil, fmt.Errorf("%s@%s publishes neither an OCI package with a contract nor a streamable-http remote", ref.Name, ref.Version)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s@%s: %w", ref.Name, ref.Version, err)
@@ -103,42 +109,9 @@ func resolveRegistry(ctx context.Context, ref Reference, o Options) (*mcpcontrac
 	return metadata, nil
 }
 
-func fetchContract(ctx context.Context, location string, o Options) (*mcpcontract.Metadata, error) {
-	if err := validateTypesURL(location); err != nil {
-		return nil, err
-	}
-	client := *o.HTTPClient
-	previous := client.CheckRedirect
-	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if err := validateTypesURL(req.URL.String()); err != nil {
-			return err
-		}
-		if len(via) >= 5 {
-			return errors.New("too many contract redirects")
-		}
-		if previous != nil {
-			return previous(req, via)
-		}
-		return nil
-	}
-	data, err := fetchJSON(ctx, &client, location)
-	if err != nil {
-		return nil, err
-	}
-	// Validate the original document before decoding the contract wire format.
-	if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": json.RawMessage(data)}); err != nil {
-		return nil, err
-	}
-	var metadata mcpcontract.Metadata
-	if err = json.Unmarshal(data, &metadata); err != nil {
-		return nil, err
-	}
-	return &metadata, nil
-}
-
 // liveContract initializes an MCP session and retrieves its advertised schemas. With a nil identity
 // the server's own serverInfo names the contract; a registry source supplies its record's identity.
-func liveContract(ctx context.Context, location string, identity *mcpcontract.Identity, client *http.Client) (*mcpcontract.Metadata, error) {
+func liveContract(ctx context.Context, location string, identity *mcpcontract.Identity, client *http.Client) (*Document, error) {
 	u, err := url.Parse(location)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" {
 		return nil, errors.New("MCP URL must be an HTTP(S) URL without credentials or a fragment")
@@ -190,9 +163,6 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 			contract.Resources = append(contract.Resources, mcpcontract.Resource{URI: resource.URI, Output: output})
 		}
 	}
-	metadata := &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: *identity, Contract: contract}
-	if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": metadata}); err != nil {
-		return nil, err
-	}
-	return metadata, nil
+	metadata := &mcpcontract.Metadata{Identity: *identity, Schema: contract}
+	return NewDocument(ctx, metadata)
 }

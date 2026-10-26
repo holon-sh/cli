@@ -8,12 +8,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcptype"
 	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
@@ -46,7 +46,7 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 		t.Fatalf("extractor calls = %v, want one batch per language", *calls)
 	}
 	metadata := prepared.Metadata()["checkout"]
-	if metadata.Identity.Name != "example.com/checkout" || metadata.Contract == nil || len(metadata.Requires["orders"].Contract.Tools) != 1 {
+	if metadata.Identity.Name != "example.com/checkout" || metadata.Schema == nil || len(prepared.Documents()[metadata.Requires["orders"]].Schema.Tools) != 1 {
 		t.Fatalf("consumer metadata = %+v", metadata)
 	}
 	if got := prepared.Targets("checkout"); !slices.Equal(got, []string{TargetTS}) {
@@ -275,15 +275,18 @@ func TestSuppliedContractsRemainDistinctAndValidated(t *testing.T) {
 	metadata := ordersMetadata()
 	source := Source{Contract: metadata}
 	alternate := ordersMetadata()
-	alternate.Contract = &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "status", Input: json.RawMessage(`{"type":"object"}`)}}}
+	alternate.Schema = &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "status", Input: json.RawMessage(`{"type":"object"}`)}}}
 	c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{source, {Alias: "alternate", Contract: alternate}}}
 	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer prepared.Close()
-	if got := prepared.Metadata(); !reflect.DeepEqual(got["orders"], metadata) || !reflect.DeepEqual(got["alternate"], alternate) {
-		t.Fatalf("resolved contracts = %+v", got)
+	for alias, expected := range map[string]*mcpcontract.Metadata{"orders": metadata, "alternate": alternate} {
+		changes, err := mcptype.Changes(t.Context(), expected, prepared.Metadata()[alias])
+		if err != nil || len(changes) != 0 {
+			t.Fatalf("resolved %s: %v %v", alias, changes, err)
+		}
 	}
 	if err := prepared.WritePythonSlot("caller", c.Dir); err != nil {
 		t.Fatal(err)
@@ -292,9 +295,9 @@ func TestSuppliedContractsRemainDistinctAndValidated(t *testing.T) {
 		t.Fatal("pre-resolved contract did not generate a typed client")
 	}
 	for _, invalid := range []*mcpcontract.Metadata{
-		{Version: 99, Identity: metadata.Identity, Contract: metadata.Contract},
-		{Version: mcpcontract.Version, Contract: metadata.Contract},
-		{Version: mcpcontract.Version, Identity: metadata.Identity, Contract: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "bad", Input: json.RawMessage(`{"type":"string"}`)}}}},
+		{Identity: metadata.Identity, Requires: map[string]string{"orders": "not-a-digest"}},
+		{Schema: metadata.Schema},
+		{Identity: metadata.Identity, Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "bad", Input: json.RawMessage(`{"type":"string"}`)}}}},
 	} {
 		c.Sources = []Source{source, {Alias: "invalid", Contract: invalid}}
 		if prepared, err := Prepare(t.Context(), []Consumer{c}, Options{}); err == nil {
@@ -328,7 +331,7 @@ func TestCredentialAuthenticatesImageSources(t *testing.T) {
 		{name: "malformed environment", env: []string{"INVALID"}, want: "must be KEY=VALUE"},
 		{name: "rejected grant", credential: grant("images.example", "wrong"), env: []string{"DOCKER_CONFIG=" + docker("secret")}, want: "rejected the supplied registry credential"},
 		{name: "rejected docker credential", env: []string{"DOCKER_CONFIG=" + docker("wrong")}, want: "images.example/orders:1.0.0"},
-		{name: "image without a contract", env: []string{"DOCKER_CONFIG=" + docker("secret")}, want: "carries no MCP contract artifact"},
+		{name: "image without a contract", env: []string{"DOCKER_CONFIG=" + docker("secret")}, want: "carries no MCP contract document"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			env := append([]string{"DOCKER_CONFIG=" + t.TempDir()}, test.env...)
@@ -349,7 +352,7 @@ func TestCredentialAuthenticatesImageSources(t *testing.T) {
 			}
 			defer prepared.Close()
 			resolved := prepared.Metadata()
-			if resolved["caller"].Requires["orders"].Identity != ordersMetadata().Identity || resolved["orders"] == nil {
+			if prepared.Documents()[resolved["caller"].Requires["orders"]].Identity != ordersMetadata().Identity || resolved["orders"] == nil {
 				t.Fatalf("image source not resolved: %+v", resolved)
 			}
 		})
@@ -372,7 +375,7 @@ func TestGoConsumerClients(t *testing.T) {
 	}
 	defer prepared.Close()
 	metadata := prepared.Metadata()["caller"]
-	if metadata.Contract != nil || metadata.Identity.Name != "example.com/caller" || len(metadata.Requires["orders"].Contract.Tools) != 1 {
+	if metadata.Schema != nil || metadata.Identity.Name != "example.com/caller" || len(prepared.Documents()[metadata.Requires["orders"]].Schema.Tools) != 1 {
 		t.Fatalf("Go consumer metadata = %+v", metadata)
 	}
 	if _, ok := prepared.CheckConfig("caller"); ok {
@@ -386,7 +389,7 @@ func TestGoConsumerClients(t *testing.T) {
 	// contract and ownership marker to that compiler and writes the result into holon/.
 	clients := read(t, stage, "holon/clients.go")
 	if !strings.Contains(clients, `holon "`+options.GoModule+`"`) || !strings.Contains(clients, " Lookup(") ||
-		!strings.Contains(read(t, stage, "holon/types.go"), "type OrdersLookupInput") || !mcpcontract.Managed(filepath.Join(stage, "holon")) {
+		!strings.Contains(read(t, stage, "holon/types.go"), "type OrdersLookupInput") || !generatedGo(filepath.Join(stage, "holon")) {
 		t.Fatalf("Go slot lacks the configured runtime, typed client or ownership marker:\n%s", clients)
 	}
 	var output bytes.Buffer
@@ -422,7 +425,7 @@ func TestPythonSourcesWithTheRealExtractor(t *testing.T) {
 		t.Fatalf("module:\n%s", module)
 	}
 	contract, err := Resolve(t.Context(), Source{Path: orders}, Options{})
-	if err != nil || contract.Identity.Name != "example.com/orders" || len(contract.Contract.Tools) != 1 || contract.Contract.Tools[0].Name != "read" || len(contract.Requires) != 0 {
+	if err != nil || contract.Identity.Name != "example.com/orders" || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" || len(contract.Requires) != 0 {
 		t.Fatalf("Resolve = %+v, %v", contract, err)
 	}
 }

@@ -49,9 +49,8 @@ func generateGoPackage(request generateRequest, catalogs map[string]catalog) map
 		header = fmt.Sprintf("\nimport (\n%s)\n", strings.Join(imports, "\n"))
 	}
 	return map[string]string{
-		"types.go":     "package holon\n\n" + declarations,
-		"clients.go":   "package holon\n" + header + text,
-		"package.json": string(encode(request.packageFields)),
+		"types.go":   "package holon\n\n" + declarations,
+		"clients.go": "package holon\n" + header + text,
 	}
 }
 

@@ -7,8 +7,8 @@ import (
 
 // changes lists what breaks expected if published is deployed. Empty means compatible.
 // Identity first, then tools by name, then resources by URI.
-func changes(expected Expectation, published *Metadata) []Change {
-	if published == nil || published.Contract == nil {
+func changes(expected *Metadata, published *Metadata) []Change {
+	if published == nil || published.Schema == nil {
 		return []Change{{Kind: "no_contract", Text: "no published contract"}}
 	}
 	var result []Change
@@ -18,7 +18,7 @@ func changes(expected Expectation, published *Metadata) []Change {
 			Text: fmt.Sprintf("identity %s@%s expected, %s@%s published", expected.Identity.Name, expected.Identity.Version, published.Identity.Name, published.Identity.Version),
 		})
 	}
-	want, have := canonicalContract(expected.Contract), canonicalContract(*published.Contract)
+	want, have := canonicalContract(*expected.Schema), canonicalContract(*published.Schema)
 	for _, name := range sortedKeys(want.Tools) {
 		tool := want.Tools[name]
 		actual, ok := have.Tools[name]

@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/moby/patternmatcher"
 	"github.com/moby/patternmatcher/ignorefile"
 )
@@ -33,7 +32,8 @@ func sourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
 	return patternmatcher.New(patterns)
 }
 
-func generatedSource(root, path string) bool {
+// GeneratedSource reports dependency directories and marked client slots excluded from source snapshots.
+func GeneratedSource(root, path string) bool {
 	relative, _ := filepath.Rel(root, path)
 	if slices.ContainsFunc(strings.Split(filepath.ToSlash(relative), "/"), func(part string) bool {
 		return slices.Contains([]string{".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}, part)
@@ -41,10 +41,7 @@ func generatedSource(root, path string) bool {
 		return true
 	}
 	managed := filepath.Join(root, "holon")
-	if pathInsideContext(path, managed) && mcpcontract.Managed(managed) {
-		return true
-	}
-	return path == filepath.Join(managed, "apps") && generatedPython(managed)
+	return pathInsideContext(path, managed) && generatedGo(managed) || pathInsideContext(path, filepath.Join(managed, "apps")) && generatedPython(managed)
 }
 
 // snapshotSource copies dir into destination (or only fingerprints it when destination is empty),
@@ -75,7 +72,7 @@ func snapshotSource(name, dir, destination string) (string, error) {
 			return err
 		}
 		if ignored {
-			if item.IsDir() && (generatedSource(root, path) || !matcher.Exclusions()) {
+			if item.IsDir() && (GeneratedSource(root, path) || !matcher.Exclusions()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -184,7 +181,7 @@ func ignoredSource(root, path string, matcher *patternmatcher.PatternMatcher) (b
 	if relative == "." {
 		return false, nil
 	}
-	if generatedSource(root, path) {
+	if GeneratedSource(root, path) {
 		return true, nil
 	}
 	return matcher.MatchesOrParentMatches(filepath.ToSlash(relative))

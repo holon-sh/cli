@@ -62,7 +62,6 @@ type Descriptor struct {
 	Remotes     []Transport                `json:"remotes"`
 	Meta        map[string]json.RawMessage `json:"_meta"`
 	Requires    map[string]Reference       `json:"-"`
-	Types       string                     `json:"-"`
 	Raw         json.RawMessage            `json:"-"`
 }
 type Package struct {
@@ -76,19 +75,11 @@ type Transport struct {
 }
 type HolonMetadata struct {
 	Requires map[string]Reference `json:"requires"`
-	Types    string               `json:"types,omitempty"`
 	Egress   json.RawMessage      `json:"egress,omitempty"`
 }
 
 func (d *Descriptor) Identity() mcpcontract.Identity {
 	return mcpcontract.Identity{Name: d.Name, Version: d.Version}
-}
-func validateTypesURL(value string) error {
-	u, err := url.Parse(value)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
-		return errors.New("sh.holon.types must be an HTTPS URL without credentials or a fragment")
-	}
-	return nil
 }
 func ParseDescriptor(data []byte) (*Descriptor, error) {
 	var d Descriptor
@@ -121,12 +112,6 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 				return nil, fmt.Errorf("sh.holon metadata: %w", err)
 			}
 			d.Requires = h.Requires
-			d.Types = h.Types
-		}
-	}
-	if d.Types != "" {
-		if err := validateTypesURL(d.Types); err != nil {
-			return nil, err
 		}
 	}
 	for name, ref := range d.Requires {
@@ -172,7 +157,7 @@ func (c Client) Get(ctx context.Context, name, version string) (*Descriptor, err
 	return d, nil
 }
 
-// fetchJSON bounds both registry records and published contract documents.
+// fetchJSON bounds registry records.
 func fetchJSON(ctx context.Context, client *http.Client, location string) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
 	if err != nil {

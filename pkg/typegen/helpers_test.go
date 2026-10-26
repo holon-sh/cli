@@ -24,8 +24,8 @@ var lookupTool = mcpcontract.Tool{Name: "lookup", Input: json.RawMessage(`{"type
 	Output: json.RawMessage(`{"type":"object","properties":{"total":{"type":"number"}},"required":["total"],"additionalProperties":false}`)}
 
 func ordersMetadata() *mcpcontract.Metadata {
-	return &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"},
-		Contract: &mcpcontract.Contract{Tools: []mcpcontract.Tool{lookupTool}}}
+	return &mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"},
+		Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{lookupTool}}}
 }
 
 func put(t *testing.T, root, name, content string) {
@@ -147,6 +147,10 @@ func imageClient(t *testing.T, metadata *mcpcontract.Metadata, artifactType stri
 		child := add(ocispec.MediaTypeImageManifest, artifact)
 		child.ArtifactType = mcpcontract.MediaType
 		index.Manifests = append(index.Manifests, child)
+		index.Annotations = map[string]string{mcpcontract.DigestAnnotation: layer.Digest.String()}
+		if artifactType == "invalid" {
+			index.Annotations[mcpcontract.DigestAnnotation] = "invalid"
+		}
 	}
 	index.SchemaVersion = 2
 	descriptor := add(ocispec.MediaTypeImageIndex, index)

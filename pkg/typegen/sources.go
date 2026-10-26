@@ -36,7 +36,7 @@ var targets = []string{TargetTS, TargetPy, TargetGo}
 const nodePackage = "holon-sh"
 
 // Source is one MCP server whose contract becomes a client, supplied explicitly or declared in
-// sh.holon.requires. Exactly one of Path, Registry, Endpoint, Image or Contract is set.
+// sh.holon.requires. Exactly one of Path, Registry, Endpoint, Image, Contract or Document is set.
 type Source struct {
 	// Alias names the client (apps.<alias>). Empty derives it: the last segment of the server's
 	// name (example.com/orders → orders), or the live server's serverInfo name for an Endpoint.
@@ -45,16 +45,17 @@ type Source struct {
 	// directory containing exactly one. Its contract is extracted from source; server.json beside
 	// the entry supplies the identity.
 	Path string
-	// Registry is an MCP registry server version. The record's sh.holon.types document is the
-	// contract; without one, its OCI package's contract artifact; without that, its streamable-http
-	// remote; without any it is an error.
+	// Registry is an MCP registry server version. Resolve its OCI package's document,
+	// falling back to its streamable-http remote when the image has no contract.
 	Registry *Reference
 	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract.
 	Endpoint string
 	// Image is an OCI image carrying a contract artifact (Options.Credential authenticates).
 	Image string
-	// Contract is an already resolved contract document the caller obtained elsewhere.
+	// Contract is a newly observed contract to serialize. Use Document for fetched blobs.
 	Contract *mcpcontract.Metadata
+	// Document retains the exact bytes of an already fetched contract blob.
+	Document *Document
 }
 
 // key identifies a fetched source (registry, endpoint or image) independently of its alias, so
@@ -79,6 +80,8 @@ func (s Source) String() string {
 		return s.Endpoint
 	case s.Image != "":
 		return s.Image
+	case s.Document != nil:
+		return s.Document.Identity.Name + "@" + s.Document.Identity.Version
 	case s.Contract != nil:
 		return s.Contract.Identity.Name + "@" + s.Contract.Identity.Version
 	}
@@ -87,7 +90,7 @@ func (s Source) String() string {
 
 func (s Source) validate() error {
 	set := 0
-	for _, present := range []bool{s.Path != "", s.Registry != nil, s.Endpoint != "", s.Image != "", s.Contract != nil} {
+	for _, present := range []bool{s.Path != "", s.Registry != nil, s.Endpoint != "", s.Image != "", s.Contract != nil, s.Document != nil} {
 		if present {
 			set++
 		}

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+
+	"github.com/opencontainers/go-digest"
 )
 
 // The v1 contract document. Decoding a value validates it; there is no separate validate step.
@@ -30,18 +32,11 @@ type Contract struct {
 	Resources map[string]Resource
 }
 
-// Expectation is the contract a caller was built against.
-type Expectation struct {
-	Identity Identity
-	Contract Contract
-}
-
 // Metadata is the document an image publishes.
 type Metadata struct {
-	Version  uint32
 	Identity Identity
-	Contract *Contract
-	Requires map[string]Expectation
+	Schema   *Contract
+	Requires map[string]string
 }
 
 func decodeIdentity(value Value) (Identity, error) {
@@ -147,58 +142,30 @@ func decodeContract(value Value) (Contract, error) {
 	return contract, nil
 }
 
-func decodeExpectation(value Value) (Expectation, error) {
-	object, err := asObject(value)
-	if err != nil {
-		return Expectation{}, err
-	}
-	var expectation Expectation
-	raw, err := requiredField(object, "identity")
-	if err != nil {
-		return Expectation{}, err
-	}
-	if expectation.Identity, err = decodeIdentity(raw); err != nil {
-		return Expectation{}, err
-	}
-	if raw, err = requiredField(object, "contract"); err != nil {
-		return Expectation{}, err
-	}
-	expectation.Contract, err = decodeContract(raw)
-	return expectation, err
-}
-
 func decodeMetadata(value Value) (Metadata, error) {
 	object, err := asObject(value)
 	if err != nil {
 		return Metadata{}, err
 	}
-	raw, err := requiredField(object, "version")
+	for key := range object {
+		if key != "identity" && key != "schema" && key != "requires" {
+			return Metadata{}, fmt.Errorf("unknown metadata field %q", key)
+		}
+	}
+	metadata := Metadata{Requires: map[string]string{}}
+	raw, err := requiredField(object, "identity")
 	if err != nil {
-		return Metadata{}, err
-	}
-	version, ok := raw.(Number)
-	if !ok {
-		return Metadata{}, fmt.Errorf("invalid type: %s, expected u32", describe(raw))
-	}
-	if version.kind != posInt || version.u > 1<<32-1 {
-		return Metadata{}, fmt.Errorf("invalid value: %s, expected u32", describe(raw))
-	}
-	if version.u != 1 {
-		return Metadata{}, fmt.Errorf("unsupported metadata version %d", version.u)
-	}
-	metadata := Metadata{Version: 1, Requires: map[string]Expectation{}}
-	if raw, err = requiredField(object, "identity"); err != nil {
 		return Metadata{}, err
 	}
 	if metadata.Identity, err = decodeIdentity(raw); err != nil {
 		return Metadata{}, err
 	}
-	if raw := object["contract"]; raw != nil {
+	if raw, ok := object["schema"]; ok {
 		contract, err := decodeContract(raw)
 		if err != nil {
 			return Metadata{}, err
 		}
-		metadata.Contract = &contract
+		metadata.Schema = &contract
 	}
 	if raw, ok := object["requires"]; ok {
 		requires, err := asObject(raw)
@@ -206,12 +173,18 @@ func decodeMetadata(value Value) (Metadata, error) {
 			return Metadata{}, err
 		}
 		for alias, item := range requires {
-			if metadata.Requires[alias], err = decodeExpectation(item); err != nil {
+			if alias == "" {
+				return Metadata{}, errors.New("dependency aliases must be nonempty")
+			}
+			value, err := asString(item)
+			if err != nil {
 				return Metadata{}, err
 			}
-		}
-		if _, ok := metadata.Requires[""]; ok {
-			return Metadata{}, errors.New("dependency aliases must be nonempty")
+			d, err := digest.Parse(value)
+			if err != nil || d.Algorithm() != digest.SHA256 {
+				return Metadata{}, fmt.Errorf("dependency %s requires a SHA-256 digest", alias)
+			}
+			metadata.Requires[alias] = value
 		}
 	}
 	return metadata, nil

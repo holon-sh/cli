@@ -2,7 +2,6 @@ package typegen
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,12 +11,6 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-func legacyManagedFiles(files map[string]string) bool {
-	var pkg struct {
-		Holon string `json:"holon"`
-	}
-	return json.Unmarshal([]byte(files["package.json"]), &pkg) == nil && pkg.Holon == mcpcontract.Marker
-}
 func generatedPython(directory string) bool {
 	data, err := os.ReadFile(filepath.Join(directory, "apps", "__init__.py"))
 	return err == nil && bytes.HasPrefix(data, []byte("# "+mcpcontract.Marker+" app="))
@@ -36,9 +29,6 @@ func validatePythonSlot(root string) error {
 		}
 	}
 	holon := filepath.Join(root, "holon")
-	if mcpcontract.Managed(holon) {
-		return nil
-	}
 	if _, err := os.Lstat(filepath.Join(holon, "__init__.py")); err == nil {
 		return errors.New("holon/__init__.py prevents namespace imports; remove it before generating types")
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -54,12 +44,6 @@ func validatePythonSlot(root string) error {
 func writePythonSlot(root string, files map[string]string) error {
 	if err := validatePythonSlot(root); err != nil {
 		return err
-	}
-	holon := filepath.Join(root, "holon")
-	if mcpcontract.Managed(holon) {
-		if err := os.RemoveAll(holon); err != nil {
-			return err
-		}
 	}
 	for name, content := range files {
 		if name != "holon/apps/__init__.py" {

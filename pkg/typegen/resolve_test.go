@@ -47,11 +47,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	defer server.Close()
-	var record, document string
-	mux.HandleFunc("/contract", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(document))
-	})
+	var record string
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.EscapedPath() != "/v0.1/servers/example.com%2Forders/versions/1.0.0" {
 			http.NotFound(w, r)
@@ -64,29 +60,25 @@ func TestRegistrySourceResolution(t *testing.T) {
 	remote := `,"remotes":[{"type":"streamable-http","url":"` + live.URL + `"}]`
 	types := `,"_meta":{"` + PublisherMetadata + `":{"sh.holon":{"types":"` + server.URL + `/contract"}}}`
 	oci := `,"packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]`
-	valid := string(mustJSON(t, ordersMetadata()))
 	wrongIdentity := ordersMetadata()
 	wrongIdentity.Identity.Name = "example.com/other"
 	for _, test := range []struct {
-		name, record, document, tool, want string
-		image                              *http.Client
+		name, record, tool, want string
+		image                    *http.Client
 	}{
-		{"types document before OCI and remote", base + types + oci + remote + `}`, valid, "lookup", "", imageClient(t, wrongIdentity, mcpcontract.MediaType)},
-		{"oci package", base + oci + `}`, "", "lookup", "", nil},
-		{"oci before remote", base + oci + remote + `}`, "", "lookup", "", nil},
-		{"oci without a contract falls through to remote", base + oci + remote + `}`, "", "read", "", imageClient(t, nil, mcpcontract.MediaType)},
-		{"oci identity mismatch", base + oci + `}`, "", "", "belongs to example.com/other", imageClient(t, wrongIdentity, mcpcontract.MediaType)},
-		{"oci error propagates", base + `,"packages":[{"registryType":"oci","identifier":"orders:1.0.0"},{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]` + remote + `}`, "", "", "package orders:1.0.0: package identifier must use an explicit OCI registry", nil},
-		{"invalid OCI contract does not fall through", base + oci + remote + `}`, "", "", "invalid MCP contract artifact", imageClient(t, ordersMetadata(), "invalid")},
-		{"remote", base + remote + `}`, "", "read", "", nil},
-		{"neither", base + `,"packages":[{"registryType":"npm","identifier":"orders"}]}`, "", "", "publishes neither", nil},
-		{"wrong registry identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "", "different server name", nil},
-		{"oversized document", base + types + `}`, strings.Repeat(" ", MaxDescriptorBytes+1), "", "exceeds", nil},
-		{"invalid contract", base + types + oci + remote + `}`, `{"version":1,"identity":{"name":"example.com/orders","version":"1.0.0"},"contract":{"tools":"invalid"}}`, "", "expected a sequence", nil},
-		{"wrong contract identity", base + types + `}`, `{"version":1,"identity":{"name":"example.com/other","version":"1.0.0"},"contract":{"tools":[]}}`, "", "belongs to example.com/other", nil},
+		{"removed types field", base + types + oci + `}`, "", "unknown field", nil},
+		{"oci package", base + oci + `}`, "lookup", "", nil},
+		{"oci before remote", base + oci + remote + `}`, "lookup", "", nil},
+		{"oci without a contract falls through to remote", base + oci + remote + `}`, "read", "", imageClient(t, nil, mcpcontract.MediaType)},
+		{"oci identity mismatch", base + oci + `}`, "", "belongs to example.com/other", imageClient(t, wrongIdentity, mcpcontract.MediaType)},
+		{"oci error propagates", base + `,"packages":[{"registryType":"oci","identifier":"orders:1.0.0"},{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]` + remote + `}`, "", "package orders:1.0.0: package identifier must use an explicit OCI registry", nil},
+		{"invalid OCI contract does not fall through", base + oci + remote + `}`, "", "requires a SHA-256 digest", imageClient(t, ordersMetadata(), "invalid")},
+		{"remote", base + remote + `}`, "read", "", nil},
+		{"neither", base + `,"packages":[{"registryType":"npm","identifier":"orders"}]}`, "", "publishes neither", nil},
+		{"wrong registry identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "different server name", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			record, document = test.record, test.document
+			record = test.record
 			image := test.image
 			if image == nil {
 				image = imageClient(t, ordersMetadata(), mcpcontract.MediaType)
@@ -104,20 +96,10 @@ func TestRegistrySourceResolution(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || metadata.Identity != identity || len(metadata.Contract.Tools) != 1 || metadata.Contract.Tools[0].Name != test.tool {
+			if err != nil || metadata.Identity != identity || len(metadata.Schema.Tools) != 1 || metadata.Schema.Tools[0].Name != test.tool {
 				t.Fatalf("Resolve = %+v, %v", metadata, err)
 			}
 		})
-	}
-}
-
-func TestContractRedirectRejectsDowngrade(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://example.com/contract", http.StatusFound)
-	}))
-	defer server.Close()
-	if _, err := fetchContract(t.Context(), server.URL, Options{HTTPClient: server.Client()}); err == nil || !strings.Contains(err.Error(), "HTTPS") {
-		t.Fatalf("insecure redirect accepted: %v", err)
 	}
 }
 
@@ -128,11 +110,11 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata.Identity != (mcpcontract.Identity{Name: "Orders Live", Version: "99"}) || len(metadata.Contract.Tools) != 1 {
+	if metadata.Identity != (mcpcontract.Identity{Name: "Orders Live", Version: "99"}) || len(metadata.Schema.Tools) != 1 {
 		t.Fatalf("live contract = %+v", metadata)
 	}
 	outputs := map[string]string{}
-	for _, resource := range metadata.Contract.Resources {
+	for _, resource := range metadata.Schema.Resources {
 		outputs[resource.URI] = string(resource.Output)
 	}
 	if outputs["orders://typed"] != `{"type":"string"}` || outputs["orders://untyped"] != `{}` {
@@ -145,7 +127,7 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer prepared.Close()
-	if _, ok := prepared.Metadata()["app"].Requires["orders-live"]; !ok {
+	if reference := prepared.Metadata()["app"].Requires["orders-live"]; prepared.Documents()[reference] == nil {
 		t.Fatalf("alias not derived from serverInfo: %+v", prepared.Metadata()["app"].Requires)
 	}
 

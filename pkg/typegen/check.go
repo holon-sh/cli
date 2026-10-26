@@ -80,7 +80,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 // relative to the consumer directory. It reports false for consumers without an extracted server.
 func (p *Prepared) CheckConfig(consumer string) (map[string]any, bool) {
 	c := p.consumer(consumer)
-	if c == nil || c.server == nil || c.server.metadata.Contract == nil {
+	if c == nil || c.server == nil || c.server.metadata.Schema == nil {
 		return nil, false
 	}
 	sources := map[string]string{}

@@ -114,20 +114,19 @@ func generationCases(t *testing.T) []generationCase {
          "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}},
         {"name": "then", "inputSchema": {"type": "object", "additionalProperties": false}}
     ], "resources": [{"uri": "orders://summary", "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}}]}`
-	legacyContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}}`
+	sampleContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}}`
 	runtime := `{"runtime.mjs": "` + base64.StdEncoding.EncodeToString([]byte("export {};\n")) + `", "browser-runtime.mjs": "` + base64.StdEncoding.EncodeToString([]byte("export {};\n")) + `", "nested/bytes.dat": "` + base64.StdEncoding.EncodeToString([]byte{0, 128, 255, '\n'}) + `"}`
 	for _, target := range []string{"node", "browser", "python", "go"} {
-		add("legacy-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}, "payments": {"name": "payments", "version": "2.0.0"}}, "contracts": `+legacyContracts+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "package_fields": {"holon": "holon-generated-apps-v1"}, "go_module": "example.com/runtime"}`)
-		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "package_fields": {"holon": "holon-generated-apps-v1", "nested": {"list": [1, 2.5, "é", null, {"k": [true, false]}], "empty": {}, "emptyList": []}, "number": 1e21, "zero": -0, "float": 1.0}, "go_module": "example.com/é/runtime", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
+		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "go_module": "example.com/é/runtime", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
 		add("empty-"+target, `{"target": "`+target+`", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
-		add("untyped-only-"+target, `{"target": "`+target+`", "identity": {"name": "a", "version": "1"}, "requires": {"payments": {"name": "payments", "version": "1"}, "pay-ments": {"name": "p", "version": "1"}}, "go_module": "example.com/runtime", "package_fields": {}}`)
+		add("untyped-only-"+target, `{"target": "`+target+`", "identity": {"name": "a", "version": "1"}, "requires": {"payments": {"name": "payments", "version": "1"}, "pay-ments": {"name": "p", "version": "1"}}, "go_module": "example.com/runtime"}`)
 	}
 	for _, target := range []string{"node", "browser", "python"} {
 		options := `"runtime_specifier": "../runtime.mjs", "browser_runtime_specifier": "../browser-runtime.mjs", "protocol_specifier": "../protocol.js"`
 		if target == "python" {
 			options = `"python_module": "holon/apps/__init__.py", "python_runtime_module": "holon.client"`
 		}
-		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+legacyContracts+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
+		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+sampleContracts+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
 		add("slot-sink-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
 	}
 	add("slot-node-runtime-only", `{"target": "node", "identity": {"name": "a", "version": "1"}, "runtime_specifier": "@holon/apps/runtime.mjs", "protocol": "type X = 1;"}`)

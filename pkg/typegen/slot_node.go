@@ -33,7 +33,7 @@ func InstalledRuntime(root, pkg string) (string, error) {
 			if err := readTypeJSON(filepath.Join(real, "package.json"), &manifest); err != nil {
 				return "", err
 			}
-			if manifest.Holon.Slot != "generated" || manifest.Holon.ContractVersion != mcpcontract.Version {
+			if manifest.Holon.Slot != "generated" || manifest.Holon.ContractVersion != 1 {
 				return "", fmt.Errorf("%s does not declare a compatible holon.slot", candidate)
 			}
 			return real, nil

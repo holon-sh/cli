@@ -64,7 +64,7 @@ func (s *preparedSource) contract(ctx context.Context, result extraction) (*mcpc
 		return nil, fmt.Errorf("%s: %s", s.origin, result.Diagnostic)
 	}
 	s.sources = result.Sources
-	s.metadata.Contract = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
+	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
 	if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": s.metadata}); err != nil {
 		return nil, fmt.Errorf("%s: %w", s.origin, err)
 	}
@@ -73,10 +73,12 @@ func (s *preparedSource) contract(ctx context.Context, result extraction) (*mcpc
 
 type preparedConsumer struct {
 	Consumer
-	server   *preparedSource
-	metadata *mcpcontract.Metadata
-	packages map[string]map[string]string // files by target
-	slot     slotMetadata
+	server    *preparedSource
+	metadata  *mcpcontract.Metadata
+	packages  map[string]map[string]string // files by target
+	slot      slotMetadata
+	preparing bool
+	prepared  bool
 }
 
 // Prepared owns temporary source snapshots. Close releases them; preparation never modifies consumers.
@@ -86,7 +88,8 @@ type Prepared struct {
 	root      string
 	options   Options
 	// resolved holds every non-path source's contract, keyed by alias as each consumer sees it.
-	resolved map[string]*mcpcontract.Metadata
+	resolved  map[string]*mcpcontract.Metadata
+	documents map[string]*Document
 }
 
 func (p *Prepared) Close() error { return os.RemoveAll(p.root) }
@@ -100,6 +103,9 @@ func (p *Prepared) Metadata() map[string]*mcpcontract.Metadata {
 	}
 	return result
 }
+
+// Documents returns the own and dependency documents by digest, preserving fetched bytes.
+func (p *Prepared) Documents() map[string]*Document { return maps.Clone(p.documents) }
 
 func (p *Prepared) consumer(name string) *preparedConsumer {
 	for _, c := range p.consumers {
@@ -127,7 +133,7 @@ func prepareSource(ctx context.Context, root, name, path string, o Options) (*pr
 	if err != nil {
 		return nil, fmt.Errorf("%s/server.json: %w", origin, err)
 	}
-	s.metadata = &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: descriptor.Identity()}
+	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
 	if s.fingerprint, err = snapshotSource(name, origin, s.root); err != nil {
 		return nil, err
 	}
@@ -155,7 +161,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
 		return nil, err
 	}
-	p := &Prepared{paths: map[string]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}}
+	p := &Prepared{paths: map[string]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}, documents: map[string]*Document{}}
 	batches := map[string][]extractionEntry{}
 	for _, c := range consumers {
 		pc := &preparedConsumer{Consumer: c, packages: map[string]map[string]string{}}
@@ -199,7 +205,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			return nil, err
 		}
 	}
-	external := map[string]*mcpcontract.Metadata{}
+	external := map[string]*Document{}
 	for _, c := range p.consumers {
 		if err = p.prepareConsumer(ctx, c, external); err != nil {
 			return nil, err
@@ -213,30 +219,52 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 
 // resolve returns a source's contract document: a snapshot's extraction for a path source, the
 // validated document itself for a contract source, or a fetch deduplicated by source key.
-func (p *Prepared) resolve(ctx context.Context, source Source, external map[string]*mcpcontract.Metadata) (*mcpcontract.Metadata, error) {
+func (p *Prepared) resolve(ctx context.Context, source Source, external map[string]*Document) (*Document, error) {
 	if source.Path != "" {
 		absolute, _ := filepath.Abs(source.Path)
-		return p.paths[absolute].metadata, nil
+		dependency := p.paths[absolute]
+		// When the source is another consumer, reference its complete document.
+		for _, consumer := range p.consumers {
+			if consumer.Server == nil {
+				continue
+			}
+			own, _ := filepath.Abs(consumer.Server.Path)
+			if p.paths[own].origin != dependency.origin {
+				continue
+			}
+			if err := p.prepareConsumer(ctx, consumer, external); err != nil {
+				return nil, err
+			}
+			return NewDocument(ctx, consumer.metadata)
+		}
+		return NewDocument(ctx, dependency.metadata)
 	}
-	// Supplied documents can differ even when their identities match; validate each one.
-	if source.Contract != nil {
-		return Resolve(ctx, source, p.options)
+	if source.Contract != nil || source.Document != nil {
+		return ResolveDocument(ctx, source, p.options)
 	}
-	if metadata, done := external[source.key()]; done {
-		return metadata, nil
+	if document, done := external[source.key()]; done {
+		return document, nil
 	}
-	metadata, err := Resolve(ctx, source, p.options)
-	if err == nil && metadata == nil {
-		err = errors.New("image carries no MCP contract artifact")
+	document, err := ResolveDocument(ctx, source, p.options)
+	if err == nil && document == nil {
+		err = errors.New("image carries no MCP contract document")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
-	external[source.key()] = metadata
-	return metadata, nil
+	external[source.key()] = document
+	return document, nil
 }
 
-func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, external map[string]*mcpcontract.Metadata) error {
+func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, external map[string]*Document) error {
+	if c.prepared {
+		return nil
+	}
+	if c.preparing {
+		return fmt.Errorf("contract dependency cycle at %s", c.Name)
+	}
+	c.preparing = true
+	defer func() { c.preparing = false }()
 	identity := mcpcontract.Identity{Name: c.Name, Version: "0.0.0"}
 	if c.Server != nil {
 		absolute, _ := filepath.Abs(c.Server.Path)
@@ -252,9 +280,9 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		}
 		identity = descriptor.Identity()
 	}
-	c.metadata = &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: identity, Requires: map[string]mcpcontract.Expectation{}}
+	c.metadata = &mcpcontract.Metadata{Identity: identity, Requires: map[string]string{}}
 	if c.server != nil {
-		c.metadata.Contract = c.server.metadata.Contract
+		c.metadata.Schema = c.server.metadata.Schema
 	}
 	request := mcptype.GenerateRequest{Identity: identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + c.Name}
 	c.slot = slotMetadata{Marker: mcpcontract.Marker, App: c.Name, Identity: identity}
@@ -264,7 +292,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
 		}
-		if metadata.Contract == nil {
+		if metadata.Schema == nil {
 			return fmt.Errorf("%s: %s has no contract", c.Name, source)
 		}
 		alias := cmp.Or(source.Alias, serverKey(metadata.Identity.Name))
@@ -276,10 +304,11 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		}
 		aliases[alias] = source.String()
 		request.Requires[alias] = metadata.Identity
-		request.Contracts[alias] = metadata.Contract
-		c.metadata.Requires[alias] = mcpcontract.Expectation{Identity: metadata.Identity, Contract: *metadata.Contract}
+		request.Contracts[alias] = metadata.Schema
+		c.metadata.Requires[alias] = metadata.Digest
+		p.documents[metadata.Digest] = metadata
 		if source.Path == "" {
-			p.resolved[alias] = metadata
+			p.resolved[alias] = metadata.Metadata
 		}
 	}
 	for _, target := range c.Targets {
@@ -289,6 +318,12 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		}
 		c.packages[target] = files
 	}
+	document, err := NewDocument(ctx, c.metadata)
+	if err != nil {
+		return err
+	}
+	p.documents[document.Digest] = document
+	c.prepared = true
 	return nil
 }
 
@@ -304,11 +339,8 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 		if goModule == "" {
 			return nil, errors.New("the go target needs Options.GoModule")
 		}
-		// The package matches the Holon platform's: unbannered, marked by package.json.
 		request.Target = "go"
-		request.Banner = ""
 		request.GoModule = goModule
-		request.PackageFields = map[string]any{"holon": mcpcontract.Marker}
 	default:
 		return nil, fmt.Errorf("unsupported target %s", target)
 	}
@@ -449,7 +481,7 @@ func (p *Prepared) WriteNodeSlot(consumer, pkgDir string) error {
 }
 
 // WritePythonSlot writes the consumer's holon/apps/__init__.py under root, a project directory or
-// its staged copy. A legacy Holon-managed holon/ package is replaced; user files in the namespace are refused.
+// its staged copy. Only a marked generated module is replaced.
 func (p *Prepared) WritePythonSlot(consumer, root string) error {
 	_, files, err := p.files(consumer, TargetPy)
 	if err != nil {

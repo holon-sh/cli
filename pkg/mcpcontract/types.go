@@ -7,14 +7,13 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"time"
 )
 
 const (
-	Version   = 1
-	Marker    = "holon-generated-apps-v1"
-	MediaType = "application/vnd.holon.mcp-contract.v1+json"
+	Marker           = "holon-generated-apps-v1"
+	DigestAnnotation = "sh.holon.contract.digest"
+	MediaType        = "application/vnd.holon.mcp-contract.v1+json"
 )
 
 // StableTime returns the mtime Holon gives a file it writes into a build
@@ -66,24 +65,10 @@ type Identity struct {
 	Version string `json:"version"`
 }
 
-type Expectation struct {
-	Identity Identity `json:"identity"`
-	Contract Contract `json:"contract"`
-}
-
+// Metadata is the contract document stored as an OCI blob. Requires pins each
+// dependency to its exact document bytes in the consumer's repository.
 type Metadata struct {
-	Version  int                    `json:"version"`
-	Identity Identity               `json:"identity"`
-	Contract *Contract              `json:"contract,omitempty"`
-	Requires map[string]Expectation `json:"requires,omitempty"`
-}
-
-// Managed reports whether directory is a package Holon generated before the public runtimes: the
-// legacy Python holon/ copy or a Go holon/ client package, both marked in package.json.
-func Managed(directory string) bool {
-	data, err := os.ReadFile(filepath.Join(directory, "package.json"))
-	var pkg struct {
-		Holon string `json:"holon"`
-	}
-	return err == nil && json.Unmarshal(data, &pkg) == nil && pkg.Holon == Marker
+	Identity Identity          `json:"identity"`
+	Schema   *Contract         `json:"schema,omitempty"`
+	Requires map[string]string `json:"requires,omitempty"`
 }
