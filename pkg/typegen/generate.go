@@ -38,16 +38,20 @@ type Options struct {
 	GoModule string
 }
 
-func (o Options) defaults() (Options, error) {
-	for _, entry := range o.Env {
+func validateEnv(env []string) error {
+	for _, entry := range env {
 		if !strings.Contains(entry, "=") {
-			return o, fmt.Errorf("environment entry %q must be KEY=VALUE", entry)
+			return fmt.Errorf("environment entry %q must be KEY=VALUE", entry)
 		}
 	}
+	return nil
+}
+
+func (o Options) defaults() Options {
 	o.HTTPClient = cmp.Or(o.HTTPClient, &http.Client{Timeout: 30 * time.Second})
 	o.Stdout = cmp.Or(o.Stdout, io.Discard)
 	o.Stderr = cmp.Or(o.Stderr, io.Discard)
-	return o, nil
+	return o
 }
 
 // preparedSource is one snapshotted server directory.
@@ -134,10 +138,7 @@ func prepareSource(ctx context.Context, root, name, path string, o Options) (*pr
 // Prepare snapshots and extracts every path source once, resolves every other source once, and
 // generates the client files for each consumer and target. Nothing is written to the consumers.
 func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Prepared, err error) {
-	o, err := options.defaults()
-	if err != nil {
-		return nil, err
-	}
+	o := options.defaults()
 	for _, c := range consumers {
 		if err := c.validate(); err != nil {
 			return nil, err
@@ -364,10 +365,7 @@ func (p *Prepared) currentSources() error {
 // Generate writes each consumer's slots: it requires the slot packages to be installed (installing
 // a declared but missing one), prepares, validates the slots, then writes them.
 func Generate(ctx context.Context, consumers []Consumer, options Options) error {
-	o, err := options.defaults()
-	if err != nil {
-		return err
-	}
+	o := options.defaults()
 	for _, c := range consumers {
 		if err := c.validate(); err != nil {
 			return err

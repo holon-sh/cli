@@ -64,6 +64,9 @@ func extractTypes(ctx context.Context, root string, batches map[string][]extract
 				return nil, err
 			}
 		} else {
+			if err := validateEnv(o.Env); err != nil {
+				return nil, err
+			}
 			l := typeLanguages[language]
 			program, err := l.localProgram(ctx)
 			if err != nil {

@@ -301,34 +301,28 @@ func TestCredentialAuthenticatesImageSources(t *testing.T) {
 	grant := func(host, password string) auth.CredentialFunc {
 		return auth.StaticCredential(host, auth.Credential{Username: "user", Password: password})
 	}
+	docker := func(password string) string {
+		dir := filepath.Join(t.TempDir(), "home=override", ".docker")
+		encoded := base64.StdEncoding.EncodeToString([]byte("user:" + password))
+		put(t, dir, "config.json", `{"auths":{"images.example":{"auth":"`+encoded+`"}}}`)
+		return dir
+	}
 	for _, test := range []struct {
 		name       string
 		credential auth.CredentialFunc
-		docker     string // password stored for images.example in the Docker config
-		home       bool
 		env        []string
 		want       string
 	}{
 		{name: "grant", credential: grant("images.example", "secret")},
-		{name: "grant ahead of docker", credential: grant("images.example", "secret"), docker: "wrong"},
-		{name: "docker for other registries", credential: grant("elsewhere.example", "wrong"), docker: "secret"},
-		{name: "docker under HOME", docker: "secret", home: true},
+		{name: "grant ahead of docker", credential: grant("images.example", "secret"), env: []string{"DOCKER_CONFIG=" + docker("wrong")}},
+		{name: "docker for other registries", credential: grant("elsewhere.example", "wrong"), env: []string{"DOCKER_CONFIG=" + docker("secret")}},
+		{name: "docker under HOME", env: []string{"HOME=" + filepath.Dir(docker("secret")), "DOCKER_CONFIG="}},
 		{name: "malformed environment", env: []string{"INVALID"}, want: "must be KEY=VALUE"},
-		{name: "rejected grant", credential: grant("images.example", "wrong"), docker: "secret", want: "rejected the supplied registry credential"},
-		{name: "rejected docker credential", docker: "wrong", want: "images.example/orders:1.0.0"},
+		{name: "rejected grant", credential: grant("images.example", "wrong"), env: []string{"DOCKER_CONFIG=" + docker("secret")}, want: "rejected the supplied registry credential"},
+		{name: "rejected docker credential", env: []string{"DOCKER_CONFIG=" + docker("wrong")}, want: "images.example/orders:1.0.0"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			home := filepath.Join(t.TempDir(), "home=override")
-			docker := filepath.Join(home, ".docker")
-			env := []string{"HOME=" + t.TempDir(), "DOCKER_CONFIG=", "DOCKER_CONFIG=" + docker}
-			if test.home {
-				env = append(env, "HOME="+home, "DOCKER_CONFIG="+t.TempDir(), "DOCKER_CONFIG=")
-			}
-			env = append(env, test.env...)
-			if test.docker != "" {
-				encoded := base64.StdEncoding.EncodeToString([]byte("user:" + test.docker))
-				put(t, docker, "config.json", `{"auths":{"images.example":{"auth":"`+encoded+`"}}}`)
-			}
+			env := append([]string{"DOCKER_CONFIG=" + t.TempDir()}, test.env...)
 			c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Image: "images.example/orders:1.0.0"}}}
 			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: authenticatedRegistry(t, ordersMetadata()), Env: env, Credential: test.credential})
 			if test.want != "" {

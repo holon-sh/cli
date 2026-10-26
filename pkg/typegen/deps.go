@@ -42,6 +42,7 @@ func packageManager(dir string, pkg packageJSON) string {
 // declares but node_modules lacks is installed with the project's package manager; an undeclared
 // one is an error naming the command that adds it.
 func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string, error) {
+	const installCommand = "install"
 	if slot, err := InstalledRuntime(dir, pkg); err == nil {
 		return slot, nil
 	}
@@ -56,17 +57,20 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string,
 	if !manifest.declares(pkg) {
 		verb := "add"
 		if manager == "npm" {
-			verb = "install"
+			verb = installCommand
 		}
 		return "", fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, pkg, manager, verb, pkg)
 	}
-	fmt.Fprintf(o.Stderr, "%s: %s install\n", filepath.Base(dir), manager)
-	command := exec.CommandContext(ctx, manager, "install")
+	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(dir), manager, installCommand)
+	if err := validateEnv(o.Env); err != nil {
+		return "", err
+	}
+	command := exec.CommandContext(ctx, manager, installCommand)
 	command.Dir = dir
 	command.Env = append(command.Environ(), o.Env...)
 	command.Stdout, command.Stderr = o.Stderr, o.Stderr
 	if err := command.Run(); err != nil {
-		return "", fmt.Errorf("%s install in %s: %w", manager, dir, err)
+		return "", fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
 	}
 	return InstalledRuntime(dir, pkg)
 }

@@ -25,6 +25,11 @@ import (
 	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
+const (
+	dockerConfigEnv = "DOCKER_CONFIG"
+	homeEnv         = "HOME"
+)
+
 func fetchImageJSON(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor, value any) error {
 	if descriptor.Size <= 0 || descriptor.Size > 4<<20 {
 		return errors.New("invalid image metadata size")
@@ -46,17 +51,20 @@ func imageRepository(name string, extraEnv []string, client *http.Client, suppli
 	}
 	authClient := &auth.Client{Client: cmp.Or(client, retry.DefaultClient), Cache: auth.NewCache()}
 	repository.Client = authClient
-	configDir, home := os.Getenv("DOCKER_CONFIG"), os.Getenv("HOME")
+	if err := validateEnv(extraEnv); err != nil {
+		return nil, used.Load, err
+	}
+	env := map[string]string{
+		dockerConfigEnv: os.Getenv(dockerConfigEnv),
+		homeEnv:         os.Getenv(homeEnv),
+	}
 	for _, entry := range extraEnv {
 		key, value, _ := strings.Cut(entry, "=")
-		switch key {
-		case "DOCKER_CONFIG":
-			configDir = value
-		case "HOME":
-			home = value
-		}
+		env[key] = value
 	}
+	configDir := env[dockerConfigEnv]
 	if configDir == "" {
+		home := env[homeEnv]
 		if home == "" {
 			home, err = os.UserHomeDir()
 			if err != nil {

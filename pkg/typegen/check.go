@@ -13,10 +13,7 @@ import (
 )
 
 func Check(ctx context.Context, dir string, options Options) error {
-	o, err := options.defaults()
-	if err != nil {
-		return err
-	}
+	o := options.defaults()
 	targets, err := DeclaredTargets(dir)
 	if err != nil {
 		return err
@@ -47,6 +44,9 @@ func Check(ctx context.Context, dir string, options Options) error {
 	}
 	defer os.RemoveAll(root)
 	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
+		return err
+	}
+	if err := validateEnv(o.Env); err != nil {
 		return err
 	}
 	for _, language := range slices.Sorted(maps.Keys(languages)) {
