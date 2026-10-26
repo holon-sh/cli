@@ -205,7 +205,8 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 	return p, nil
 }
 
-// resolve returns a source's contract document, fetching non-path sources once per Prepared.
+// resolve returns a source's contract document: a snapshot's extraction for a path source, the
+// validated document itself for a contract source, or a fetch deduplicated by source key.
 func (p *Prepared) resolve(ctx context.Context, source Source, external map[string]*mcpcontract.Metadata) (*mcpcontract.Metadata, error) {
 	if source.Path != "" {
 		absolute, _ := filepath.Abs(source.Path)
@@ -360,12 +361,12 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 		for _, target := range c.Targets {
 			switch target {
 			case TargetTS:
-				slot, err := ensureNodeRuntime(ctx, c.Dir, slotPackages[target], o)
+				slot, err := ensureNodeRuntime(ctx, c.Dir, nodePackage, o)
 				if err != nil {
 					return fmt.Errorf("%s: %w", c.Name, err)
 				}
 				if prior, ok := owners[slot]; ok && prior != c.Name {
-					return fmt.Errorf("%s and %s share %s; install a separate %s for each project (avoid hoisting this package)", prior, c.Name, slot, slotPackages[target])
+					return fmt.Errorf("%s and %s share %s; install a separate %s for each project (avoid hoisting this package)", prior, c.Name, slot, nodePackage)
 				}
 				owners[slot] = c.Name
 				slots[slotKey{target, c.Name}] = slot
@@ -386,7 +387,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 			var err error
 			switch target {
 			case TargetTS:
-				err = validateNodeSlot(slots[slotKey{target, c.Name}], slotPackages[target], c.slot)
+				err = validateNodeSlot(slots[slotKey{target, c.Name}], nodePackage, c.slot)
 			case TargetPy:
 				err = validatePythonSlot(c.Dir)
 			case TargetGo:
@@ -448,7 +449,7 @@ func (p *Prepared) WriteNodeSlot(consumer, pkgDir string) error {
 	if err != nil {
 		return err
 	}
-	return writeNodeSlot(pkgDir, slotPackages[TargetTS], files, c.slot)
+	return writeNodeSlot(pkgDir, nodePackage, files, c.slot)
 }
 
 // WritePythonSlot writes the consumer's holon/apps/__init__.py under root, a project directory or
@@ -496,10 +497,8 @@ func AcquireLocks(consumers []Consumer) (func(), error) {
 			return release, err
 		}
 		paths[real] = true
-		for _, pkg := range slotPackages {
-			if slot, err := InstalledRuntime(c.Dir, pkg); err == nil {
-				paths[slot] = true
-			}
+		if slot, err := InstalledRuntime(c.Dir, nodePackage); err == nil {
+			paths[slot] = true
 		}
 	}
 	for _, path := range slices.Sorted(maps.Keys(paths)) {

@@ -80,7 +80,7 @@ func DeclaredTargets(dir string) ([]string, error) {
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	if manifest.declares(slotPackages[TargetTS]) {
+	if manifest.declares(nodePackage) {
 		targets = append(targets, TargetTS)
 	}
 	if ensurePythonRuntime(dir) == nil {

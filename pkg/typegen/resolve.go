@@ -17,7 +17,8 @@ import (
 )
 
 // Resolve returns one source's contract document without writing anything: a path source is
-// extracted from its snapshot, the others are fetched as Prepare would fetch them.
+// extracted from its snapshot, a registry or endpoint source is fetched, and a supplied
+// contract is validated and returned as given.
 func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.Metadata, error) {
 	o := options.defaults()
 	if err := source.validate(); err != nil {
