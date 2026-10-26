@@ -1,25 +1,21 @@
 from __future__ import annotations
 
 import ast
-import hashlib
-import os
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Never
 
-IGNORED = frozenset(
-    {
-        ".git",
-        ".venv",
-        "venv",
-        "node_modules",
-        "holon",
-        ".holon",
-        ".holon-types",
-        "__pycache__",
-    }
-)
+IGNORED = {
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "holon",
+    ".holon",
+    ".holon-types",
+    "__pycache__",
+}
 ALIASES = {
     "typing_extensions": "typing",
     "mcp.server.mcpserver": "mcp.server",
@@ -79,8 +75,8 @@ class Analyzer:
         self.trees: dict[Path, ast.Module] = {}
         self.modules: dict[Path, dict[str, ast.AST | str]] = {}
         self.active: set[tuple[Path, str]] = set()
-        self.sources: dict[str, str] = {}
         self.definitions: dict[str, dict[str, Any]] = {}
+        self.sources: dict[str, str] = {}
 
     def fail(self, path: Path, node: ast.AST, message: str) -> Never:
         raise ExtractionError(
@@ -100,9 +96,9 @@ class Analyzer:
     def tree(self, path: Path) -> ast.Module:
         path = path.resolve()
         if path not in self.trees:
-            self.trees[path] = ast.parse(
-                path.read_text(), filename=str(path.relative_to(self.root))
-            )
+            name = str(path.relative_to(self.root))
+            self.sources[name] = path.read_bytes().decode("utf-8")
+            self.trees[path] = ast.parse(self.sources[name], filename=name)
         return self.trees[path]
 
     def load(self, path: Path) -> dict[str, ast.AST | str]:
@@ -415,8 +411,8 @@ class Analyzer:
         options: Mapping[str, ast.AST],
     ) -> dict[str, Any]:
         name = self.literal(path, options.get("name", ast.Constant(function.name)))
-        if not isinstance(name, str) or not name:
-            self.fail(path, function, "Tool names must be literal nonempty strings.")
+        if not isinstance(name, str):
+            self.fail(path, function, "Tool names must be literal strings.")
         signature = function.args
         if signature.posonlyargs or signature.vararg or signature.kwarg:
             self.fail(
@@ -542,7 +538,7 @@ class Analyzer:
         if mime_type != "application/json" or function.returns is None:
             return []
         uri = self.constant(path, options.get("uri", ast.Constant(None)))
-        if not isinstance(uri, str) or not uri:
+        if not isinstance(uri, str):
             self.fail(path, call, "Typed resources require a constant URI.")
         return [
             {
@@ -685,10 +681,6 @@ class Analyzer:
                         child,
                         "Register tools only with top-level MCP decorators or add_tool in the entrypoint.",
                     )
-        names = [tool["name"] for tool in tools]
-        uris = [resource["uri"] for resource in resources]
-        if len(names) != len(set(names)) or len(uris) != len(set(uris)):
-            self.fail(path, tree, "Duplicate tool registrations are unsupported.")
         return {"tools": tools, "resources": resources}
 
 
@@ -699,19 +691,8 @@ def wrap(schema: dict[str, Any]) -> dict[str, Any]:
 def extract(root: str | Path, entry: str) -> dict[str, Any]:
     analyzer = Analyzer(Path(root))
     try:
-        paths = []
-        for directory, folders, filenames in os.walk(analyzer.root):
-            folders[:] = [name for name in folders if name not in IGNORED]
-            paths += [
-                Path(directory, name) for name in filenames if name.endswith(".py")
-            ]
-        for path in paths:
-            source = path.read_text()
-            analyzer.sources[str(path.relative_to(analyzer.root))] = hashlib.sha256(
-                source.encode()
-            ).hexdigest()
         catalog = analyzer.extract((analyzer.root / entry).resolve())
-        return {**catalog, "sources": analyzer.sources}
+        return {**catalog, "sources": analyzer.sources, "ignored": sorted(IGNORED)}
     except (
         ValueError,
         SyntaxError,
@@ -720,11 +701,7 @@ def extract(root: str | Path, entry: str) -> dict[str, Any]:
         TypeError,
         RecursionError,
     ) as error:
-        return {
-            "tools": [],
-            "diagnostic": str(error),
-            "sources": analyzer.sources,
-        }
+        return {"tools": [], "diagnostic": str(error)}
 
 
 DECORATORS = {

@@ -44,7 +44,7 @@ func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.
 		if err != nil {
 			return nil, err
 		}
-		return prepared.contract(results["source"])
+		return prepared.contract(results["source"]), nil
 	case source.Registry != nil:
 		return resolveRegistry(ctx, *source.Registry, o)
 	case source.Endpoint != "":

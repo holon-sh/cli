@@ -1,4 +1,4 @@
-// Package tooling embeds the public SDK extraction and checking tools.
+// Package tooling embeds the shared Go core and language extraction/checking workers.
 package tooling
 
 import (
@@ -18,7 +18,7 @@ import (
 //go:embed cli-tooling-*.zip SHA256SUMS
 var assets embed.FS
 
-// Unpack verifies both archives and writes each language to its own directory.
+// Unpack verifies the archives and writes language workers and compatibility hosts.
 func Unpack(root string) error {
 	sums, err := assets.ReadFile("SHA256SUMS")
 	if err != nil {
@@ -28,8 +28,8 @@ func Unpack(root string) error {
 	if err != nil {
 		return err
 	}
-	if len(entries) != 2 {
-		return errors.New("expected TypeScript and Python tooling archives")
+	if len(entries) != 3 {
+		return errors.New("expected core, TypeScript and Python tooling archives")
 	}
 	for _, name := range entries {
 		data, err := assets.ReadFile(name)
@@ -43,6 +43,8 @@ func Unpack(root string) error {
 		language := "typescript"
 		if strings.HasPrefix(name, "cli-tooling-py-") {
 			language = "python"
+		} else if name == "cli-tooling-core.zip" {
+			language = "core"
 		}
 		archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
@@ -66,7 +68,7 @@ func Unpack(root string) error {
 			if err != nil {
 				return err
 			}
-			if err = os.WriteFile(path, content, 0o644); err != nil {
+			if err = os.WriteFile(path, content, 0o644|file.Mode().Perm()&0o111); err != nil {
 				return err
 			}
 		}

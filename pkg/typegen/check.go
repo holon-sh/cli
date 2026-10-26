@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/tooling"
+	"github.com/holon-sh/cli/pkg/tooling/core"
 )
 
 func Check(ctx context.Context, dir string, options Options) error {
@@ -60,16 +60,8 @@ func Check(ctx context.Context, dir string, options Options) error {
 		if language == "python" {
 			program = pythonEnvironment(dir, program)
 		}
-		config := filepath.Join(root, language+"-check.json")
-		if err = writeJSON(config, map[string]any{"root": dir, "entry": "", "sources": map[string]string{}, "check": true}); err != nil {
-			return err
-		}
-		command := exec.CommandContext(ctx, program, filepath.Join(root, "tooling", language, l.runner), "check", config)
-		command.Dir = dir
-		command.Env = env
-		command.Stdout = o.Stdout
-		command.Stderr = o.Stderr
-		if err = command.Run(); err != nil {
+		runner := core.Runner{Language: language, Program: program, Path: filepath.Join(root, "tooling", language, l.runner), Env: env, Stdout: o.Stdout, Stderr: o.Stderr}
+		if err = runner.Check(ctx, core.CheckConfig{Root: dir, Check: true}, false); err != nil {
 			return fmt.Errorf("%s does not type-check against its typed contracts: %w", filepath.Base(dir), err)
 		}
 	}

@@ -50,14 +50,11 @@ type preparedSource struct {
 	sources                                    map[string]string
 }
 
-// contract turns an extraction into the source's contract document; a diagnostic is an error.
-func (s *preparedSource) contract(result extraction) (*mcpcontract.Metadata, error) {
-	if result.Diagnostic != "" {
-		return nil, fmt.Errorf("%s: %s", s.origin, result.Diagnostic)
-	}
+// contract attaches a validated extraction to the source metadata.
+func (s *preparedSource) contract(result extraction) *mcpcontract.Metadata {
 	s.sources = result.Sources
 	s.metadata.Contract = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
-	return s.metadata, nil
+	return s.metadata
 }
 
 type preparedConsumer struct {
@@ -186,9 +183,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			continue
 		}
 		name := filepath.Base(s.root)
-		if _, err = s.contract(results[name]); err != nil {
-			return nil, err
-		}
+		s.contract(results[name])
 	}
 	external := map[string]*mcpcontract.Metadata{}
 	for _, c := range p.consumers {

@@ -116,12 +116,6 @@ async def unknown(id: str):
 """)
     extracted = extract(tmp_path, "server.py")
     assert "diagnostic" not in extracted, extracted
-    assert set(extracted["sources"]) == {
-        "server.py",
-        "models.py",
-        "tools/__init__.py",
-        "tools/lines.py",
-    }
     assert not (tmp_path / "executed").exists()
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(sys.modules, "models", raising=False)

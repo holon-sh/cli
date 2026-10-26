@@ -1,6 +1,6 @@
 #!/bin/sh
-# Build both embedded tooling archives and their checksum file in pkg/tooling.
-# Requires `npm ci` in tooling/typescript (Node 22+) and Python 3.11+ on PATH.
+# Build embedded tooling archives and their checksum file in pkg/tooling.
+# Requires Go, `npm ci` in tooling/typescript (Node 22+) and Python 3.11+ on PATH.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 (cd "$root/tooling/typescript" && node build.mjs)
@@ -9,6 +9,7 @@ for candidate in python3.15 python3.14 python3.13 python3.12 python3.11; do
   if command -v "$candidate" >/dev/null 2>&1; then python=$candidate; break; fi
 done
 "$python" -I "$root/tooling/python/build.py"
+"$python" "$root/scripts/build_tooling_core.py"
 cd "$root/pkg/tooling"
-shasum -a 256 cli-tooling-ts-*.zip cli-tooling-py-*.zip > SHA256SUMS
+shasum -a 256 cli-tooling-ts-*.zip cli-tooling-py-*.zip cli-tooling-core.zip > SHA256SUMS
 cat SHA256SUMS

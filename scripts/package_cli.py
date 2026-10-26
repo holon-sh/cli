@@ -54,10 +54,11 @@ def verify_binary(binary: Path, target: Target) -> None:
             raise ValueError("Linux binaries must be static (no PT_DYNAMIC or PT_INTERP)")
 
 
-def build_binary(binary: Path, target: Target, version: str) -> None:
+def build_binary(binary: Path, target: Target, version: str, package: str = "./cmd/holon") -> None:
     """Cross-compile from any host: the CLI is pure Go, so the binary is static without a C toolchain."""
     env = os.environ | {"CGO_ENABLED": "0", "GOOS": target.goos, "GOARCH": target.goarch}
-    subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
+    flags = "-s -w" + (f" -X main.version={version}" if version else " -buildid=")
+    subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags", flags, "-o", str(binary), package], cwd=ROOT, env=env, check=True)
 
 
 def build_wheel(stage: Path, dist: Path, binary: Path, target: Target, version: str) -> None:

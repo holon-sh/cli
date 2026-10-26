@@ -25,6 +25,17 @@ type CanonicalForm struct {
 	Digest    string          `json:"digest"`
 }
 
+// ValidateContract checks the contract wire format without normalizing schemas or
+// discarding annotations. Language schema engines remain responsible for their dialects.
+func ValidateContract(ctx context.Context, document any) error {
+	value, err := marshal(ctx, document)
+	if err != nil {
+		return err
+	}
+	_, err = decodeContract(value)
+	return err
+}
+
 // Canonical validates document, one of {"contract"}, {"schema"} or {"metadata"}, and returns its canonical form and digest.
 func Canonical(ctx context.Context, document any) (CanonicalForm, error) {
 	value, err := marshal(ctx, document)

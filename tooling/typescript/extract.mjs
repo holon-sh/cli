@@ -2,8 +2,6 @@ import ts from "typescript";
 import { z } from "zod";
 import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { resolve, dirname, relative, extname, sep } from "node:path";
-import { validator } from "./validate.mjs";
-import { createHash } from "node:crypto";
 
 class Builtin {
   constructor(module, name) { this.module = module; this.name = name; }
@@ -16,8 +14,8 @@ class Schema {
 }
 const resourceSchemaKey = "sh.holon/outputSchema";
 class Server {
-  tools = new Map();
-  resources = new Map();
+  tools = [];
+  resources = [];
   list = undefined;
 }
 class Lazy {
@@ -57,23 +55,8 @@ export function extract(root, entry) {
     if (!(result instanceof Server)) analyzer.fail(module.file, "Cannot establish the default MCP handler's tool catalog.");
     for (const module of analyzer.modules.values()) analyzer.auditStatements(module.file.statements, module.scope);
     for (const block of analyzer.blocks) analyzer.auditStatements(block.statements, block.scope);
-    const tools = result.list ?? [...result.tools.values()];
-    const names = new Set();
-    for (const tool of tools) {
-      if (typeof tool.name !== "string" || !tool.name || names.has(tool.name)) analyzer.fail(module.file, "Tool names must be unique constant strings.");
-      names.add(tool.name);
-      if (!tool.inputSchema || typeof tool.inputSchema !== "object" || Array.isArray(tool.inputSchema) || tool.inputSchema.type !== "object") analyzer.fail(module.file, `Invalid object input schema for ${tool.name}.`);
-      if (Object.hasOwn(tool, "outputSchema") && (!tool.outputSchema || typeof tool.outputSchema !== "object" || Array.isArray(tool.outputSchema))) analyzer.fail(module.file, `Invalid output schema for ${tool.name}.`);
-      try {
-        validator(tool.inputSchema);
-        if (tool.outputSchema) validator(tool.outputSchema);
-      } catch (error) { analyzer.fail(module.file, `Unsupported JSON Schema in ${tool.name}: ${error.message}`); }
-    }
-    const resources = [...result.resources.values()].sort((a, b) => a.uri.localeCompare(b.uri));
-    for (const resource of resources) {
-      if (!resource.outputSchema || typeof resource.outputSchema !== "object" || Array.isArray(resource.outputSchema)) analyzer.fail(module.file, `Invalid contents schema for ${resource.uri}.`);
-      try { validator(resource.outputSchema); } catch (error) { analyzer.fail(module.file, `Unsupported JSON Schema in ${resource.uri}: ${error.message}`); }
-    }
+    const tools = result.list ?? result.tools;
+    const resources = result.resources.sort((a, b) => a.uri.localeCompare(b.uri));
     return { tools: tools.sort((a, b) => a.name.localeCompare(b.name)), resources, sources: analyzer.sources };
   } catch (error) {
     return { diagnostic: error.message };
@@ -101,7 +84,7 @@ class Analyzer {
     const real = realpathSync(path);
     if (real !== this.root && !real.startsWith(this.root + sep)) throw new Error("Contract imports must stay inside the application source.");
     const text = readFileSync(path, "utf8");
-    this.sources[relative(this.root, real)] = createHash("sha256").update(text).digest("hex");
+    this.sources[relative(this.root, real)] = text;
     const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
     if (file.parseDiagnostics.length) this.fail(file, ts.flattenDiagnosticMessageText(file.parseDiagnostics[0].messageText, "\n"));
     const scope = new Map();
@@ -120,7 +103,7 @@ class Analyzer {
           const target = this.resolveImport(dirname(path), specifier, statement);
           if (extname(target) === ".json") {
             const text = readFileSync(target, "utf8");
-            this.sources[relative(this.root, target)] = createHash("sha256").update(text).digest("hex");
+            this.sources[relative(this.root, target)] = text;
             return JSON.parse(text);
           }
           const other = this.module(target);
@@ -434,9 +417,9 @@ class Analyzer {
     const meta = config._meta === undefined ? undefined : this.value(config._meta);
     if (!meta || typeof meta !== "object" || !Object.hasOwn(meta, resourceSchemaKey)) return;
     const uri = this.expression(expression.arguments[1], scope);
-    if (typeof uri !== "string" || server.resources.has(uri)) this.fail(expression, "Typed resource registration must have one unique constant URI.");
+    if (typeof uri !== "string") this.fail(expression, "Typed resource registration must have a constant URI.");
     if (this.value(config.mimeType) !== "application/json") this.fail(expression, `Typed resource ${uri} must declare the application/json mimeType.`);
-    server.resources.set(uri, { uri, outputSchema: this.materialize(meta[resourceSchemaKey]) });
+    server.resources.push({ uri, outputSchema: this.materialize(meta[resourceSchemaKey]) });
   }
   statementExpression(expression, scope) {
       if (ts.isAwaitExpression(expression)) expression = expression.expression;
@@ -470,19 +453,19 @@ class Analyzer {
         }
         if (methodName === "registerTool") {
           const name = this.expression(expression.arguments[0], scope);
-          if (typeof name !== "string" || receiver.tools.has(name) || receiver.list !== undefined) this.fail(expression, "Tool registration must have one unique constant name and catalog source.");
+          if (typeof name !== "string" || receiver.list !== undefined) this.fail(expression, "Tool registration must have a constant name and one catalog source.");
           const config = this.fields(expression.arguments[1], scope);
           if (this.containsRegistration(expression.arguments[2], scope)) this.fail(expression.arguments[2], "Tool handlers must not change the tool catalog.");
           const tool = { name, inputSchema: this.schema(config.inputSchema, "input", expression) };
           if (config.outputSchema) tool.outputSchema = this.schema(config.outputSchema, "output", expression);
-          receiver.tools.set(name, tool);
+          receiver.tools.push(tool);
         } else if (methodName === "setRequestHandler") {
           const name = this.expression(expression.arguments[0], scope);
           if (name !== "tools/list") {
             if (expression.arguments.slice(1).some(arg => this.containsRegistration(arg, scope))) this.fail(expression, "Request handlers must not change the tool catalog.");
             return;
           }
-          if (receiver.tools.size || receiver.list !== undefined) this.fail(expression, "Multiple tool catalog definitions are unsupported.");
+          if (receiver.tools.length || receiver.list !== undefined) this.fail(expression, "Multiple tool catalog definitions are unsupported.");
           const fn = this.expression(expression.arguments.at(-1), scope);
           const result = this.functionBody(fn, [], expression, true);
           if (result.nextCursor) this.fail(expression, "A paginated tool catalog is not a fixed complete catalog.");
