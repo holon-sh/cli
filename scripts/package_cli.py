@@ -4,15 +4,28 @@
 import argparse
 import gzip
 import os
+import re
 import struct
 import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
-
-from release_common import TARGETS, VERSION_PATTERN, Target, sha256
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+class Target(NamedTuple):
+    goos: str
+    goarch: str
+
+    @property
+    def platform(self) -> str:
+        return f"{self.goos}_{self.goarch}"
+
+
+TARGETS = tuple(Target(os, arch) for os in ("darwin", "linux") for arch in ("amd64", "arm64"))
+VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc|dev)\.[0-9]+)?")
 
 
 def write_tarball(binary: Path, archive: Path) -> None:
@@ -60,14 +73,14 @@ def build_binary(binary: Path, target: Target, version: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default=os.environ.get("HOLON_VERSION", "0.0.1"))
-    parser.add_argument("--target", choices=[target.platform for target in TARGETS], default=os.environ.get("HOLON_TARGET"), required="HOLON_TARGET" not in os.environ)
+    parser.add_argument("--version", default="0.0.1")
+    parser.add_argument("--target", choices=[target.platform for target in TARGETS], required=True)
     parser.add_argument("--binary", type=Path, help="package an already-built binary")
     parser.add_argument("--out", type=Path, default=ROOT / "dist")
     args = parser.parse_args()
     if not VERSION_PATTERN.fullmatch(args.version):
         raise ValueError("version must be X.Y.Z or X.Y.Z-{alpha,beta,rc,dev}.N")
-    target = next(target for target in TARGETS if target.platform == args.target)
+    target = Target(*args.target.split("_"))
     dist = args.out.resolve()
     dist.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="holon-package-") as directory:
@@ -76,8 +89,6 @@ def main() -> None:
             build_binary(binary, target, args.version)
         verify_binary(binary, target)
         write_tarball(binary, dist / f"holon_{args.version}_{target.platform}.tar.gz")
-    artifacts = sorted(dist.glob("*.tar.gz"))
-    (dist / "SHA256SUMS").write_text("".join(f"{sha256(path)}  {path.name}\n" for path in artifacts))
 
 
 if __name__ == "__main__":

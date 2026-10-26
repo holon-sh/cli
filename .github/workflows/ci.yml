@@ -70,18 +70,14 @@ jobs:
         target: [linux_amd64, linux_arm64, darwin_amd64, darwin_arm64]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      HOLON_VERSION: ${{ inputs.version || '0.0.1' }}
-      CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: python3 scripts/package_cli.py --target '${{ matrix.target }}' --version "$HOLON_VERSION"
+      - run: python3 scripts/package_cli.py --target '${{ matrix.target }}' --version '${{ inputs.version || '0.0.1' }}'
       - uses: actions/upload-artifact@v4
         with:
           name: holon-types-${{ matrix.target }}
           path: |
             dist/holon_*.tar.gz
-            dist/SHA256SUMS
