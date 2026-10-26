@@ -147,8 +147,8 @@ func Generate(ctx context.Context, request GenerateRequest) (map[string][]byte, 
 	return generate(ctx, decoded)
 }
 
-// marshal takes the request through its JSON wire form, which validates it exactly as the
-// compiler's JSON entry points do.
+// marshal takes the request through its JSON wire form, the request representation
+// decodeGenerateRequest validates.
 func marshal(ctx context.Context, request any) (Value, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
