@@ -12,7 +12,7 @@ holon types generate --contract ../orders
 Each SERVER is a server entry file or directory, an MCP registry server version
 URL, or an MCP endpoint URL, optionally prefixed with `ALIAS=`; the client is
 `apps.<alias>`, named after the server by default. Clients go into the runtime
-the project declares: `holon-sh` or `holon-ui` in `package.json`, or `holon-sh`
+the project declares: `holon-sh` in `package.json`, or `holon-sh`
 in `pyproject.toml`. `holon types check` type-checks the project.
 
 This package bundles the native `holon` executable. Supported platforms are
