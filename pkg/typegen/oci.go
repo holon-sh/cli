@@ -1,7 +1,6 @@
 package typegen
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,7 +21,6 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
 	"oras.land/oras-go/v2/registry/remote/errcode"
-	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
 const (
@@ -42,17 +40,17 @@ func fetchImageJSON(ctx context.Context, source content.Fetcher, descriptor ocis
 }
 
 // imageRepository authenticates with supplied, then Docker-stored, credentials. The returned
-// function reports whether supplied returned a credential for the repository's registry.
-func imageRepository(name string, extraEnv []string, client *http.Client, supplied auth.CredentialFunc) (*remote.Repository, func() bool, error) {
+// flag reports whether supplied returned a credential for the repository's registry.
+func imageRepository(name string, extraEnv []string, client *http.Client, supplied auth.CredentialFunc) (*remote.Repository, *atomic.Bool, error) {
 	var used atomic.Bool
 	repository, err := remote.NewRepository(name)
 	if err != nil {
-		return nil, used.Load, err
+		return nil, nil, err
 	}
-	authClient := &auth.Client{Client: cmp.Or(client, retry.DefaultClient), Cache: auth.NewCache()}
+	authClient := &auth.Client{Client: client, Cache: auth.NewCache()}
 	repository.Client = authClient
 	if err := validateEnv(extraEnv); err != nil {
-		return nil, used.Load, err
+		return nil, nil, err
 	}
 	env := map[string]string{
 		dockerConfigEnv: os.Getenv(dockerConfigEnv),
@@ -68,14 +66,14 @@ func imageRepository(name string, extraEnv []string, client *http.Client, suppli
 		if home == "" {
 			home, err = os.UserHomeDir()
 			if err != nil {
-				return nil, used.Load, err
+				return nil, nil, err
 			}
 		}
 		configDir = filepath.Join(home, ".docker")
 	}
 	store, err := credentials.NewStore(filepath.Join(configDir, "config.json"), credentials.StoreOptions{})
 	if err != nil {
-		return nil, used.Load, fmt.Errorf("read source registry credentials: %w", err)
+		return nil, nil, fmt.Errorf("read source registry credentials: %w", err)
 	}
 	stored := credentials.Credential(store)
 	authClient.Credential = stored
@@ -89,7 +87,7 @@ func imageRepository(name string, extraEnv []string, client *http.Client, suppli
 			return stored(ctx, host)
 		}
 	}
-	return repository, used.Load, nil
+	return repository, &used, nil
 }
 
 func readTypeMetadata(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor) (*mcpcontract.Metadata, error) {
@@ -149,13 +147,13 @@ func resolveTypeMetadata(ctx context.Context, image string, o Options) (*mcpcont
 	if err != nil {
 		return nil, err
 	}
-	repository, supplied, err := imageRepository(named.Name(), o.Env, o.HTTPClient, o.Credential)
+	repository, suppliedUsed, err := imageRepository(named.Name(), o.Env, o.HTTPClient, o.Credential)
 	if err != nil {
 		return nil, err
 	}
 	rejected := func(err error) error {
 		var response *errcode.ErrorResponse
-		if supplied() && errors.As(err, &response) && response.StatusCode == http.StatusUnauthorized {
+		if suppliedUsed.Load() && errors.As(err, &response) && response.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("%s rejected the supplied registry credential: %w", reference.Domain(named), err)
 		}
 		return err

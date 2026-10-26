@@ -306,6 +306,7 @@ func TestCredentialAuthenticatesImageSources(t *testing.T) {
 		name       string
 		credential auth.CredentialFunc
 		env        []string
+		noContract bool
 		want       string
 	}{
 		{name: "grant ahead of docker", credential: grant("images.example", "secret"), env: []string{"DOCKER_CONFIG=" + docker("wrong")}},
@@ -314,12 +315,12 @@ func TestCredentialAuthenticatesImageSources(t *testing.T) {
 		{name: "malformed environment", env: []string{"INVALID"}, want: "must be KEY=VALUE"},
 		{name: "rejected grant", credential: grant("images.example", "wrong"), env: []string{"DOCKER_CONFIG=" + docker("secret")}, want: "rejected the supplied registry credential"},
 		{name: "rejected docker credential", env: []string{"DOCKER_CONFIG=" + docker("wrong")}, want: "images.example/orders:1.0.0"},
-		{name: "image without a contract", env: []string{"DOCKER_CONFIG=" + docker("secret")}, want: "carries no MCP contract artifact"},
+		{name: "image without a contract", env: []string{"DOCKER_CONFIG=" + docker("secret")}, noContract: true, want: "carries no MCP contract artifact"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			env := append([]string{"DOCKER_CONFIG=" + t.TempDir()}, test.env...)
 			metadata := ordersMetadata()
-			if test.name == "image without a contract" {
+			if test.noContract {
 				metadata = nil
 			}
 			c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Image: "images.example/orders:1.0.0"}}}

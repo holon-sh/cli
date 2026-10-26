@@ -51,7 +51,11 @@ func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.
 	case source.Endpoint != "":
 		return liveContract(ctx, source.Endpoint, nil, o.HTTPClient)
 	case source.Image != "":
-		return resolveTypeMetadata(ctx, source.Image, o)
+		metadata, err := resolveTypeMetadata(ctx, source.Image, o)
+		if err == nil && metadata == nil {
+			err = errors.New("image carries no MCP contract artifact")
+		}
+		return metadata, err
 	default:
 		if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": source.Contract}); err != nil {
 			return nil, err

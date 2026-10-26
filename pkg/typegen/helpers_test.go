@@ -139,16 +139,14 @@ func imageClient(t *testing.T, metadata *mcpcontract.Metadata, artifactType stri
 		documents[descriptor.Digest.String()] = document{descriptor, data}
 		return descriptor
 	}
-	index := ocispec.Index{Manifests: []ocispec.Descriptor{}}
+	index := ocispec.Index{SchemaVersion: 2}
 	if metadata != nil {
 		layer := add(mcpcontract.MediaType, metadata)
-		artifact := ocispec.Manifest{ArtifactType: artifactType, Layers: []ocispec.Descriptor{layer}}
-		artifact.SchemaVersion = 2
+		artifact := ocispec.Manifest{SchemaVersion: 2, ArtifactType: artifactType, Layers: []ocispec.Descriptor{layer}}
 		child := add(ocispec.MediaTypeImageManifest, artifact)
 		child.ArtifactType = mcpcontract.MediaType
 		index.Manifests = append(index.Manifests, child)
 	}
-	index.SchemaVersion = 2
 	descriptor := add(ocispec.MediaTypeImageIndex, index)
 	documents["1.0.0"] = documents[descriptor.Digest.String()]
 	return &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {

@@ -82,7 +82,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 		{"neither", base + `,"packages":[{"registryType":"npm","identifier":"orders"}]}`, "", "", "publishes neither", nil},
 		{"wrong registry identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "", "different server name", nil},
 		{"oversized document", base + types + `}`, strings.Repeat(" ", MaxDescriptorBytes+1), "", "exceeds", nil},
-		{"invalid contract", base + types + oci + remote + `}`, `{"version":1,"identity":{"name":"example.com/orders","version":"1.0.0"},"contract":{"tools":"invalid"}}`, "", "expected a sequence", nil},
+		{"invalid contract", base + types + remote + `}`, `{"version":1,"identity":{"name":"example.com/orders","version":"1.0.0"},"contract":{"tools":"invalid"}}`, "", "expected a sequence", nil},
 		{"wrong contract identity", base + types + `}`, `{"version":1,"identity":{"name":"example.com/other","version":"1.0.0"},"contract":{"tools":[]}}`, "", "belongs to example.com/other", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {

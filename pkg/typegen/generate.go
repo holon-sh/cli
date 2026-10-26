@@ -223,9 +223,6 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 		return metadata, nil
 	}
 	metadata, err := Resolve(ctx, source, p.options)
-	if err == nil && metadata == nil {
-		err = errors.New("image carries no MCP contract artifact")
-	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
