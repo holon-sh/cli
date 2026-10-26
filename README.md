@@ -5,7 +5,7 @@
 [![Downloads](https://img.shields.io/badge/releases-download-blue)](https://github.com/holon-sh/cli/releases/latest)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-`holon` generates typed clients for MCP servers. This allows invoking an MCP server as a function call your type checker understands.
+`holon` provides type-safety for MCP servers, e.g. invoking an MCP server as a function call your type checker understands.
 
 This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk-py) and [TypeScript SDK](https://github.com/holon-sh/sdk-ts).
 
