@@ -1,63 +1,39 @@
+"""Check an application against its extracted sources and typed contracts.
+
+Usage: runner.py check|verify CONFIG. The config maps source paths to the
+SHA-256 digests recorded at extraction and names the entry to type-check.
+verify stops once the sources match; check then runs mypy from the app's
+environment, which the holon-types wheel supplies.
+"""
+
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
-import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
-# extract.py sits beside this file, both in the source tree and in the tooling bundle.
-from extract import extract
+from mypy import api
 
-
-def check(config: dict[str, Any], verify_only: bool) -> None:
-    for path, expected in config["sources"].items():
-        if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
-            raise ValueError(
-                f"{path}: application sources changed after extraction; regenerate types before checking."
-            )
-    if verify_only or not config["check"]:
-        return
-    if importlib.util.find_spec("mypy") is not None:
-        command = [sys.executable, "-m", "mypy"]
-    else:
+mode, config = sys.argv[1:]
+settings = json.loads(Path(config).read_text())
+for path, digest in settings["sources"].items():
+    if hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest:
         raise SystemExit(
-            f"mypy is not installed for {sys.executable}; install mypy==2.4.0 in the app's environment."
+            f"{path}: application sources changed after extraction; regenerate types before checking."
         )
-    result = subprocess.run(
-        [
-            *command,
-            "--no-incremental",
-            "--check-untyped-defs",
-            "--explicit-package-bases",
-            "--exclude",
-            r"/(\.venv|venv|node_modules)/",
-            config["entry"] or ".",
-        ],
-        check=False,
-    )
-    if result.returncode:
-        raise SystemExit(result.returncode)
-
-
-MODES: dict[str, Callable[[dict[str, Any]], object]] = {
-    "extract": lambda config: {
-        app["name"]: extract(app["path"], app["entry"]) for app in config["apps"]
-    },
-    "check": lambda config: check(config, False),
-    "verify": lambda config: check(config, True),
-}
-
-
-def main() -> None:
-    mode, path, *output = sys.argv[1:]
-    result = MODES[mode](json.loads(Path(path).read_text()))
-    if output:
-        Path(output[0]).write_text(json.dumps(result))
-
-
-if __name__ == "__main__":
-    main()
+if mode == "verify":
+    sys.exit(0)
+stdout, stderr, status = api.run(
+    [
+        "--no-incremental",
+        "--check-untyped-defs",
+        "--explicit-package-bases",
+        "--exclude",
+        r"/(\.venv|venv|node_modules)/",
+        settings["entry"] or ".",
+    ]
+)
+sys.stdout.write(stdout)
+sys.stderr.write(stderr)
+sys.exit(status)

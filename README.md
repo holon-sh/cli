@@ -15,7 +15,7 @@ This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk
 curl -fsSL https://holon-labs.dev/install.sh | sh
 ```
 
-Or alternatively with [Go](https://go.dev/doc/install) 1.27+, build and install from source:
+Or with [Go](https://go.dev/doc/install) 1.27+:
 
 ```sh
 go install github.com/holon-sh/cli/cmd/holon@latest
@@ -272,19 +272,3 @@ Flags:
 ```
 
 </details>
-
-## Contract documents
-
-Images publish `application/vnd.holon.mcp-contract.v1+json` documents with an
-`identity`, an optional `schema` containing tools and resources, and `requires`
-mapping dependency aliases to SHA-256 blob digests. The image index annotation
-`sh.holon.contract.digest` points to the own document. Each dependency document
-is stored in the consumer's repository, including snapshots observed from live
-MCP endpoints. Readers verify the fetched bytes before comparing schemas and
-provider identities.
-
-This replaces inline dependency contracts and `sh.holon.types` document URLs.
-Rebuild and republish alpha images, and regenerate client slots. Remove legacy
-managed `holon/` runtime copies first; generation only replaces marked slots.
-Python apps install `holon-sh` and import generated clients with
-`from holon.apps import apps`.

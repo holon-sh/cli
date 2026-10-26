@@ -1,7 +1,7 @@
 import ts from "typescript";
 import { z } from "zod";
-import { readFileSync, existsSync, realpathSync } from "node:fs";
-import { resolve, dirname, relative, extname, sep } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { resolve, relative, extname, sep } from "node:path";
 import { validator } from "./validate.mjs";
 import { createHash } from "node:crypto";
 
@@ -112,12 +112,12 @@ class Analyzer {
         const specifier = statement.moduleSpecifier.text;
         const clause = statement.importClause;
         if (!clause) {
-          if (specifier.startsWith(".")) this.module(this.resolveImport(dirname(path), specifier, statement));
+          if (specifier.startsWith(".")) this.module(this.resolveImport(specifier, statement));
           continue;
         }
         const imported = name => {
           if (!specifier.startsWith(".")) return new Builtin(specifier, name);
-          const target = this.resolveImport(dirname(path), specifier, statement);
+          const target = this.resolveImport(specifier, statement);
           if (extname(target) === ".json") {
             const text = readFileSync(target, "utf8");
             this.sources[relative(this.root, target)] = createHash("sha256").update(text).digest("hex");
@@ -143,7 +143,7 @@ class Analyzer {
       if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
         for (const item of statement.exportClause.elements) {
           if (statement.moduleSpecifier) {
-            const target = this.module(this.resolveImport(dirname(path), statement.moduleSpecifier.text, statement));
+            const target = this.module(this.resolveImport(statement.moduleSpecifier.text, statement));
             result.exports.set(item.name.text, { imported: target, name: (item.propertyName ?? item.name).text, node: statement });
           } else result.exports.set(item.name.text, new Lazy(item.propertyName ?? item.name, scope));
         }
@@ -151,18 +151,12 @@ class Analyzer {
     }
     return result;
   }
-  resolveImport(directory, name, node) {
-    const base = resolve(directory, name);
-    const stems = /\.[cm]?js$/.test(base) ? [base.replace(/\.[cm]?js$/, ".ts"), base] : [base];
-    for (const stem of stems) for (const suffix of ["", ".ts", ".js", ".mts", ".mjs", "/index.ts", "/index.js"]) {
-      const candidate = stem + suffix;
-      if (existsSync(candidate) && /\.(?:[cm]?[jt]s|json)$/.test(candidate)) {
-        const real = realpathSync(candidate);
-        if (!real.startsWith(this.root + sep)) this.fail(node, "Contract imports must stay inside the application source.");
-        return real;
-      }
-    }
-    this.fail(node, `Cannot resolve contract import ${name}.`);
+  resolveImport(name, node) {
+    const { resolvedModule } = ts.resolveModuleName(name, node.getSourceFile().fileName, { moduleResolution: ts.ModuleResolutionKind.Bundler, allowJs: true, resolveJsonModule: true }, ts.sys);
+    if (!resolvedModule || resolvedModule.isExternalLibraryImport) this.fail(node, `Cannot resolve contract import ${name}.`);
+    const real = realpathSync(resolvedModule.resolvedFileName);
+    if (!real.startsWith(this.root + sep)) this.fail(node, "Contract imports must stay inside the application source.");
+    return real;
   }
   bind(statement, scope) {
     if (ts.isVariableStatement(statement)) for (const d of statement.declarationList.declarations) {

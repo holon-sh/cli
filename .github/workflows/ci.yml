@@ -62,22 +62,66 @@ jobs:
           enable-cache: false
       - run: go vet ./...
       - run: go test ./...
+      - run: uv run --with-requirements packaging/requirements.txt python -m unittest discover -s scripts
   test-package:
-    needs: tooling
+    name: test-package (${{ matrix.target }})
+    needs: [tooling, package-launcher]
     strategy:
       fail-fast: false
       matrix:
-        target: [linux_amd64, linux_arm64, darwin_amd64, darwin_arm64]
-    runs-on: ubuntu-24.04
+        include:
+          - runner: ubuntu-24.04
+            target: linux_amd64
+          - runner: ubuntu-24.04-arm
+            target: linux_arm64
+          - runner: macos-15
+            target: darwin_arm64
+          - runner: macos-15-intel
+            target: darwin_amd64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      VERSION: ${{ inputs.version || '0.0.1' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: python3 scripts/package_cli.py --target '${{ matrix.target }}' --version '${{ inputs.version || '0.0.1' }}'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.11'
+          enable-cache: false
+      - run: uv run --with-requirements packaging/requirements.txt python scripts/package_cli.py --target '${{ matrix.target }}' --version "$VERSION" --format tarball --format wheel --format npm-platform
+      - uses: actions/download-artifact@v4
+        with:
+          name: holon-types-launcher
+          path: launcher
+      - name: Install and run the wheel and npm packages
+        run: |
+          uv venv .venv
+          uv pip install --python .venv dist/holon_types-*.whl
+          .venv/bin/python -m mypy --version
+          .venv/bin/holon --version | grep -F "$VERSION"
+          npm install --prefix smoke "$PWD"/dist/*.tgz "$PWD"/launcher/*.tgz
+          (cd smoke && npx --no-install holon --version | grep -F "$VERSION")
       - uses: actions/upload-artifact@v4
         with:
           name: holon-types-${{ matrix.target }}
-          path: |
-            dist/holon_*.tar.gz
+          path: dist/*
+  package-launcher:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: python3 -m unittest discover -s packaging/tests
+      - run: python3 scripts/package_cli.py --version '${{ inputs.version || '0.0.1' }}' --format npm-launcher
+      - uses: actions/upload-artifact@v4
+        with:
+          name: holon-types-launcher
+          path: dist/*
