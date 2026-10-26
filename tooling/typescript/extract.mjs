@@ -17,6 +17,7 @@ class Schema {
   constructor(value) { this.value = value; }
 }
 const resourceSchemaKey = "sh.holon/outputSchema";
+const schemaObject = z.record(z.string(), z.unknown());
 class Server {
   tools = new Map();
   resources = new Map();
@@ -93,8 +94,7 @@ export async function extract(root, entry) {
     }
     const resources = [...result.resources.values()].sort((a, b) => a.uri.localeCompare(b.uri));
     for (const resource of resources) {
-      if (!resource.outputSchema || typeof resource.outputSchema !== "object" || Array.isArray(resource.outputSchema)) analyzer.fail(module.file, `Invalid contents schema for ${resource.uri}.`);
-      try { validator(resource.outputSchema); } catch (error) { analyzer.fail(module.file, `Unsupported JSON Schema in ${resource.uri}: ${error.message}`); }
+      try { validator(schemaObject.parse(resource.outputSchema)); } catch (error) { analyzer.fail(module.file, `Unsupported JSON Schema in ${resource.uri}: ${error.message}`); }
     }
     return { tools: tools.sort((a, b) => a.name.localeCompare(b.name)), resources, sources: analyzer.sources };
   } catch (error) {
@@ -209,7 +209,7 @@ class Analyzer {
   }
   expression(node, scope) {
     if (++this.steps > 50000) this.fail(node, "Contract analysis exceeded its complexity limit.");
-    if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isTypeAssertionExpression(node) || ts.isNonNullExpression(node) || ts.isAwaitExpression(node)) return this.expression(node.expression, scope);
+    if (ts.isParenthesizedExpression(node) || ts.isAssertionExpression(node) || ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node) || ts.isAwaitExpression(node)) return this.expression(node.expression, scope);
     if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return ts.isNumericLiteral(node) ? Number(node.text) : node.text;
     if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
     if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
@@ -334,22 +334,20 @@ class Analyzer {
     } finally { this.calls.delete(fn.node); }
   }
   containsRegistration(node, scope, visited = new Set()) {
-    let found = false;
     const visit = n => {
       if (ts.isTypeNode(n)) return;
       if (visited.has(n)) return;
       visited.add(n);
-      if (ts.isPropertyAccessExpression(n) && ["registerTool", "setRequestHandler", "update", "remove", "disable", "enable"].includes(n.name.text)) found = true;
-      if (ts.isIdentifier(n) && identifierReference(n) && scope?.has(n.text)) {
+      if (ts.isPropertyAccessExpression(n) && ["registerTool", "setRequestHandler", "update", "remove", "disable", "enable"].includes(n.name.text)) return true;
+      if (ts.isIdentifier(n) && identifierReference(n) && scope.has(n.text)) {
         let value;
         try { value = this.value(scope.get(n.text)); } catch {}
-        if (value instanceof Server) found = true;
-        if (value instanceof FunctionValue && value.node.body && this.containsRegistration(value.node.body, value.scope, visited)) found = true;
+        if (value instanceof Server) return true;
+        if (value instanceof FunctionValue && value.node.body && this.containsRegistration(value.node.body, value.scope, visited)) return true;
       }
-      ts.forEachChild(n, visit);
+      return ts.forEachChild(n, visit);
     };
-    visit(node);
-    return found;
+    return !!visit(node);
   }
   statements(statements, scope, fixedCatalog = false) {
     for (const statement of statements) {
@@ -382,19 +380,17 @@ class Analyzer {
     return undefined;
   }
   containsContractData(node, scope) {
-    let found = false;
     const visit = n => {
       if (ts.isFunctionLike(n) || ts.isTypeNode(n)) return;
       if (ts.isIdentifier(n) && identifierReference(n)) {
         let value = scope.get(n.text);
         if (value?.imported) value = value.imported.exports.get(value.name);
         if (value instanceof Lazy) value = value.result;
-        if (value && typeof value === "object" && !(value instanceof Builtin) && !(value instanceof FunctionValue) && !(value instanceof Server)) found = true;
+        if (value && typeof value === "object" && !(value instanceof Builtin) && !(value instanceof FunctionValue) && !(value instanceof Server)) return true;
       }
-      ts.forEachChild(n, visit);
+      return ts.forEachChild(n, visit);
     };
-    visit(node);
-    return found;
+    return !!visit(node);
   }
   auditStatements(statements, scope) {
     for (const statement of statements) {

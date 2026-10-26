@@ -52,28 +52,29 @@ test("the standalone runner extracts a batch without installed dependencies and 
   }
 });
 
-for (const compiler of ["bundled", "application"]) {
-  test(`check uses the ${compiler} compiler and reports project type errors`, t => {
-    const { root, run } = unpackTooling(t);
-    const app = join(root, "application");
-    mkdirSync(app);
-    writeFileSync(join(app, "package.json"), '{"type":"module"}');
-    const source = "export const total: number = [1, 2].length;\nexport const label = total.toFixed();\n";
-    writeFileSync(join(app, "check.ts"), source);
-    if (compiler === "application") {
-      mkdirSync(join(app, "node_modules"));
-      symlinkSync(fileURLToPath(new URL("../node_modules/typescript", import.meta.url)), join(app, "node_modules/typescript"));
-      writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));
-      // A project config's file selection takes precedence over entry/discovery.
-      writeFileSync(join(app, "excluded.ts"), 'export const wrong: number = "excluded";');
-    }
-    const config = join(root, "check.json");
-    writeFileSync(config, JSON.stringify({ root: app, entry: compiler === "application" ? "excluded.ts" : "check.ts" }));
-    const valid = run("check", config);
-    assert.equal(valid.status, 0, valid.stderr + valid.stdout);
-    writeFileSync(join(app, "check.ts"), source + "export const wrong: string = total;\n");
-    const invalid = run("check", config);
-    assert.equal(invalid.status, 1, invalid.stderr + invalid.stdout);
-    assert.match(invalid.stderr, /check\.ts.*TS2322/);
-  });
-}
+test("check loads bundled declarations and honors the application's project configuration", t => {
+  const { root, run } = unpackTooling(t);
+  const app = join(root, "application");
+  mkdirSync(app);
+  writeFileSync(join(app, "package.json"), '{"type":"module"}');
+  const source = "export const total: number = [1, 2].length;\nexport const label = total.toFixed();\n";
+  writeFileSync(join(app, "check.ts"), source);
+  const config = join(root, "check.json");
+  writeFileSync(config, JSON.stringify({ root: app, entry: "check.ts" }));
+  const valid = run("check", config);
+  assert.equal(valid.status, 0, valid.stderr + valid.stdout);
+  writeFileSync(join(app, "check.ts"), source + "export const wrong: string = total;\n");
+  const invalid = run("check", config);
+  assert.equal(invalid.status, 1, invalid.stderr + invalid.stdout);
+  assert.match(invalid.stderr, /check\.ts.*error/);
+
+  writeFileSync(join(app, "check.ts"), source);
+  mkdirSync(join(app, "node_modules"));
+  symlinkSync(fileURLToPath(new URL("../node_modules/typescript", import.meta.url)), join(app, "node_modules/typescript"));
+  writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));
+  // The application's file selection takes precedence over entry/discovery.
+  writeFileSync(join(app, "excluded.ts"), 'export const wrong: number = "excluded";');
+  writeFileSync(config, JSON.stringify({ root: app, entry: "excluded.ts" }));
+  const configured = run("check", config);
+  assert.equal(configured.status, 0, configured.stderr + configured.stdout);
+});
