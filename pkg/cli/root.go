@@ -21,17 +21,17 @@ import (
 
 // examples shows every SERVER form; cobra prints them under "Examples:".
 func examples(command string) string {
-	return `  # A server directory, or its server.py / server.ts
-  ` + command + ` ../orders
+	return `  # A server directory
+  ` + command + ` orders
 
-  # An MCP registry server version
+  # A server entry
+  ` + command + ` orders/server.py
+
+  # An MCP registry server
   ` + command + ` https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
 
-  # A live MCP endpoint, with the client named docs
-  ` + command + ` docs=https://mcp.context7.com/mcp
-
-  # This project's own server, for its holon-ui view
-  ` + command + ` ../orders ./server.ts`
+  # A remote MCP server, with the client named docs
+  ` + command + ` docs=https://mcp.context7.com/mcp`
 }
 
 var alias = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?=`)
@@ -142,7 +142,7 @@ func printContract(cmd *cobra.Command, arg string) error {
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
-	return &cobra.Command{Use: "check SERVER...", Short: short, Long: "Type-check a project's calls to MCP servers.\n\nRun it in the project that calls the servers.", Example: examples("holon types check"), RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: "check SERVER...", Short: short, Long: "Type-check a project's calls to MCP servers.", Example: examples("holon types check"), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := consumer(args)
 		if err != nil {
 			return err
@@ -165,7 +165,7 @@ func NewTypesCommand() *cobra.Command {
 	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
 	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	var verbose, contract bool
-	generate := &cobra.Command{Use: "generate SERVER...", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for MCP servers.\n\nRun it in the project that calls the servers.", Example: examples("holon types generate"), RunE: func(cmd *cobra.Command, args []string) error {
+	generate := &cobra.Command{Use: "generate SERVER...", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for MCP servers.", Example: examples("holon types generate"), RunE: func(cmd *cobra.Command, args []string) error {
 		if contract {
 			if len(args) != 1 {
 				return errors.New("--contract takes exactly one SERVER")

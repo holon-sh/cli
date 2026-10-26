@@ -29,23 +29,21 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 ```text
 Generate typed clients for MCP servers.
 
-Run it in the project that calls the servers.
-
 Usage:
   holon types generate SERVER... [flags]
 
 Examples:
-  # A server directory, or its server.py / server.ts
-  holon types generate ../orders
+  # A server directory
+  holon types generate orders
 
-  # An MCP registry server version
+  # A server entry
+  holon types generate orders/server.py
+
+  # An MCP registry server
   holon types generate https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
 
-  # A live MCP endpoint, with the client named docs
+  # A remote MCP server, with the client named docs
   holon types generate docs=https://mcp.context7.com/mcp
-
-  # This project's own server, for its holon-ui view
-  holon types generate ../orders ./server.ts
 
 Flags:
       --contract   Print one server's MCP contract instead of generating
@@ -61,23 +59,21 @@ Flags:
 ```text
 Type-check a project's calls to MCP servers.
 
-Run it in the project that calls the servers.
-
 Usage:
   holon types check SERVER... [flags]
 
 Examples:
-  # A server directory, or its server.py / server.ts
-  holon types check ../orders
+  # A server directory
+  holon types check orders
 
-  # An MCP registry server version
+  # A server entry
+  holon types check orders/server.py
+
+  # An MCP registry server
   holon types check https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
 
-  # A live MCP endpoint, with the client named docs
+  # A remote MCP server, with the client named docs
   holon types check docs=https://mcp.context7.com/mcp
-
-  # This project's own server, for its holon-ui view
-  holon types check ../orders ./server.ts
 
 Flags:
   -h, --help   help for check
