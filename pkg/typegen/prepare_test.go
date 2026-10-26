@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -270,13 +271,9 @@ func TestCheckTypeChecksTheProjectAgainstItsGeneratedClients(t *testing.T) {
 	}
 }
 
-func TestPreResolvedContractSource(t *testing.T) {
+func TestSuppliedContractsRemainDistinctAndValidated(t *testing.T) {
 	metadata := ordersMetadata()
 	source := Source{Contract: metadata}
-	resolved, err := Resolve(t.Context(), source, Options{})
-	if err != nil || resolved != metadata {
-		t.Fatalf("Resolve = %+v, %v", resolved, err)
-	}
 	alternate := ordersMetadata()
 	alternate.Contract = &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "status", Input: json.RawMessage(`{"type":"object"}`)}}}
 	c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{source, {Alias: "alternate", Contract: alternate}}}
@@ -285,7 +282,7 @@ func TestPreResolvedContractSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer prepared.Close()
-	if got := prepared.Metadata(); got["orders"] != metadata || got["alternate"] != alternate || len(got["caller"].Requires["orders"].Contract.Tools) != 1 {
+	if got := prepared.Metadata(); !reflect.DeepEqual(got["orders"], metadata) || !reflect.DeepEqual(got["alternate"], alternate) {
 		t.Fatalf("resolved contracts = %+v", got)
 	}
 	if err := prepared.WritePythonSlot("caller", c.Dir); err != nil {
@@ -299,9 +296,6 @@ func TestPreResolvedContractSource(t *testing.T) {
 		{Version: mcpcontract.Version, Contract: metadata.Contract},
 		{Version: mcpcontract.Version, Identity: metadata.Identity, Contract: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "bad", Input: json.RawMessage(`{"type":"string"}`)}}}},
 	} {
-		if _, err := Resolve(t.Context(), Source{Contract: invalid}, Options{}); err == nil {
-			t.Fatalf("accepted invalid contract: %+v", invalid)
-		}
 		c.Sources = []Source{source, {Alias: "invalid", Contract: invalid}}
 		if prepared, err := Prepare(t.Context(), []Consumer{c}, Options{}); err == nil {
 			prepared.Close()

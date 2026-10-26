@@ -155,8 +155,9 @@ func snapshotSource(name, dir, destination string) (string, error) {
 // entryFiles are the server entry locations, relative to the application root.
 var entryFiles = []string{"server.py", "src/server.py", "server.ts", "src/server.ts", "server.js", "src/server.js", "server.go"}
 
-// sourceEntry returns the one entry file under root, or "" when there is none.
-func sourceEntry(root string) (string, error) {
+// SourceEntry returns the one server entry relative to root, or "" when there is none.
+// More than one entry is an error.
+func SourceEntry(root string) (string, error) {
 	var entry string
 	for _, name := range entryFiles {
 		if err := regularNoSymlink(filepath.Join(root, name), "server entry"); errors.Is(err, fs.ErrNotExist) {

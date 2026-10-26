@@ -351,8 +351,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 		return err
 	}
 	defer release()
-	type slotKey struct{ target, consumer string }
-	slots := map[slotKey]string{}
+	slots := map[string]string{}
 	owners := map[string]string{}
 	for _, c := range consumers {
 		for _, target := range c.Targets {
@@ -366,7 +365,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 					return fmt.Errorf("%s and %s share %s; install a separate %s for each project (avoid hoisting this package)", prior, c.Name, slot, nodePackage)
 				}
 				owners[slot] = c.Name
-				slots[slotKey{target, c.Name}] = slot
+				slots[c.Name] = slot
 			case TargetPy:
 				if err := ensurePythonRuntime(c.Dir); err != nil {
 					return fmt.Errorf("%s: %w", c.Name, err)
@@ -384,7 +383,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 			var err error
 			switch target {
 			case TargetTS:
-				err = validateNodeSlot(slots[slotKey{target, c.Name}], nodePackage, c.slot)
+				err = validateNodeSlot(slots[c.Name], nodePackage, c.slot)
 			case TargetPy:
 				err = validatePythonSlot(c.Dir)
 			case TargetGo:
@@ -403,7 +402,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 			var err error
 			switch target {
 			case TargetTS:
-				err = prepared.WriteNodeSlot(c.Name, slots[slotKey{target, c.Name}])
+				err = prepared.WriteNodeSlot(c.Name, slots[c.Name])
 			case TargetPy:
 				err = prepared.WritePythonSlot(c.Name, c.Dir)
 			case TargetGo:

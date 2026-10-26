@@ -1,8 +1,8 @@
-// Package typegen turns explicit MCP server sources into typed client slots.
+// Package typegen turns MCP server sources into typed client slots.
 //
 // A Consumer is a project directory that receives clients for the servers it names as Sources.
-// Nothing is discovered: every dependency, where its schema comes from, and which SDK slot
-// receives it is stated by the caller, and whatever cannot be resolved from that is an error.
+// Sources can be supplied explicitly or read from sh.holon.requires with DeclaredSources.
+// The caller chooses which SDK slots receive them; unresolved sources are errors.
 package typegen
 
 import (
@@ -35,8 +35,8 @@ var targets = []string{TargetTS, TargetPy, TargetGo}
 // nodePackage is the installed package that owns the ts target's generated slot.
 const nodePackage = "holon-sh"
 
-// Source is one MCP server whose contract becomes a client. Exactly one of Path, Registry,
-// Endpoint, Image or Contract is set.
+// Source is one MCP server whose contract becomes a client, supplied explicitly or declared in
+// sh.holon.requires. Exactly one of Path, Registry, Endpoint, Image or Contract is set.
 type Source struct {
 	// Alias names the client (apps.<alias>). Empty derives it: the last segment of the server's
 	// name (example.com/orders → orders), or the live server's serverInfo name for an Endpoint.
@@ -170,7 +170,7 @@ func serverEntry(path string) (root, entry, language string, err error) {
 	}
 	if info.IsDir() {
 		root = path
-		if entry, err = sourceEntry(root); err != nil {
+		if entry, err = SourceEntry(root); err != nil {
 			return "", "", "", fmt.Errorf("%s: %w", path, err)
 		}
 		if entry == "" {

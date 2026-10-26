@@ -72,6 +72,9 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string,
 	return InstalledRuntime(dir, pkg)
 }
 
+// ErrNoRuntime identifies a project without a declared Holon SDK runtime.
+var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh in package.json, or on holon-sh in pyproject.toml")
+
 // DeclaredTargets are the slots a project declares: ts when package.json depends on holon-sh,
 // py when pyproject.toml or requirements declare holon-sh. None is an error.
 func DeclaredTargets(dir string) ([]string, error) {
@@ -87,7 +90,7 @@ func DeclaredTargets(dir string) ([]string, error) {
 		targets = append(targets, TargetPy)
 	}
 	if len(targets) == 0 {
-		return nil, fmt.Errorf("%s declares no runtime: depend on holon-sh in package.json, or on holon-sh in pyproject.toml", dir)
+		return nil, fmt.Errorf("%s %w", dir, ErrNoRuntime)
 	}
 	return targets, nil
 }
