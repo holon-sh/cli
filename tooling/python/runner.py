@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -20,23 +19,23 @@ def check(config: dict[str, Any], verify_only: bool) -> None:
             )
     if verify_only or not config["check"]:
         return
-    # mypy comes with the holon-types wheel and runs from the app's environment.
-    result = subprocess.run(
+    # The app's environment supplies mypy through the holon-types wheel.
+    from mypy import api
+
+    stdout, stderr, status = api.run(
         [
-            sys.executable,
-            "-m",
-            "mypy",
             "--no-incremental",
             "--check-untyped-defs",
             "--explicit-package-bases",
             "--exclude",
             r"/(\.venv|venv|node_modules)/",
             config["entry"] or ".",
-        ],
-        check=False,
+        ]
     )
-    if result.returncode:
-        raise SystemExit(result.returncode)
+    sys.stdout.write(stdout)
+    sys.stderr.write(stderr)
+    if status:
+        raise SystemExit(status)
 
 
 MODES: dict[str, Callable[[dict[str, Any]], object]] = {
