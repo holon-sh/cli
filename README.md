@@ -13,15 +13,9 @@ This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk
 
 ### Standalone installer
 
-On macOS and Linux:
-
 ```sh
 curl -fsSL https://holon-labs.dev/install.sh | sh
 ```
-
-The installer downloads a prebuilt binary, verifies its checksum, and installs it
-to `~/.local/bin`. Set `HOLON_INSTALL_DIR` to choose another directory, or
-`HOLON_VERSION` to install a specific release (without the leading `v`).
 
 ### Go
 
@@ -30,9 +24,6 @@ With [Go 1.27 or newer](https://go.dev/doc/install), build and install from sour
 ```sh
 go install github.com/holon-sh/cli/cmd/holon@latest
 ```
-
-Go installs `holon` into `GOBIN`, or `$(go env GOPATH)/bin` when `GOBIN` is unset.
-Add that directory to your `PATH`.
 
 ## Usage
 
