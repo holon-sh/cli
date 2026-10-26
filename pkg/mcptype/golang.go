@@ -22,8 +22,8 @@ var goWords = regexp.MustCompile(`[a-zA-Z0-9]+`)
 // goTagName matches ASCII JSON struct-tag names; "-" alone means omission.
 var goTagName = regexp.MustCompile(`^[a-zA-Z0-9` + regexp.QuoteMeta(" !#$%&()*+./:;<=>?@[]^_{|}~") + `-]+$`)
 
-// goIdentifier turns any name into an exported Go identifier.
-func goIdentifier(value string) string {
+// typeIdentifier turns any name into a capitalized ASCII identifier.
+func typeIdentifier(value string) string {
 	words := goWords.FindAllString(value, -1)
 	for i, word := range words {
 		words[i] = strings.ToUpper(word[:1]) + word[1:]
@@ -92,7 +92,7 @@ func renderGo(value typ) string {
 				}
 				tagName += ",omitempty"
 			}
-			fmt.Fprintf(&out, "\t%s %s %s\n", unique(names, goIdentifier(name)), rendered, quoted("json:"+quoted(tagName)))
+			fmt.Fprintf(&out, "\t%s %s %s\n", unique(names, typeIdentifier(name)), rendered, quoted("json:"+quoted(tagName)))
 		}
 		out.WriteString("}")
 		return out.String()
@@ -106,13 +106,13 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 	var declarations strings.Builder
 	bindings := make(map[string]goBinding, len(contracts))
 	for _, binding := range sortedKeys(contracts) {
-		client := unique(names, goIdentifier(binding))
+		client := unique(names, typeIdentifier(binding))
 		methods := map[string]bool{"CallTool": true}
 		tools := map[string]goTool{}
 		catalog := contracts[binding].tools
 		for _, name := range sortedKeys(catalog) {
 			tool := catalog[name]
-			method := unique(methods, goIdentifier(name))
+			method := unique(methods, typeIdentifier(name))
 			var symbols []string
 			for _, part := range []struct {
 				suffix string
@@ -121,7 +121,7 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 				symbol := unique(names, client+method+part.suffix)
 				fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(part.shape.value))
 				for _, definition := range sortedKeys(part.shape.named) {
-					named := unique(names, symbol+goIdentifier(definition))
+					named := unique(names, symbol+typeIdentifier(definition))
 					fmt.Fprintf(&declarations, "type %s = %s\n\n", named, renderGo(part.shape.named[definition]))
 				}
 				symbols = append(symbols, symbol)

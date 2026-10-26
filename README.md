@@ -62,14 +62,29 @@ Call the server. A wrong tool name or argument is a type error.
 ```python
 from holon.apps import apps
 
-await apps.context7.call_tool("resolve-library-id", {"libraryName": "Next.js", "query": "app router"})
+await apps.context7.call_tool("resolve-library-id", libraryName="Next.js", query="app router")
 
-await apps.context7.call_tool("resolve-library-id", {"libraryName": 1, "query": "app router"})
-# error: No overload variant of "call_tool" of "_App0" matches argument types "str", "dict[str, object]"  [call-overload]
+await apps.context7.call_tool("resolve-library-id", libraryName=1, query="app router")
+# error: No overload variant of "call_tool" of "Context7App" matches argument types "str", "int", "str"  [call-overload]
 
-await apps.context7.call_tool("resolve-library", {"libraryName": "Next.js", "query": "app router"})
-# error: No overload variant of "call_tool" of "_App0" matches argument types "str", "dict[str, str]"  [call-overload]
+await apps.context7.call_tool("resolve-library", libraryName="Next.js", query="app router")
+# error: No overload variant of "call_tool" of "Context7App" matches argument types "str", "str", "str"  [call-overload]
 ```
+
+Tool arguments are keywords; an existing dict can be passed with `**arguments`. Optional request controls are a separate positional `CallOptions` dict, so a tool can still have fields named `name`, `timeout`, or `options`:
+
+```python
+await apps.context7.call_tool(
+    "resolve-library-id",
+    {"timeout": 5.0},
+    libraryName="Next.js",
+    query="app router",
+)
+```
+
+`call_tool` returns the full MCP result. For tool names that are Python identifiers, `apps.<app>.tools.<tool>(**arguments)` returns structured output and raises on tool errors or additional input requests. Non-identifier field names work through `**{"field-name": value}`; hyphenated tool names use `call_tool`.
+
+When upgrading, update both the CLI and the [Python runtime](https://github.com/holon-sh/sdk-py), then regenerate clients with `holon types generate` or `holon types check`. Replace positional input dicts with keywords or `**arguments`, and move `timeout`, `input_responses`, `request_state`, and `meta` into the positional options dict.
 
 </details>
 
@@ -121,17 +136,17 @@ holon types check foo -s bar/server.py
 ```python
 from holon.apps import apps
 
-greeting = await apps.bar.tools.greet({"name": "world"})
+greeting = await apps.bar.tools.greet(name="world")
 greeting["result"]
 
-await apps.bar.tools.greet({"name": 1})
-# error: Incompatible types (expression has type "int", TypedDict item "name" has type "str")  [typeddict-item]
+await apps.bar.tools.greet(name=1)
+# error: Argument "name" to "greet" of "BarTools" has incompatible type "int"; expected "str"  [arg-type]
 
-await apps.bar.tools.hello({"name": "world"})
-# error: "_Tools0" has no attribute "hello"  [attr-defined]
+await apps.bar.tools.hello(name="world")
+# error: "BarTools" has no attribute "hello"  [attr-defined]
 
 greeting["text"]
-# error: TypedDict "_Shape1" has no key "text"  [typeddict-item]
+# error: TypedDict "BarGreetOutput" has no key "text"  [typeddict-item]
 ```
 
 </details>

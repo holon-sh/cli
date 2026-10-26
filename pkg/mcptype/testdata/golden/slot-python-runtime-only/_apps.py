@@ -1,12 +1,12 @@
+# Input alternatives share a result type; redundant overloads are harmless.
+# mypy: disable-error-code=overload-cannot-match
 from __future__ import annotations
 
 import json as _json
 
-from mcp.types import InputResponses as _InputResponses
-from mcp.types import RequestParamsMeta as _RequestParamsMeta
-
 from _holon.client_1 import Apps as _Apps
 from _holon.client_1 import Binding as _Binding
+from _holon.client_1 import CallOptions as _CallOptions
 from _holon.client_1 import ToolResult as _ToolResult
 
 import builtins as _builtins
