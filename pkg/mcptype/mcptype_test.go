@@ -39,7 +39,7 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestChanges(t *testing.T) {
-	get := mcpcontract.Tool{Name: "get", Input: json.RawMessage(`{"type":"object"}`)}
+	get := mcpcontract.Tool{Name: "get", Input: json.RawMessage(`{"type":"object"}`), Output: json.RawMessage(`{"type":"number"}`)}
 	summary := mcpcontract.Resource{URI: "orders://summary", Output: json.RawMessage(`{"type":"object"}`)}
 	expected := mcpcontract.Expectation{
 		Identity: mcpcontract.Identity{Name: "example/orders", Version: "1"},
@@ -60,9 +60,47 @@ func TestChanges(t *testing.T) {
 	if changes, err := Changes(t.Context(), expected, nil); err != nil || len(changes) != 1 || changes[0].Text != "no published contract" {
 		t.Fatalf("missing contract accepted: %v %v", changes, err)
 	}
+	for _, test := range []struct {
+		name      string
+		tools     []mcpcontract.Tool
+		resources []mcpcontract.Resource
+		kind      string
+	}{
+		{"annotations and additions", []mcpcontract.Tool{{Name: get.Name, Input: json.RawMessage(`{"description":"new docs","type":"object"}`), Output: get.Output}, {Name: "new", Input: get.Input}}, []mcpcontract.Resource{summary, {URI: "orders://new", Output: summary.Output}}, ""},
+		{"tool input", []mcpcontract.Tool{{Name: get.Name, Input: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}}}`), Output: get.Output}}, []mcpcontract.Resource{summary}, "tool_input_changed"},
+		{"tool output removed", []mcpcontract.Tool{{Name: get.Name, Input: get.Input}}, []mcpcontract.Resource{summary}, "tool_output_changed"},
+		{"tool output changed", []mcpcontract.Tool{{Name: get.Name, Input: get.Input, Output: json.RawMessage(`{"type":"string"}`)}}, []mcpcontract.Resource{summary}, "tool_output_changed"},
+		{"resource removed", []mcpcontract.Tool{get}, nil, "resource_removed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metadata := &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: expected.Identity, Contract: &mcpcontract.Contract{Tools: test.tools, Resources: test.resources}}
+			got, err := Changes(t.Context(), expected, metadata)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.kind == "" {
+				if len(got) != 0 {
+					t.Fatalf("compatible contract reported changes: %+v", got)
+				}
+			} else if len(got) != 1 || got[0].Kind != test.kind {
+				t.Fatalf("changes = %+v, want %s", got, test.kind)
+			}
+		})
+	}
 	published.Version = 2
 	if _, err := Changes(t.Context(), expected, published); err == nil {
 		t.Fatal("invalid published metadata accepted")
+	}
+}
+
+func TestChangesIgnoresSchemaOrderingAndNestedAnnotations(t *testing.T) {
+	const before = `{"type":"object","properties":{"id":{"type":["string","null"],"enum":["a","b",null]},"value":{"anyOf":[{"type":"string","description":"old"},{"type":"number"}]}},"dependentSchemas":{"id":{"properties":{"value":{"description":"old","type":"string"}}}},"not":{"properties":{"blocked":{"type":"boolean","title":"old"}}}}`
+	const after = `{"type":"object","properties":{"id":{"type":["null","string"],"enum":[null,"b","a"]},"value":{"anyOf":[{"type":"number"},{"description":"new","type":"string"}]}},"dependentSchemas":{"id":{"properties":{"value":{"type":"string","description":"new"}}}},"not":{"properties":{"blocked":{"title":"new","type":"boolean"}}}}`
+	identity := mcpcontract.Identity{Name: "example/orders", Version: "1"}
+	expected := mcpcontract.Expectation{Identity: identity, Contract: mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "read", Input: json.RawMessage(before)}}}}
+	published := &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: identity, Contract: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "read", Input: json.RawMessage(after)}}}}
+	if changes, err := Changes(t.Context(), expected, published); err != nil || len(changes) != 0 {
+		t.Fatalf("equivalent schemas reported changes: %+v, %v", changes, err)
 	}
 }
 
