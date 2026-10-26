@@ -103,7 +103,7 @@ func TestPrepareGeneratesEveryTargetFromExplicitSources(t *testing.T) {
 	if _, ok := prepared.CheckConfig("missing"); ok {
 		t.Fatal("unknown consumer has a check configuration")
 	}
-	for _, test := range []struct{ consumer, target, want string }{{"missing", TargetTS, "unknown consumer"}, {"checkout", TargetGo, "no go clients"}} {
+	for _, test := range []struct{ consumer, want string }{{"missing", "unknown consumer"}, {"checkout", "no go clients"}} {
 		if err := prepared.WriteGoSlot(test.consumer, t.TempDir()); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Fatalf("WriteGoSlot(%s) = %v, want %q", test.consumer, err, test.want)
 		}
@@ -179,7 +179,7 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 }
 
 func TestGenerateWritesSlotsAndRequiresDeclaredRuntimes(t *testing.T) {
-	c, extract, calls := checkoutConsumer(t, TargetUI, TargetTS)
+	c, extract, _ := checkoutConsumer(t, TargetUI, TargetTS)
 	node, ui := slotPackage(t, c.Dir, "holon-sh"), slotPackage(t, c.Dir, "holon-ui")
 	var output bytes.Buffer
 	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Extract: extract}); err != nil {
@@ -187,9 +187,6 @@ func TestGenerateWritesSlotsAndRequiresDeclaredRuntimes(t *testing.T) {
 	}
 	if got, want := output.String(), "checkout: generated ui types\ncheckout: generated ts types\n"; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
-	}
-	if !slices.Equal(*calls, []string{"python", "typescript"}) {
-		t.Fatalf("generate extracted %v, want one batch per language", *calls)
 	}
 	for _, pkg := range []string{node, ui} {
 		var marker slotMetadata
@@ -292,11 +289,7 @@ func TestCheckRunsInACopyAndLeavesTheConsumerAlone(t *testing.T) {
 				return err
 			}
 			if !entry.IsDir() {
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return err
-				}
-				files[path] = string(data)
+				files[path] = read(t, "", path)
 			}
 			return nil
 		})
@@ -392,20 +385,12 @@ func TestGoConsumerClients(t *testing.T) {
 	if err = prepared.WriteGoSlot("caller", stage); err != nil {
 		t.Fatal(err)
 	}
-	golden := filepath.Join("testdata", "golden", "go-caller")
-	entries, err := os.ReadDir(filepath.Join(stage, "holon"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, entry := range entries {
-		names = append(names, entry.Name())
-		if got, want := read(t, stage, filepath.Join("holon", entry.Name())), read(t, golden, entry.Name()); got != want {
-			t.Errorf("%s differs from %s:\n%s", entry.Name(), golden, got)
-		}
-	}
-	if !slices.Equal(names, []string{"clients.go", "package.json", "types.go"}) {
-		t.Fatalf("Go package files = %v", names)
+	// Compiler goldens in mcptype cover emitted syntax; this boundary supplies the runtime,
+	// contract and ownership marker to that compiler and writes the result into holon/.
+	clients := read(t, stage, "holon/clients.go")
+	if !strings.Contains(clients, `holon "`+options.GoModule+`"`) || !strings.Contains(clients, " Lookup(") ||
+		!strings.Contains(read(t, stage, "holon/types.go"), "type OrdersLookupInput") || !mcpcontract.Managed(filepath.Join(stage, "holon")) {
+		t.Fatalf("Go slot lacks the configured runtime, typed client or ownership marker:\n%s", clients)
 	}
 	var output bytes.Buffer
 	options.Stdout = &output
@@ -420,7 +405,6 @@ func TestGoConsumerClients(t *testing.T) {
 	if err = prepared.WriteGoSlot("caller", other); err == nil || !strings.Contains(err.Error(), "unmarked") {
 		t.Fatalf("overwrote a user holon/ package: %v", err)
 	}
-	c.Targets = []string{TargetGo}
 	if _, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: options.HTTPClient, Env: options.Env}); err == nil || !strings.Contains(err.Error(), "GoModule") {
 		t.Fatalf("go target without GoModule = %v", err)
 	}

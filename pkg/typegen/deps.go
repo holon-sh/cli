@@ -23,29 +23,21 @@ func (p packageJSON) declares(pkg string) bool {
 }
 
 // packageManager is the project's declared package manager, else the one its nearest lockfile
-// belongs to, else npm. The second value is that manager's verb for adding a dependency.
-func packageManager(dir string, pkg packageJSON) (string, string) {
-	manager, _, _ := strings.Cut(pkg.PackageManager, "@")
-	if manager == "" {
-		manager = "npm"
-		for current := dir; ; current = filepath.Dir(current) {
-			found := false
-			for _, lock := range []struct{ file, manager string }{{"pnpm-lock.yaml", "pnpm"}, {"yarn.lock", "yarn"}, {"bun.lock", "bun"}, {"bun.lockb", "bun"}, {"package-lock.json", "npm"}} {
-				if isFile(filepath.Join(current, lock.file)) {
-					manager = lock.manager
-					found = true
-					break
-				}
-			}
-			if found || filepath.Dir(current) == current {
-				break
+// belongs to, else npm.
+func packageManager(dir string, pkg packageJSON) string {
+	if manager, _, _ := strings.Cut(pkg.PackageManager, "@"); manager != "" {
+		return manager
+	}
+	for current := dir; ; current = filepath.Dir(current) {
+		for _, lock := range []struct{ file, manager string }{{"pnpm-lock.yaml", "pnpm"}, {"yarn.lock", "yarn"}, {"bun.lock", "bun"}, {"bun.lockb", "bun"}, {"package-lock.json", "npm"}} {
+			if isFile(filepath.Join(current, lock.file)) {
+				return lock.manager
 			}
 		}
+		if filepath.Dir(current) == current {
+			return "npm"
+		}
 	}
-	if manager == "npm" {
-		return manager, "install"
-	}
-	return manager, "add"
 }
 
 // ensureNodeRuntime returns the installed slot package for dir. A package that package.json
@@ -62,8 +54,12 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string,
 		}
 		return "", err
 	}
-	manager, verb := packageManager(dir, manifest)
+	manager := packageManager(dir, manifest)
 	if !manifest.declares(pkg) {
+		verb := "add"
+		if manager == "npm" {
+			verb = "install"
+		}
 		return "", fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, pkg, manager, verb, pkg)
 	}
 	if err := run(ctx, dir, manager, []string{"install"}, o); err != nil {

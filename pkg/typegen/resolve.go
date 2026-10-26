@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
@@ -24,8 +23,8 @@ func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.
 	if err := source.validate(); err != nil {
 		return nil, err
 	}
-	switch source.kind() {
-	case "path":
+	switch {
+	case source.Path != "":
 		root, err := os.MkdirTemp("", "holon-types-")
 		if err != nil {
 			return nil, err
@@ -46,9 +45,9 @@ func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.
 			return nil, err
 		}
 		return prepared.contract(results["source"])
-	case "registry":
+	case source.Registry != nil:
 		return resolveRegistry(ctx, *source.Registry, o)
-	case "endpoint":
+	case source.Endpoint != "":
 		return liveContract(ctx, source.Endpoint, nil, o.HTTPClient)
 	default:
 		return resolveTypeMetadata(ctx, source.Image, o)
@@ -107,20 +106,7 @@ func fetchContract(ctx context.Context, location string, o Options) (*mcpcontrac
 		}
 		return nil
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Accept", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		return nil, HTTPError(response.StatusCode)
-	}
-	data, err := readLimited(response.Body, MaxDescriptorBytes)
+	data, err := fetchJSON(ctx, &client, location)
 	if err != nil {
 		return nil, err
 	}
@@ -138,9 +124,6 @@ func fetchContract(ctx context.Context, location string, o Options) (*mcpcontrac
 // liveContract initializes an MCP session and retrieves its advertised schemas. With a nil identity
 // the server's own serverInfo names the contract; a registry source supplies its record's identity.
 func liveContract(ctx context.Context, location string, identity *mcpcontract.Identity, client *http.Client) (*mcpcontract.Metadata, error) {
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
 	u, err := url.Parse(location)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" {
 		return nil, errors.New("MCP URL must be an HTTP(S) URL without credentials or a fragment")

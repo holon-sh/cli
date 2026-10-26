@@ -105,7 +105,7 @@ func insideDir(path, dir string) bool {
 		path = real
 	}
 	relative, err := filepath.Rel(dir, path)
-	return err == nil && (relative == "." || filepath.IsLocal(relative))
+	return err == nil && filepath.IsLocal(relative)
 }
 
 // printContract prints one server's contract document and writes no files.

@@ -50,16 +50,14 @@ func (p *Prepared) CheckConfig(consumer string) (map[string]any, bool) {
 	if c == nil || c.server == nil || c.server.metadata.Contract == nil {
 		return nil, false
 	}
-	sources := maps.Clone(c.server.sources)
-	if sources == nil {
-		sources = map[string]string{}
-	}
+	sources := map[string]string{}
+	maps.Copy(sources, c.server.sources)
 	entry, _ := filepath.Rel(c.Dir, filepath.Join(c.server.origin, c.server.entry))
 	return map[string]any{"entry": filepath.ToSlash(entry), "sources": sources, "check": true}, true
 }
 
 func typeCheck(ctx context.Context, c *preparedConsumer, p *Prepared, copy string) error {
-	env, err := commandenv.Environ(append(append([]string{}, p.options.Env...), "PYTHONDONTWRITEBYTECODE=1"))
+	env, err := commandenv.Environ(append(slices.Clone(p.options.Env), "PYTHONDONTWRITEBYTECODE=1"))
 	if err != nil {
 		return err
 	}
