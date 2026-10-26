@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const dependencyHelp = "Leverages sh.holon.requires in the publisher-provided metadata field (https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/official-registry-requirements.md#publisher-provided-metadata) from server.json (https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md) to resolve dependencies, or the -s list for explicit dependencies."
+const dependencyHelp = "Leverages sh.holon.requires in the publisher-provided metadata field (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) from server.json (https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) to resolve dependencies, or the -s list for explicit dependencies."
 
 const generateExamples = `  # Generate for the current project, from server.json requires
   holon types generate
