@@ -113,11 +113,11 @@ func ensureDependencies(ctx context.Context, app App, imports []string, o Option
 	if strings.Contains(project, "[tool.poetry") {
 		return installDependency(ctx, app.Path, "poetry", []string{"add", "holon-sh"}, o)
 	}
-	fmt.Fprintf(o.Stdout, "%s: install runtime with pip install holon-sh and add holon-sh to your requirements\n", app.Name)
+	fmt.Fprintf(o.Stderr, "%s: install runtime with pip install holon-sh and add holon-sh to your requirements\n", app.Name)
 	return nil
 }
 func installDependency(ctx context.Context, root, program string, args []string, o Options) error {
-	fmt.Fprintf(o.Stdout, "%s: %s %s\n", filepath.Base(root), program, strings.Join(args, " "))
+	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(root), program, strings.Join(args, " "))
 	if o.NoInstall {
 		return nil
 	}
@@ -128,7 +128,7 @@ func installDependency(ctx context.Context, root, program string, args []string,
 	command := exec.CommandContext(ctx, program, args...)
 	command.Dir = root
 	command.Env = env
-	command.Stdout = o.Stdout
+	command.Stdout = o.Stderr
 	command.Stderr = o.Stderr
 	if err = command.Run(); err != nil {
 		return fmt.Errorf("install runtime in %s: %w", root, err)
