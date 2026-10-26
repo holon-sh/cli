@@ -42,11 +42,8 @@ func TestDeclaredSources(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("DeclaredSources = %#v, want %#v", got, test.want)
+			if err != nil || !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("DeclaredSources = %#v, %v; want %#v", got, err, test.want)
 			}
 		})
 	}

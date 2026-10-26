@@ -27,7 +27,7 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 <summary><code>holon types generate</code></summary>
 
 ```text
-Generate typed clients for the project's MCP servers, from server.json requires or the -s list. Generation may install the declared holon-sh/holon-ui package and rewrites the generated/ slot.
+Generate typed clients for the project's MCP servers, from server.json requires or the -s list. Generation may install the declared holon-sh package and rewrites the generated/ slot.
 
 Usage:
   holon types generate [DIR] [flags]

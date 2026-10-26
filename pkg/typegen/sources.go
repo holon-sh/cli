@@ -46,8 +46,7 @@ type Source struct {
 	// the entry supplies the identity.
 	Path string
 	// Registry is an MCP registry server version. The record's sh.holon.types document is the
-	// contract; without one, its OCI package's contract artifact; without that, its streamable-http
-	// remote; without any it is an error.
+	// contract; without one, its streamable-http remote is asked; without either it is an error.
 	Registry *Reference
 	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract.
 	Endpoint string
@@ -55,15 +54,12 @@ type Source struct {
 	Contract *mcpcontract.Metadata
 }
 
-// key identifies a non-path source independently of its alias, so it resolves once.
+// key identifies a registry or endpoint source independently of its alias, so it resolves once.
 func (s Source) key() string {
-	switch {
-	case s.Registry != nil:
+	if s.Registry != nil {
 		return "registry:" + s.Registry.RegistryURL() + "#" + s.Registry.Name + "@" + s.Registry.Version
-	case s.Endpoint != "":
-		return "endpoint:" + s.Endpoint
 	}
-	return "contract:" + s.String()
+	return "endpoint:" + s.Endpoint
 }
 
 func (s Source) String() string {
@@ -156,7 +152,7 @@ func (c Consumer) validate() error {
 // More than one entry is an error.
 func OwnServer(dir string) (*Source, error) {
 	entry, err := sourceEntry(dir)
-	if err != nil || entry == "" {
+	if entry == "" {
 		return nil, err
 	}
 	return &Source{Path: filepath.Join(dir, filepath.FromSlash(entry))}, nil

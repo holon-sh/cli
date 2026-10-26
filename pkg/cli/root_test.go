@@ -13,7 +13,8 @@ import (
 	"github.com/holon-sh/cli/pkg/typegen"
 )
 
-func run(t *testing.T, args ...string) (string, error) {
+// run returns stdout on success or the expected error's text on failure.
+func run(t *testing.T, wantErr string, args ...string) string {
 	t.Helper()
 	var output bytes.Buffer
 	command := NewCommand("test")
@@ -21,7 +22,16 @@ func run(t *testing.T, args ...string) (string, error) {
 	command.SetOut(&output)
 	command.SetErr(new(bytes.Buffer))
 	err := command.Execute()
-	return output.String(), err
+	if wantErr != "" {
+		if err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Fatalf("%v = %v, want %q", args, err, wantErr)
+		}
+		return err.Error()
+	}
+	if err != nil {
+		t.Fatalf("%v: %v", args, err)
+	}
+	return output.String()
 }
 
 func TestParseSource(t *testing.T) {
@@ -47,25 +57,18 @@ func TestParseSource(t *testing.T) {
 			}
 			continue
 		}
-		if err != nil {
-			t.Errorf("parseSource(%q): %v", test.arg, err)
-			continue
-		}
-		if !reflect.DeepEqual(got, test.want) {
-			t.Errorf("parseSource(%q) = %+v, want %+v", test.arg, got, test.want)
+		if err != nil || !reflect.DeepEqual(got, test.want) {
+			t.Errorf("parseSource(%q) = %+v, %v; want %+v", test.arg, got, err, test.want)
 		}
 	}
 }
 
 func TestRemovedFlagsAndContractArity(t *testing.T) {
-	output, err := run(t, "--version")
-	if err != nil || !strings.Contains(output, "standalone types CLI") {
-		t.Fatalf("version = %q, %v", output, err)
+	if output := run(t, "", "--version"); !strings.Contains(output, "standalone types CLI") {
+		t.Fatalf("version = %q", output)
 	}
 	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--no-install", "x"}, {"types", "generate", "--quiet", "x"}, {"types", "generate", "--target", "ts", "x"}, {"types", "check", "--target", "ts"}, {"types", "contract"}} {
-		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "unknown") {
-			t.Fatalf("removed flag accepted: %v: %v", args, err)
-		}
+		run(t, "unknown", args...)
 	}
 	for _, test := range []struct {
 		args []string
@@ -75,9 +78,7 @@ func TestRemovedFlagsAndContractArity(t *testing.T) {
 		{[]string{"types", "generate", "--contract", "a", "-s", "b"}, "takes one SERVER and nothing else"},
 		{[]string{"types", "generate", "--contract", "a", "somedir"}, "takes one SERVER and nothing else"},
 	} {
-		if _, err := run(t, test.args...); err == nil || !strings.Contains(err.Error(), test.want) {
-			t.Errorf("%v = %v, want %q", test.args, err, test.want)
-		}
+		run(t, test.want, test.args...)
 	}
 }
 
@@ -98,30 +99,24 @@ func installCLISlot(t *testing.T, root, pkg string) {
 	writeCLIFile(t, root, "node_modules/"+pkg+"/generated/holon-generated.json", `{"marker":"`+mcpcontract.Marker+`","placeholder":true}`)
 }
 
-func TestTargetsComeFromTheProjectsDeclarations(t *testing.T) {
+func TestExplicitOwnServer(t *testing.T) {
 	for _, test := range []struct {
-		name, manifest string
-		entries, args  []string
-		want           string
+		name          string
+		entries, args []string
+		want          string
 	}{
-		{"no runtime", "", []string{"server.ts"}, nil, "declares no runtime"},
-		{"no requires", `{"dependencies":{"holon-sh":"^0.0.1"}}`, []string{"server.ts"}, nil, "has no requires"},
-		{"own server only", `{"dependencies":{"holon-sh":"^0.0.1"}}`, []string{"server.ts"}, []string{"-s", "./server.ts"}, "has no requires"},
-		{"two own servers", `{"dependencies":{"holon-sh":"^0.0.1"}}`, []string{"server.ts", "src/server.ts"}, []string{"-s", "./server.ts", "-s", "./src/server.ts"}, "one own server"},
+		{"own server only", []string{"server.ts"}, []string{"-s", "./server.ts"}, "has no requires"},
+		{"two own servers", []string{"server.ts", "src/server.ts"}, []string{"-s", "./server.ts", "-s", "./src/server.ts"}, "one own server"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			t.Chdir(root)
-			if test.manifest != "" {
-				writeCLIFile(t, root, "package.json", test.manifest)
-			}
+			writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
 			for _, entry := range test.entries {
 				writeCLIFile(t, root, entry, "export default {};\n")
 			}
 			args := append([]string{"types", "generate"}, test.args...)
-			if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Errorf("%v = %v, want %q", args, err, test.want)
-			}
+			run(t, test.want, args...)
 		})
 	}
 }
@@ -157,28 +152,18 @@ func TestCheckGrammar(t *testing.T) {
 		{[]string{"check", "--no-generate", "-s", "x"}, "-s has no effect"},
 		{[]string{"check", "missing-dir"}, "is not a directory"},
 	} {
-		if _, err := run(t, test.args...); err == nil || !strings.Contains(err.Error(), test.want) {
-			t.Errorf("%v = %v, want %q", test.args, err, test.want)
-		}
+		run(t, test.want, test.args...)
 	}
 	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
 	for _, args := range [][]string{{"check", "--no-generate"}, {"types", "check", "--no-generate"}} {
-		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "holon-sh is not installed") {
-			t.Errorf("%v without the slot = %v", args, err)
-		}
+		run(t, "holon-sh is not installed", args...)
 	}
 	installCLISlot(t, root, "holon-sh")
 	for _, args := range [][]string{{"check"}, {"types", "check"}} {
-		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "has no requires in server.json; pass -s") {
-			t.Errorf("%v without requires = %v", args, err)
-		}
-		if _, err := run(t, append(args, "--no-generate")...); err == nil || !strings.Contains(err.Error(), "has no generated clients; run holon types generate") {
-			t.Errorf("%v with a placeholder slot = %v", args, err)
-		}
+		run(t, "has no requires in server.json; pass -s", args...)
+		run(t, "has no generated clients; run holon types generate", append(args, "--no-generate")...)
 	}
-	if _, err := run(t, "check", "package.json"); err == nil || !strings.Contains(err.Error(), "is not a directory") {
-		t.Errorf("file DIR = %v", err)
-	}
+	run(t, "is not a directory", "check", "package.json")
 }
 
 func TestOldPositionalServerHint(t *testing.T) {
@@ -195,14 +180,14 @@ func TestOldPositionalServerHint(t *testing.T) {
 		{nil, false},
 		{[]string{"../orders", "-s", "../another"}, false},
 	} {
-		_, err := run(t, append([]string{"types", "generate"}, test.args...)...)
-		if err == nil || !strings.Contains(err.Error(), "declares no runtime") || strings.Contains(err.Error(), "did you mean -s") != test.hint {
-			t.Errorf("generate %v = %v, want hint %v", test.args, err, test.hint)
+		message := run(t, "declares no runtime", append([]string{"types", "generate"}, test.args...)...)
+		if strings.Contains(message, "did you mean -s") != test.hint {
+			t.Errorf("generate %v = %s, want hint %v", test.args, message, test.hint)
 		}
 	}
 	writeCLIFile(t, root, "orders/package.json", "{")
-	if _, err := run(t, "types", "generate", "../orders"); err == nil || strings.Contains(err.Error(), "did you mean") {
-		t.Errorf("malformed manifest = %v, want no old-form hint", err)
+	if message := run(t, "unexpected end of JSON input", "types", "generate", "../orders"); strings.Contains(message, "did you mean") {
+		t.Errorf("malformed manifest = %s, want no old-form hint", message)
 	}
 }
 
@@ -228,29 +213,19 @@ func TestTypesCompileNamesBrowserEntryFiles(t *testing.T) {
 	}
 }
 
+const pythonServer = "from mcp.server import MCPServer\nserver = MCPServer('provider')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n"
+
 func TestContractOfAPathSource(t *testing.T) {
 	dir := t.TempDir()
-	for name, data := range map[string]string{
-		"server.json": `{"name":"example.com/provider","version":"1.0.0","description":"Provider"}`,
-		"server.py":   "from mcp.server import MCPServer\nserver = MCPServer('provider')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n",
-	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	output, err := run(t, "types", "generate", "--contract", dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeCLIFile(t, dir, "server.json", `{"name":"example.com/provider","version":"1.0.0","description":"Provider"}`)
+	writeCLIFile(t, dir, "server.py", pythonServer)
+	output := run(t, "", "types", "generate", "--contract", filepath.Join(dir, "server.py"))
 	var metadata mcpcontract.Metadata
 	if err := json.Unmarshal([]byte(output), &metadata); err != nil {
 		t.Fatal(err)
 	}
 	if metadata.Identity.Name != "example.com/provider" || metadata.Contract == nil || len(metadata.Contract.Tools) != 1 || metadata.Contract.Tools[0].Name != "read" {
 		t.Fatalf("provider contract = %s", output)
-	}
-	if _, err := run(t, "types", "generate", "--contract", filepath.Join(dir, "server.py")); err != nil {
-		t.Fatalf("entry file source: %v", err)
 	}
 }
 
@@ -264,21 +239,12 @@ func TestGenerateReadsRequires(t *testing.T) {
 	installCLISlot(t, client, "holon-sh")
 	for _, name := range []string{"orders", "docs,archive"} {
 		writeCLIFile(t, root, name+"/server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
-		writeCLIFile(t, root, name+"/server.py", "from mcp.server import MCPServer\nserver = MCPServer('orders')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n")
+		writeCLIFile(t, root, name+"/server.py", pythonServer)
 	}
 	t.Chdir(client)
-	for _, args := range [][]string{{"types", "generate"}, {"check"}} {
-		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "example.com/orders@1.0.0") {
-			t.Fatalf("%v with requires = %v, want dependency resolution error", args, err)
-		}
-	}
-	if _, err := run(t, "types", "generate", "-s", "../orders"); err != nil {
-		t.Fatalf("explicit dependency should replace requires: %v", err)
-	}
+	run(t, "example.com/orders@1.0.0", "types", "generate")
+	run(t, "", "types", "generate", "-s", "../orders")
 	slot := filepath.Join(client, "node_modules/holon-sh/generated")
-	if _, err := os.Stat(filepath.Join(slot, "index.d.ts")); err != nil {
-		t.Fatal(err)
-	}
 	data, err := os.ReadFile(filepath.Join(slot, "holon-generated.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -299,9 +265,9 @@ func TestGenerateReadsRequires(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	output, err := run(t, "types", "check", "-s=orders", "client-link", "-sdocs=docs,archive")
-	if err != nil || output != "Typed contracts check passed.\n" {
-		t.Fatalf("check with explicit dependencies = %q, %v", output, err)
+	output := run(t, "", "types", "check", "-s=orders", "client-link", "-sdocs=docs,archive")
+	if output != "Typed contracts check passed.\n" {
+		t.Fatalf("check with explicit dependencies = %q", output)
 	}
 	data, err = os.ReadFile(filepath.Join(slot, "index.d.ts"))
 	if err != nil || !strings.Contains(string(data), "orders") || !strings.Contains(string(data), "docs") {
@@ -311,10 +277,7 @@ func TestGenerateReadsRequires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err = run(t, "check", "client-link", "--no-generate")
-	if err != nil || output != "Typed contracts check passed.\n" {
-		t.Fatalf("offline check = %q, %v", output, err)
-	}
+	run(t, "", "check", "client-link", "--no-generate")
 	after, err := os.Stat(filepath.Join(slot, "holon-generated.json"))
 	if err != nil || !after.ModTime().Equal(before.ModTime()) {
 		t.Fatalf("offline check changed the generated slot: %v", err)

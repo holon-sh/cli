@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,22 +19,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func examples(command string) string {
-	return `  # Generate for the current project, from server.json requires
-  ` + command + `
+const generateExamples = `  # Generate for the current project, from server.json requires
+  holon types generate
 
   # Another project
-  ` + command + ` ../checkout
+  holon types generate ../checkout
 
   # Explicit dependencies: a server directory, a server entry, an MCP registry server, a remote MCP server named docs
-  ` + command + ` -s ../orders
-  ` + command + ` -s ../orders/server.py
-  ` + command + ` -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
-  ` + command + ` -s docs=https://mcp.context7.com/mcp
+  holon types generate -s ../orders
+  holon types generate -s ../orders/server.py
+  holon types generate -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
+  holon types generate -s docs=https://mcp.context7.com/mcp
 
   # Print one server's contract
-  ` + command + ` --contract ../orders`
-}
+  holon types generate --contract ../orders`
 
 var alias = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?=`)
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
@@ -73,22 +72,18 @@ func oneDir(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-// clientDir resolves the optional client directory. typed is empty when DIR was omitted.
-func clientDir(args []string) (dir, typed string, err error) {
-	path := "."
-	if len(args) == 1 {
-		path, typed = args[0], args[0]
-	}
-	dir, err = filepath.Abs(path)
+// clientDir resolves the optional client directory, defaulting to the working directory.
+func clientDir(path string) (string, error) {
+	path = cmp.Or(path, ".")
+	dir, err := filepath.Abs(path)
 	if err != nil {
-		return "", typed, err
+		return "", err
 	}
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
-		return "", typed, fmt.Errorf("%s is not a directory", path)
+		return "", fmt.Errorf("%s is not a directory", path)
 	}
-	dir, err = filepath.EvalSymlinks(dir)
-	return dir, typed, err
+	return filepath.EvalSymlinks(dir)
 }
 
 // consumer selects dependencies from -s or server.json. A -s path inside dir is the project's own
@@ -158,14 +153,19 @@ func printContract(cmd *cobra.Command, arg string) error {
 	return encoder.Encode(document)
 }
 
-// generateProject rewrites dir's generated slots for progress: dependencies come from -s
-// or its server.json requires.
-func generateProject(cmd *cobra.Command, dir, typed string, servers []string, progress io.Writer) error {
+// generateProject resolves the client directory and generates its declared slots from -s
+// or server.json requires. It returns the directory for type-checking.
+func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (string, error) {
+	typed := cmd.Flags().Arg(0)
+	dir, err := clientDir(typed)
+	if err != nil {
+		return "", err
+	}
 	c, err := consumer(dir, typed, servers)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
+	return dir, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
 }
 
 // newCheck builds the check command; it is registered as "holon types check" and as the
@@ -180,18 +180,19 @@ func newCheck(short string) *cobra.Command {
   holon types check --no-generate
 
   # Explicit dependencies, as for generate
-  holon types check -s orders=../orders`, Args: oneDir, RunE: func(cmd *cobra.Command, args []string) error {
+  holon types check -s orders=../orders`, Args: oneDir, RunE: func(cmd *cobra.Command, _ []string) error {
 		if noGenerate && len(servers) > 0 {
 			return errors.New("--no-generate type-checks the existing clients; -s has no effect")
 		}
-		dir, typed, err := clientDir(args)
+		var dir string
+		var err error
+		if noGenerate {
+			dir, err = clientDir(cmd.Flags().Arg(0))
+		} else {
+			dir, err = generateProject(cmd, servers, io.Discard)
+		}
 		if err != nil {
 			return err
-		}
-		if !noGenerate {
-			if err := generateProject(cmd, dir, typed, servers, io.Discard); err != nil {
-				return err
-			}
 		}
 		return typegen.Check(cmd.Context(), dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
 	}}
@@ -218,22 +219,19 @@ func NewTypesCommand() *cobra.Command {
 	var verbose bool
 	var contract string
 	var servers []string
-	generate := &cobra.Command{Use: "generate [DIR]", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for the project's MCP servers, from server.json requires or the -s list. Generation may install the declared holon-sh package and rewrites the generated/ slot.", Example: examples("holon types generate"), Args: oneDir, RunE: func(cmd *cobra.Command, args []string) error {
+	generate := &cobra.Command{Use: "generate [DIR]", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for the project's MCP servers, from server.json requires or the -s list. Generation may install the declared holon-sh package and rewrites the generated/ slot.", Example: generateExamples, Args: oneDir, RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("contract") {
 			if len(args) > 0 || len(servers) > 0 {
 				return errors.New("--contract takes one SERVER and nothing else")
 			}
 			return printContract(cmd, contract)
 		}
-		dir, typed, err := clientDir(args)
-		if err != nil {
-			return err
-		}
 		progress := io.Discard
 		if verbose {
 			progress = cmd.ErrOrStderr()
 		}
-		return generateProject(cmd, dir, typed, servers, progress)
+		_, err := generateProject(cmd, servers, progress)
+		return err
 	}}
 	generate.Flags().StringVar(&contract, "contract", "", "Print one server's MCP contract instead of generating")
 	generate.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
