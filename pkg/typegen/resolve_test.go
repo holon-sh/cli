@@ -12,19 +12,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// registry serves one record for example.com/orders@1.0.0 whose server document is body.
-func registry(t *testing.T, server string) *httptest.Server {
-	t.Helper()
-	return httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.EscapedPath() != "/v0.1/servers/example.com%2Forders/versions/1.0.0" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"server":` + server + `}`))
-	}))
-}
-
 func liveServer(t *testing.T, name string) *httptest.Server {
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: name, Version: "99"}, nil)
@@ -42,39 +29,43 @@ func liveServer(t *testing.T, name string) *httptest.Server {
 	return httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
 }
 
-func TestRegistrySourcesUseTheContractDocumentThenTheRemote(t *testing.T) {
+func TestRegistrySourceResolution(t *testing.T) {
 	identity := mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"}
-	document := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(mustJSON(t, mcpcontract.Metadata{Version: 1, Identity: identity, Contract: &mcpcontract.Contract{Tools: []mcpcontract.Tool{lookupTool}}}))
-	}))
-	defer document.Close()
 	live := liveServer(t, "orders-live")
 	defer live.Close()
-	record := func(extra string) string {
-		return `{"name":"example.com/orders","version":"1.0.0","description":"Orders"` + extra + `}`
-	}
-	for _, test := range []struct{ name, server, tool, want string }{
-		{"types document", record(`,"_meta":{"` + PublisherMetadata + `":{"sh.holon":{"types":"` + document.URL + `"}}},"remotes":[{"type":"streamable-http","url":"` + live.URL + `"}]`), "lookup", ""},
-		{"remote", record(`,"remotes":[{"type":"streamable-http","url":"` + live.URL + `"}]`), "read", ""},
-		{"neither", record(`,"packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]`), "", "publishes neither a sh.holon.types contract nor a streamable-http remote"},
-		{"wrong identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "different server name"},
+	mux := http.NewServeMux()
+	server := httptest.NewTLSServer(mux)
+	defer server.Close()
+	var record, document string
+	mux.HandleFunc("/contract", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(document))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/v0.1/servers/example.com%2Forders/versions/1.0.0" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server":` + record + `}`))
+	})
+	base := `{"name":"example.com/orders","version":"1.0.0","description":"Orders"`
+	remote := `,"remotes":[{"type":"streamable-http","url":"` + live.URL + `"}]`
+	types := `,"_meta":{"` + PublisherMetadata + `":{"sh.holon":{"types":"` + server.URL + `/contract"}}}`
+	valid := string(mustJSON(t, ordersMetadata()))
+	for _, test := range []struct{ name, record, document, tool, want string }{
+		{"types document before remote", base + types + remote + `}`, valid, "lookup", ""},
+		{"remote", base + remote + `}`, "", "read", ""},
+		{"neither", base + `,"packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]}`, "", "", "publishes neither a sh.holon.types contract nor a streamable-http remote"},
+		{"wrong registry identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "", "different server name"},
+		{"oversized document", base + types + `}`, strings.Repeat(" ", MaxDescriptorBytes+1), "", "exceeds"},
+		{"invalid contract", base + types + remote + `}`, `{"version":1,"identity":{"name":"example.com/orders","version":"1.0.0"},"contract":{"tools":"invalid"}}`, "", "expected a sequence"},
+		{"wrong contract identity", base + types + `}`, `{"version":1,"identity":{"name":"example.com/other","version":"1.0.0"},"contract":{"tools":[]}}`, "", "belongs to example.com/other"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			server := registry(t, test.server)
-			defer server.Close()
-			registryTransport, documentTransport := server.Client().Transport, document.Client().Transport
-			client := &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {
-				switch request.URL.Host {
-				case document.Listener.Addr().String():
-					return documentTransport.RoundTrip(request)
-				case live.Listener.Addr().String():
-					return http.DefaultTransport.RoundTrip(request)
-				}
-				return registryTransport.RoundTrip(request)
-			})}
+			record, document = test.record, test.document
 			ref := Reference{Name: identity.Name, Version: identity.Version, Registry: server.URL}
-			metadata, err := Resolve(t.Context(), Source{Registry: &ref}, Options{HTTPClient: client})
+			metadata, err := Resolve(t.Context(), Source{Registry: &ref}, Options{HTTPClient: server.Client()})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {
 					t.Fatalf("Resolve = %v, want %q", err, test.want)
@@ -88,46 +79,14 @@ func TestRegistrySourcesUseTheContractDocumentThenTheRemote(t *testing.T) {
 	}
 }
 
-func TestContractDocumentValidation(t *testing.T) {
-	identity := mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"}
-	for _, tc := range []struct{ name, body, want string }{
-		{"oversized", strings.Repeat(" ", MaxDescriptorBytes+1), "exceeds"},
-		{"invalid-contract", `{"version":1,"identity":{"name":"example.com/orders","version":"1.0.0"},"contract":{"tools":"invalid"}}`, ""},
-		{"identity", `{"version":1,"identity":{"name":"example.com/other","version":"1.0.0"},"contract":{"tools":[]}}`, "belongs to example.com/other"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			document := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(tc.body))
-			}))
-			defer document.Close()
-			server := registry(t, `{"name":"example.com/orders","version":"1.0.0","description":"Orders","_meta":{"`+PublisherMetadata+`":{"sh.holon":{"types":"`+document.URL+`"}}}}`)
-			defer server.Close()
-			registryTransport, documentTransport := server.Client().Transport, document.Client().Transport
-			client := &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {
-				if request.URL.Host == document.Listener.Addr().String() {
-					return documentTransport.RoundTrip(request)
-				}
-				return registryTransport.RoundTrip(request)
-			})}
-			_, err := resolveRegistry(t.Context(), Reference{Name: identity.Name, Version: identity.Version, Registry: server.URL}, Options{HTTPClient: client})
-			if err == nil {
-				t.Fatal("accepted an invalid contract document")
-			}
-			if tc.want != "" && !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("unexpected error: %v", err)
-			}
-		})
+func TestContractRedirectRejectsDowngrade(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.com/contract", http.StatusFound)
+	}))
+	defer server.Close()
+	if _, err := fetchContract(t.Context(), server.URL, Options{HTTPClient: server.Client()}); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("insecure redirect accepted: %v", err)
 	}
-	t.Run("redirect downgrade", func(t *testing.T) {
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "http://example.com/contract", http.StatusFound)
-		}))
-		defer server.Close()
-		if _, err := fetchContract(t.Context(), server.URL, Options{HTTPClient: server.Client()}); err == nil || !strings.Contains(err.Error(), "HTTPS") {
-			t.Fatalf("insecure redirect accepted: %v", err)
-		}
-	})
 }
 
 func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {

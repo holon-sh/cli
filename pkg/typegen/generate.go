@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -36,22 +37,15 @@ type Options struct {
 }
 
 func (o Options) defaults() Options {
-	if o.HTTPClient == nil {
-		o.HTTPClient = &http.Client{Timeout: 30 * time.Second}
-	}
-	if o.Stdout == nil {
-		o.Stdout = io.Discard
-	}
-	if o.Stderr == nil {
-		o.Stderr = io.Discard
-	}
+	o.HTTPClient = cmp.Or(o.HTTPClient, &http.Client{Timeout: 30 * time.Second})
+	o.Stdout = cmp.Or(o.Stdout, io.Discard)
+	o.Stderr = cmp.Or(o.Stderr, io.Discard)
 	return o
 }
 
 // preparedSource is one snapshotted server directory.
 type preparedSource struct {
 	origin, root, entry, language, fingerprint string
-	identity                                   mcpcontract.Identity
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
 }
@@ -62,7 +56,8 @@ func (s *preparedSource) contract(result extraction) (*mcpcontract.Metadata, err
 		return nil, fmt.Errorf("%s: %s", s.origin, result.Diagnostic)
 	}
 	s.sources = result.Sources
-	return &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: s.identity, Contract: &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}}, nil
+	s.metadata.Contract = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
+	return s.metadata, nil
 }
 
 type preparedConsumer struct {
@@ -122,7 +117,7 @@ func prepareSource(ctx context.Context, root, name, path string, o Options) (*pr
 	if err != nil {
 		return nil, fmt.Errorf("%s/server.json: %w", origin, err)
 	}
-	s.identity = descriptor.Identity()
+	s.metadata = &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: descriptor.Identity()}
 	if s.fingerprint, err = snapshotSource(name, origin, s.root); err != nil {
 		return nil, err
 	}
@@ -188,11 +183,10 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 	}
 	for _, s := range p.paths {
 		if s.language == "go" {
-			s.metadata = &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: s.identity}
 			continue
 		}
 		name := filepath.Base(s.root)
-		if s.metadata, err = s.contract(results[name]); err != nil {
+		if _, err = s.contract(results[name]); err != nil {
 			return nil, err
 		}
 	}
@@ -217,18 +211,9 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 	if metadata, done := external[source.key()]; done {
 		return metadata, nil
 	}
-	var metadata *mcpcontract.Metadata
-	var err error
-	switch source.kind() {
-	case "registry":
-		metadata, err = resolveRegistry(ctx, *source.Registry, p.options)
-	case "endpoint":
-		metadata, err = liveContract(ctx, source.Endpoint, nil, p.options.HTTPClient)
-	default:
-		metadata, err = resolveTypeMetadata(ctx, source.Image, p.options)
-		if err == nil && metadata == nil {
-			err = errors.New("image carries no MCP contract artifact")
-		}
+	metadata, err := Resolve(ctx, source, p.options)
+	if err == nil && metadata == nil {
+		err = errors.New("image carries no MCP contract artifact")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
@@ -245,7 +230,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		if !pathInsideContext(c.server.origin, c.Dir) {
 			return fmt.Errorf("%s: own server %s is outside %s", c.Name, c.server.origin, c.Dir)
 		}
-		identity = c.server.identity
+		identity = c.server.metadata.Identity
 	} else if data, err := os.ReadFile(filepath.Join(c.Dir, "server.json")); err == nil {
 		descriptor, err := ParseDescriptor(data)
 		if err != nil {
@@ -275,12 +260,9 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		if metadata.Contract == nil {
 			return fmt.Errorf("%s: %s has no contract", c.Name, source)
 		}
-		alias := source.Alias
-		if alias == "" {
-			alias = serverKey(metadata.Identity.Name)
-			if len(alias) > 49 || !appName.MatchString(alias) {
-				return fmt.Errorf("%s: cannot derive a client name from %q; write ALIAS=%s", c.Name, metadata.Identity.Name, source)
-			}
+		alias := cmp.Or(source.Alias, serverKey(metadata.Identity.Name))
+		if !appName.MatchString(alias) {
+			return fmt.Errorf("%s: cannot derive a client name from %q; write ALIAS=%s", c.Name, metadata.Identity.Name, source)
 		}
 		if prior, taken := aliases[alias]; taken {
 			return fmt.Errorf("%s: %s and %s both become apps.%s; write ALIAS= for one of them", c.Name, prior, source, alias)
@@ -300,10 +282,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	}
 	own := ""
 	if c.server != nil {
-		own = c.Server.Alias
-		if own == "" {
-			own = serverKey(identity.Name)
-		}
+		own = cmp.Or(c.Server.Alias, serverKey(identity.Name))
 		if prior, taken := aliases[own]; taken && slices.Contains(c.Targets, TargetUI) {
 			return fmt.Errorf("%s: own server %s and %s both become %s; write ALIAS= for one of them", c.Name, identity.Name, prior, own)
 		}

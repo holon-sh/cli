@@ -47,22 +47,15 @@ func generatedSource(root, path string) bool {
 	return path == filepath.Join(managed, "apps") && generatedPython(managed)
 }
 
-func validateBuildContext(name, dir string) error {
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return fmt.Errorf("build context for %s: %w", name, err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("build context for %s must be a real directory", name)
-	}
-	return nil
-}
-
 // snapshotSource copies dir into destination (or only fingerprints it when destination is empty),
 // honouring .dockerignore and skipping generated and dependency directories.
 func snapshotSource(name, dir, destination string) (string, error) {
-	if err := validateBuildContext(name, dir); err != nil {
-		return "", err
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("build context for %s: %w", name, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("build context for %s must be a real directory", name)
 	}
 	root, err := filepath.EvalSymlinks(dir)
 	if err != nil {
@@ -93,10 +86,10 @@ func snapshotSource(name, dir, destination string) (string, error) {
 		if err != nil {
 			return err
 		}
-		if destination == "" && item.IsDir() {
-			return nil
-		}
 		if item.IsDir() {
+			if destination == "" {
+				return nil
+			}
 			return os.MkdirAll(target, info.Mode().Perm()|0o700)
 		}
 		if destination != "" {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,7 +90,7 @@ func writeNodeSlot(pkgDir, pkg string, files map[string]string, meta slotMetadat
 	if err != nil {
 		return err
 	}
-	files = cloneFiles(files)
+	files = maps.Clone(files)
 	files["holon-generated.json"] = string(data) + "\n"
 	return replaceDirectory(pkgDir, directory, files)
 }
@@ -147,11 +148,4 @@ func replaceDirectory(parent, directory string, files map[string]string) error {
 		return os.RemoveAll(backup)
 	}
 	return nil
-}
-func cloneFiles(in map[string]string) map[string]string {
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
 }
