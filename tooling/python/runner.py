@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import subprocess
 import sys
@@ -21,15 +20,12 @@ def check(config: dict[str, Any], verify_only: bool) -> None:
             )
     if verify_only or not config["check"]:
         return
-    if importlib.util.find_spec("mypy") is not None:
-        command = [sys.executable, "-m", "mypy"]
-    else:
-        raise SystemExit(
-            f"mypy is not installed for {sys.executable}; install mypy==2.4.0 in the app's environment."
-        )
+    # mypy comes with the holon-types wheel and runs from the app's environment.
     result = subprocess.run(
         [
-            *command,
+            sys.executable,
+            "-m",
+            "mypy",
             "--no-incremental",
             "--check-untyped-defs",
             "--explicit-package-bases",

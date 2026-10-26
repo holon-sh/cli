@@ -8,6 +8,7 @@ version = "0.0.0"
 description = "The holon CLI: typed clients for MCP servers, generated and type-checked"
 readme = "README.md"
 requires-python = ">=3.11"
+dependencies = ["mypy>=2.4,<3"]
 license = "MIT"
 license-files = ["LICENSE"]
 urls.Repository = "https://github.com/holon-sh/cli"
