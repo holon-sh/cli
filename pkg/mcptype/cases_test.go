@@ -91,8 +91,9 @@ const kitchenSink = `{
 
 const sinkRequires = `{"orders": {"name": "orders", "version": "1.0.0"}, "orders!": {"name": "example/orders", "version": "2"}, "123": {"name": "n", "version": "1"}, "for": {"name": "keyword", "version": "1"}, "with-hyphen": {"name": "h", "version": "1"}, "_private": {"name": "p", "version": "1"}, "ünï": {"name": "ü", "version": "1"}, "payments": {"name": "payments", "version": "2.0.0"}, "pay-ments": {"name": "pay", "version": "1"}, "class": {"name": "c", "version": "1"}, "untyped_ok": {"name": "u", "version": "1"}}`
 
+// The second orders alias exercises identifier collisions without repeating every schema case.
 func sinkContracts() string {
-	return `{"orders": ` + kitchenSink + `, "orders!": ` + kitchenSink + `, "123": {"tools": []}, "for": {"tools": [{"name": "x", "inputSchema": {"type": "object"}}]}, "with-hyphen": {"tools": [{"name": "y", "inputSchema": {"type": "object"}}], "resources": []}, "_private": {"tools": []}, "ünï": {"tools": [{"name": "z", "inputSchema": {"type": "object"}}]}}`
+	return `{"orders": ` + kitchenSink + `, "orders!": {"tools": [{"name": "kitchen-sink", "inputSchema": {"type":"object", "properties":{"id":{"type":"string"}}, "required":["id"], "additionalProperties":false}, "outputSchema":{"type":"boolean"}}]}, "123": {"tools": []}, "for": {"tools": [{"name": "x", "inputSchema": {"type": "object"}}]}, "with-hyphen": {"tools": [{"name": "y", "inputSchema": {"type": "object"}}], "resources": []}, "_private": {"tools": []}, "ünï": {"tools": [{"name": "z", "inputSchema": {"type": "object"}}]}}`
 }
 
 func generationCases(t *testing.T) []generationCase {

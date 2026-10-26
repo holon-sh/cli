@@ -30,53 +30,40 @@ func Canonical(ctx context.Context, document any) (CanonicalForm, error) {
 	if err != nil {
 		return CanonicalForm{}, err
 	}
-	canonical, digest, err := canonicalRequest(value)
-	if err != nil || canonical == nil {
-		return CanonicalForm{}, err
-	}
-	return CanonicalForm{Canonical: encode(canonical), Digest: digest}, nil
-}
-
-// canonicalRequest answers {"contract": Contract}, {"schema": {...}} or {"metadata": Metadata};
-// the canonical form is nil for metadata without a contract.
-func canonicalRequest(value Value) (Value, string, error) {
 	object, err := asObject(value)
 	if err != nil {
-		return nil, "", err
+		return CanonicalForm{}, err
 	}
 	if len(object) != 1 {
-		return nil, "", fmt.Errorf("expected a map with a single key, one of `contract`, `schema`, `metadata`")
+		return CanonicalForm{}, fmt.Errorf("expected a map with a single key, one of `contract`, `schema`, `metadata`")
 	}
 	variant := sortedKeys(object)[0]
-	contract := func(contract Contract) (Value, string, error) {
-		form := canonicalContract(contract).toValue()
-		return form, digest.FromBytes(encode(form)).String(), nil
-	}
+	var canonical Value
 	switch variant {
 	case "contract":
-		document, err := decodeContract(object[variant])
+		contract, err := decodeContract(object[variant])
 		if err != nil {
-			return nil, "", err
+			return CanonicalForm{}, err
 		}
-		return contract(document)
+		canonical = canonicalContract(contract)
 	case "schema":
 		schema, err := asObject(object[variant])
 		if err != nil {
-			return nil, "", err
+			return CanonicalForm{}, err
 		}
 		normalizeObject(schema)
-		return schema, digest.FromBytes(encode(schema)).String(), nil
+		canonical = schema
 	case "metadata":
 		metadata, err := decodeMetadata(object[variant])
-		if err != nil {
-			return nil, "", err
+		if err != nil || metadata.Schema == nil {
+			return CanonicalForm{}, err
 		}
-		if metadata.Schema == nil {
-			return nil, "", nil
-		}
-		return contract(*metadata.Schema)
+		canonical = canonicalContract(*metadata.Schema)
+	default:
+		return CanonicalForm{}, fmt.Errorf("unknown variant `%s`, expected one of `contract`, `schema`, `metadata`", variant)
 	}
-	return nil, "", fmt.Errorf("unknown variant `%s`, expected one of `contract`, `schema`, `metadata`", variant)
+	data := encode(canonical)
+	return CanonicalForm{Canonical: data, Digest: digest.FromBytes(data).String()}, nil
 }
 
 // Changes lists what breaks expected if published is deployed. Empty means compatible.
@@ -127,23 +114,6 @@ type GenerateRequest struct {
 	// Entry names the TypeScript entry point files: "index" gives index.js, index.d.ts and resources.d.ts.
 	// Empty means index for node and browser for browser.
 	Entry string `json:"entry,omitempty"`
-}
-
-// Generate returns the package files by relative path.
-func Generate(ctx context.Context, request GenerateRequest) (map[string][]byte, error) {
-	// Only schemas need JSON decoding; the remaining options are already typed.
-	value, err := marshal(ctx, request.Contracts)
-	if err != nil {
-		return nil, err
-	}
-	decoded := generateRequest{GenerateRequest: request, contracts: map[string]Contract{}}
-	contracts, _ := value.(Object) // A nil Contracts map encodes as null.
-	for alias, raw := range contracts {
-		if decoded.contracts[alias], err = decodeContract(raw); err != nil {
-			return nil, err
-		}
-	}
-	return generate(ctx, decoded)
 }
 
 // marshal decodes a private JSON tree, preserving schema number semantics.

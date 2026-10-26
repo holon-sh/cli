@@ -38,20 +38,9 @@ func ParseDocument(ctx context.Context, data []byte) (*Document, error) {
 	return &Document{Metadata: &metadata, Data: bytes.Clone(data), Digest: digest.FromBytes(data).String()}, nil
 }
 
-// NewDocument serializes a newly observed contract with Go's sorted JSON keys,
-// including keys inside schemas. Numeric schema values retain their precision.
+// NewDocument serializes a newly observed contract. Schema numbers retain their precision.
 func NewDocument(ctx context.Context, metadata *mcpcontract.Metadata) (*Document, error) {
 	data, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, err
-	}
-	var value any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
-	}
-	data, err = json.Marshal(value)
 	if err != nil {
 		return nil, err
 	}

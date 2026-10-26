@@ -1,7 +1,6 @@
 package mcptype
 
 import (
-	"bytes"
 	"cmp"
 	"fmt"
 	"strconv"
@@ -26,14 +25,8 @@ const pythonUntyped = `class _Untyped(_typing.Protocol):
 
 func generatePythonPackage(request generateRequest, catalogs map[string]catalog) map[string]string {
 	declarations := generatePython(catalogs)
-	var payload bytes.Buffer
-	payload.WriteByte('[')
-	request.writeCaller(&payload)
-	payload.WriteByte(',')
-	writeContracts(&payload, request.contracts)
-	payload.WriteByte(']')
 	// Go's ASCII quoted literals also evaluate as Python strings.
-	literal := strconv.QuoteToASCII(payload.String())
+	literal := strconv.QuoteToASCII(string(encode([]Value{request.caller(), request.contracts})))
 	var members strings.Builder
 	for _, alias := range request.untyped() {
 		if pythonIdentifier(alias) {

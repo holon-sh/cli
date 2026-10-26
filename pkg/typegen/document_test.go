@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/opencontainers/go-digest"
 	"oras.land/oras-go/v2/content"
 )
@@ -26,9 +27,8 @@ func TestDocumentBytesAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"identity":{"name":"example/orders","version":"1"},"schema":{"tools":[{"inputSchema":{"properties":{"id":{"const":9007199254740993}},"type":"object"},"name":"lookup"}]}}`
-	if string(canonical.Data) != want {
-		t.Fatalf("writer bytes = %s", canonical.Data)
+	if changes, err := mcptype.Changes(t.Context(), document.Metadata, canonical.Metadata); err != nil || len(changes) != 0 {
+		t.Fatalf("writer changed the contract: %+v, %v", changes, err)
 	}
 	for _, invalid := range []string{
 		`{"version":1,"identity":{"name":"a","version":"1"},"contract":{"tools":[]}}`,
@@ -44,9 +44,8 @@ func TestDocumentBytesAndValidation(t *testing.T) {
 }
 
 func TestImageDocumentReadAndCopy(t *testing.T) {
-	// The fixture's struct JSON has a different key order from the writer's canonical
-	// JSON. A consumer must pin and copy those original bytes, without re-encoding.
-	original := mustJSON(t, ordersMetadata())
+	// A consumer must pin and copy the fetched blob, including its original whitespace.
+	original := append([]byte(" "), mustJSON(t, ordersMetadata())...)
 	for _, test := range []struct {
 		name string
 		data []byte

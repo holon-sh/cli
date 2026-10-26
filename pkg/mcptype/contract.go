@@ -1,7 +1,7 @@
 package mcptype
 
 import (
-	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -190,8 +190,8 @@ func decodeMetadata(value Value) (Metadata, error) {
 	return metadata, nil
 }
 
-// toValue is the contract's wire form as a Value, whose keys serialize sorted.
-func (c Contract) toValue() Object {
+// MarshalJSON writes the contract with tools and resources sorted by name or URI.
+func (c Contract) MarshalJSON() ([]byte, error) {
 	tools := make([]Value, 0, len(c.Tools))
 	for _, name := range sortedKeys(c.Tools) {
 		tool := c.Tools[name]
@@ -209,13 +209,5 @@ func (c Contract) toValue() Object {
 		}
 		wire["resources"] = resources
 	}
-	return wire
-}
-
-func writeContracts(out *bytes.Buffer, contracts map[string]Contract) {
-	values := make(Object, len(contracts))
-	for alias, contract := range contracts {
-		values[alias] = contract.toValue()
-	}
-	writeValue(out, values)
+	return json.Marshal(wire)
 }

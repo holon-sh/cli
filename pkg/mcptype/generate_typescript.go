@@ -1,7 +1,6 @@
 package mcptype
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"fmt"
@@ -61,14 +60,12 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	case request.Protocol != "":
 		protocol = request.Protocol
 	}
-	var identity, contracts bytes.Buffer
-	request.writeCaller(&identity)
-	writeContracts(&contracts, request.contracts)
+	identity, contracts := encode(request.caller()), encode(request.contracts)
 	untyped := untypedTypeScript(request)
 	types := func(resources string) string {
 		return fmt.Sprintf("import type { Outputs as Resources } from \"./%s.js\";\n%s\nexport type { Resources };\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> }%s;\n", resources, protocol, tools, untyped)
 	}
-	bound := fmt.Sprintf("export function createApps(bindings,options){return bindApps(%s,%s,bindings,options)}\n", &identity, &contracts)
+	bound := fmt.Sprintf("export function createApps(bindings,options){return bindApps(%s,%s,bindings,options)}\n", identity, contracts)
 	runtime := quoted(cmp.Or(request.RuntimeSpecifier, "./runtime.mjs"))
 	browserRuntime := quoted(cmp.Or(request.BrowserRuntimeSpecifier, "./browser-runtime.mjs"))
 	entry := "index"
@@ -89,7 +86,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		}
 	default:
 		files = map[string]string{
-			entry + ".js":   fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\nexport const apps = create(%s, %s);\n%s", runtime, runtime, &identity, &contracts, bound),
+			entry + ".js":   fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\nexport const apps = create(%s, %s);\n%s", runtime, runtime, identity, contracts, bound),
 			entry + ".d.ts": types(resourcesEntry) + "export declare const apps: Apps;\n" + bindingTypes,
 		}
 	}

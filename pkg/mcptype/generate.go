@@ -20,8 +20,21 @@ type generateRequest struct {
 	contracts map[string]Contract
 }
 
-// generate lays out one target's package: copied runtime files plus the generated sources.
-func generate(ctx context.Context, request generateRequest) (map[string][]byte, error) {
+// Generate returns the package files by relative path: copied runtime files plus generated sources.
+func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, error) {
+	// Only schemas need JSON decoding; the remaining options are already typed.
+	value, err := marshal(ctx, options.Contracts)
+	if err != nil {
+		return nil, err
+	}
+	request := generateRequest{GenerateRequest: options, contracts: map[string]Contract{}}
+	contracts, _ := value.(Object) // A nil Contracts map encodes as null.
+	for alias, raw := range contracts {
+		if request.contracts[alias], err = decodeContract(raw); err != nil {
+			return nil, err
+		}
+	}
+
 	for _, path := range sortedKeys(request.Runtime) {
 		if !relative(path) {
 			return nil, fmt.Errorf("runtime path %q must be relative and normalized", path)
@@ -119,13 +132,13 @@ func (r generateRequest) untyped() []string {
 	return aliases
 }
 
-// writeCaller is the identity a generated client announces, with the aliases its app declares.
-func (r generateRequest) writeCaller(out *bytes.Buffer) {
+// caller is the identity a generated client announces, with the aliases its app declares.
+func (r generateRequest) caller() Object {
 	requires := make(Object, len(r.Requires))
 	for alias, identity := range r.Requires {
-		requires[alias] = Object{"name": identity.Name, "version": identity.Version}
+		requires[alias] = identity
 	}
-	writeValue(out, Object{"name": r.Identity.Name, "requires": requires, "version": r.Identity.Version})
+	return Object{"name": r.Identity.Name, "requires": requires, "version": r.Identity.Version}
 }
 
 func relative(path string) bool {

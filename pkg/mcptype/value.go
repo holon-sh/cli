@@ -13,8 +13,8 @@ import (
 	"strings"
 )
 
-// Value is a JSON value with serde_json's semantics: nil, bool, Number, string, []Value or Object.
-// Objects are unordered and written with sorted keys, as serde_json's default map does.
+// Value is a JSON value: nil, bool, Number, string, []Value or Object.
+// Objects are unordered and serialize with sorted keys.
 type Value = any
 
 // Object is a JSON object.
@@ -38,7 +38,7 @@ type Number struct {
 
 func (n Number) isInteger() bool { return n.kind != float }
 
-// String formats the number as serde_json writes it: integers in decimal, floats in ryu's shortest form.
+// String formats the number without losing integer precision or the integer/float distinction.
 func (n Number) String() string {
 	switch n.kind {
 	case posInt:
@@ -46,7 +46,11 @@ func (n Number) String() string {
 	case negInt:
 		return strconv.FormatInt(n.i, 10)
 	}
-	return formatFloat(n.f)
+	text := strconv.FormatFloat(n.f, 'g', -1, 64)
+	if !strings.ContainsAny(text, ".eE") {
+		text += ".0"
+	}
+	return text
 }
 
 // parseNumber classifies a JSON number literal as serde_json does: integers that fit u64 or i64
@@ -66,21 +70,6 @@ func parseNumber(literal string) (Number, error) {
 		return Number{}, errors.New("number out of range")
 	}
 	return Number{kind: float, f: value}, nil
-}
-
-// formatFloat is ryu's pretty printing of a finite f64, which serde_json uses for floats.
-func formatFloat(value float64) string {
-	mantissa, exponent, _ := strings.Cut(strconv.FormatFloat(value, 'e', -1, 64), "e")
-	power, _ := strconv.Atoi(exponent)
-	// Serde uses fixed notation for decimal exponents -5 through 15.
-	if power >= -5 && power < 16 {
-		fixed := strconv.FormatFloat(value, 'f', -1, 64)
-		if !strings.Contains(fixed, ".") {
-			fixed += ".0"
-		}
-		return fixed
-	}
-	return mantissa + "e" + fmt.Sprintf("%+d", power)
 }
 
 // decodeJSON parses one JSON document.
@@ -124,87 +113,19 @@ func fromAny(raw any) (Value, error) {
 	return raw, nil // null, booleans and strings already have their final representation.
 }
 
-// encode writes compact JSON with object keys sorted, as serde_json serializes a Value.
+// encode writes compact JSON with sorted object keys using the standard encoder.
 func encode(value Value) []byte {
-	var out bytes.Buffer
-	writeValue(&out, value)
-	return out.Bytes()
-}
-
-func writeValue(out *bytes.Buffer, value Value) {
-	switch value := value.(type) {
-	case nil:
-		out.WriteString("null")
-	case bool:
-		out.WriteString(strconv.FormatBool(value))
-	case Number:
-		out.WriteString(value.String())
-	case string:
-		writeQuoted(out, value)
-	case []Value:
-		out.WriteByte('[')
-		for i, item := range value {
-			if i > 0 {
-				out.WriteByte(',')
-			}
-			writeValue(out, item)
-		}
-		out.WriteByte(']')
-	case Object:
-		out.WriteByte('{')
-		for i, key := range sortedKeys(value) {
-			if i > 0 {
-				out.WriteByte(',')
-			}
-			writeQuoted(out, key)
-			out.WriteByte(':')
-			writeValue(out, value[key])
-		}
-		out.WriteByte('}')
-	default:
-		panic(fmt.Sprintf("mcptype: not a JSON value: %T", value))
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err) // Values come from validated JSON or the compiler's own wire types.
 	}
+	return data
 }
 
-// quoted is a JSON string literal as serde_json writes it: only quotes, backslashes and
-// control characters are escaped, with lowercase hex.
-func quoted(text string) string {
-	var out bytes.Buffer
-	writeQuoted(&out, text)
-	return out.String()
-}
+func quoted(text string) string { return string(encode(text)) }
 
-func writeQuoted(out *bytes.Buffer, text string) {
-	const hex = "0123456789abcdef"
-	out.WriteByte('"')
-	for i := 0; i < len(text); i++ {
-		switch c := text[i]; c {
-		case '"':
-			out.WriteString(`\"`)
-		case '\\':
-			out.WriteString(`\\`)
-		case '\b':
-			out.WriteString(`\b`)
-		case '\f':
-			out.WriteString(`\f`)
-		case '\n':
-			out.WriteString(`\n`)
-		case '\r':
-			out.WriteString(`\r`)
-		case '\t':
-			out.WriteString(`\t`)
-		default:
-			if c < 0x20 {
-				out.WriteString(`\u00`)
-				out.WriteByte(hex[c>>4])
-				out.WriteByte(hex[c&0xf])
-			} else {
-				out.WriteByte(c)
-			}
-		}
-	}
-	out.WriteByte('"')
-}
+// MarshalJSON preserves the number representation used for schema comparison.
+func (n Number) MarshalJSON() ([]byte, error) { return []byte(n.String()), nil }
 
 func sortedKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))

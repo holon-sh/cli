@@ -24,16 +24,7 @@ export interface Inputs {
     "émoji🎉": { "é"?: string; [key: string]: unknown; };
   };
   "orders!": {
-    "-": { [key: string]: unknown; };
-    "123": { [key: string]: unknown; };
-    "CallTool": { [key: string]: unknown; };
-    "call_tool": { "a"?: number; "b": string; };
-    "class": { "opt"?: { "n"?: number; }; };
-    "get-order": { "id": string; };
-    "get_order": { "id": string; };
-    "kitchen-sink": { "1starts"?: string; "Dash-Key"?: string; "all"?: ({ "a": string; [key: string]: unknown; } & { "b"?: number; [key: string]: unknown; }); "allConflict"?: ({ "a"?: string; [key: string]: unknown; } & { "a"?: number; [key: string]: unknown; }); "allNonObject"?: (string & { [key: string]: unknown; }); "annotated"?: string; "arrayRef"?: string; "closedEmpty"?: {  }; "constNum"?: 1e+21; "constObj"?: unknown; "constString"?: "it's \"quoted\"\n"; "cycle"?: { "next"?: unknown; "value": number; }; "dash-key"?: string; "emptyAll"?: unknown; "emptyAny"?: never; "falseSchema"?: never; "implicitTuple"?: ["x"?, ...unknown[]]; "literals": ("a" | 1 | 2.5 | -3 | true | null | unknown | unknown | 1.0 | 1e+21 | -0.0); "mapOf"?: { [key: string]: string; }; "multi"?: (string | null | Array<number> | unknown); "nested"?: Array<Array<{ "deep"?: null; }>>; "noType": { "p": boolean; [key: string]: unknown; }; "numericType"?: { "p"?: boolean; [key: string]: unknown; }; "odd key with spaces"?: string; "oneOf"?: (string | number); "openObj"?: { "x"?: string; [key: string]: unknown; }; "openTuple"?: [boolean?, ...Array<number>]; "plainArray"?: Array<unknown>; "pointerEscape"?: number; "rootRef"?: { "1starts"?: string; "Dash-Key"?: string; "all"?: ({ "a": string; [key: string]: unknown; } & { "b"?: number; [key: string]: unknown; }); "allConflict"?: ({ "a"?: string; [key: string]: unknown; } & { "a"?: number; [key: string]: unknown; }); "allNonObject"?: (string & { [key: string]: unknown; }); "annotated"?: string; "arrayRef"?: string; "closedEmpty"?: {  }; "constNum"?: 1e+21; "constObj"?: unknown; "constString"?: "it's \"quoted\"\n"; "cycle"?: { "next"?: unknown; "value": number; }; "dash-key"?: string; "emptyAll"?: unknown; "emptyAny"?: never; "falseSchema"?: never; "implicitTuple"?: ["x"?, ...unknown[]]; "literals": ("a" | 1 | 2.5 | -3 | true | null | unknown | unknown | 1.0 | 1e+21 | -0.0); "mapOf"?: { [key: string]: string; }; "multi"?: (string | null | Array<number> | unknown); "nested"?: Array<Array<{ "deep"?: null; }>>; "noType": { "p": boolean; [key: string]: unknown; }; "numericType"?: { "p"?: boolean; [key: string]: unknown; }; "odd key with spaces"?: string; "oneOf"?: (string | number); "openObj"?: { "x"?: string; [key: string]: unknown; }; "openTuple"?: [boolean?, ...Array<number>]; "plainArray"?: Array<unknown>; "pointerEscape"?: number; "rootRef"?: unknown; "trueObj"?: { "x"?: string; [key: string]: unknown; }; "trueSchema"?: unknown; "tuple": [string, number?]; "unknownKeyword"?: unknown; }; "trueObj"?: { "x"?: string; [key: string]: unknown; }; "trueSchema"?: unknown; "tuple": [string, number?]; "unknownKeyword"?: unknown; };
-    "weird-keys": { "": null; "-"?: boolean; "x\"quote"?: string; "ünïcode"?: number; };
-    "émoji🎉": { "é"?: string; [key: string]: unknown; };
+    "kitchen-sink": { "id": string; };
   };
   "with-hyphen": {
     "y": { [key: string]: unknown; };
@@ -63,16 +54,7 @@ export interface Outputs {
     "émoji🎉": string;
   };
   "orders!": {
-    "-": unknown;
-    "123": unknown;
-    "CallTool": unknown;
-    "call_tool": { "x": boolean; };
-    "class": Array<unknown>;
-    "get-order": unknown;
-    "get_order": unknown;
-    "kitchen-sink": unknown;
-    "weird-keys": { "a.b"?: string; "nl\nname"?: string; "tab\tname": string; };
-    "émoji🎉": string;
+    "kitchen-sink": boolean;
   };
   "with-hyphen": {
     "y": unknown;
@@ -102,16 +84,7 @@ export interface InputTypes {
     "émoji🎉": {  };
   };
   "orders!": {
-    "-": {  };
-    "123": {  };
-    "CallTool": {  };
-    "call_tool": {  };
-    "class": {  };
-    "get-order": {  };
-    "get_order": {  };
-    "kitchen-sink": { "9lives": string; "Legacy": number; "Node": { "next"?: { "next"?: unknown; "value": number; }; "value": number; }; "_private": boolean; "a/b~c": number; "for": string; "list": [string?, ...unknown[]]; };
-    "weird-keys": {  };
-    "émoji🎉": {  };
+    "kitchen-sink": {  };
   };
   "with-hyphen": {
     "y": {  };
@@ -141,16 +114,7 @@ export interface OutputTypes {
     "émoji🎉": {  };
   };
   "orders!": {
-    "-": {  };
-    "123": {  };
-    "CallTool": {  };
-    "call_tool": {  };
-    "class": {  };
-    "get-order": {  };
-    "get_order": {  };
     "kitchen-sink": {  };
-    "weird-keys": {  };
-    "émoji🎉": {  };
   };
   "with-hyphen": {
     "y": {  };

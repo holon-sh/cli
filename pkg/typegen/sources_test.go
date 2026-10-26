@@ -112,18 +112,18 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 		t.Fatalf("slot = %s, want %s", resolved, real)
 	}
 	put(t, store, "generated/index.js", "user content")
-	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err == nil {
+	if err := writeNodeSlot(resolved, pkg, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err == nil {
 		t.Fatal("overwrote foreign slot")
 	}
 	if got := read(t, store, "generated/index.js"); got != "user content" {
 		t.Fatalf("foreign contents changed: %s", got)
 	}
 	put(t, store, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})))
-	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
+	if err := writeNodeSlot(resolved, pkg, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := os.Stat(filepath.Join(store, "generated/index.js"))
-	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
+	if err := writeNodeSlot(resolved, pkg, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := os.Stat(filepath.Join(store, "generated/index.js"))
@@ -132,17 +132,17 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	}
 	// Older markers may carry digests; ownership still permits refreshing their slot.
 	put(t, store, "generated/holon-generated.json", `{"marker":"holon-generated-apps-v1","app":"one","digests":{"orders":"sha256:old"}}`)
-	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
+	if err := writeNodeSlot(resolved, pkg, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "other"}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
+	if err := writeNodeSlot(resolved, pkg, map[string][]byte{"index.js": []byte("other")}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
 		t.Fatalf("shared package was reassigned to another consumer: %v", err)
 	}
 }
 
 func TestPythonSlotProtectsUserFiles(t *testing.T) {
 	content := "# " + mcpcontract.Marker + " app=orders\napps = object()\n"
-	files := map[string]string{"holon/apps/__init__.py": content}
+	files := map[string][]byte{"holon/apps/__init__.py": []byte(content)}
 
 	root := t.TempDir()
 	put(t, root, "holon/package.json", `{"holon":"holon-generated-apps-v1"}`)

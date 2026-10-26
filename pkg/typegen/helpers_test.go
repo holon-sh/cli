@@ -146,7 +146,7 @@ func imageClient(t *testing.T, metadata *mcpcontract.Metadata, annotation string
 	}
 	documents := map[string]document{}
 	add := func(mediaType string, value any) ocispec.Descriptor {
-		data := mustJSON(t, value)
+		data := append([]byte(" "), mustJSON(t, value)...) // Fetched bytes need not match our writer.
 		descriptor := content.NewDescriptorFromBytes(mediaType, data)
 		documents[descriptor.Digest.String()] = document{descriptor, data}
 		return descriptor

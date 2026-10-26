@@ -12,9 +12,6 @@ export interface Inputs {
     "res://é/ü": {  };
   };
   "orders!": {
-    "res://plain": {  };
-    "res://typed": {  };
-    "res://é/ü": {  };
   };
   "with-hyphen": {
   };
@@ -34,9 +31,6 @@ export interface Outputs {
     "res://é/ü": { "n"?: number; [key: string]: unknown; };
   };
   "orders!": {
-    "res://plain": string;
-    "res://typed": { "items": Array<{ "id": string; }>; };
-    "res://é/ü": { "n"?: number; [key: string]: unknown; };
   };
   "with-hyphen": {
   };
@@ -56,9 +50,6 @@ export interface InputTypes {
     "res://é/ü": {  };
   };
   "orders!": {
-    "res://plain": {  };
-    "res://typed": {  };
-    "res://é/ü": {  };
   };
   "with-hyphen": {
   };
@@ -78,9 +69,6 @@ export interface OutputTypes {
     "res://é/ü": {  };
   };
   "orders!": {
-    "res://plain": {  };
-    "res://typed": { "Item": { "id": string; }; };
-    "res://é/ü": {  };
   };
   "with-hyphen": {
   };

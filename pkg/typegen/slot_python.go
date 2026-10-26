@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
@@ -41,7 +40,7 @@ func validatePythonSlot(root string) error {
 	}
 	return nil
 }
-func writePythonSlot(root string, files map[string]string) error {
+func writePythonSlot(root string, files map[string][]byte) error {
 	if err := validatePythonSlot(root); err != nil {
 		return err
 	}
@@ -49,11 +48,11 @@ func writePythonSlot(root string, files map[string]string) error {
 		if name != "holon/apps/__init__.py" {
 			return fmt.Errorf("unexpected Python generated file %q", name)
 		}
-		if !strings.HasPrefix(content, "# "+mcpcontract.Marker+" app=") {
+		if !bytes.HasPrefix(content, []byte("# "+mcpcontract.Marker+" app=")) {
 			return errors.New("generated Python module is missing its ownership banner")
 		}
 		target := filepath.Join(root, name)
-		if old, err := os.ReadFile(target); err == nil && string(old) == content {
+		if old, err := os.ReadFile(target); err == nil && bytes.Equal(old, content) {
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -63,7 +62,7 @@ func writePythonSlot(root string, files map[string]string) error {
 		if err != nil {
 			return err
 		}
-		_, err = temp.WriteString(content)
+		_, err = temp.Write(content)
 		err = errors.Join(err, temp.Chmod(0o644), temp.Close())
 		if err == nil {
 			err = os.Rename(temp.Name(), target)

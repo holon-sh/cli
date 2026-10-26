@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -43,12 +44,12 @@ func validateGoSlot(root string) error {
 	return nil
 }
 
-func writeGoSlot(root string, files map[string]string) error {
+func writeGoSlot(root string, files map[string][]byte) error {
 	if err := validateGoSlot(root); err != nil {
 		return err
 	}
 	for name, text := range files {
-		if !strings.HasSuffix(name, ".go") || !strings.HasPrefix(text, "// "+mcpcontract.Marker+" app=") {
+		if !strings.HasSuffix(name, ".go") || !bytes.HasPrefix(text, []byte("// "+mcpcontract.Marker+" app=")) {
 			return errors.New("generated Go package is missing its ownership banner")
 		}
 	}

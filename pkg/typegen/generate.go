@@ -71,7 +71,7 @@ type preparedConsumer struct {
 	Consumer
 	server   *preparedSource
 	metadata *mcpcontract.Metadata
-	packages map[string]map[string]string // files by target
+	packages map[string]map[string][]byte // files by target
 	slot     slotMetadata
 	document *Document
 }
@@ -159,7 +159,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 	p := &Prepared{paths: map[string]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}, documents: map[string]*Document{}}
 	batches := map[string][]extractionEntry{}
 	for _, c := range consumers {
-		pc := &preparedConsumer{Consumer: c, packages: map[string]map[string]string{}}
+		pc := &preparedConsumer{Consumer: c, packages: map[string]map[string][]byte{}}
 		p.consumers = append(p.consumers, pc)
 		sources := c.Sources
 		if c.Server != nil {
@@ -321,32 +321,20 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	return nil
 }
 
-func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, goModule string) (map[string]string, error) {
+func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, goModule string) (map[string][]byte, error) {
 	switch target {
 	case TargetTS:
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
 	case TargetPy:
 		request.Target = "python"
-		request.PythonModule = "holon/apps/__init__.py"
-		request.PythonRuntimeModule = "holon.client"
 	case TargetGo:
 		if goModule == "" {
 			return nil, errors.New("the go target needs Options.GoModule")
 		}
 		request.Target = "go"
 		request.GoModule = goModule
-	default:
-		return nil, fmt.Errorf("unsupported target %s", target)
 	}
-	generated, err := mcptype.Generate(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-	files := make(map[string]string, len(generated))
-	for name, data := range generated {
-		files[name] = string(data)
-	}
-	return files, nil
+	return mcptype.Generate(ctx, request)
 }
 
 // currentSources fails when any snapshotted directory changed since preparation.
@@ -451,7 +439,7 @@ func (p *Prepared) Targets(consumer string) []string {
 	return nil
 }
 
-func (p *Prepared) files(consumer, target string) (*preparedConsumer, map[string]string, error) {
+func (p *Prepared) files(consumer, target string) (*preparedConsumer, map[string][]byte, error) {
 	c := p.consumer(consumer)
 	if c == nil {
 		return nil, nil, fmt.Errorf("unknown consumer %q", consumer)

@@ -139,7 +139,7 @@ func generatePython(contracts map[string]catalog) string {
 	for index, binding := range sortedKeys(contracts) {
 		var methods, calls []string
 		appExports := make([][]string, 4)
-		tools := contracts[binding].tools
+		tools := contracts[binding]
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
 			shapes := []shape{tool.input, tool.output}
