@@ -40,18 +40,15 @@ func resourceContracts(contracts map[string]Contract) map[string]Contract {
 		for uri, resource := range contract.Resources {
 			tools[uri] = Tool{Input: Object{"type": "object", "additionalProperties": false}, Output: resource.Output}
 		}
-		result[alias] = Contract{Tools: tools, Resources: map[string]Resource{}}
+		result[alias] = Contract{Tools: tools}
 	}
 	return result
 }
 
-func generateTypeScriptPackage(ctx context.Context, request generateRequest) (map[string]string, error) {
-	catalogs, err := compileCatalogs(ctx, request.contracts)
-	if err != nil {
-		return nil, err
-	}
+func generateTypeScriptPackage(ctx context.Context, request generateRequest, catalogs map[string]catalog) (map[string]string, error) {
 	tools := generateTypeScript(catalogs)
-	if catalogs, err = compileCatalogs(ctx, resourceContracts(request.contracts)); err != nil {
+	catalogs, err := compileCatalogs(ctx, resourceContracts(request.contracts))
+	if err != nil {
 		return nil, err
 	}
 	resources := generateTypeScript(catalogs)

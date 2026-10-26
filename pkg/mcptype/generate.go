@@ -132,15 +132,18 @@ func generate(ctx context.Context, request generateRequest) (map[string][]byte, 
 	if err := request.validate(); err != nil {
 		return nil, err
 	}
+	catalogs, err := compileCatalogs(ctx, request.contracts)
+	if err != nil {
+		return nil, err
+	}
 	var generated map[string]string
-	var err error
 	switch request.target {
 	case "node", "browser":
-		generated, err = generateTypeScriptPackage(ctx, request)
+		generated, err = generateTypeScriptPackage(ctx, request, catalogs)
 	case "python":
-		generated, err = generatePythonPackage(ctx, request)
+		generated = generatePythonPackage(request, catalogs)
 	default:
-		generated, err = generateGoPackage(ctx, request)
+		generated = generateGoPackage(request, catalogs)
 	}
 	if err != nil {
 		return nil, err
@@ -191,6 +194,9 @@ func (r generateRequest) validate() error {
 				return errors.New("python_runtime_module must be an absolute Python module name")
 			}
 		}
+	}
+	if r.target == "go" && r.goModule == nil {
+		return errors.New("go_module is required for the go target")
 	}
 	return nil
 }

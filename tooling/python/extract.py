@@ -699,17 +699,14 @@ def wrap(schema: dict[str, Any]) -> dict[str, Any]:
 def extract(root: str | Path, entry: str) -> dict[str, Any]:
     analyzer = Analyzer(Path(root))
     try:
-        paths = []
         for directory, folders, filenames in os.walk(analyzer.root):
             folders[:] = [name for name in folders if name not in IGNORED]
-            paths += [
-                Path(directory, name) for name in filenames if name.endswith(".py")
-            ]
-        for path in paths:
-            source = path.read_text()
-            analyzer.sources[str(path.relative_to(analyzer.root))] = hashlib.sha256(
-                source.encode()
-            ).hexdigest()
+            for name in filenames:
+                if name.endswith(".py"):
+                    path = Path(directory, name)
+                    analyzer.sources[str(path.relative_to(analyzer.root))] = (
+                        hashlib.sha256(path.read_text().encode()).hexdigest()
+                    )
         catalog = analyzer.extract((analyzer.root / entry).resolve())
         return {**catalog, "sources": analyzer.sources}
     except (

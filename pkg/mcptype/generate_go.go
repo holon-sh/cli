@@ -1,8 +1,6 @@
 package mcptype
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -11,14 +9,7 @@ import (
 // The generated Go package holon: declarations and one client variable per dependency.
 // clients.go is gofmt-clean by construction; the declarations in types.go are not reformatted.
 
-func generateGoPackage(ctx context.Context, request generateRequest) (map[string]string, error) {
-	if request.goModule == nil {
-		return nil, errors.New("go_module is required for the go target")
-	}
-	catalogs, err := compileCatalogs(ctx, request.contracts)
-	if err != nil {
-		return nil, err
-	}
+func generateGoPackage(request generateRequest, catalogs map[string]catalog) map[string]string {
 	declarations, bindings := generateGo(catalogs)
 	var source strings.Builder
 	hasTools := false
@@ -61,7 +52,7 @@ func generateGoPackage(ctx context.Context, request generateRequest) (map[string
 		"types.go":     "package holon\n\n" + declarations,
 		"clients.go":   "package holon\n" + header + text,
 		"package.json": string(encode(request.packageFields)),
-	}, nil
+	}
 }
 
 // goQuote is a Go interpreted string literal.

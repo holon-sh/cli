@@ -2,7 +2,6 @@ package mcptype
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"strings"
 	"unicode/utf16"
@@ -24,11 +23,7 @@ from .client import ToolResult as _ToolResult`
 const pythonUntyped = `class _Untyped(_typing.Protocol):
     async def call_tool(self, name: _builtins.str, arguments: _typing.Mapping[_builtins.str, _builtins.object], *, timeout: _builtins.float | None = ..., input_responses: _InputResponses | None = ..., request_state: _builtins.str | None = ..., meta: _RequestParamsMeta | None = ...) -> _ToolResult[_builtins.object]: ...`
 
-func generatePythonPackage(ctx context.Context, request generateRequest) (map[string]string, error) {
-	catalogs, err := compileCatalogs(ctx, request.contracts)
-	if err != nil {
-		return nil, err
-	}
+func generatePythonPackage(request generateRequest, catalogs map[string]catalog) map[string]string {
 	declarations := generatePython(catalogs)
 	var payload bytes.Buffer
 	payload.WriteByte('[')
@@ -59,7 +54,7 @@ func generatePythonPackage(ctx context.Context, request generateRequest) (map[st
 	if !request.slot() {
 		files["package.json"] = pythonDumps(request.packageFields)
 	}
-	return files, nil
+	return files
 }
 
 // pythonDumps is Python's json.dumps with ensure_ascii and its default separators.

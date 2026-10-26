@@ -144,8 +144,5 @@ func replaceDirectory(parent, directory string, files map[string]string) error {
 		}
 		return err
 	}
-	if moved {
-		return os.RemoveAll(backup)
-	}
-	return nil
+	return os.RemoveAll(backup)
 }

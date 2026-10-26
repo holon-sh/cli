@@ -1,7 +1,9 @@
 package mcptype
 
 import (
+	"cmp"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -15,29 +17,22 @@ type goTool struct {
 	name, input, output string
 }
 
+var goWords = regexp.MustCompile(`[a-zA-Z0-9]+`)
+
+// goTagName matches ASCII JSON struct-tag names; "-" alone means omission.
+var goTagName = regexp.MustCompile(`^[a-zA-Z0-9` + regexp.QuoteMeta(" !#$%&()*+./:;<=>?@[]^_{|}~") + `-]+$`)
+
 // goIdentifier turns any name into an exported Go identifier.
 func goIdentifier(value string) string {
-	var result strings.Builder
-	upper := true
-	for i := 0; i < len(value); i++ {
-		c := value[i]
-		if !isASCIIAlphanumeric(c) {
-			upper = true
-			continue
-		}
-		if result.Len() == 0 && isASCIIDigit(c) {
-			result.WriteByte('X')
-		}
-		if upper && c >= 'a' && c <= 'z' {
-			c -= 'a' - 'A'
-		}
-		result.WriteByte(c)
-		upper = false
+	words := goWords.FindAllString(value, -1)
+	for i, word := range words {
+		words[i] = strings.ToUpper(word[:1]) + word[1:]
 	}
-	if result.Len() == 0 {
-		return "Value"
+	name := strings.Join(words, "")
+	if name != "" && name[0] >= '0' && name[0] <= '9' {
+		name = "X" + name
 	}
-	return result.String()
+	return cmp.Or(name, "Value")
 }
 
 func unique(names map[string]bool, preferred string) string {
@@ -47,19 +42,6 @@ func unique(names map[string]bool, preferred string) string {
 	}
 	names[name] = true
 	return name
-}
-
-// goFieldName reports whether value can be a struct tag's JSON name.
-func goFieldName(value string) bool {
-	if value == "" || value == "-" {
-		return false
-	}
-	for i := 0; i < len(value); i++ {
-		if c := value[i]; !isASCIIAlphanumeric(c) && !strings.ContainsRune(" !#$%&()*+-./:;<=>?@[]^_{|}~", rune(c)) {
-			return false
-		}
-	}
-	return true
 }
 
 func renderGo(value typ) string {
@@ -93,7 +75,7 @@ func renderGo(value typ) string {
 			return "map[string]json.RawMessage"
 		}
 		for name := range value.fields {
-			if !goFieldName(name) {
+			if name == "-" || !goTagName.MatchString(name) {
 				return "map[string]json.RawMessage"
 			}
 		}

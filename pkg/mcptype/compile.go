@@ -17,9 +17,6 @@ type compiledTool struct {
 func parseCatalog(ctx context.Context, contract Contract) (catalog, error) {
 	result := catalog{tools: make(map[string]compiledTool, len(contract.Tools))}
 	for _, name := range sortedKeys(contract.Tools) {
-		if err := ctx.Err(); err != nil {
-			return catalog{}, err
-		}
 		tool := contract.Tools[name]
 		input, err := parseShape(ctx, tool.Input)
 		if err != nil {

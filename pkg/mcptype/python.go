@@ -15,12 +15,6 @@ var pythonKeywords = []string{
 	"return", "try", "while", "with", "yield",
 }
 
-func isASCIIAlphabetic(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
-func isASCIIDigit(c byte) bool      { return c >= '0' && c <= '9' }
-func isASCIIAlphanumeric(c byte) bool {
-	return isASCIIAlphabetic(c) || isASCIIDigit(c)
-}
-
 var pythonName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // pythonIdentifier reports whether name is a public ASCII identifier that is not a keyword.
