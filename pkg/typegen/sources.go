@@ -1,8 +1,8 @@
-// Package typegen turns explicit MCP server sources into typed client slots.
+// Package typegen turns MCP server sources into typed client slots.
 //
 // A Consumer is a project directory that receives clients for the servers it names as Sources.
-// Nothing is discovered: every dependency, where its schema comes from, and which SDK slot
-// receives it is stated by the caller, and whatever cannot be resolved from that is an error.
+// Sources can be supplied explicitly or read from sh.holon.requires with DeclaredSources.
+// The caller chooses which SDK slots receive them; unresolved sources are errors.
 package typegen
 
 import (
@@ -34,8 +34,8 @@ var targets = []string{TargetTS, TargetUI, TargetPy, TargetGo}
 // slotPackages are the installed packages that own a Node slot, by target.
 var slotPackages = map[string]string{TargetTS: "holon-sh", TargetUI: "holon-ui"}
 
-// Source is one MCP server whose contract becomes a client. Exactly one of Path, Registry,
-// Endpoint or Image is set.
+// Source is one MCP server whose contract becomes a client, supplied explicitly or declared in
+// sh.holon.requires. Exactly one of Path, Registry, Endpoint or Image is set.
 type Source struct {
 	// Alias names the client (apps.<alias>). Empty derives it: the last segment of the server's
 	// name (example.com/orders → orders), or the live server's serverInfo name for an Endpoint.
@@ -45,7 +45,8 @@ type Source struct {
 	// the entry supplies the identity.
 	Path string
 	// Registry is an MCP registry server version. The record's sh.holon.types document is the
-	// contract; without one, its streamable-http remote is asked; without either it is an error.
+	// contract; without one, its OCI package's contract artifact; without that, its streamable-http
+	// remote; without any it is an error.
 	Registry *Reference
 	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract.
 	Endpoint string
@@ -150,6 +151,19 @@ func (c Consumer) validate() error {
 	}
 	return nil
 }
+
+// OwnServer returns dir's server entry as a path source, or nil when dir has none.
+// More than one entry is an error.
+func OwnServer(dir string) (*Source, error) {
+	entry, err := sourceEntry(dir)
+	if err != nil || entry == "" {
+		return nil, err
+	}
+	return &Source{Path: filepath.Join(dir, filepath.FromSlash(entry))}, nil
+}
+
+// EntryFiles returns the supported server entry locations relative to the project directory.
+func EntryFiles() []string { return slices.Clone(entryFiles) }
 
 // serverEntry resolves a path source: path is an entry file, or a directory holding exactly one of
 // server.py, src/server.py, server.ts, src/server.ts, server.js, src/server.js (and server.go).

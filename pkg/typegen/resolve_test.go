@@ -3,6 +3,7 @@ package typegen
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,16 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+type hostTransport map[string]http.RoundTripper
+
+func (h hostTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	transport, ok := h[r.URL.Host]
+	if !ok {
+		return nil, fmt.Errorf("unexpected request host: %s", r.URL.Host)
+	}
+	return transport.RoundTrip(r)
+}
 
 func liveServer(t *testing.T, name string) *httptest.Server {
 	t.Helper()
@@ -52,20 +63,41 @@ func TestRegistrySourceResolution(t *testing.T) {
 	base := `{"name":"example.com/orders","version":"1.0.0","description":"Orders"`
 	remote := `,"remotes":[{"type":"streamable-http","url":"` + live.URL + `"}]`
 	types := `,"_meta":{"` + PublisherMetadata + `":{"sh.holon":{"types":"` + server.URL + `/contract"}}}`
+	oci := `,"packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]`
 	valid := string(mustJSON(t, ordersMetadata()))
-	for _, test := range []struct{ name, record, document, tool, want string }{
-		{"types document before remote", base + types + remote + `}`, valid, "lookup", ""},
-		{"remote", base + remote + `}`, "", "read", ""},
-		{"neither", base + `,"packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]}`, "", "", "publishes neither a sh.holon.types contract nor a streamable-http remote"},
-		{"wrong registry identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "", "different server name"},
-		{"oversized document", base + types + `}`, strings.Repeat(" ", MaxDescriptorBytes+1), "", "exceeds"},
-		{"invalid contract", base + types + remote + `}`, `{"version":1,"identity":{"name":"example.com/orders","version":"1.0.0"},"contract":{"tools":"invalid"}}`, "", "expected a sequence"},
-		{"wrong contract identity", base + types + `}`, `{"version":1,"identity":{"name":"example.com/other","version":"1.0.0"},"contract":{"tools":[]}}`, "", "belongs to example.com/other"},
+	wrongIdentity := ordersMetadata()
+	wrongIdentity.Identity.Name = "example.com/other"
+	for _, test := range []struct {
+		name, record, document, tool, want string
+		image                              *http.Client
+	}{
+		{"types document before OCI and remote", base + types + oci + remote + `}`, valid, "lookup", "", imageClient(t, wrongIdentity, mcpcontract.MediaType)},
+		{"oci package", base + oci + `}`, "", "lookup", "", nil},
+		{"oci before remote", base + oci + remote + `}`, "", "lookup", "", nil},
+		{"oci without a contract falls through to remote", base + oci + remote + `}`, "", "read", "", imageClient(t, nil, mcpcontract.MediaType)},
+		{"oci identity mismatch", base + oci + `}`, "", "", "belongs to example.com/other", imageClient(t, wrongIdentity, mcpcontract.MediaType)},
+		{"oci error propagates", base + `,"packages":[{"registryType":"oci","identifier":"orders:1.0.0"},{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]` + remote + `}`, "", "", "package orders:1.0.0: package identifier must use an explicit OCI registry", nil},
+		{"invalid OCI contract does not fall through", base + oci + remote + `}`, "", "", "invalid MCP contract artifact", imageClient(t, ordersMetadata(), "invalid")},
+		{"remote", base + remote + `}`, "", "read", "", nil},
+		{"neither", base + `,"packages":[{"registryType":"npm","identifier":"orders"}]}`, "", "", "publishes neither", nil},
+		{"wrong registry identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "", "different server name", nil},
+		{"oversized document", base + types + `}`, strings.Repeat(" ", MaxDescriptorBytes+1), "", "exceeds", nil},
+		{"invalid contract", base + types + oci + remote + `}`, `{"version":1,"identity":{"name":"example.com/orders","version":"1.0.0"},"contract":{"tools":"invalid"}}`, "", "expected a sequence", nil},
+		{"wrong contract identity", base + types + `}`, `{"version":1,"identity":{"name":"example.com/other","version":"1.0.0"},"contract":{"tools":[]}}`, "", "belongs to example.com/other", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			record, document = test.record, test.document
+			image := test.image
+			if image == nil {
+				image = imageClient(t, ordersMetadata(), mcpcontract.MediaType)
+			}
+			client := &http.Client{Transport: hostTransport{
+				strings.TrimPrefix(server.URL, "https://"): server.Client().Transport,
+				strings.TrimPrefix(live.URL, "http://"):    http.DefaultTransport,
+				"images.example":                           image.Transport,
+			}}
 			ref := Reference{Name: identity.Name, Version: identity.Version, Registry: server.URL}
-			metadata, err := Resolve(t.Context(), Source{Registry: &ref}, Options{HTTPClient: server.Client()})
+			metadata, err := Resolve(t.Context(), Source{Registry: &ref}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {
 					t.Fatalf("Resolve = %v, want %q", err, test.want)

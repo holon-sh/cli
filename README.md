@@ -27,28 +27,32 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 <summary><code>holon types generate</code></summary>
 
 ```text
-Generate typed clients for MCP servers.
+Generate typed clients for the project's MCP servers, from server.json requires or the -s list. Generation may install the declared holon-sh/holon-ui package and rewrites the generated/ slot.
 
 Usage:
-  holon types generate SERVER... [flags]
+  holon types generate [DIR] [flags]
 
 Examples:
-  # A server directory
-  holon types generate orders
+  # Generate for the current project, from server.json requires
+  holon types generate
 
-  # A server entry
-  holon types generate orders/server.py
+  # Another project
+  holon types generate ../checkout
 
-  # An MCP registry server
-  holon types generate https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
+  # Explicit dependencies: a server directory, a server entry, an MCP registry server, a remote MCP server named docs
+  holon types generate -s ../orders
+  holon types generate -s ../orders/server.py
+  holon types generate -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
+  holon types generate -s docs=https://mcp.context7.com/mcp
 
-  # A remote MCP server, with the client named docs
-  holon types generate docs=https://mcp.context7.com/mcp
+  # Print one server's contract
+  holon types generate --contract ../orders
 
 Flags:
-      --contract   Print one server's MCP contract instead of generating
-  -h, --help       help for generate
-  -v, --verbose    Show generation details
+      --contract string      Print one server's MCP contract instead of generating
+  -h, --help                 help for generate
+  -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, server.json requires is used
+  -v, --verbose              Show generation details
 ```
 
 </details>
@@ -57,13 +61,26 @@ Flags:
 <summary><code>holon types check</code></summary>
 
 ```text
-Type-check the project's calls to MCP servers.
+Generate the project's typed clients from server.json requires (or -s), then type-check its calls to them.
+With --no-generate, type-check the existing clients only: no network, no install, no writes.
 
 Usage:
-  holon types check [flags]
+  holon types check [DIR] [flags]
+
+Examples:
+  # Generate from server.json requires, then type-check
+  holon types check
+
+  # Type-check the existing clients only (no network, no writes)
+  holon types check --no-generate
+
+  # Explicit dependencies, as for generate
+  holon types check -s orders=../orders
 
 Flags:
-  -h, --help   help for check
+  -h, --help                 help for check
+      --no-generate          Type-check the existing clients only: no network, no install, no writes
+  -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, server.json requires is used
 ```
 
 </details>

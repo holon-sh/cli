@@ -125,6 +125,7 @@ func (response registryResponse) RoundTrip(request *http.Request) (*http.Respons
 }
 
 // imageClient serves metadata as an OCI contract artifact of images.example/orders:1.0.0.
+// With nil metadata, the image index contains no contract artifact.
 func imageClient(t *testing.T, metadata *mcpcontract.Metadata, artifactType string) *http.Client {
 	t.Helper()
 	type document struct {
@@ -138,12 +139,15 @@ func imageClient(t *testing.T, metadata *mcpcontract.Metadata, artifactType stri
 		documents[descriptor.Digest.String()] = document{descriptor, data}
 		return descriptor
 	}
-	layer := add(mcpcontract.MediaType, metadata)
-	artifact := ocispec.Manifest{ArtifactType: artifactType, Layers: []ocispec.Descriptor{layer}}
-	artifact.SchemaVersion = 2
-	child := add(ocispec.MediaTypeImageManifest, artifact)
-	child.ArtifactType = mcpcontract.MediaType
-	index := ocispec.Index{Manifests: []ocispec.Descriptor{child}}
+	index := ocispec.Index{Manifests: []ocispec.Descriptor{}}
+	if metadata != nil {
+		layer := add(mcpcontract.MediaType, metadata)
+		artifact := ocispec.Manifest{ArtifactType: artifactType, Layers: []ocispec.Descriptor{layer}}
+		artifact.SchemaVersion = 2
+		child := add(ocispec.MediaTypeImageManifest, artifact)
+		child.ArtifactType = mcpcontract.MediaType
+		index.Manifests = append(index.Manifests, child)
+	}
 	index.SchemaVersion = 2
 	descriptor := add(ocispec.MediaTypeImageIndex, index)
 	documents["1.0.0"] = documents[descriptor.Digest.String()]
