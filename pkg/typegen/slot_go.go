@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
 // validateGoSlot accepts an absent, empty or Holon-marked holon/ package directory.
@@ -24,7 +26,7 @@ func validateGoSlot(root string) error {
 	if err != nil {
 		return err
 	}
-	if len(entries) > 0 && !legacyManaged(directory) {
+	if len(entries) > 0 && !mcpcontract.Managed(directory) {
 		return fmt.Errorf("refusing to overwrite unmarked %s", directory)
 	}
 	for _, entry := range entries {

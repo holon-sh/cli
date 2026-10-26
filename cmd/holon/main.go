@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/holon-sh/cli/internal/cli"
+	"github.com/holon-sh/cli/pkg/cli"
 )
 
 var version = "dev"
