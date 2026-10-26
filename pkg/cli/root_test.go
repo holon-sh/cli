@@ -39,7 +39,6 @@ func TestParseSource(t *testing.T) {
 	for _, test := range []struct {
 		arg  string
 		want typegen.Source
-		err  string
 	}{
 		{arg: "../orders", want: typegen.Source{Path: filepath.Join(cwd, "../orders")}},
 		{arg: "orders=../orders/server.py", want: typegen.Source{Alias: "orders", Path: filepath.Join(cwd, "../orders/server.py")}},
@@ -48,15 +47,8 @@ func TestParseSource(t *testing.T) {
 		{arg: "https://mcp.context7.com/mcp", want: typegen.Source{Endpoint: "https://mcp.context7.com/mcp"}},
 		{arg: "c7=http://localhost:3001/mcp", want: typegen.Source{Alias: "c7", Endpoint: "http://localhost:3001/mcp"}},
 		{arg: "weird=value=../orders", want: typegen.Source{Alias: "weird", Path: filepath.Join(cwd, "value=../orders")}},
-		{arg: "orders=", err: "a server is required after ALIAS="},
 	} {
 		got, err := parseSource(test.arg)
-		if test.err != "" {
-			if err == nil || !strings.Contains(err.Error(), test.err) {
-				t.Errorf("parseSource(%q) = %v, want %q", test.arg, err, test.err)
-			}
-			continue
-		}
 		if err != nil || !reflect.DeepEqual(got, test.want) {
 			t.Errorf("parseSource(%q) = %+v, %v; want %+v", test.arg, got, err, test.want)
 		}
@@ -75,6 +67,8 @@ func TestRemovedFlagsAndContractArity(t *testing.T) {
 		want string
 	}{
 		{[]string{"types", "generate", "--contract"}, "needs an argument"},
+		{[]string{"types", "generate", "--contract", ""}, "a server path or URL is required"},
+		{[]string{"types", "generate", "--contract", "orders="}, "a server path or URL is required"},
 		{[]string{"types", "generate", "--contract", "a", "-s", "b"}, "takes one SERVER and nothing else"},
 		{[]string{"types", "generate", "--contract", "a", "somedir"}, "takes one SERVER and nothing else"},
 	} {
@@ -93,10 +87,10 @@ func writeCLIFile(t *testing.T, root, name, content string) {
 	}
 }
 
-func installCLISlot(t *testing.T, root, pkg string) {
+func installCLISlot(t *testing.T, root string) {
 	t.Helper()
-	writeCLIFile(t, root, "node_modules/"+pkg+"/package.json", `{"name":"`+pkg+`","exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
-	writeCLIFile(t, root, "node_modules/"+pkg+"/generated/holon-generated.json", `{"marker":"`+mcpcontract.Marker+`","placeholder":true}`)
+	writeCLIFile(t, root, "node_modules/holon-sh/package.json", `{"name":"holon-sh","exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
+	writeCLIFile(t, root, "node_modules/holon-sh/generated/holon-generated.json", `{"marker":"`+mcpcontract.Marker+`","placeholder":true}`)
 }
 
 func TestExplicitOwnServer(t *testing.T) {
@@ -158,7 +152,7 @@ func TestCheckGrammar(t *testing.T) {
 	for _, args := range [][]string{{"check", "--no-generate"}, {"types", "check", "--no-generate"}} {
 		run(t, "holon-sh is not installed", args...)
 	}
-	installCLISlot(t, root, "holon-sh")
+	installCLISlot(t, root)
 	for _, args := range [][]string{{"check"}, {"types", "check"}} {
 		run(t, "has no requires in server.json; pass -s", args...)
 		run(t, "has no generated clients; run holon types generate", append(args, "--no-generate")...)
@@ -214,7 +208,7 @@ func TestGenerateReadsRequires(t *testing.T) {
 	writeCLIFile(t, client, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0","registry":"https://127.0.0.1:1"}}}}}}`)
 	// A ts-only client can have an entry without treating it as its own server.
 	writeCLIFile(t, client, "server.ts", "export const answer: string = 'ready';\n")
-	installCLISlot(t, client, "holon-sh")
+	installCLISlot(t, client)
 	for _, name := range []string{"orders", "docs,archive"} {
 		writeCLIFile(t, root, name+"/server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
 		writeCLIFile(t, root, name+"/server.py", pythonServer)

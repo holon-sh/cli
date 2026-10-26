@@ -26,9 +26,11 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 <details open>
 <summary><code>holon types generate</code></summary>
 
-```text
-Generate typed clients for the project's MCP servers, from server.json requires or the -s list. Generation may install the declared holon-sh package and rewrites the generated/ slot.
+Generate typed clients for MCP servers.
 
+Leverages `sh.holon.requires` in the [publisher-provided metadata field](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/official-registry-requirements.md#publisher-provided-metadata) from [`server.json`](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md) to resolve dependencies, or the `-s` list for explicit dependencies.
+
+```text
 Usage:
   holon types generate [DIR] [flags]
 
@@ -60,10 +62,11 @@ Flags:
 <details open>
 <summary><code>holon types check</code></summary>
 
-```text
-Generate the project's typed clients from server.json requires (or -s), then type-check its calls to them.
-With --no-generate, type-check the existing clients only: no network, no install, no writes.
+Generate typed clients for MCP servers, then type-check the project's calls to them.
 
+Leverages `sh.holon.requires` in the [publisher-provided metadata field](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/official-registry-requirements.md#publisher-provided-metadata) from [`server.json`](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md) to resolve dependencies, or the `-s` list for explicit dependencies.
+
+```text
 Usage:
   holon types check [DIR] [flags]
 

@@ -156,16 +156,6 @@ func (c Consumer) validate() error {
 	return nil
 }
 
-// OwnServer returns dir's server entry as a path source, or nil when dir has none.
-// More than one entry is an error.
-func OwnServer(dir string) (*Source, error) {
-	entry, err := sourceEntry(dir)
-	if entry == "" {
-		return nil, err
-	}
-	return &Source{Path: filepath.Join(dir, filepath.FromSlash(entry))}, nil
-}
-
 // serverEntry resolves a path source: path is an entry file, or a directory holding exactly one of
 // server.py, src/server.py, server.ts, src/server.ts, server.js, src/server.js (and server.go).
 // It returns the application root (the directory above src/), the entry relative to it, and its language.
@@ -180,7 +170,7 @@ func serverEntry(path string) (root, entry, language string, err error) {
 	}
 	if info.IsDir() {
 		root = path
-		if entry, err = sourceEntry(root); err != nil {
+		if entry, err = SourceEntry(root); err != nil {
 			return "", "", "", fmt.Errorf("%s: %w", path, err)
 		}
 		if entry == "" {
