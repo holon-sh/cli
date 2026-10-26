@@ -62,5 +62,5 @@ jobs:
           prerelease=""
           case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
           gh release create "$TAG" --repo "$REPO" --title "holon $VERSION" --target "$GITHUB_SHA" $prerelease \
-            --notes "Install with \`curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sh\`, or download the archive for your platform below." \
+            --notes "Install with \`curl -fsSL https://holon-labs.dev/install.sh | HOLON_VERSION=$VERSION sh\`, build from source with \`go install github.com/holon-sh/cli/cmd/holon@$TAG\` (Go 1.27+), or download the archive for your platform below." \
             release/holon_*.tar.gz release/SHA256SUMS

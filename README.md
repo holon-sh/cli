@@ -12,7 +12,15 @@ This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/holon-sh/cli/main/install.sh | sh
+curl -fsSL https://holon-labs.dev/install.sh | sh
+```
+
+Or alternatively
+
+With [Go](https://go.dev/doc/install) 1.27 or newer, build and install from source:
+
+```sh
+go install github.com/holon-sh/cli/cmd/holon@latest
 ```
 
 ## Usage
