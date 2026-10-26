@@ -16,8 +16,6 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
-// checkoutConsumer writes a TypeScript checkout server beside a Python orders server and returns
-// the consumer plus a fake extractor answering both.
 func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, string, string) error, *[]string) {
 	t.Helper()
 	root := t.TempDir()
@@ -189,13 +187,11 @@ func TestGenerateWritesSlotsAndRequiresDeclaredRuntimes(t *testing.T) {
 	if !strings.Contains(read(t, ui, "generated/index.js"), `appClass(identity, contracts, "checkout")`) {
 		t.Fatal("holon-ui slot has no App class")
 	}
-	// Orders, a source, is left exactly as it was.
 	orders := c.Sources[0].Path
 	if entries, _ := os.ReadDir(orders); len(entries) != 2 {
 		t.Fatalf("source directory changed: %v", entries)
 	}
 
-	// An undeclared slot package is an error naming the install command; a declared one is installed.
 	put(t, c.Dir, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
 	if err := os.RemoveAll(ui); err != nil {
 		t.Fatal(err)
@@ -213,20 +209,19 @@ func TestGenerateWritesSlotsAndRequiresDeclaredRuntimes(t *testing.T) {
 
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	c, extract, _ := checkoutConsumer(t, TargetTS)
-	// A fake npm on PATH records the install and creates the package.
 	bin := t.TempDir()
 	log := filepath.Join(bin, "calls")
-	put(t, bin, "npm", "#!/bin/sh\necho \"$PWD $*\" >> "+log+"\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
+	put(t, bin, "npm", "#!/bin/sh\necho \"$PWD $* $INSTALL_MODE\" >> "+log+"\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
 	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("INSTALL_MODE", "inherited")
 	var output bytes.Buffer
-	if err := Generate(t.Context(), []Consumer{c}, Options{Stderr: &output, Extract: extract}); err != nil {
+	if err := Generate(t.Context(), []Consumer{c}, Options{Stderr: &output, Extract: extract, Env: []string{"INSTALL_MODE=first", "INSTALL_MODE=last=value"}}); err != nil {
 		t.Fatalf("generate: %v\n%s", err, &output)
 	}
-	real, _ := filepath.EvalSymlinks(c.Dir)
-	if calls := read(t, bin, "calls"); calls != real+" install\n" {
+	if calls := read(t, bin, "calls"); calls != c.Dir+" install last=value\n" {
 		t.Fatalf("npm calls = %q", calls)
 	}
 	if !isFile(filepath.Join(c.Dir, "node_modules/holon-sh/generated/index.js")) {
@@ -283,29 +278,34 @@ func TestCheckTypeChecksTheProjectAgainstItsGeneratedClients(t *testing.T) {
 }
 
 func TestCredentialAuthenticatesImageSources(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	grant := func(host, password string) auth.CredentialFunc {
 		return auth.StaticCredential(host, auth.Credential{Username: "user", Password: password})
+	}
+	docker := func(password string) string {
+		dir := filepath.Join(t.TempDir(), "home=override", ".docker")
+		encoded := base64.StdEncoding.EncodeToString([]byte("user:" + password))
+		put(t, dir, "config.json", `{"auths":{"images.example":{"auth":"`+encoded+`"}}}`)
+		return dir
 	}
 	for _, test := range []struct {
 		name       string
 		credential auth.CredentialFunc
-		docker     string // password stored for images.example in the Docker config
+		env        []string
 		want       string
 	}{
-		{name: "grant", credential: grant("images.example", "secret")},
-		{name: "grant ahead of docker", credential: grant("images.example", "secret"), docker: "wrong"},
-		{name: "docker for other registries", credential: grant("elsewhere.example", "wrong"), docker: "secret"},
-		{name: "rejected grant", credential: grant("images.example", "wrong"), docker: "secret", want: "rejected the supplied registry credential"},
-		{name: "rejected docker credential", docker: "wrong", want: "images.example/orders:1.0.0"},
+		{name: "grant ahead of docker", credential: grant("images.example", "secret"), env: []string{"DOCKER_CONFIG=" + docker("wrong")}},
+		{name: "docker for other registries", credential: grant("elsewhere.example", "wrong"), env: []string{"DOCKER_CONFIG=" + docker("secret")}},
+		{name: "docker under HOME", env: []string{"HOME=" + filepath.Dir(docker("secret")), "DOCKER_CONFIG="}},
+		{name: "malformed environment", env: []string{"INVALID"}, want: "must be KEY=VALUE"},
+		{name: "rejected grant", credential: grant("images.example", "wrong"), env: []string{"DOCKER_CONFIG=" + docker("secret")}, want: "rejected the supplied registry credential"},
+		{name: "rejected docker credential", env: []string{"DOCKER_CONFIG=" + docker("wrong")}, want: "images.example/orders:1.0.0"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			docker := t.TempDir()
-			if test.docker != "" {
-				encoded := base64.StdEncoding.EncodeToString([]byte("user:" + test.docker))
-				put(t, docker, "config.json", `{"auths":{"images.example":{"auth":"`+encoded+`"}}}`)
-			}
+			env := append([]string{"DOCKER_CONFIG=" + t.TempDir()}, test.env...)
 			c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Image: "images.example/orders:1.0.0"}}}
-			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: authenticatedRegistry(t, ordersMetadata()), Env: []string{"DOCKER_CONFIG=" + docker}, Credential: test.credential})
+			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: authenticatedRegistry(t, ordersMetadata()), Env: env, Credential: test.credential})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {
 					t.Fatalf("Prepare = %v, want %q", err, test.want)

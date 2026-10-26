@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/holon-sh/cli/internal/commandenv"
 )
 
 type packageJSON struct {
@@ -40,10 +38,8 @@ func packageManager(dir string, pkg packageJSON) string {
 	}
 }
 
-// ensureNodeRuntime returns the installed slot package for dir. A package that package.json
-// declares but node_modules lacks is installed with the project's package manager; an undeclared
-// one is an error naming the command that adds it.
 func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string, error) {
+	const installCommand = "install"
 	if slot, err := InstalledRuntime(dir, pkg); err == nil {
 		return slot, nil
 	}
@@ -58,12 +54,20 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string,
 	if !manifest.declares(pkg) {
 		verb := "add"
 		if manager == "npm" {
-			verb = "install"
+			verb = installCommand
 		}
 		return "", fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, pkg, manager, verb, pkg)
 	}
-	if err := run(ctx, dir, manager, []string{"install"}, o); err != nil {
+	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(dir), manager, installCommand)
+	if err := validateEnv(o.Env); err != nil {
 		return "", err
+	}
+	command := exec.CommandContext(ctx, manager, installCommand)
+	command.Dir = dir
+	command.Env = append(command.Environ(), o.Env...)
+	command.Stdout, command.Stderr = o.Stderr, o.Stderr
+	if err := command.Run(); err != nil {
+		return "", fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
 	}
 	return InstalledRuntime(dir, pkg)
 }
@@ -100,21 +104,4 @@ func ensurePythonRuntime(dir string) error {
 		}
 	}
 	return fmt.Errorf("%s does not depend on holon-sh; run uv add holon-sh (or add it to requirements.txt)", dir)
-}
-
-func run(ctx context.Context, dir, program string, args []string, o Options) error {
-	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(dir), program, strings.Join(args, " "))
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
-		return err
-	}
-	command := exec.CommandContext(ctx, program, args...)
-	command.Dir = dir
-	command.Env = env
-	command.Stdout = o.Stderr
-	command.Stderr = o.Stderr
-	if err = command.Run(); err != nil {
-		return fmt.Errorf("%s %s in %s: %w", program, strings.Join(args, " "), dir, err)
-	}
-	return nil
 }

@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/holon-sh/cli/internal/commandenv"
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
 type extraction struct {
@@ -49,7 +49,6 @@ type extractionEntry struct {
 	Entry string `json:"entry"`
 }
 
-// extractTypes runs one extractor batch per language under root and returns the results by name.
 func extractTypes(ctx context.Context, root string, batches map[string][]extractionEntry, o Options) (map[string]extraction, error) {
 	results := map[string]extraction{}
 	for _, language := range slices.Sorted(maps.Keys(batches)) {
@@ -64,8 +63,7 @@ func extractTypes(ctx context.Context, root string, batches map[string][]extract
 				return nil, err
 			}
 		} else {
-			env, err := commandenv.Environ(o.Env)
-			if err != nil {
+			if err := validateEnv(o.Env); err != nil {
 				return nil, err
 			}
 			l := typeLanguages[language]
@@ -74,7 +72,8 @@ func extractTypes(ctx context.Context, root string, batches map[string][]extract
 				return nil, err
 			}
 			command := exec.CommandContext(ctx, program, filepath.Join(tooling, language, l.runner), "extract", config, output)
-			command.Env, command.Stdout, command.Stderr = env, o.Stderr, o.Stderr
+			command.Env = append(command.Environ(), o.Env...)
+			command.Stdout, command.Stderr = o.Stderr, o.Stderr
 			if err = command.Run(); err != nil {
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
