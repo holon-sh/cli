@@ -144,7 +144,7 @@ jobs:
           platform="${platform/amd64/x64}"
           tar tzvf "dist/holon-types-$platform-$VERSION.tgz" | grep -E '^-rwxr-xr-x.*package/bin/holon$'
           mkdir smoke
-          npm install --prefix smoke "dist/holon-types-$platform-$VERSION.tgz" "dist/holon-types-$VERSION.tgz"
+          npm install --prefix smoke "$PWD/dist/holon-types-$platform-$VERSION.tgz" "$PWD/dist/holon-types-$VERSION.tgz"
           smoke/node_modules/.bin/holon --version | grep -F "$VERSION"
           smoke/node_modules/.bin/holon types check --help >/dev/null
           (cd smoke && npx --no-install holon --version | grep -F "$VERSION")
