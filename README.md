@@ -31,13 +31,13 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 
 ## Example
 
-Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example depends on [Context7](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4), a public server that needs no credentials.
+Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example uses the public [Context7](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4) server.
 
 ```json
 {
-  "name": "com.example/example",
+  "name": "com.example/foo",
   "version": "0.1.0",
-  "description": "Example Description",
+  "description": "Example Foo",
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "sh.holon": {
@@ -56,11 +56,10 @@ Generate the typed clients and type-check the calls to them.
 holon types check
 ```
 
-Or name the servers yourself, for example a running endpoint or a sibling checkout. Any `-s` replaces the whole `requires` list, so `server.json` is not needed.
+Or name the servers yourself. Any `-s` replaces the whole `requires` list, so `server.json` is not needed.
 
 ```sh
 holon types check -s context7=https://mcp.context7.com/mcp
-holon types check -s orders=../orders
 ```
 
 Call the server. A wrong tool name or argument is a type error.
@@ -101,6 +100,34 @@ await apps.context7.call_tool("resolve-library", {"libraryName": "Next.js", "que
 ```
 
 </details>
+
+A server you are still building, say `com.example/bar` in a sibling directory, is not in the registry yet. Pass its directory with `-s`, restating the registry dependency since `-s` replaces the whole list.
+
+```python
+# ../bar/server.py
+from mcp.server import MCPServer
+
+server = MCPServer("bar")
+
+
+@server.tool()
+def greet(name: str) -> str:
+    return f"hello {name}"
+```
+
+```sh
+holon types check -s context7=https://mcp.context7.com/mcp -s bar=../bar
+```
+
+```ts
+const greeting = await apps.bar.tools.greet({ name: "world" });
+greeting.result;
+```
+
+```python
+greeting = await apps.bar.tools.greet({"name": "world"})
+greeting["result"]
+```
 
 ## Reference
 
