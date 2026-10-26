@@ -4,15 +4,16 @@ The standalone Holon CLI generates and checks typed MCP clients.
 
 ```sh
 cd my-project
-holon types generate --target ts ../orders https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
-holon types check --target ts ../orders https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
+holon types generate ../orders https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
+holon types check ../orders https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
 holon types generate --contract ../orders
 ```
 
-Each SOURCE is a server entry file or directory, an MCP registry server version
-URL, or a live MCP endpoint, optionally prefixed with `ALIAS=`; the client is
-`apps.<alias>`, named after the server by default. `--target ts`, `ui` and `py`
-pick the installed `holon-sh`, `holon-ui` or Python slot of the current directory.
+Each SERVER is a server entry file or directory, an MCP registry server version
+URL, or an MCP endpoint URL, optionally prefixed with `ALIAS=`; the client is
+`apps.<alias>`, named after the server by default. Clients go into the runtime
+the project declares: `holon-sh` or `holon-ui` in `package.json`, or `holon-sh`
+in `pyproject.toml`.
 
 This package bundles the native `holon` executable. Supported platforms are
 macOS 15 or newer and Linux, on arm64 and x86-64. Node 22+ or Python 3.11+ is

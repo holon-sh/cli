@@ -37,7 +37,7 @@ func TestParseSource(t *testing.T) {
 		{arg: "https://mcp.context7.com/mcp", want: typegen.Source{Endpoint: "https://mcp.context7.com/mcp"}},
 		{arg: "c7=http://localhost:3001/mcp", want: typegen.Source{Alias: "c7", Endpoint: "http://localhost:3001/mcp"}},
 		{arg: "weird=value=../orders", want: typegen.Source{Alias: "weird", Path: filepath.Join(cwd, "value=../orders")}},
-		{arg: "orders=", err: "a source is required after ALIAS="},
+		{arg: "orders=", err: "a server is required after ALIAS="},
 	} {
 		got, err := parseSource(test.arg)
 		if test.err != "" {
@@ -56,34 +56,53 @@ func TestParseSource(t *testing.T) {
 	}
 }
 
-func TestCommandsRequireTargetsAndSources(t *testing.T) {
+func TestRemovedFlagsAndContractArity(t *testing.T) {
 	output, err := run(t, "--version")
 	if err != nil || !strings.Contains(output, "standalone types CLI") {
 		t.Fatalf("version = %q, %v", output, err)
 	}
-	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--no-install", "x"}, {"types", "generate", "--quiet", "x"}, {"types", "contract"}} {
+	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--no-install", "x"}, {"types", "generate", "--quiet", "x"}, {"types", "generate", "--target", "ts", "x"}, {"types", "check", "--target", "ts", "x"}, {"types", "contract"}} {
 		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "unknown") {
 			t.Fatalf("removed flag accepted: %v: %v", args, err)
 		}
 	}
+	for _, args := range [][]string{{"types", "generate", "--contract"}, {"types", "generate", "--contract", "a", "b"}} {
+		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "exactly one SERVER") {
+			t.Errorf("%v = %v", args, err)
+		}
+	}
+}
+
+func TestTargetsComeFromTheProjectsDeclarations(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "server.ts"), []byte("export default {};\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src.ts"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
 	for _, test := range []struct {
-		args []string
-		want string
+		manifest string
+		args     []string
+		want     string
 	}{
-		{[]string{"types", "generate", "../orders"}, "--target is required"},
-		{[]string{"types", "check", "../orders"}, "--target is required"},
-		{[]string{"check", "../orders"}, "--target is required"},
-		{[]string{"types", "generate", "--target", "node", "../orders"}, `unknown target "node"`},
-		{[]string{"types", "generate", "--target", "ts"}, "at least one SOURCE"},
-		{[]string{"types", "generate", "--target", "ui", "../orders"}, "--target ui needs the own server"},
-		{[]string{"types", "generate", "--target", "ts", "./server.ts"}, "a project does not depend on itself"},
-		{[]string{"types", "generate", "--target", "ui", "./server.ts", "./src/server.ts"}, "exactly one own server"},
-		{[]string{"types", "generate", "--contract"}, "exactly one SOURCE"},
-		{[]string{"types", "generate", "--contract", "a", "b"}, "exactly one SOURCE"},
-		{[]string{"types", "generate", "--contract", "--target", "ts", "a"}, "takes no --target"},
+		{"", []string{"../orders"}, "declares no runtime"},
+		{`{"dependencies":{"holon-sh":"^0.0.1"}}`, nil, "at least one SERVER"},
+		{`{"dependencies":{"holon-sh":"^0.0.1"}}`, []string{"./server.ts"}, "does not depend on holon-ui"},
+		{`{"dependencies":{"holon-ui":"^0.0.1"}}`, []string{"../orders"}, "list its own server"},
+		{`{"dependencies":{"holon-ui":"^0.0.1"}}`, []string{"./server.ts", "./src.ts"}, "one own server"},
 	} {
-		if _, err := run(t, test.args...); err == nil || !strings.Contains(err.Error(), test.want) {
-			t.Errorf("%v = %v, want %q", test.args, err, test.want)
+		if test.manifest == "" {
+			_ = os.Remove(filepath.Join(root, "package.json"))
+		} else if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(test.manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, command := range [][]string{{"types", "generate"}, {"types", "check"}, {"check"}} {
+			args := append(append([]string{}, command...), test.args...)
+			if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Errorf("%v with %s = %v, want %q", args, test.manifest, err, test.want)
+			}
 		}
 	}
 }

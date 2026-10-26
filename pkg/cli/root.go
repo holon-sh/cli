@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -18,22 +19,21 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const sourceUsage = `SOURCE is [ALIAS=]PATH or [ALIAS=]URL: a server entry (server.py, server.ts, server.js, or the
-same under src/) or a directory holding one; an MCP registry server version URL
-(https://registry.modelcontextprotocol.io/v0.1/servers/NAME/versions/VERSION); or a live MCP endpoint.
-ALIAS names the client (apps.ALIAS); it defaults to the server's name.`
+const serverUsage = `Run it in the project that calls the servers. Each SERVER is a server entry (server.py, server.ts or
+server.js, at the root or under src/) or its directory, an MCP registry version URL, or an MCP endpoint
+URL; ALIAS= names its client. A server inside the project is the project's own, for its holon-ui view.`
 
 var alias = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?=`)
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
 
-// parseSource reads one SOURCE argument. Paths are resolved against the working directory.
+// parseSource reads one SERVER argument. Paths are resolved against the working directory.
 func parseSource(arg string) (typegen.Source, error) {
 	var source typegen.Source
 	if match := alias.FindString(arg); match != "" {
 		source.Alias, arg = strings.TrimSuffix(match, "="), arg[len(match):]
 	}
 	if arg == "" {
-		return source, errors.New("a source is required after ALIAS=")
+		return source, errors.New("a server is required after ALIAS=")
 	}
 	if u, err := url.Parse(arg); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
@@ -59,9 +59,9 @@ func parseSource(arg string) (typegen.Source, error) {
 	return source, nil
 }
 
-// consumer builds the working directory's consumer for one target. For the ui target the one
-// path source inside the working directory is the own server; other targets reject such a source.
-func consumer(target string, args []string) (typegen.Consumer, error) {
+// consumer builds the working directory's consumer. Its targets are the runtimes the project declares;
+// a server inside the directory is the project's own and serves the ui target.
+func consumer(args []string) (typegen.Consumer, error) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return typegen.Consumer{}, err
@@ -69,29 +69,33 @@ func consumer(target string, args []string) (typegen.Consumer, error) {
 	if dir, err = filepath.EvalSymlinks(dir); err != nil {
 		return typegen.Consumer{}, err
 	}
-	c := typegen.Consumer{Name: filepath.Base(dir), Dir: dir, Targets: []string{target}}
+	targets, err := typegen.DeclaredTargets(dir)
+	if err != nil {
+		return typegen.Consumer{}, err
+	}
+	c := typegen.Consumer{Name: filepath.Base(dir), Dir: dir, Targets: targets}
 	for _, arg := range args {
 		source, err := parseSource(arg)
 		if err != nil {
 			return c, fmt.Errorf("%s: %w", arg, err)
 		}
 		if source.Path != "" && insideDir(source.Path, dir) {
-			if target != typegen.TargetUI {
-				return c, fmt.Errorf("%s is this project's own server; a project does not depend on itself (--target ui makes it the App class for a view)", arg)
+			if !slices.Contains(targets, typegen.TargetUI) {
+				return c, fmt.Errorf("%s is this project's own server, which only a holon-ui view calls; %s does not depend on holon-ui", arg, dir)
 			}
 			if c.Server != nil {
-				return c, fmt.Errorf("%s: --target ui takes exactly one own server inside %s", arg, dir)
+				return c, fmt.Errorf("%s: a project has one own server", arg)
 			}
 			c.Server = &source
 			continue
 		}
 		c.Sources = append(c.Sources, source)
 	}
-	if target == typegen.TargetUI && c.Server == nil {
-		return c, fmt.Errorf("--target ui needs the own server, a path inside %s (for example ./server.ts)", dir)
+	if slices.Contains(targets, typegen.TargetUI) && c.Server == nil {
+		return c, fmt.Errorf("%s depends on holon-ui, so list its own server (for example ./server.ts) for the view's App class", dir)
 	}
 	if len(args) == 0 {
-		return c, errors.New("at least one SOURCE is required")
+		return c, errors.New("at least one SERVER is required")
 	}
 	return c, nil
 }
@@ -104,17 +108,7 @@ func insideDir(path, dir string) bool {
 	return err == nil && (relative == "." || filepath.IsLocal(relative))
 }
 
-func validTarget(target string) error {
-	switch target {
-	case typegen.TargetTS, typegen.TargetUI, typegen.TargetPy:
-		return nil
-	case "":
-		return errors.New("--target is required: ts, ui or py")
-	}
-	return fmt.Errorf("unknown target %q: expected ts, ui or py", target)
-}
-
-// printContract prints one source's contract document and writes no files.
+// printContract prints one server's contract document and writes no files.
 func printContract(cmd *cobra.Command, arg string) error {
 	source, err := parseSource(arg)
 	if err != nil {
@@ -137,19 +131,13 @@ func printContract(cmd *cobra.Command, arg string) error {
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
-	var target string
-	check := &cobra.Command{Use: "check --target ts|ui|py SOURCE...", Short: short, Long: "Type-check the current directory against its typed clients, in a temporary copy.\n\n" + sourceUsage, RunE: func(cmd *cobra.Command, args []string) error {
-		if err := validTarget(target); err != nil {
-			return err
-		}
-		c, err := consumer(target, args)
+	return &cobra.Command{Use: "check SERVER...", Short: short, Long: "Type-check the project's calls to these servers, in a temporary copy.\n\n" + serverUsage, RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := consumer(args)
 		if err != nil {
 			return err
 		}
 		return typegen.Check(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
 	}}
-	check.Flags().StringVar(&target, "target", "", "Slot to check: ts (holon-sh), ui (holon-ui) or py (holon/apps)")
-	return check
 }
 
 // NewCommand builds the standalone CLI, including the check shortcut.
@@ -165,22 +153,15 @@ func NewCommand(version string) *cobra.Command {
 func NewTypesCommand() *cobra.Command {
 	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
 	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
-	var target string
 	var verbose, contract bool
-	generate := &cobra.Command{Use: "generate --target ts|ui|py SOURCE...", Short: "Generate typed clients for MCP servers into the current directory", Long: "Generate typed clients for MCP servers into the current directory's SDK slot.\n\n" + sourceUsage, RunE: func(cmd *cobra.Command, args []string) error {
+	generate := &cobra.Command{Use: "generate SERVER...", Short: "Generate typed clients for the MCP servers a project calls", Long: "Generate typed clients for the MCP servers a project calls, into the runtime it declares (holon-sh or holon-ui in package.json, or holon-sh in pyproject.toml).\n\n" + serverUsage, RunE: func(cmd *cobra.Command, args []string) error {
 		if contract {
-			if target != "" {
-				return errors.New("--contract prints one source's contract and takes no --target")
-			}
 			if len(args) != 1 {
-				return errors.New("--contract takes exactly one SOURCE")
+				return errors.New("--contract takes exactly one SERVER")
 			}
 			return printContract(cmd, args[0])
 		}
-		if err := validTarget(target); err != nil {
-			return err
-		}
-		c, err := consumer(target, args)
+		c, err := consumer(args)
 		if err != nil {
 			return err
 		}
@@ -190,11 +171,10 @@ func NewTypesCommand() *cobra.Command {
 		}
 		return typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
 	}}
-	generate.Flags().StringVar(&target, "target", "", "Slot to write: ts (holon-sh), ui (holon-ui) or py (holon/apps)")
-	generate.Flags().BoolVar(&contract, "contract", false, "Print one source's MCP contract instead of generating")
+	generate.Flags().BoolVar(&contract, "contract", false, "Print one server's MCP contract instead of generating")
 	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")
 	types.AddCommand(generate)
-	types.AddCommand(newCheck("Type-check the current directory against its typed clients"))
+	types.AddCommand(newCheck("Type-check a project's calls to MCP servers"))
 
 	// Plumbing for the SDK repositories' test fixtures: compile one generate request
 	// (the JSON form of mcptype.GenerateRequest, from a file or stdin) into a directory.
