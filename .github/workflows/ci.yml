@@ -5,7 +5,7 @@ on:
   workflow_call:
     inputs:
       version:
-        description: Version stamped into the binaries and packages
+        description: Version stamped into the binaries
         type: string
         default: "0.0.1"
 permissions:
@@ -40,24 +40,14 @@ jobs:
         run: |
           scripts/build-tooling
           git diff --exit-code pkg/tooling
-  test-package:
+  test:
     needs: tooling
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: linux_amd64
-          - runner: ubuntu-24.04-arm
-            target: linux_arm64
-          - runner: macos-15
-            target: darwin_arm64
-          - runner: macos-15-intel
-            target: darwin_amd64
+        runner: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
-    env:
-      HOLON_VERSION: ${{ inputs.version || '0.0.1' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -71,22 +61,26 @@ jobs:
           python-version: '3.12'
       - run: go vet ./...
       - run: go test ./...
+  test-package:
+    needs: tooling
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux_amd64, linux_arm64, darwin_amd64, darwin_arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      HOLON_VERSION: ${{ inputs.version || '0.0.1' }}
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
       - run: python3 scripts/package_cli.py --target '${{ matrix.target }}' --version "$HOLON_VERSION"
-      - name: Verify Python launcher
-        run: |
-          uv venv .venv
-          uv pip install --no-cache --no-index dist/holon_types-*.whl
-          uv run --no-project holon --version
-      - name: Verify npm launcher
-        run: |
-          mkdir -p /tmp/holon-npm-smoke
-          npm install --prefix /tmp/holon-npm-smoke "$PWD"/dist/*.tgz
-          /tmp/holon-npm-smoke/node_modules/.bin/holon --version
       - uses: actions/upload-artifact@v4
         with:
           name: holon-types-${{ matrix.target }}
           path: |
             dist/holon_*.tar.gz
-            dist/holon_types-*.whl
-            dist/holon-types-*.tgz
             dist/SHA256SUMS
