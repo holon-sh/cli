@@ -11,24 +11,6 @@ This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk
 
 ## Install
 
-With uv, in a Python project:
-
-```sh
-uv add --dev holon-types
-uv run holon types check
-```
-
-With npm, in a Node project:
-
-```sh
-npm install -D holon-types
-npx holon types check
-```
-
-Or without touching the project: `uvx --from holon-types holon …` and `npx holon-types …`.
-
-Standalone:
-
 ```sh
 curl -fsSL https://holon-labs.dev/install.sh | sh
 ```
@@ -306,13 +288,3 @@ Rebuild and republish alpha images, and regenerate client slots. Remove legacy
 managed `holon/` runtime copies first; generation only replaces marked slots.
 Python apps install `holon-sh` and import generated clients with
 `from holon.apps import apps`.
-
-## Building release packages
-
-Package builds need Go 1.27+, Python 3.11+, and Node 22+ with npm. Wheels use the small, build-only `pdm-backend`; npm archives use `npm pack`. With uv:
-
-```sh
-uv run --with-requirements packaging/requirements.txt python scripts/package_cli.py --target darwin_arm64 --version 0.0.1 --format tarball --format wheel --format npm-platform --format npm-launcher
-```
-
-Targets are `{darwin,linux}_{arm64,amd64}`. Outputs go to `dist/`; `--binary PATH` packages an existing executable. These commands never publish, and the installed launchers have no packaging dependencies.

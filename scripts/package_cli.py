@@ -99,7 +99,7 @@ def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None
         (package / "holon_types/bin").mkdir()
         shutil.copyfile(binary, package / "holon_types/bin/holon")
         (package / "holon_types/bin/holon").chmod(0o755)
-        shutil.copyfile(ROOT / "packaging/README.md", package / "README.md")
+        shutil.copyfile(ROOT / "README.md", package / "README.md")
         shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
         shutil.copyfile(source / "pyproject.toml", package / "pyproject.toml")
         config = Config.from_pyproject(package)
@@ -126,7 +126,7 @@ def write_npm_launcher(dist: Path, version: str) -> None:
     manifest = json.loads((source / "package.json").read_text())
     manifest["version"] = version
     manifest["optionalDependencies"] = {target.npm_name: version for target in TARGETS}
-    write_npm_package(dist, manifest, source / "bin/holon.js", "holon.js", ROOT / "packaging/README.md")
+    write_npm_package(dist, manifest, source / "bin/holon.js", "holon.js", ROOT / "README.md")
 
 
 def write_npm_platform(binary: Path, dist: Path, version: str, target: Target) -> None:

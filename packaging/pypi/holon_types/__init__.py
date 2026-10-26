@@ -7,8 +7,6 @@ from pathlib import Path
 
 def main() -> None:
     binary = os.environ.get("HOLON_BINARY") or str(Path(__file__).with_name("bin") / "holon")
-    sys.stdout.flush()
-    sys.stderr.flush()
     try:
         os.execv(binary, [binary, *sys.argv[1:]])
     except OSError as error:
