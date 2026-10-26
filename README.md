@@ -9,14 +9,6 @@
 
 This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk-py) and [TypeScript SDK](https://github.com/holon-sh/sdk-ts).
 
-```mermaid
-flowchart LR
-  R["server.json<br/>sh.holon.requires"] --> H["holon types check"]
-  H -->|fetches| C["each server's contract<br/>(tool and resource schemas)"]
-  C --> TS["holon-sh/generated<br/>(TypeScript package)"] --> TSC["tsc"]
-  C --> PY["holon.apps<br/>(Python module)"] --> MYPY["mypy"]
-```
-
 ## Install
 
 ```sh
@@ -65,6 +57,23 @@ holon types check -s https://mcp.context7.com/mcp
 Call the server. A wrong tool name or argument is a type error.
 
 <details open>
+<summary><h4>Python</h4></summary>
+
+```python
+from holon.apps import apps
+
+await apps.context7.call_tool("resolve-library-id", {"libraryName": "Next.js", "query": "app router"})
+
+await apps.context7.call_tool("resolve-library-id", {"libraryName": 1, "query": "app router"})
+# error: No overload variant of "call_tool" of "_App0" matches argument types "str", "dict[str, object]"  [call-overload]
+
+await apps.context7.call_tool("resolve-library", {"libraryName": "Next.js", "query": "app router"})
+# error: No overload variant of "call_tool" of "_App0" matches argument types "str", "dict[str, str]"  [call-overload]
+```
+
+</details>
+
+<details open>
 <summary><h4>TypeScript</h4></summary>
 
 ```ts
@@ -80,23 +89,6 @@ await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js" });
 
 await apps.context7.tools["resolve-library"]({ libraryName: "Next.js", query: "app router" });
 // error TS2551: Property 'resolve-library' does not exist on type '{ ... }'. Did you mean 'resolve-library-id'?
-```
-
-</details>
-
-<details open>
-<summary><h4>Python</h4></summary>
-
-```python
-from holon.apps import apps
-
-await apps.context7.call_tool("resolve-library-id", {"libraryName": "Next.js", "query": "app router"})
-
-await apps.context7.call_tool("resolve-library-id", {"libraryName": 1, "query": "app router"})
-# error: No overload variant of "call_tool" of "_App0" matches argument types "str", "dict[str, object]"  [call-overload]
-
-await apps.context7.call_tool("resolve-library", {"libraryName": "Next.js", "query": "app router"})
-# error: No overload variant of "call_tool" of "_App0" matches argument types "str", "dict[str, str]"  [call-overload]
 ```
 
 </details>
@@ -117,32 +109,11 @@ def greet(name: str) -> str:
     return f"hello {name}"
 ```
 
-From the directory that holds both `foo` and `bar`, pass its entry file with `-s`, restating the registry dependency since `-s` replaces the whole list.
+Pass its entry file with `-s`.
 
 ```sh
 holon types check foo -s https://mcp.context7.com/mcp -s bar/server.py
 ```
-
-<details open>
-<summary><h4>TypeScript</h4></summary>
-
-```ts
-import { apps } from "holon-sh";
-
-const greeting = await apps.bar.tools.greet({ name: "world" });
-greeting.result;
-
-await apps.bar.tools.greet({ name: 1 });
-// error TS2322: Type 'number' is not assignable to type 'string'.
-
-await apps.bar.tools.hello({ name: "world" });
-// error TS2339: Property 'hello' does not exist on type '{ readonly greet: (input: { name: string; }, options?: CallOptions) => Promise<{ result: string; }>; }'.
-
-const text: string = greeting.text;
-// error TS2322: Type 'unknown' is not assignable to type 'string'.
-```
-
-</details>
 
 <details open>
 <summary><h4>Python</h4></summary>
@@ -161,6 +132,27 @@ await apps.bar.tools.hello({"name": "world"})
 
 greeting["text"]
 # error: TypedDict "_Shape1" has no key "text"  [typeddict-item]
+```
+
+</details>
+
+<details open>
+<summary><h4>TypeScript</h4></summary>
+
+```ts
+import { apps } from "holon-sh";
+
+const greeting = await apps.bar.tools.greet({ name: "world" });
+greeting.result;
+
+await apps.bar.tools.greet({ name: 1 });
+// error TS2322: Type 'number' is not assignable to type 'string'.
+
+await apps.bar.tools.hello({ name: "world" });
+// error TS2339: Property 'hello' does not exist on type '{ readonly greet: (input: { name: string; }, options?: CallOptions) => Promise<{ result: string; }>; }'.
+
+const text: string = greeting.text;
+// error TS2322: Type 'unknown' is not assignable to type 'string'.
 ```
 
 </details>
@@ -242,13 +234,37 @@ Flags:
 
 </details>
 
-### Where a dependency's contract comes from
+### Dependencies
+
+A dependency is an MCP server your project calls. For each one `holon` obtains a **contract**, the JSON Schemas of the server's tools and resources, and writes a typed client `apps.<alias>` into the SDK package your project declares. `check` then runs the language's type checker over your code against those clients.
 
 ```mermaid
 flowchart LR
-  P["server directory or entry file<br/>-s ../orders"] --> PX["extracted from the source code"]
-  G["registry server<br/>requires entry, or -s REGISTRY-VERSION-URL"] --> T["its sh.holon.types document"]
-  T -. else .-> O["its OCI package's contract artifact<br/>(holon publish)"]
-  O -. else .-> R["its streamable-http remote"]
-  L["running MCP server<br/>-s docs=ENDPOINT-URL"] --> LX["tools/list and resources/list"]
+  D["dependencies<br/>server.json requires, or -s"] --> C["contracts"] --> G["generated clients<br/>holon-sh/generated (TypeScript)<br/>holon.apps (Python)"] --> T["tsc / mypy"]
 ```
+
+A dependency is written in one of three ways, and the contract comes from a different place for each.
+
+**A server's source code.** A directory or entry file. The contract is extracted from the code; the server is never started.
+
+```sh
+holon types check -s bar/server.py
+```
+
+**A registry record.** A `requires` entry in `server.json`, or `-s` with a registry version URL. The record is fetched and its contract is the first of these that the record has:
+
+1. the `sh.holon.types` document it links to;
+2. the contract artifact attached to its OCI package, which `holon publish` adds;
+3. its `streamable-http` remote, asked live.
+
+```sh
+holon types check -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
+```
+
+**A running server.** An endpoint URL. The server is asked for `tools/list` and `resources/list`.
+
+```sh
+holon types check -s https://mcp.context7.com/mcp
+```
+
+The alias names the client: the `requires` key, an `ALIAS=` prefix on `-s`, or otherwise the last segment of the server's name, so Context7 becomes `apps.context7`. Any `-s` replaces the whole `requires` list rather than adding to it.
