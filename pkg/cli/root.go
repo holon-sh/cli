@@ -19,9 +19,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const serverUsage = `Run it in the project that calls the servers. Each SERVER is a server entry (server.py, server.ts or
-server.js, at the root or under src/) or its directory, an MCP registry version URL, or an MCP endpoint
-URL; ALIAS= names its client. A server inside the project is the project's own, for its holon-ui view.`
+func examples(command string) string {
+	return `  # A server directory
+  ` + command + ` orders
+
+  # A server entry
+  ` + command + ` orders/server.py
+
+  # An MCP registry server
+  ` + command + ` https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
+
+  # A remote MCP server, with the client named docs
+  ` + command + ` docs=https://mcp.context7.com/mcp`
+}
 
 var alias = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?=`)
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
@@ -131,12 +141,15 @@ func printContract(cmd *cobra.Command, arg string) error {
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
-	return &cobra.Command{Use: "check SERVER...", Short: short, Long: "Type-check the project's calls to these servers, in a temporary copy.\n\n" + serverUsage, RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := consumer(args)
+	return &cobra.Command{Use: "check", Short: short, Long: "Type-check the project's calls to MCP servers.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		dir, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		return typegen.Check(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
+		if dir, err = filepath.EvalSymlinks(dir); err != nil {
+			return err
+		}
+		return typegen.Check(cmd.Context(), dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
 	}}
 }
 
@@ -154,7 +167,7 @@ func NewTypesCommand() *cobra.Command {
 	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
 	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	var verbose, contract bool
-	generate := &cobra.Command{Use: "generate SERVER...", Short: "Generate typed clients for the MCP servers a project calls", Long: "Generate typed clients for the MCP servers a project calls, into the runtime it declares (holon-sh or holon-ui in package.json, or holon-sh in pyproject.toml).\n\n" + serverUsage, RunE: func(cmd *cobra.Command, args []string) error {
+	generate := &cobra.Command{Use: "generate SERVER...", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for MCP servers.", Example: examples("holon types generate"), RunE: func(cmd *cobra.Command, args []string) error {
 		if contract {
 			if len(args) != 1 {
 				return errors.New("--contract takes exactly one SERVER")
@@ -174,7 +187,7 @@ func NewTypesCommand() *cobra.Command {
 	generate.Flags().BoolVar(&contract, "contract", false, "Print one server's MCP contract instead of generating")
 	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")
 	types.AddCommand(generate)
-	types.AddCommand(newCheck("Type-check a project's calls to MCP servers"))
+	types.AddCommand(newCheck("Type-check the project's calls to MCP servers"))
 
 	// Plumbing for the SDK repositories' test fixtures: compile one generate request
 	// (the JSON form of mcptype.GenerateRequest, from a file or stdin) into a directory.

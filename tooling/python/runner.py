@@ -28,7 +28,15 @@ def check(config: dict[str, Any], verify_only: bool) -> None:
             f"mypy is not installed for {sys.executable}; install mypy==2.4.0 in the app's environment."
         )
     result = subprocess.run(
-        [*command, "--no-incremental", "--check-untyped-defs", config["entry"] or "."],
+        [
+            *command,
+            "--no-incremental",
+            "--check-untyped-defs",
+            "--explicit-package-bases",
+            "--exclude",
+            r"/(\.venv|venv|node_modules)/",
+            config["entry"] or ".",
+        ],
         check=False,
     )
     if result.returncode:

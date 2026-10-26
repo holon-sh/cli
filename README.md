@@ -27,14 +27,23 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 <summary><code>holon types generate</code></summary>
 
 ```text
-Generate typed clients for the MCP servers a project calls, into the runtime it declares (holon-sh or holon-ui in package.json, or holon-sh in pyproject.toml).
-
-Run it in the project that calls the servers. Each SERVER is a server entry (server.py, server.ts or
-server.js, at the root or under src/) or its directory, an MCP registry version URL, or an MCP endpoint
-URL; ALIAS= names its client. A server inside the project is the project's own, for its holon-ui view.
+Generate typed clients for MCP servers.
 
 Usage:
   holon types generate SERVER... [flags]
+
+Examples:
+  # A server directory
+  holon types generate orders
+
+  # A server entry
+  holon types generate orders/server.py
+
+  # An MCP registry server
+  holon types generate https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
+
+  # A remote MCP server, with the client named docs
+  holon types generate docs=https://mcp.context7.com/mcp
 
 Flags:
       --contract   Print one server's MCP contract instead of generating
@@ -48,14 +57,10 @@ Flags:
 <summary><code>holon types check</code></summary>
 
 ```text
-Type-check the project's calls to these servers, in a temporary copy.
-
-Run it in the project that calls the servers. Each SERVER is a server entry (server.py, server.ts or
-server.js, at the root or under src/) or its directory, an MCP registry version URL, or an MCP endpoint
-URL; ALIAS= names its client. A server inside the project is the project's own, for its holon-ui view.
+Type-check the project's calls to MCP servers.
 
 Usage:
-  holon types check SERVER... [flags]
+  holon types check [flags]
 
 Flags:
   -h, --help   help for check

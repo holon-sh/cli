@@ -62,7 +62,7 @@ func TestRemovedFlagsAndContractArity(t *testing.T) {
 	if err != nil || !strings.Contains(output, "standalone types CLI") {
 		t.Fatalf("version = %q, %v", output, err)
 	}
-	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--no-install", "x"}, {"types", "generate", "--quiet", "x"}, {"types", "generate", "--target", "ts", "x"}, {"types", "check", "--target", "ts", "x"}, {"types", "contract"}} {
+	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--no-install", "x"}, {"types", "generate", "--quiet", "x"}, {"types", "generate", "--target", "ts", "x"}, {"types", "check", "--target", "ts"}, {"types", "contract"}} {
 		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "unknown") {
 			t.Fatalf("removed flag accepted: %v: %v", args, err)
 		}
@@ -99,11 +99,30 @@ func TestTargetsComeFromTheProjectsDeclarations(t *testing.T) {
 		} else if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(test.manifest), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		for _, command := range [][]string{{"types", "generate"}, {"types", "check"}, {"check"}} {
-			args := append(append([]string{}, command...), test.args...)
-			if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Errorf("%v with %s = %v, want %q", args, test.manifest, err, test.want)
-			}
+		args := append([]string{"types", "generate"}, test.args...)
+		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Errorf("%v with %s = %v, want %q", args, test.manifest, err, test.want)
+		}
+	}
+}
+
+func TestCheckTakesNoArgumentsAndNeedsGeneratedClients(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	for _, args := range [][]string{{"check", "orders"}, {"types", "check", "../orders"}} {
+		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "unknown command") {
+			t.Errorf("%v = %v, want an unknown command error", args, err)
+		}
+	}
+	if _, err := run(t, "check"); err == nil || !strings.Contains(err.Error(), "declares no runtime") {
+		t.Fatalf("check without a manifest = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"dependencies":{"holon-sh":"^0.0.1"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"check"}, {"types", "check"}} {
+		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "holon-sh is not installed") {
+			t.Errorf("%v without the slot = %v", args, err)
 		}
 	}
 }
