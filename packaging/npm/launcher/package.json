@@ -1,0 +1,18 @@
+{
+  "name": "holon-types",
+  "version": "0.0.0",
+  "description": "The holon CLI: typed clients for MCP servers, generated and type-checked",
+  "repository": { "type": "git", "url": "git+https://github.com/holon-sh/cli.git" },
+  "license": "MIT",
+  "type": "module",
+  "bin": { "holon": "bin/holon.js" },
+  "files": ["bin/holon.js", "README.md", "LICENSE"],
+  "engines": { "node": ">=22" },
+  "publishConfig": { "access": "public" },
+  "optionalDependencies": {
+    "holon-types-darwin-arm64": "0.0.0",
+    "holon-types-darwin-x64": "0.0.0",
+    "holon-types-linux-arm64": "0.0.0",
+    "holon-types-linux-x64": "0.0.0"
+  }
+}

@@ -11,11 +11,29 @@ This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk
 
 ## Install
 
+With uv, in a Python project:
+
+```sh
+uv add --dev holon-types
+uv run holon types check
+```
+
+With npm, in a Node project:
+
+```sh
+npm install -D holon-types
+npx holon types check
+```
+
+Or without touching the project: `uvx --from holon-types holon …` and `npx holon-types …`.
+
+Standalone:
+
 ```sh
 curl -fsSL https://holon-labs.dev/install.sh | sh
 ```
 
-Or alternatively with [Go](https://go.dev/doc/install) 1.27+, build and install from source:
+Or with [Go](https://go.dev/doc/install) 1.27+:
 
 ```sh
 go install github.com/holon-sh/cli/cmd/holon@latest
