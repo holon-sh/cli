@@ -129,7 +129,7 @@ func prepareSource(ctx context.Context, root, name, path string, o Options) (*pr
 		return nil, fmt.Errorf("%s/server.json: %w", origin, err)
 	}
 	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
-	if s.fingerprint, err = snapshotSource(name, origin, s.root); err != nil {
+	if s.fingerprint, err = SnapshotSource(name, origin, s.root); err != nil {
 		return nil, err
 	}
 	return s, ctx.Err()
@@ -340,7 +340,7 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 // currentSources fails when any snapshotted directory changed since preparation.
 func (p *Prepared) currentSources() error {
 	for _, s := range p.paths {
-		fingerprint, err := snapshotSource(filepath.Base(s.root), s.origin, "")
+		fingerprint, err := SnapshotSource(filepath.Base(s.root), s.origin, "")
 		if err != nil {
 			return err
 		}
