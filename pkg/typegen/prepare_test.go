@@ -3,6 +3,7 @@ package typegen
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
 func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, string, string) error, *[]string) {
@@ -285,6 +287,58 @@ func TestPreResolvedContractSource(t *testing.T) {
 			prepared.Close()
 			t.Fatalf("accepted invalid contract after resolving a matching identity: %+v", invalid)
 		}
+	}
+}
+
+func TestCredentialAuthenticatesImageSources(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	grant := func(host, password string) auth.CredentialFunc {
+		return auth.StaticCredential(host, auth.Credential{Username: "user", Password: password})
+	}
+	docker := func(password string) string {
+		dir := filepath.Join(t.TempDir(), "home=override", ".docker")
+		encoded := base64.StdEncoding.EncodeToString([]byte("user:" + password))
+		put(t, dir, "config.json", `{"auths":{"images.example":{"auth":"`+encoded+`"}}}`)
+		return dir
+	}
+	for _, test := range []struct {
+		name       string
+		credential auth.CredentialFunc
+		env        []string
+		want       string
+	}{
+		{name: "grant ahead of docker", credential: grant("images.example", "secret"), env: []string{"DOCKER_CONFIG=" + docker("wrong")}},
+		{name: "docker for other registries", credential: grant("elsewhere.example", "wrong"), env: []string{"DOCKER_CONFIG=" + docker("secret")}},
+		{name: "docker under HOME", env: []string{"HOME=" + filepath.Dir(docker("secret")), "DOCKER_CONFIG="}},
+		{name: "malformed environment", env: []string{"INVALID"}, want: "must be KEY=VALUE"},
+		{name: "rejected grant", credential: grant("images.example", "wrong"), env: []string{"DOCKER_CONFIG=" + docker("secret")}, want: "rejected the supplied registry credential"},
+		{name: "rejected docker credential", env: []string{"DOCKER_CONFIG=" + docker("wrong")}, want: "images.example/orders:1.0.0"},
+		{name: "image without a contract", env: []string{"DOCKER_CONFIG=" + docker("secret")}, want: "carries no MCP contract artifact"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env := append([]string{"DOCKER_CONFIG=" + t.TempDir()}, test.env...)
+			metadata := ordersMetadata()
+			if test.name == "image without a contract" {
+				metadata = nil
+			}
+			c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Image: "images.example/orders:1.0.0"}}}
+			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: authenticatedRegistry(t, metadata), Env: env, Credential: test.credential})
+			if test.want != "" {
+				if err == nil || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("Prepare = %v, want %q", err, test.want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer prepared.Close()
+			resolved := prepared.Metadata()
+			if resolved["caller"].Requires["orders"].Identity != ordersMetadata().Identity || resolved["orders"] == nil {
+				t.Fatalf("image source not resolved: %+v", resolved)
+			}
+		})
 	}
 }
 
