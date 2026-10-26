@@ -60,6 +60,10 @@ jobs:
         with:
           python-version: '3.12'
           enable-cache: false
+      - name: Install Python extraction dependencies
+        run: |
+          uv sync --project tooling/python
+          echo "$PWD/tooling/python/.venv/bin" >> "$GITHUB_PATH"
       - run: go vet ./...
       - run: go test ./...
       - run: uv run --with-requirements packaging/requirements.txt python -m unittest discover -s scripts
