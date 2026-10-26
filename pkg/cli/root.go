@@ -47,14 +47,9 @@ func parseSource(arg string) (typegen.Source, error) {
 	}
 	if u, err := url.Parse(arg); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
-			name, err := url.PathUnescape(m[1])
-			if err != nil {
-				return source, err
-			}
-			version, err := url.PathUnescape(m[2])
-			if err != nil {
-				return source, err
-			}
+			// EscapedPath guarantees valid escapes in each slash-delimited segment.
+			name, _ := url.PathUnescape(m[1])
+			version, _ := url.PathUnescape(m[2])
 			source.Registry = &typegen.Reference{Name: name, Version: version, Registry: u.Scheme + "://" + u.Host}
 			return source, nil
 		}

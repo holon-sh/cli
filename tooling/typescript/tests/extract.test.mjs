@@ -41,18 +41,6 @@ export default createMcpHandler(createServer);
   assert.equal(existsSync(join(root, "executed")), false);
 });
 
-test("recognizes imported registration helpers", t => {
-  const root = fixture(t, `
-import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
-import { register } from "./helper.js";
-export default createMcpHandler(() => { const server = new McpServer({name:"x",version:"1"}); register(server); return server; });
-`, { "helper.ts": `import { z } from "zod"; export function register(s) { s.registerTool("read", { inputSchema: z.strictObject({id:z.string()}) }, () => {}); }` });
-  const result = extract(root, "server.ts");
-  assert.equal(result.diagnostic, undefined);
-  assert.equal(result.tools[0].name, "read");
-  assert.equal(result.tools[0].inputSchema.properties.id.type, "string");
-});
-
 test("does not advertise partial catalogs or execute unsupported schemas", t => {
   for (const registration of [
     `if (process.env.FLAG) server.registerTool("x", {inputSchema:z.object({})}, () => {});`,
@@ -85,22 +73,24 @@ test("does not advertise partial catalogs or execute unsupported schemas", t => 
 
 test("extracted catalogs match the official SDK for wire defaults, schema shapes and fixed catalogs", async t => {
   for (const registration of [
-    `server.registerTool("read", {inputSchema: input, outputSchema: output}, () => ({content:[]})); server.registerTool("no_output", {}, () => ({content:[]})); server.registerResource("snapshot", "fixture://snapshot", {mimeType:"application/json", _meta:{"sh.holon/outputSchema":z.toJSONSchema(output)}}, () => ({contents:[]})); server.registerResource("readme", "fixture://readme", {mimeType:"text/markdown"}, () => ({contents:[]}));`,
+    `register(server); server.registerTool("no_output", {}, () => ({content:[]})); server.registerResource("snapshot", "fixture://snapshot", {mimeType:"application/json", _meta:{"sh.holon/outputSchema":z.toJSONSchema(output)}}, () => ({contents:[]})); server.registerResource("readme", "fixture://readme", {mimeType:"text/markdown"}, () => ({contents:[]}));`,
     `server.registerTool("variant", {inputSchema:z.discriminatedUnion("kind",[z.object({kind:z.literal("a")}),z.object({kind:z.literal("b")})]),outputSchema:z.union([output,z.object({error:z.string()})])}, () => ({content:[]})); server.registerTool("primitive_output",{inputSchema:input,outputSchema:z.number()},()=>({content:[]}));`,
     `server.server.setRequestHandler("tools/list", () => ({tools:[{name:"read",inputSchema:z.toJSONSchema(input,{io:"input"}),outputSchema:z.toJSONSchema(output)}]}));`,
   ]) {
     const root = fixture(t, `import {createMcpHandler,McpServer} from "@modelcontextprotocol/server";
-import {z} from "zod"; import {input,output} from "./schemas.js";
+import {z} from "zod"; import {input,output} from "./schemas.js"; import {register} from "./helper.js";
 export default createMcpHandler(() => {const server=new McpServer({name:"fixture",version:"1"},{capabilities:{tools:{},resources:{}}}); ${registration} return server;}, {legacy:"reject"});`, {
       "schemas.ts": `import {z} from "zod";
 export const input=z.strictObject({id:z.string().min(1),count:z.number().int().min(1).default(5),choice:z.enum(["a","b"]).optional(),tuple:z.tuple([z.string(),z.number()]).optional(),list:z.array(z.boolean()).optional(),map:z.record(z.string(),z.number()).optional(),union:z.union([z.string(),z.number()]).nullable().optional(),both:z.intersection(z.object({a:z.string()}),z.object({b:z.boolean()})).optional(),literal:z.literal("fixed").optional(),loose:z.looseObject({enabled:z.boolean()}).optional()});
 export const output=z.object({id:z.string(),value:z.unknown().optional()});`,
       "package.json": '{"type":"module"}',
+      "helper.ts": `import {input,output} from "./schemas.js"; export function register(server) { server.registerTool("read", {inputSchema:input,outputSchema:output}, () => ({content:[]})); }`,
     });
     const extracted = extract(root, "server.ts");
     assert.equal(extracted.diagnostic, undefined);
     symlinkSync(resolve("node_modules"), join(root, "node_modules"));
     symlinkSync("schemas.ts", join(root, "schemas.js"));
+    symlinkSync("helper.ts", join(root, "helper.js"));
     const { default: handler } = await import(pathToFileURL(join(root, "server.ts")));
     const client = new Client({name:"test",version:"1"}, {versionNegotiation:{mode:"auto"}});
     try {

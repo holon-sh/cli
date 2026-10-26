@@ -29,10 +29,4 @@ func TestStringsAreQuotedAsSerdeWrites(t *testing.T) {
 	if got, want := pythonDumps(Object{"a": []Value{"é😀", Number{kind: posInt, u: 1}, Number{kind: float, f: 2.5}, nil, true}, "b'": "\\\n"}), `{"a": ["\u00e9\ud83d\ude00", 1, 2.5, null, true], "b'": "\\\n"}`; got != want {
 		t.Errorf("dumps: got %s, want %s", got, want)
 	}
-	if got := pythonRepr(`{"b'":"\\n"}`); got != `'{"b\'":"\\\\n"}'` {
-		t.Errorf("repr: got %s", got)
-	}
-	if got := pythonRepr("it's"); got != `"it's"` {
-		t.Errorf("repr: got %s", got)
-	}
 }

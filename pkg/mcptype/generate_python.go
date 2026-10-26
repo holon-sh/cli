@@ -31,6 +31,9 @@ func generatePythonPackage(request generateRequest, catalogs map[string]catalog)
 	payload.WriteByte(',')
 	writeContracts(&payload, request.contracts)
 	payload.WriteByte(']')
+	// JSON object keys contain double quotes, so Python repr uses single quotes.
+	// JSON already escaped C0 controls; DEL is the only remaining ASCII control.
+	literal := "'" + strings.NewReplacer(`\`, `\\`, "'", `\'`, "\x7f", `\x7f`).Replace(asciiJSON(payload.String())) + "'"
 	var members strings.Builder
 	for _, alias := range request.untyped() {
 		if pythonIdentifier(alias) {
@@ -46,7 +49,7 @@ func generatePythonPackage(request generateRequest, catalogs map[string]catalog)
 	module := strings.Join([]string{
 		header,
 		declarations + untyped,
-		fmt.Sprintf("_identity, _contracts = _json.loads(%s)", pythonRepr(asciiJSON(payload.String()))),
+		fmt.Sprintf("_identity, _contracts = _json.loads(%s)", literal),
 		fmt.Sprintf("apps = _typing.cast(%s, _Apps(_identity, _contracts))", clients),
 		fmt.Sprintf("def create_apps(bindings: _typing.Mapping[str, _Binding]) -> %s:\n    return _typing.cast(%s, _Apps(_identity, _contracts, bindings))", clients, clients),
 	}, "\n\n")
@@ -94,36 +97,5 @@ func asciiJSON(text string) string {
 			fmt.Fprintf(&out, "\\u%04x", unit)
 		}
 	}
-	return out.String()
-}
-
-// pythonRepr is Python's repr of an ASCII string.
-func pythonRepr(text string) string {
-	quote := byte('\'')
-	if strings.Contains(text, "'") && !strings.Contains(text, "\"") {
-		quote = '"'
-	}
-	var out strings.Builder
-	out.WriteByte(quote)
-	for i := 0; i < len(text); i++ {
-		switch c := text[i]; {
-		case c == '\\':
-			out.WriteString(`\\`)
-		case c == '\n':
-			out.WriteString(`\n`)
-		case c == '\r':
-			out.WriteString(`\r`)
-		case c == '\t':
-			out.WriteString(`\t`)
-		case c == quote:
-			out.WriteByte('\\')
-			out.WriteByte(c)
-		case c < 0x20 || c == 0x7f:
-			fmt.Fprintf(&out, "\\x%02x", c)
-		default:
-			out.WriteByte(c)
-		}
-	}
-	out.WriteByte(quote)
 	return out.String()
 }

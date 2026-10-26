@@ -249,9 +249,7 @@ class Analyzer {
         const method = node.expression.name.text;
         if (receiver instanceof Schema) {
           if (!modifiers.has(method)) this.fail(node, `Schema method ${method} has no supported static wire contract.`);
-          const args = node.arguments.map(a => this.materialize(new Lazy(a, scope)));
-          if (args.some(a => a instanceof FunctionValue)) this.fail(node, "Schema callbacks are not executed during contract extraction.");
-          return new Schema(receiver.value[method](...args));
+          return new Schema(receiver.value[method](...node.arguments.map(a => this.materialize(new Lazy(a, scope)))));
         }
       }
       const target = this.expression(node.expression, scope);
@@ -329,6 +327,7 @@ class Analyzer {
         }
         return this.expression(body, scope);
       }
+      this.blocks.push({ statements: fn.node.body.statements, scope });
       return this.statements(fn.node.body.statements, scope, fixedCatalog);
     } finally { this.calls.delete(fn.node); }
   }
@@ -351,7 +350,6 @@ class Analyzer {
     return found;
   }
   statements(statements, scope, fixedCatalog = false) {
-    this.blocks.push({ statements, scope });
     for (const statement of statements) {
       this.bind(statement, scope);
       if (ts.isThrowStatement(statement)) this.fail(statement, "A throwing factory cannot establish a tool catalog.");

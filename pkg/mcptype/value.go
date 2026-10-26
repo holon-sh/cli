@@ -54,13 +54,8 @@ func (n Number) String() string {
 func parseNumber(literal string) (Number, error) {
 	if !strings.ContainsAny(literal, ".eE") {
 		if strings.HasPrefix(literal, "-") {
-			magnitude, err := strconv.ParseUint(literal[1:], 10, 64)
-			switch {
-			case err != nil:
-			case magnitude == 0:
-				return Number{kind: float, f: math.Copysign(0, -1)}, nil
-			case magnitude <= 1<<63:
-				return Number{kind: negInt, i: -int64(magnitude)}, nil
+			if value, err := strconv.ParseInt(literal, 10, 64); err == nil && value != 0 {
+				return Number{kind: negInt, i: value}, nil
 			}
 		} else if value, err := strconv.ParseUint(literal, 10, 64); err == nil {
 			return Number{kind: posInt, u: value}, nil
