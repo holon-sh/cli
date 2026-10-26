@@ -29,7 +29,7 @@ test("the standalone runner extracts a batch without installed dependencies and 
   mkdirSync(app);
   const inputSchema = {type: "object", properties: {id: {type: "string"}}, required: ["id"]};
   writeFileSync(join(app, "input.json"), JSON.stringify(inputSchema));
-  writeFileSync(join(app, "server.ts"), 'import {McpServer,createMcpHandler,fromJsonSchema} from "@modelcontextprotocol/server"; import input from "./input.json"; export default createMcpHandler(()=>{const s=new McpServer({name:"test",version:"1"}); s.registerTool("read",{inputSchema:fromJsonSchema(input)},()=>{throw new Error("must not call tools");}); return s;});');
+  writeFileSync(join(app, "server.ts"), '\uFEFFimport {McpServer,createMcpHandler,fromJsonSchema} from "@modelcontextprotocol/server"; import input from "./input.json"; export default createMcpHandler(()=>{const s=new McpServer({name:"test",version:"1"}); s.registerTool("read",{inputSchema:fromJsonSchema(input)},()=>{throw new Error("must not call tools");}); return s;});');
   writeFileSync(join(app, "empty.ts"), 'import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export default createMcpHandler(()=>new McpServer({name:"empty",version:"1"}));');
   const config = join(root, "extract.json");
   const output = join(root, "output.json");
