@@ -11,13 +11,11 @@ This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk
 
 ## Install
 
-### Standalone installer
-
 ```sh
 curl -fsSL https://holon-labs.dev/install.sh | sh
 ```
 
-### Go
+Or alternatively
 
 With [Go 1.27 or newer](https://go.dev/doc/install), build and install from source:
 
