@@ -85,10 +85,11 @@ await apps.context7.tools["resolve-library-id"]({ libraryName: 1, query: "app ro
 // error TS2322: Type 'number' is not assignable to type 'string'.
 
 await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js" });
-// error TS2345: Property '"query"' is missing in type '{ libraryName: string; }' but required in type '{ libraryName: string; query: string; }'.
+// error TS2345: Argument of type '{ libraryName: string; }' is not assignable to parameter of type '{ [key: string]: unknown; libraryName: string; query: string; }'.
+//   Property '"query"' is missing in type '{ libraryName: string; }' but required in type '{ [key: string]: unknown; libraryName: string; query: string; }'.
 
 await apps.context7.tools["resolve-library"]({ libraryName: "Next.js", query: "app router" });
-// error TS2551: Property 'resolve-library' does not exist on type '{ ... }'. Did you mean 'resolve-library-id'?
+// error TS2551: Property 'resolve-library' does not exist on type '{ readonly "query-docs": (input: { [key: string]: unknown; language?: string | undefined; libraryId: string; query: string; }, options?: CallOptions | undefined) => Promise<unknown>; readonly "resolve-library-id": (input: { ...; }, options?: CallOptions | undefined) => Promise<...>; }'. Did you mean 'resolve-library-id'?
 ```
 
 </details>
@@ -107,6 +108,16 @@ server = MCPServer("bar")
 @server.tool()
 def greet(name: str) -> str:
     return f"hello {name}"
+```
+
+Give it a `server.json` beside the entry file.
+
+```json
+{
+  "name": "com.example/bar",
+  "version": "0.1.0",
+  "description": "Example Bar"
+}
 ```
 
 Pass its entry file with `-s`.
@@ -149,7 +160,7 @@ await apps.bar.tools.greet({ name: 1 });
 // error TS2322: Type 'number' is not assignable to type 'string'.
 
 await apps.bar.tools.hello({ name: "world" });
-// error TS2339: Property 'hello' does not exist on type '{ readonly greet: (input: { name: string; }, options?: CallOptions) => Promise<{ result: string; }>; }'.
+// error TS2339: Property 'hello' does not exist on type '{ readonly greet: (input: { [key: string]: unknown; name: string; }, options?: CallOptions | undefined) => Promise<{ [key: string]: unknown; result: string; }>; }'.
 
 const text: string = greeting.text;
 // error TS2322: Type 'unknown' is not assignable to type 'string'.
@@ -166,7 +177,7 @@ A dependency is written in one of three ways.
 <details open>
 <summary><h3>Source code</h3></summary>
 
-An implementation of an MCP server, or its parent directory.
+An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry.
 
 ```sh
 holon types check -s bar/server.py
