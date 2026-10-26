@@ -1,5 +1,7 @@
 import ts from "typescript";
 import { z } from "zod";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { McpServer, createMcpHandler, fromJsonSchema } from "@modelcontextprotocol/server";
 import { readFileSync, realpathSync } from "node:fs";
 import { resolve, relative, extname, sep } from "node:path";
 import { validator } from "./validate.mjs";
@@ -19,6 +21,27 @@ class Server {
   tools = new Map();
   resources = new Map();
   list = undefined;
+
+  async catalog() {
+    // Only analyzed schemas cross into the SDK. Application callbacks are never installed.
+    const handler = createMcpHandler(() => {
+      const server = new McpServer({ name: "holon-contract", version: "1" }, { capabilities: { tools: {} } });
+      for (const [name, config] of this.tools) server.registerTool(name, config, () => { throw new Error("Contract extraction cannot call tools."); });
+      if (this.list !== undefined) server.server.setRequestHandler("tools/list", () => ({ tools: this.list }));
+      return server;
+    }, { legacy: "reject" });
+    const client = new Client({ name: "holon-contract", version: "1" }, { versionNegotiation: { mode: "auto" } });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL("http://holon-contract/mcp"), {
+        fetch: (url, init) => handler.fetch(new Request(url, init)),
+      }));
+      // Request the complete fixed catalog without listTools' client-specific filtering.
+      const { tools } = await client.request({ method: "tools/list" });
+      return tools.map(({ name, inputSchema, outputSchema }) => ({ name, inputSchema, ...(outputSchema === undefined ? {} : { outputSchema }) }));
+    } finally {
+      await Promise.all([client.close(), handler.close()]);
+    }
+  }
 }
 class Lazy {
   constructor(node, scope, mutable = false) { this.node = node; this.scope = scope; this.mutable = mutable; }
@@ -45,7 +68,7 @@ function identifierReference(node) {
   return !((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === node);
 }
 
-export function extract(root, entry) {
+export async function extract(root, entry) {
   const analyzer = new Analyzer(root);
   try {
     if (!entry) throw new Error("Cannot identify a static MCP handler entrypoint; use the existing server.ts/server.js convention or a direct package main/start entry.");
@@ -57,13 +80,12 @@ export function extract(root, entry) {
     if (!(result instanceof Server)) analyzer.fail(module.file, "Cannot establish the default MCP handler's tool catalog.");
     for (const module of analyzer.modules.values()) analyzer.auditStatements(module.file.statements, module.scope);
     for (const block of analyzer.blocks) analyzer.auditStatements(block.statements, block.scope);
-    const tools = result.list ?? [...result.tools.values()];
+    let tools;
+    try { tools = await result.catalog(); } catch (error) { analyzer.fail(module.file, error.message); }
     const names = new Set();
     for (const tool of tools) {
-      if (typeof tool.name !== "string" || !tool.name || names.has(tool.name)) analyzer.fail(module.file, "Tool names must be unique constant strings.");
+      if (!tool.name || names.has(tool.name)) analyzer.fail(module.file, "Tool names must be unique constant strings.");
       names.add(tool.name);
-      if (!tool.inputSchema || typeof tool.inputSchema !== "object" || Array.isArray(tool.inputSchema) || tool.inputSchema.type !== "object") analyzer.fail(module.file, `Invalid object input schema for ${tool.name}.`);
-      if (Object.hasOwn(tool, "outputSchema") && (!tool.outputSchema || typeof tool.outputSchema !== "object" || Array.isArray(tool.outputSchema))) analyzer.fail(module.file, `Invalid output schema for ${tool.name}.`);
       try {
         validator(tool.inputSchema);
         if (tool.outputSchema) validator(tool.outputSchema);
@@ -252,7 +274,8 @@ class Analyzer {
         return this.functionBody(factory, [], node);
       }
       if (target instanceof Builtin && target.module === sdk && target.name === "fromJsonSchema") {
-        return { jsonSchema: this.materialize(new Lazy(node.arguments[0], scope)) };
+        const schema = this.materialize(new Lazy(node.arguments[0], scope));
+        try { return new Schema(fromJsonSchema(schema)); } catch (error) { this.fail(node, `Unsupported JSON Schema: ${error.message}`); }
       }
       if (target instanceof Builtin && zodModules.has(target.module)) {
         if (target.name === "toJSONSchema") {
@@ -278,26 +301,11 @@ class Analyzer {
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, this.materialize(v)]));
     return value;
   }
-  schema(value, io, node) {
+  schema(value, node) {
     value = this.value(value);
-    if (value === undefined && io === "input") return { type: "object", properties: {} };
-    let schema;
-    if (value instanceof Schema) schema = z.toJSONSchema(value.value, { io });
-    else if (value && Object.hasOwn(value, "jsonSchema")) schema = value.jsonSchema;
-    else this.fail(node, "Expected a supported schema object or fromJsonSchema declaration.");
-    if (!schema || typeof schema !== "object" || Array.isArray(schema)) this.fail(node, "An MCP tool schema must be a JSON Schema object.");
-    if (io === "input") {
-      if (schema.type !== undefined && schema.type !== "object") this.fail(node, "MCP tool inputs must describe objects.");
-      return {type: "object", ...schema};
-    }
-    const objectShaped = schema => {
-      if (["properties", "patternProperties", "additionalProperties", "required"].some(key => Object.hasOwn(schema, key))) return true;
-      for (const key of ["oneOf", "anyOf", "allOf"]) {
-        if (Array.isArray(schema[key]) && schema[key].length) return schema[key].every(child => child && typeof child === "object" && (child.type === "object" || objectShaped(child)));
-      }
-      return false;
-    };
-    return schema.type === undefined && objectShaped(schema) ? {type:"object", ...schema} : schema;
+    if (value === undefined) return undefined;
+    if (!(value instanceof Schema)) this.fail(node, "Expected a supported schema object or fromJsonSchema declaration.");
+    return value.value;
   }
   functionBody(fn, args, node, fixedCatalog = false) {
     if (!(fn instanceof FunctionValue)) this.fail(node, "Expected a statically declared server factory or registration helper.");
@@ -465,9 +473,7 @@ class Analyzer {
           if (typeof name !== "string" || receiver.tools.has(name) || receiver.list !== undefined) this.fail(expression, "Tool registration must have one unique constant name and catalog source.");
           const config = this.fields(expression.arguments[1], scope);
           if (this.containsRegistration(expression.arguments[2], scope)) this.fail(expression.arguments[2], "Tool handlers must not change the tool catalog.");
-          const tool = { name, inputSchema: this.schema(config.inputSchema, "input", expression) };
-          if (config.outputSchema) tool.outputSchema = this.schema(config.outputSchema, "output", expression);
-          receiver.tools.set(name, tool);
+          receiver.tools.set(name, { inputSchema: this.schema(config.inputSchema, expression), outputSchema: this.schema(config.outputSchema, expression) });
         } else if (methodName === "setRequestHandler") {
           const name = this.expression(expression.arguments[0], scope);
           if (name !== "tools/list") {

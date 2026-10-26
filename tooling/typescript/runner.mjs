@@ -9,7 +9,7 @@ const [mode, configPath, output] = process.argv.slice(2);
 const config = JSON.parse(readFileSync(configPath, "utf8"));
 const assets = dirname(process.argv[1]);
 if (mode === "extract") {
-  const results = Object.fromEntries(config.apps.map(app => [app.name, extract(app.path, app.entry)]));
+  const results = Object.fromEntries(await Promise.all(config.apps.map(async app => [app.name, await extract(app.path, app.entry)])));
   writeFileSync(output, JSON.stringify(results));
 } else if (mode === "check" || mode === "verify") {
   const root = resolve(config.root ?? ".");
