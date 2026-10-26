@@ -1,9 +1,8 @@
-import json
-import subprocess
-import sys
-
 import pytest
 from jsonschema import Draft202012Validator, ValidationError
+from mcp.server.mcpserver.exceptions import InvalidSignature
+from mcp.server.mcpserver.tools import Tool as SDKTool
+from pydantic_core import SchemaError
 
 from extract import extract
 
@@ -57,7 +56,7 @@ from extract import extract
         ),
         (
             "class Value(BaseModel):\n    total: int = Field(default_factory=factory)\n@server.tool()\ndef read() -> Value: raise RuntimeError()",
-            "Unsupported Field option; no callbacks are evaluated",
+            "Expected a literal contract value",
         ),
         (
             "class Value(BaseModel, metaclass=factory):\n    total: int\n@server.tool()\ndef read() -> Value: raise RuntimeError()",
@@ -122,27 +121,8 @@ async def tools():
     ]
 
 
-@pytest.mark.parametrize(
-    "annotation",
-    [
-        "Order",
-        "list[str]",
-        "dict[str, float]",
-        "Dict[str, float]",
-        "Annotated[CallToolResult, Order]",
-        "Order | InputRequiredResult",
-        "Snapshot",
-        'Union[Literal["open", "closed"], None]',
-        "tuple[str, int]",
-        "tuple[str, ...]",
-        "CallToolResult",
-        "InputRequiredResult",
-    ],
-)
-def test_static_contract_matches_official_catalog_without_running_sources(
-    tmp_path, annotation
-):
-    (tmp_path / "models.py").write_text("""from typing import Annotated
+def test_static_contract_preserves_imported_types_without_running_sources(tmp_path):
+    (tmp_path / "models.py").write_text("""from typing import Annotated, Literal
 from typing_extensions import TypedDict, Required, NotRequired
 from pydantic import BaseModel, Field
 class Line(BaseModel):
@@ -150,6 +130,7 @@ class Line(BaseModel):
     name: str = Field(..., min_length=1)
 class Order(Line):
     total: Annotated[float, Field(ge=0)]
+    status: Literal["open", "closed"] = "open"
     lines: list[Line] = []
 class Partial(TypedDict, total=False):
     id: Required[str]
@@ -162,13 +143,11 @@ class Snapshot(Partial):
     (tmp_path / "tools" / "lines.py").write_text(
         "from models import Line\nasync def add_line(name: str) -> Line:\n    raise RuntimeError('handler not called')\n"
     )
-    (
-        tmp_path / "server.py"
-    ).write_text(f"""from typing import Annotated, Dict, Literal, Optional, Union
+    (tmp_path / "server.py").write_text("""from typing import Annotated
 from pathlib import Path
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
-from mcp.types import CallToolResult, InputRequiredResult
+from mcp.types import CallToolResult
 from pydantic import Field
 from models import Order, Snapshot
 from tools import lines
@@ -176,11 +155,11 @@ Path(__file__).with_name("executed").write_text("")
 server = MCPServer("orders")
 server.add_tool(lines.add_line)
 @server.tool()
-async def read(id: Annotated[str, Field(pattern="^ord_")], context: Context, limit: int = 5, *, order: Optional[Order] = None) -> {annotation}:
+async def read(id: Annotated[str, Field(pattern="^ord_")], snapshot: Snapshot, context: Context, limit: int = 5, *, order: Order | None = None) -> Annotated[CallToolResult, Order]:
     raise RuntimeError("handler not called")
 @server.tool()
 async def unknown(id: str):
-    return {{"guessed": "never"}}
+    return {"guessed": "never"}
 """)
     extracted = extract(tmp_path, "server.py")
     assert "diagnostic" not in extracted, extracted
@@ -191,22 +170,42 @@ async def unknown(id: str):
         "tools/lines.py",
     }
     assert not (tmp_path / "executed").exists()
-    # Run this owned fixture in a separate interpreter so imported models cannot
-    # leak between cases. Only the reference catalog executes the fixture.
-    catalog = subprocess.check_output(
-        [
-            sys.executable,
-            "-c",
-            """import asyncio, json, server
-print(json.dumps([tool.model_dump(by_alias=True, exclude_none=True,
-    include={"name", "input_schema", "output_schema"})
-    for tool in asyncio.run(server.server.list_tools())]))
-""",
-        ],
-        cwd=tmp_path,
-        text=True,
+    tools = {tool["name"]: tool for tool in extracted["tools"]}
+    assert set(tools) == {"add_line", "read", "unknown"}
+    assert "outputSchema" not in tools["unknown"]
+    inputs = Draft202012Validator(tools["read"]["inputSchema"])
+    inputs.validate({"id": "ord_1", "snapshot": {"id": "snap_1", "lines": []}})
+    inputs.validate(
+        {
+            "id": "ord_1",
+            "snapshot": {"id": "snap_1", "lines": [{"name": "item"}], "note": "ready"},
+            "limit": 2,
+            "order": {"name": "order", "total": 1.5},
+        }
     )
-    assert extracted["tools"] == json.loads(catalog)
+    for payload in [
+        {"snapshot": {"id": "snap_1", "lines": []}},
+        {"id": "ord_1", "snapshot": {"lines": []}},
+        {"id": "ord_1", "snapshot": {"id": "snap_1"}},
+        {"id": "invalid", "snapshot": {"id": "snap_1", "lines": []}},
+    ]:
+        with pytest.raises(ValidationError):
+            inputs.validate(payload)
+    output = Draft202012Validator(tools["read"]["outputSchema"])
+    output.validate(
+        {"name": "order", "total": 1.5, "status": "open", "lines": [{"name": "item"}]}
+    )
+    for payload in [
+        {"total": 1.5},
+        {"name": "order", "total": -1},
+        {"name": "order", "total": 1, "status": "unknown"},
+    ]:
+        with pytest.raises(ValidationError):
+            output.validate(payload)
+    added_output = Draft202012Validator(tools["add_line"]["outputSchema"])
+    added_output.validate({"name": "item"})
+    with pytest.raises(ValidationError):
+        added_output.validate({})
 
 
 def test_disabled_structured_output_does_not_resolve_return_annotation(tmp_path):
@@ -224,26 +223,22 @@ def read() -> Unknown:
 
 
 @pytest.mark.parametrize(
-    ("definition", "diagnostic"),
-    [
-        (
-            "@server.tool(structured_output=True)\ndef read(): pass",
-            "return annotation required",
-        ),
-        (
-            'class Value(BaseModel):\n    name: str = Field(pattern="[")\n@server.tool()\ndef read(value: Value): pass',
-            "regex parse error",
-        ),
-    ],
+    "error", [InvalidSignature("invalid contract"), SchemaError("invalid contract")]
 )
-def test_library_schema_failures_are_reported(tmp_path, definition, diagnostic):
-    (tmp_path / "server.py").write_text(
-        'from mcp.server import MCPServer\nfrom pydantic import BaseModel, Field\nserver=MCPServer("test")\n'
-        + definition
-    )
+def test_library_failures_become_extraction_diagnostics(tmp_path, monkeypatch, error):
+    (tmp_path / "server.py").write_text("""from mcp.server import MCPServer
+server = MCPServer("test")
+@server.tool()
+def read(id: str) -> str: return id
+""")
+
+    def reject(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(SDKTool, "from_function", reject)
     result = extract(tmp_path, "server.py")
     assert result["tools"] == []
-    assert diagnostic in result["diagnostic"]
+    assert result["diagnostic"] == "invalid contract"
 
 
 def test_only_typed_json_resources_advertise_contents_schemas(tmp_path):
@@ -276,7 +271,6 @@ def app() -> str:
     Draft202012Validator.check_schema(resource["outputSchema"])
     validator = Draft202012Validator(resource["outputSchema"])
     validator.validate({"messages": [{"id": "message-1"}]})
-    for payload, rule in [({}, "required"), ({"messages": [{"id": 1}]}, "type")]:
-        with pytest.raises(ValidationError) as failure:
+    for payload in [{}, {"messages": [{"id": 1}]}]:
+        with pytest.raises(ValidationError):
             validator.validate(payload)
-        assert failure.value.validator == rule

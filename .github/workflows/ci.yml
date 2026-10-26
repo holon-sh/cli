@@ -107,6 +107,7 @@ jobs:
         run: |
           uv venv .venv
           uv pip install --python .venv dist/holon_types-*.whl
+          .venv/bin/python -c "from mcp.server.mcpserver.tools import Tool; from pydantic import TypeAdapter"
           .venv/bin/python -m mypy --version
           .venv/bin/holon --version | grep -F "$VERSION"
           npm install --prefix smoke "$PWD"/dist/*.tgz "$PWD"/launcher/*.tgz

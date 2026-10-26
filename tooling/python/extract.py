@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-import asyncio
 import hashlib
 import inspect
 import json
@@ -13,22 +12,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Never, cast
 
-try:
-    import typing_extensions as typing
-    from mcp.server import MCPServer
-    from mcp.server.mcpserver import Context
-    from mcp.server.mcpserver.exceptions import InvalidSignature
-    from mcp.types import CallToolResult, InputRequiredResult, Tool
-    from pydantic import BaseModel, Field, TypeAdapter
-    from pydantic.errors import PydanticUserError
-    from pydantic.fields import FieldInfo
-    from pydantic_core import SchemaError
-except ImportError as error:
-    raise SystemExit(
-        "Python contract extraction requires MCP and Pydantic in "
-        f"{sys.executable}; install holon-types in that environment "
-        "or run the CLI installed by `uv tool install holon-types`."
-    ) from error
+import typing_extensions as typing
+from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import InvalidSignature
+from mcp.server.mcpserver.tools import Tool as SDKTool
+from mcp.types import CallToolResult, InputRequiredResult, Tool
+from pydantic import BaseModel, Field, TypeAdapter
+from pydantic.errors import PydanticUserError
+from pydantic.fields import FieldInfo
+from pydantic_core import SchemaError
 
 IGNORED = frozenset(
     {
@@ -85,14 +77,6 @@ TYPES: dict[object, Any] = {
         )
     },
 }
-# Use the library's declared options, excluding callback hooks and deprecated
-# catch-all keywords. Values still have to pass the static literal boundary.
-FIELDS = inspect.signature(Field).parameters.keys() - {
-    "extra",
-    "default_factory",
-    "exclude_if",
-    "field_title_generator",
-}
 OPTIONS = {
     "name",
     "title",
@@ -111,7 +95,6 @@ class Analyzer:
         self.trees: dict[Path, ast.Module] = {}
         self.modules: dict[Path, dict[str, ast.AST | str]] = {}
         self.active: set[tuple[Path, str]] = set()
-        self.sources: dict[str, str] = {}
         self.models: dict[tuple[Path, str], type[Any]] = {}
 
     def fail(self, path: Path, node: ast.AST, message: str) -> Never:
@@ -237,19 +220,6 @@ class Analyzer:
             return self.resolve(local, ast.Name(id=name))
         return path, f"{ALIASES.get(module, module)}:{name}"
 
-    def generic(
-        self, path: Path, node: ast.AST
-    ) -> tuple[Path, ast.AST | str, list[ast.expr]]:
-        source, value = self.resolve(path, node)
-        if isinstance(value, ast.Subscript):
-            args = (
-                value.slice.elts
-                if isinstance(value.slice, ast.Tuple)
-                else [value.slice]
-            )
-            return source, self.resolve(source, value.value)[1], args
-        return source, value, []
-
     def is_server(self, path: Path, node: ast.AST) -> bool:
         source, value = self.resolve(path, node)
         return (
@@ -292,7 +262,15 @@ class Analyzer:
         )
 
     def annotation(self, path: Path, node: ast.AST) -> Any:
-        source, origin, args = self.generic(path, node)
+        source, origin = self.resolve(path, node)
+        args = []
+        if isinstance(origin, ast.Subscript):
+            args = (
+                origin.slice.elts
+                if isinstance(origin.slice, ast.Tuple)
+                else [origin.slice]
+            )
+            _, origin = self.resolve(source, origin.value)
         if isinstance(origin, ast.ClassDef):
             return self.model(source, origin)
         if isinstance(origin, ast.BinOp) and isinstance(origin.op, ast.BitOr):
@@ -387,21 +365,15 @@ class Analyzer:
         if (
             not isinstance(node, ast.Call)
             or self.resolve(path, node.func)[1] != "pydantic:Field"
-            or len(node.args) > 1
         ):
             self.fail(path, node, "Only static pydantic.Field metadata is supported.")
-        options = {item.arg: item.value for item in node.keywords}
-        if set(options) - FIELDS:
-            self.fail(
-                path, node, "Unsupported Field option; no callbacks are evaluated."
-            )
         return cast(
             FieldInfo,
             Field(
                 *(self.literal(path, arg) for arg in node.args),
                 **{
-                    cast(str, name): self.literal(path, item)
-                    for name, item in options.items()
+                    cast(str, item.arg): self.literal(path, item.value)
+                    for item in node.keywords
                 },
             ),
         )
@@ -465,18 +437,12 @@ class Analyzer:
             stub.__annotations__["return"] = returns
         # The SDK sees concrete trusted annotations and a signature, not source code.
         stub.__signature__ = inspect.Signature(parameters, return_annotation=returns)  # type: ignore[attr-defined]
-        server = MCPServer("holon-contract-extractor")
-        server.add_tool(
-            stub,
-            name=name,
-            structured_output=structured,
-        )
-        (tool,) = asyncio.run(server.list_tools())
-        return tool.model_dump(
-            by_alias=True,
-            exclude_none=True,
-            include={"name", "input_schema", "output_schema"},
-        )
+        tool = SDKTool.from_function(stub, name=name, structured_output=structured)
+        return Tool(
+            name=tool.name,
+            input_schema=tool.parameters,
+            output_schema=tool.output_schema,
+        ).model_dump(by_alias=True, exclude_none=True)
 
     def registration(self, node: ast.AST, servers: set[str]) -> str | None:
         match node:
@@ -670,6 +636,7 @@ class Analyzer:
 
 def extract(root: str | Path, entry: str) -> dict[str, Any]:
     analyzer = Analyzer(Path(root))
+    sources: dict[str, str] = {}
     try:
         for directory, folders, filenames in os.walk(analyzer.root):
             folders[:] = [name for name in folders if name not in IGNORED]
@@ -677,11 +644,11 @@ def extract(root: str | Path, entry: str) -> dict[str, Any]:
                 if name.endswith(".py"):
                     path = Path(directory, name)
                     with path.open("rb") as source:
-                        analyzer.sources[str(path.relative_to(analyzer.root))] = (
+                        sources[str(path.relative_to(analyzer.root))] = (
                             hashlib.file_digest(source, "sha256").hexdigest()
                         )
         catalog = analyzer.extract((analyzer.root / entry).resolve())
-        return {**catalog, "sources": analyzer.sources}
+        return {**catalog, "sources": sources}
     except (
         ValueError,
         SyntaxError,
@@ -696,7 +663,7 @@ def extract(root: str | Path, entry: str) -> dict[str, Any]:
         return {
             "tools": [],
             "diagnostic": str(error),
-            "sources": analyzer.sources,
+            "sources": sources,
         }
 
 
