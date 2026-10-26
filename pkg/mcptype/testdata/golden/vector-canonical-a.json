@@ -1,1 +1,0 @@
-{"canonical":{"dependentSchemas":{"description":{"required":["a","b"]}},"properties":{"from":{"enum":["a","z"],"type":["integer","null"]},"to":{"type":"string"},"y":{"not":{"type":"string"}}},"required":["from","to"],"type":"object"},"digest":"sha256:4446cc9118aafd207213d325352d5c2f263b08fff34b5845f754f7edf950005f"}

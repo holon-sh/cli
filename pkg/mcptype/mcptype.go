@@ -1,6 +1,4 @@
 // Package mcptype compares MCP typed contracts and generates typed client packages.
-// It is a Go port of the mcptype compiler (hughhan1/mcptype 0.0.6) and produces the
-// same bytes: canonical forms, digests, change texts and package files.
 package mcptype
 
 import (

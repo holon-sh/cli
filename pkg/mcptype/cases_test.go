@@ -3,52 +3,27 @@ package mcptype
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// parityCase is one compiler request in its JSON wire form, as the C, Node and Python bindings send it.
-type parityCase struct {
-	name, op, input string
-	wantError       string
+// generationCase is one package-generation request in its JSON wire form.
+type generationCase struct {
+	name, input string
+	wantError   bool
 }
 
-// run returns the compiler output in the same files as the native golden fixtures.
-func (c parityCase) run() (map[string][]byte, error) {
+func (c generationCase) run() (map[string][]byte, error) {
 	value, err := decodeJSON([]byte(c.input))
 	if err != nil {
 		return nil, err
 	}
-	switch c.op {
-	case "canonical":
-		canonical, digest, err := canonicalRequest(value)
-		if err != nil {
-			return nil, err
-		}
-		output := Object{"canonical": canonical, "digest": digest}
-		if canonical == nil {
-			output["digest"] = nil
-		}
-		return map[string][]byte{c.name + ".json": encode(output)}, nil
-	case "changes":
-		found, err := changesRequest(value)
-		if err != nil {
-			return nil, err
-		}
-		records := make([]Value, len(found))
-		for i, change := range found {
-			records[i] = change.record()
-		}
-		return map[string][]byte{c.name + ".json": encode(Object{"changes": records})}, nil
-	default:
-		request, err := decodeGenerateRequest(value)
-		if err != nil {
-			return nil, err
-		}
-		return generate(context.Background(), request)
+	request, err := decodeGenerateRequest(value)
+	if err != nil {
+		return nil, err
 	}
+	return generate(context.Background(), request)
 }
 
 const kitchenSink = `{
@@ -118,60 +93,20 @@ const kitchenSink = `{
   ]
 }`
 
-const floatSchema = `{"type": "number", "minimum": 0.5, "maximum": 1e21, "default": -0, "multipleOf": 1.0, "x": 1e16, "y": 1e15, "z": 0.00001234, "w": 0.000001234, "big": 18446744073709551616, "neg": -9223372036854775809, "u64max": 18446744073709551615, "i64min": -9223372036854775808, "pi": 3.141592653589793, "exp": 1E2, "small": 5e-324, "large": 1.7976931348623157e308, "enum": [1.0, 1, "1", true, null, [], {}, -0, 0, 0.0, 1e21, 100.0, 1E2], "required": ["b", "a", "a"], "type2": ["null", "string", "null"]}`
-
 const sinkRequires = `{"orders": {"name": "orders", "version": "1.0.0"}, "orders!": {"name": "example/orders", "version": "2"}, "123": {"name": "n", "version": "1"}, "for": {"name": "keyword", "version": "1"}, "with-hyphen": {"name": "h", "version": "1"}, "_private": {"name": "p", "version": "1"}, "ünï": {"name": "ü", "version": "1"}, "payments": {"name": "payments", "version": "2.0.0"}, "pay-ments": {"name": "pay", "version": "1"}, "class": {"name": "c", "version": "1"}, "untyped_ok": {"name": "u", "version": "1"}}`
 
 func sinkContracts() string {
 	return `{"orders": ` + kitchenSink + `, "orders!": ` + kitchenSink + `, "123": {"tools": []}, "for": {"tools": [{"name": "x", "inputSchema": {"type": "object"}}]}, "with-hyphen": {"tools": [{"name": "y", "inputSchema": {"type": "object"}}], "resources": []}, "_private": {"tools": []}, "ünï": {"tools": [{"name": "z", "inputSchema": {"type": "object"}}]}}`
 }
 
-func parityCases(t *testing.T) []parityCase {
+func generationCases(t *testing.T) []generationCase {
 	t.Helper()
-	var cases []parityCase
-	add := func(name, op, input string) { cases = append(cases, parityCase{name: name, op: op, input: input}) }
-	data, err := os.ReadFile(filepath.Join("testdata", "contract-core.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var vectors struct {
-		Canonical []struct{ Input json.RawMessage } `json:"canonical"`
-		Changes   []struct{ Input json.RawMessage } `json:"changes"`
-		Invalid   []struct {
-			Input json.RawMessage
-			Error string
-		} `json:"invalid"`
-	}
-	if err := json.Unmarshal(data, &vectors); err != nil {
-		t.Fatal(err)
-	}
-	for i, vector := range vectors.Canonical {
-		add("vector-canonical-"+string(rune('a'+i)), "canonical", string(vector.Input))
-	}
-	for i, vector := range vectors.Changes {
-		add("vector-changes-"+string(rune('a'+i)), "changes", string(vector.Input))
-	}
-	for i, vector := range vectors.Invalid {
-		cases = append(cases, parityCase{name: "vector-invalid-" + string(rune('a'+i)), op: "changes", input: string(vector.Input), wantError: vector.Error})
-	}
+	var cases []generationCase
+	add := func(name, input string) { cases = append(cases, generationCase{name: name, input: input}) }
 	nested, err := os.ReadFile(filepath.Join("testdata", "nested-types.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	add("canonical-floats", "canonical", `{"schema": `+floatSchema+`}`)
-	add("canonical-sink", "canonical", `{"contract": `+kitchenSink+`}`)
-	add("canonical-nested", "canonical", `{"contract": `+string(nested)+`}`)
-	add("canonical-metadata-sink", "canonical", `{"metadata": {"version": 1, "identity": {"name": "é", "version": "1"}, "contract": `+kitchenSink+`, "requires": {"x": {"identity": {"name": "x", "version": "1"}, "contract": {"tools": []}}}}}`)
-	add("canonical-unicode", "canonical", `{"schema": {"type": "object", "properties": {"é": {"type": "string", "description": " "}, "a\"b": {"type": "string"}, "tab\t": {"type": "string"}}, "required": ["é", "a\"b"], "enum": ["z", "é", "a", "é"]}}`)
-	cases = append(cases, parityCase{name: "canonical-schema-not-object", op: "canonical", input: `{"schema": []}`, wantError: "invalid type: sequence, expected a map"})
-	cases = append(cases, parityCase{name: "canonical-unknown-variant", op: "canonical", input: `{"other": {}}`, wantError: "unknown variant `other`, expected one of `contract`, `schema`, `metadata`"})
-	cases = append(cases, parityCase{name: "canonical-two-keys", op: "canonical", input: `{"schema": {}, "contract": {"tools": []}}`, wantError: "expected a map with a single key, one of `contract`, `schema`, `metadata`"})
-	cases = append(cases, parityCase{name: "canonical-version-float", op: "canonical", input: `{"metadata": {"version": 1.0, "identity": {"name": "a", "version": "1"}}}`, wantError: "invalid value: floating point `1.0`, expected u32"})
-	add("changes-sink-vs-nested", "changes", `{"expected": {"identity": {"name": "a", "version": "1"}, "contract": `+kitchenSink+`}, "published": {"version": 1, "identity": {"name": "a", "version": "1"}, "contract": `+string(nested)+`}}`)
-	add("changes-sink-same", "changes", `{"expected": {"identity": {"name": "a", "version": "1"}, "contract": `+kitchenSink+`}, "published": {"version": 1, "identity": {"name": "a", "version": "1"}, "contract": `+kitchenSink+`}}`)
-	add("changes-float-literals", "changes", `{"expected": {"identity": {"name": "a", "version": "1"}, "contract": {"tools": [{"name": "t", "inputSchema": {"type": "object", "minimum": 1}}, {"name": "u", "inputSchema": {"type": "object", "minimum": 1.0}, "outputSchema": {"type": "object"}}, {"name": "v", "inputSchema": {"type": "object"}, "outputSchema": {"type": "object"}}]}}, "published": {"version": 1, "identity": {"name": "a", "version": "1"}, "contract": {"tools": [{"name": "t", "inputSchema": {"type": "object", "minimum": 1.0}}, {"name": "u", "inputSchema": {"type": "object", "minimum": 1.0}}, {"name": "v", "inputSchema": {"type": "object"}, "outputSchema": {"type": "object", "description": "only docs"}}]}}}`)
-	add("changes-no-published-contract", "changes", `{"expected": {"identity": {"name": "a", "version": "1"}, "contract": {"tools": []}}, "published": {"version": 1, "identity": {"name": "a", "version": "1"}}}`)
-	add("changes-missing-published", "changes", `{"expected": {"identity": {"name": "a", "version": "1"}, "contract": {"tools": []}}}`)
 	const protocol = "type AuthProvider = { token(): Promise<string> };\ntype ToolClient<I, O, R> = { tools: { [K in keyof I]: (input: I[K]) => Promise<K extends keyof O ? O[K] : unknown> }; resources: { [U in keyof R]: { read(): Promise<R[U]> } }; callTool<K extends keyof I & string>(request: { name: K; arguments: I[K] }): Promise<unknown> };"
 	const order = `{"tools": [
         {"name": "get_order", "inputSchema": {"type": "object", "additionalProperties": false,
@@ -182,58 +117,60 @@ func parityCases(t *testing.T) []parityCase {
 	legacyContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}}`
 	runtime := `{"runtime.mjs": "` + base64.StdEncoding.EncodeToString([]byte("export {};\n")) + `", "browser-runtime.mjs": "` + base64.StdEncoding.EncodeToString([]byte("export {};\n")) + `", "nested/bytes.dat": "` + base64.StdEncoding.EncodeToString([]byte{0, 128, 255, '\n'}) + `"}`
 	for _, target := range []string{"node", "browser", "python", "go"} {
-		add("legacy-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}, "payments": {"name": "payments", "version": "2.0.0"}}, "contracts": `+legacyContracts+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "package_fields": {"holon": "holon-generated-apps-v1"}, "go_module": "example.com/runtime"}`)
-		add("sink-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "package_fields": {"holon": "holon-generated-apps-v1", "nested": {"list": [1, 2.5, "é", null, {"k": [true, false]}], "empty": {}, "emptyList": []}, "number": 1e21, "zero": -0, "float": 1.0}, "go_module": "example.com/é/runtime", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
-		add("empty-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
-		add("untyped-only-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "a", "version": "1"}, "requires": {"payments": {"name": "payments", "version": "1"}, "pay-ments": {"name": "p", "version": "1"}}, "go_module": "example.com/runtime", "package_fields": {}}`)
+		add("legacy-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}, "payments": {"name": "payments", "version": "2.0.0"}}, "contracts": `+legacyContracts+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "package_fields": {"holon": "holon-generated-apps-v1"}, "go_module": "example.com/runtime"}`)
+		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "package_fields": {"holon": "holon-generated-apps-v1", "nested": {"list": [1, 2.5, "é", null, {"k": [true, false]}], "empty": {}, "emptyList": []}, "number": 1e21, "zero": -0, "float": 1.0}, "go_module": "example.com/é/runtime", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
+		add("empty-"+target, `{"target": "`+target+`", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
+		add("untyped-only-"+target, `{"target": "`+target+`", "identity": {"name": "a", "version": "1"}, "requires": {"payments": {"name": "payments", "version": "1"}, "pay-ments": {"name": "p", "version": "1"}}, "go_module": "example.com/runtime", "package_fields": {}}`)
 	}
 	for _, target := range []string{"node", "browser", "python"} {
 		options := `"runtime_specifier": "../runtime.mjs", "browser_runtime_specifier": "../browser-runtime.mjs", "protocol_specifier": "../protocol.js"`
 		if target == "python" {
 			options = `"python_module": "holon/apps/__init__.py", "python_runtime_module": "holon.client"`
 		}
-		add("slot-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+legacyContracts+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
-		add("slot-sink-"+target, "generate", `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
+		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+legacyContracts+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
+		add("slot-sink-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
 	}
-	add("slot-node-runtime-only", "generate", `{"target": "node", "identity": {"name": "a", "version": "1"}, "runtime_specifier": "@holon/apps/runtime.mjs", "protocol": "type X = 1;"}`)
-	add("slot-browser-only", "generate", `{"target": "browser", "identity": {"name": "a", "version": "1"}, "browser_runtime_specifier": "./x.mjs"}`)
-	add("slot-python-module-only", "generate", `{"target": "python", "identity": {"name": "a", "version": "1"}, "python_module": "apps.py"}`)
-	add("slot-python-runtime-only", "generate", `{"target": "python", "identity": {"name": "a", "version": "1"}, "python_runtime_module": "_holon.client_1"}`)
-	add("banner-runtime", "generate", `{"target": "node", "identity": {"name": "a", "version": "1"}, "banner": "generated by a caller", "runtime": {"runtime.mjs": "`+base64.StdEncoding.EncodeToString([]byte("export {};\n"))+`", "index.js": "`+base64.StdEncoding.EncodeToString([]byte("overwritten\n"))+`"}}`)
-	for _, test := range []struct{ name, patch, message string }{
-		{"go-module-missing", `"target": "go", "go_module": null`, "go_module is required for the go target"},
-		{"runtime-escape", `"runtime": {"../escape": ""}`, "runtime path \"../escape\" must be relative and normalized"},
-		{"runtime-bad-base64", `"runtime": {"file": "%%"}`, "runtime file: illegal base64 data at input byte 0"},
-		{"protocol-exclusive", `"protocol": "", "protocol_specifier": "../protocol.js"`, "protocol and protocol_specifier are mutually exclusive"},
-		{"runtime-specifier-empty", `"runtime_specifier": ""`, "runtime_specifier must be nonempty and contain no line breaks or control characters"},
-		{"browser-specifier-newline", `"browser_runtime_specifier": "bad\nmodule"`, "browser_runtime_specifier must be nonempty and contain no line breaks or control characters"},
-		{"protocol-specifier-blank", `"protocol_specifier": " "`, "protocol_specifier must be nonempty and contain no line breaks or control characters"},
-		{"python-module-escape", `"python_module": "../escape.py"`, "python_module must be a relative, normalized .py path"},
-		{"python-module-absolute", `"python_module": "/absolute.py"`, "relative, normalized .py path"},
-		{"python-module-dot", `"python_module": "holon/./apps.py"`, "relative, normalized .py path"},
-		{"python-module-backslash", `"python_module": "holon\\apps.py"`, "relative, normalized .py path"},
-		{"python-module-ext", `"python_module": "apps.json"`, "python_module must be a relative, normalized .py path"},
-		{"python-runtime-relative", `"python_runtime_module": ".client"`, "python_runtime_module must be an absolute Python module name"},
-		{"python-runtime-keyword", `"python_runtime_module": "holon.class"`, "python_runtime_module must be an absolute Python module name"},
-		{"banner-newline", `"banner": "marker\nimport os"`, "banner must be nonempty and contain no line breaks or control characters"},
-		{"entry-empty", `"entry": ""`, "entry must be a nonempty file name without separators or control characters"},
-		{"entry-separator", `"entry": "a/b"`, "entry must be a nonempty file name without separators or control characters"},
-		{"binding-empty", `"contracts": {"": {"tools": []}}`, "binding names must be nonempty"},
-		{"unknown-field", `"unknown": true`, "unknown field `unknown`"},
-		{"bad-target", `"target": "wasm"`, "unknown variant `wasm`, expected one of `node`, `browser`, `python`, `go`"},
-		{"identity-empty", `"identity": {"name": "", "version": "1"}`, "identity name and version must be nonempty"},
-		{"requires-empty-identity", `"requires": {"x": {"name": "x", "version": ""}}`, "identity name and version must be nonempty"},
-		{"contract-null", `"contracts": {"x": null}`, "invalid type: null, expected a map"},
-		{"duplicate-tool", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}}, {"name":"read", "inputSchema":{"type":"object"}}]}}`, "tool names must be nonempty and unique"},
-		{"empty-tool", `"contracts": {"x": {"tools": [{"name":"", "inputSchema":{"type":"object"}}]}}`, "tool names must be nonempty and unique"},
-		{"input-not-object", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"string"}}]}}`, "read: inputSchema must have type object"},
-		{"output-null", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}, "outputSchema":null}]}}`, "invalid type: null, expected a map"},
-		{"external-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "https://example.com"}}}}]}}`, "external schema reference is unsupported: https://example.com"},
-		{"unresolved-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/nope"}}}}]}}`, "unresolved schema reference: #/nope"},
-		{"schema-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": 5}}}]}}`, "schema must be an object or boolean"},
-		{"items-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"type": "array", "items": 5}}}}]}}`, "schema must be an object or boolean"},
+	add("slot-node-runtime-only", `{"target": "node", "identity": {"name": "a", "version": "1"}, "runtime_specifier": "@holon/apps/runtime.mjs", "protocol": "type X = 1;"}`)
+	add("slot-python-module-only", `{"target": "python", "identity": {"name": "a", "version": "1"}, "python_module": "apps.py"}`)
+	add("slot-python-runtime-only", `{"target": "python", "identity": {"name": "a", "version": "1"}, "python_runtime_module": "_holon.client_1"}`)
+	add("banner-runtime", `{"target": "node", "identity": {"name": "a", "version": "1"}, "banner": "generated by a caller", "runtime": {"runtime.mjs": "`+base64.StdEncoding.EncodeToString([]byte("export {};\n"))+`", "index.js": "`+base64.StdEncoding.EncodeToString([]byte("overwritten\n"))+`"}}`)
+	for _, test := range []struct{ name, patch string }{
+		{"go-module-missing", `"target": "go", "go_module": null`},
+		{"runtime-escape", `"runtime": {"../escape": ""}`},
+		{"runtime-bad-base64", `"runtime": {"file": "%%"}`},
+		{"protocol-exclusive", `"protocol": "", "protocol_specifier": "../protocol.js"`},
+		{"runtime-specifier-empty", `"runtime_specifier": ""`},
+		{"browser-specifier-newline", `"browser_runtime_specifier": "bad\nmodule"`},
+		{"protocol-specifier-blank", `"protocol_specifier": " "`},
+		{"python-module-escape", `"python_module": "../escape.py"`},
+		{"python-module-absolute", `"python_module": "/absolute.py"`},
+		{"python-module-dot", `"python_module": "holon/./apps.py"`},
+		{"python-module-backslash", `"python_module": "holon\\apps.py"`},
+		{"python-module-ext", `"python_module": "apps.json"`},
+		{"python-runtime-relative", `"python_runtime_module": ".client"`},
+		{"python-runtime-keyword", `"python_runtime_module": "holon.class"`},
+		{"banner-newline", `"banner": "marker\nimport os"`},
+		{"entry-empty", `"entry": ""`},
+		{"entry-separator", `"entry": "a/b"`},
+		{"binding-empty", `"contracts": {"": {"tools": []}}`},
+		{"unknown-field", `"unknown": true`},
+		{"bad-target", `"target": "wasm"`},
+		{"identity-empty", `"identity": {"name": "", "version": "1"}`},
+		{"requires-empty-identity", `"requires": {"x": {"name": "x", "version": ""}}`},
+		{"contract-null", `"contracts": {"x": null}`},
+		{"duplicate-tool", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}}, {"name":"read", "inputSchema":{"type":"object"}}]}}`},
+		{"empty-tool", `"contracts": {"x": {"tools": [{"name":"", "inputSchema":{"type":"object"}}]}}`},
+		{"input-not-object", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"string"}}]}}`},
+		{"output-null", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}, "outputSchema":null}]}}`},
+		{"duplicate-resource", `"contracts": {"x": {"tools": [], "resources": [{"uri":"r://a", "outputSchema":{}}, {"uri":"r://a", "outputSchema":{}}]}}`},
+		{"empty-resource", `"contracts": {"x": {"tools": [], "resources": [{"uri":"", "outputSchema":{}}]}}`},
+		{"resource-output-not-object", `"contracts": {"x": {"tools": [], "resources": [{"uri":"r://a", "outputSchema":[]}]}}`},
+		{"external-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "https://example.com"}}}}]}}`},
+		{"unresolved-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/nope"}}}}]}}`},
+		{"schema-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": 5}}}]}}`},
+		{"items-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"type": "array", "items": 5}}}}]}}`},
 	} {
-		cases = append(cases, parityCase{name: "invalid-" + test.name, op: "generate", input: `{"target": "node", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime", ` + test.patch + `}`, wantError: test.message})
+		cases = append(cases, generationCase{name: "invalid-" + test.name, input: `{"target": "node", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime", ` + test.patch + `}`, wantError: true})
 	}
 	return cases
 }

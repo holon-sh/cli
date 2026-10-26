@@ -7,24 +7,8 @@ import (
 
 // change is one way a published contract breaks an expectation.
 type change struct {
-	kind                string
-	name, uri, text     string
-	expected, published Identity
-}
-
-// record is the change's JSON form: {"kind", "name" | "uri" | "expected" + "published", "text"}.
-func (c change) record() Object {
-	record := Object{"kind": c.kind, "text": c.text}
-	switch c.kind {
-	case "identity":
-		record["expected"] = Object{"name": c.expected.Name, "version": c.expected.Version}
-		record["published"] = Object{"name": c.published.Name, "version": c.published.Version}
-	case "tool_removed", "tool_input_changed", "tool_output_changed":
-		record["name"] = c.name
-	case "resource_removed", "resource_output_changed":
-		record["uri"] = c.uri
-	}
-	return record
+	kind            string
+	name, uri, text string
 }
 
 // changes lists what breaks expected if published is deployed. Empty means compatible.
@@ -36,7 +20,7 @@ func changes(expected Expectation, published *Metadata) []change {
 	var result []change
 	if expected.Identity != published.Identity {
 		result = append(result, change{
-			kind: "identity", expected: expected.Identity, published: published.Identity,
+			kind: "identity",
 			text: fmt.Sprintf("identity %s@%s expected, %s@%s published", expected.Identity.Name, expected.Identity.Version, published.Identity.Name, published.Identity.Version),
 		})
 	}

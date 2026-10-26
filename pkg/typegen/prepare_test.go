@@ -66,8 +66,11 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 		t.Fatal("the ts slot received the consumer's own contract")
 	}
 	var marker slotMetadata
-	if err = readTypeJSON(filepath.Join(stage, "holon-sh/generated/holon-generated.json"), &marker); err != nil || marker.App != "checkout" || marker.Digests["checkout"] == "" || marker.Digests["orders"] == "" {
+	if err = readTypeJSON(filepath.Join(stage, "holon-sh/generated/holon-generated.json"), &marker); err != nil || marker.App != "checkout" {
 		t.Fatalf("slot marker = %+v, %v", marker, err)
+	}
+	if strings.Contains(read(t, stage, "holon-sh/generated/holon-generated.json"), `"digests"`) {
+		t.Fatal("slot marker contains unused contract digests")
 	}
 	config, ok := prepared.CheckConfig("checkout")
 	if want := `{"check":true,"entry":"server.ts","sources":{"server.ts":"sha256:checkout"}}`; !ok || string(mustJSON(t, config)) != want {
@@ -142,6 +145,23 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 			t.Fatalf("extractor failure = %v, want %v", err, failure)
 		}
 	})
+}
+
+func TestPrepareRejectsInvalidExtractedContracts(t *testing.T) {
+	for _, server := range []string{"example.com/checkout", "example.com/orders"} {
+		t.Run(server, func(t *testing.T) {
+			c, _, calls := checkoutConsumer(t, TargetTS)
+			results := map[string]extraction{
+				"example.com/checkout": {Tools: []mcpcontract.Tool{lookupTool}},
+				"example.com/orders":   {Tools: []mcpcontract.Tool{lookupTool}},
+			}
+			results[server] = extraction{Tools: []mcpcontract.Tool{{Name: "invalid", Input: json.RawMessage(`{"type":"string"}`)}}}
+			if prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: fakeExtract(t, results, calls)}); err == nil {
+				prepared.Close()
+				t.Fatal("accepted an invalid extracted contract")
+			}
+		})
+	}
 }
 
 func TestGenerateWritesSlotsAndRequiresDeclaredRuntimes(t *testing.T) {

@@ -56,12 +56,15 @@ type preparedSource struct {
 	sources                                    map[string]string
 }
 
-func (s *preparedSource) contract(result extraction) (*mcpcontract.Metadata, error) {
+func (s *preparedSource) contract(ctx context.Context, result extraction) (*mcpcontract.Metadata, error) {
 	if result.Diagnostic != "" {
 		return nil, fmt.Errorf("%s: %s", s.origin, result.Diagnostic)
 	}
 	s.sources = result.Sources
 	s.metadata.Contract = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
+	if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": s.metadata}); err != nil {
+		return nil, fmt.Errorf("%s: %w", s.origin, err)
+	}
 	return s.metadata, nil
 }
 
@@ -189,7 +192,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			continue
 		}
 		name := filepath.Base(s.root)
-		if _, err = s.contract(results[name]); err != nil {
+		if _, err = s.contract(ctx, results[name]); err != nil {
 			return nil, err
 		}
 	}
@@ -248,14 +251,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		c.metadata.Contract = c.server.metadata.Contract
 	}
 	request := mcptype.GenerateRequest{Identity: identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + c.Name}
-	c.slot = slotMetadata{Marker: mcpcontract.Marker, App: c.Name, Identity: identity, Digests: map[string]string{}}
-	if c.metadata.Contract != nil {
-		canonical, err := mcptype.Canonical(ctx, map[string]any{"contract": c.metadata.Contract})
-		if err != nil {
-			return fmt.Errorf("%s: %w", c.Name, err)
-		}
-		c.slot.Digests[c.Name] = canonical.Digest
-	}
+	c.slot = slotMetadata{Marker: mcpcontract.Marker, App: c.Name, Identity: identity}
 	aliases := map[string]string{}
 	for _, source := range c.Sources {
 		metadata, err := p.resolve(ctx, source, external)
@@ -276,11 +272,6 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		request.Requires[alias] = metadata.Identity
 		request.Contracts[alias] = metadata.Contract
 		c.metadata.Requires[alias] = mcpcontract.Expectation{Identity: metadata.Identity, Contract: *metadata.Contract}
-		canonical, err := mcptype.Canonical(ctx, map[string]any{"metadata": metadata})
-		if err != nil {
-			return err
-		}
-		c.slot.Digests[alias] = canonical.Digest
 		if source.Path == "" {
 			p.resolved[alias] = metadata
 		}
