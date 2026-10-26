@@ -31,18 +31,18 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 
 ## Walkthrough
 
-Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)).
+Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example depends on [Context7](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4), a public server that needs no credentials.
 
 ```json
 {
-  "name": "io.github.acme/checkout",
+  "name": "com.example/example",
   "version": "0.1.0",
-  "description": "Checkout service",
+  "description": "Example Description",
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "sh.holon": {
         "requires": {
-          "orders": { "name": "io.github.acme/orders", "version": "1.0.0" }
+          "context7": { "name": "io.github.upstash/context7", "version": "4.4.4" }
         }
       }
     }
@@ -56,13 +56,14 @@ Generate the typed clients and type-check the calls to them.
 holon types check
 ```
 
-Or name the servers yourself, for example a sibling checkout. Any `-s` replaces the whole `requires` list, so `server.json` is not needed.
+Or name the servers yourself, for example a running endpoint or a sibling checkout. Any `-s` replaces the whole `requires` list, so `server.json` is not needed.
 
 ```sh
+holon types check -s context7=https://mcp.context7.com/mcp
 holon types check -s orders=../orders
 ```
 
-Call the server. A wrong tool, argument or result field is a type error.
+Call the server. A wrong tool name or argument is a type error.
 
 <details open>
 <summary><h3>TypeScript</h3></summary>
@@ -70,17 +71,16 @@ Call the server. A wrong tool, argument or result field is a type error.
 ```ts
 import { apps } from "holon-sh";
 
-const order = await apps.orders.tools.lookup({ id });
-order.result;
+await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js", query: "app router" });
 
-await apps.orders.tools.lookup({ id: 1 });
+await apps.context7.tools["resolve-library-id"]({ libraryName: 1, query: "app router" });
 // error TS2322: Type 'number' is not assignable to type 'string'.
 
-await apps.orders.tools.lookup({});
-// error TS2345: Property '"id"' is missing in type '{}' but required in type '{ id: string; }'.
+await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js" });
+// error TS2345: Property '"query"' is missing in type '{ libraryName: string; }' but required in type '{ libraryName: string; query: string; }'.
 
-const total: number = order.total;
-// error TS2322: Type 'unknown' is not assignable to type 'number'.
+await apps.context7.tools["resolve-library"]({ libraryName: "Next.js", query: "app router" });
+// error TS2551: Property 'resolve-library' does not exist on type '{ ... }'. Did you mean 'resolve-library-id'?
 ```
 
 </details>
@@ -91,17 +91,13 @@ const total: number = order.total;
 ```python
 from holon.apps import apps
 
-order = await apps.orders.tools.lookup({"id": id})
-order["result"]
+await apps.context7.call_tool("resolve-library-id", {"libraryName": "Next.js", "query": "app router"})
 
-await apps.orders.tools.lookup({"id": 1})
-# error: Incompatible types (expression has type "int", TypedDict item "id" has type "str")  [typeddict-item]
+await apps.context7.call_tool("resolve-library-id", {"libraryName": 1, "query": "app router"})
+# error: No overload variant of "call_tool" of "_App0" matches argument types "str", "dict[str, object]"  [call-overload]
 
-await apps.orders.tools.lookup({})
-# error: Missing key "id" for TypedDict  [typeddict-item]
-
-order["total"]
-# error: TypedDict has no key "total"  [typeddict-item]
+await apps.context7.call_tool("resolve-library", {"libraryName": "Next.js", "query": "app router"})
+# error: No overload variant of "call_tool" of "_App0" matches argument types "str", "dict[str, str]"  [call-overload]
 ```
 
 </details>
