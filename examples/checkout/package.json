@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "types": "holon types generate --target ts ../orders https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4 && holon types generate --target ui ./server.ts",
+    "types:check": "holon types check --target ts ../orders https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4 && holon types check --target ui ./server.ts",
     "build": "vite build",
     "serve": "node main.ts"
   },

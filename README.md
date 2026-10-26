@@ -27,14 +27,21 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 <summary><code>holon types generate</code></summary>
 
 ```text
-Generate typed clients for MCP servers
+Generate typed clients for MCP servers into the current directory's SDK slot.
+
+SOURCE is [ALIAS=]PATH or [ALIAS=]URL: a server entry (server.py, server.ts, server.js, or the
+same under src/) or a directory holding one; an MCP registry server version URL
+(https://registry.modelcontextprotocol.io/v0.1/servers/NAME/versions/VERSION); or a live MCP endpoint.
+ALIAS names the client (apps.ALIAS); it defaults to the server's name.
 
 Usage:
-  holon types generate [DIR...] [flags]
+  holon types generate --target ts|ui|py SOURCE... [flags]
 
 Flags:
-      --contract   Output the app's MCP contract
-  -v, --verbose    Show generation details
+      --contract        Print one source's MCP contract instead of generating
+  -h, --help            help for generate
+      --target string   Slot to write: ts (holon-sh), ui (holon-ui) or py (holon/apps)
+  -v, --verbose         Show generation details
 ```
 
 </details>
@@ -43,10 +50,19 @@ Flags:
 <summary><code>holon types check</code></summary>
 
 ```text
-Type-check apps
+Type-check the current directory against its typed clients, in a temporary copy.
+
+SOURCE is [ALIAS=]PATH or [ALIAS=]URL: a server entry (server.py, server.ts, server.js, or the
+same under src/) or a directory holding one; an MCP registry server version URL
+(https://registry.modelcontextprotocol.io/v0.1/servers/NAME/versions/VERSION); or a live MCP endpoint.
+ALIAS names the client (apps.ALIAS); it defaults to the server's name.
 
 Usage:
-  holon types check [DIR...] [flags]
+  holon types check --target ts|ui|py SOURCE... [flags]
+
+Flags:
+  -h, --help            help for check
+      --target string   Slot to check: ts (holon-sh), ui (holon-ui) or py (holon/apps)
 ```
 
 </details>
@@ -54,6 +70,13 @@ Usage:
 ## Examples
 
 The [`examples`](examples) directory contains MCP servers implemented in different languages that make type-safe invocations.
+
+In `examples/checkout`, the clients come from:
+
+```sh
+holon types generate --target ts ../orders https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
+holon types generate --target ui ./server.ts
+```
 
 In [`examples/checkout/server.ts`](examples/checkout/server.ts), it invokes a tool in the same repository as
 

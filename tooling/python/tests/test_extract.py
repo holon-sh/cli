@@ -76,29 +76,6 @@ async def tools():
 
 
 @pytest.mark.parametrize(
-    "imports, typed",
-    [
-        ("from holon.binding import set_default_binding", False),
-        ("from holon.apps import apps as clients", True),
-        ("from holon.apps import Inputs, Outputs", True),
-        ("from holon.apps import InputTypes, OutputTypes", True),
-        ("import holon.apps", True),
-        ("import holon.apps as h\nclients = h.apps", True),
-        ("import holon.client as h\nclient = h.Apps", False),
-    ],
-)
-def test_sdk_imports_only_record_typed_dependency_usage_when_needed(
-    tmp_path, imports, typed
-):
-    (tmp_path / "server.py").write_text(
-        imports + '\nfrom mcp.server import MCPServer\nserver = MCPServer("app")\n'
-    )
-    result = extract(tmp_path, "server.py")
-    assert "diagnostic" not in result, result
-    assert result["usesApps"] is typed
-
-
-@pytest.mark.parametrize(
     "annotation",
     [
         "Order",

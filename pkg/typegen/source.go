@@ -47,22 +47,24 @@ func generatedSource(root, path string) bool {
 	return path == filepath.Join(managed, "apps") && generatedPython(managed)
 }
 
-func validateBuildContext(app manifestApp) error {
-	info, err := os.Lstat(app.Path)
+func validateBuildContext(name, dir string) error {
+	info, err := os.Lstat(dir)
 	if err != nil {
-		return fmt.Errorf("build context for %s: %w", app.Name, err)
+		return fmt.Errorf("build context for %s: %w", name, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("build context for %s must be a real directory", app.Name)
+		return fmt.Errorf("build context for %s must be a real directory", name)
 	}
 	return nil
 }
 
-func snapshotSource(app manifestApp, destination string) (string, error) {
-	if err := validateBuildContext(app); err != nil {
+// snapshotSource copies dir into destination (or only fingerprints it when destination is empty),
+// honouring .dockerignore and skipping generated and dependency directories.
+func snapshotSource(name, dir, destination string) (string, error) {
+	if err := validateBuildContext(name, dir); err != nil {
 		return "", err
 	}
-	root, err := filepath.EvalSymlinks(app.Path)
+	root, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return "", err
 	}
@@ -157,27 +159,20 @@ func snapshotSource(app manifestApp, destination string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), err
 }
 
+// entryFiles are the server entry locations, relative to the application root.
+var entryFiles = []string{"server.py", "src/server.py", "server.ts", "src/server.ts", "server.js", "src/server.js", "server.go"}
+
+// sourceEntry returns the one entry file under root, or "" when there is none.
 func sourceEntry(root string) (string, error) {
-	var metadata struct {
-		Scripts map[string]string `json:"scripts"`
-		Main    string            `json:"main"`
-	}
-	if err := readTypeJSON(filepath.Join(root, "package.json"), &metadata); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", err
-	}
-	entries := []string{"server.py", "src/server.py", "server.go"}
-	if metadata.Scripts["start"] == "" && metadata.Main == "" {
-		entries = append(entries, "server.ts", "src/server.ts", "server.js", "src/server.js")
-	}
 	var entry string
-	for _, name := range entries {
-		if err := regularNoSymlink(filepath.Join(root, name), "application entrypoint"); errors.Is(err, fs.ErrNotExist) {
+	for _, name := range entryFiles {
+		if err := regularNoSymlink(filepath.Join(root, name), "server entry"); errors.Is(err, fs.ErrNotExist) {
 			continue
 		} else if err != nil {
 			return "", err
 		}
 		if entry != "" {
-			return "", errors.New("keep exactly one server entrypoint: server.go at the root, or server.ts, server.js, server.py at the root or in src")
+			return "", fmt.Errorf("keep exactly one server entry (found %s and %s)", entry, name)
 		}
 		entry = name
 	}

@@ -43,7 +43,6 @@ def read(id: str) -> str:
     runner = [sys.executable, "-S", str(tmp_path / "tooling/runner.py")]
     subprocess.run([*runner, "extract", str(config), str(output)], check=True)
     result = json.loads(output.read_text())["orders"]
-    assert result["usesApps"] is True
     assert [tool["name"] for tool in result["tools"]] == ["read"]
     assert result["sources"] == {
         "server.py": hashlib.sha256(source.read_bytes()).hexdigest()

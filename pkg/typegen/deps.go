@@ -2,14 +2,15 @@ package typegen
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/holon-sh/cli/internal/commandenv"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
+
+	"github.com/holon-sh/cli/internal/commandenv"
 )
 
 type packageJSON struct {
@@ -21,117 +22,81 @@ func (p packageJSON) declares(pkg string) bool {
 	return p.Dependencies[pkg] != "" || p.DevDependencies[pkg] != "" || p.PeerDependencies[pkg] != ""
 }
 
-func (p packageJSON) kinds(imported map[string]bool) []string {
-	var kinds []string
-	if p.declares(slotPackages["browser"]) || imported[slotPackages["browser"]] {
-		kinds = append(kinds, "browser")
-	}
-	if p.declares(slotPackages["typescript"]) || imported[slotPackages["typescript"]] || len(kinds) == 0 {
-		kinds = append(kinds, "typescript")
-	}
-	return kinds
-}
-
-func ensureDependencies(ctx context.Context, app App, imports []string, o Options) error {
-	if isFile(filepath.Join(app.Path, "package.json")) {
-		var pkg packageJSON
-		if err := readTypeJSON(filepath.Join(app.Path, "package.json"), &pkg); err != nil {
-			return err
-		}
-		imported := map[string]bool{}
-		for _, specifier := range imports {
-			name, _, _ := strings.Cut(specifier, "/")
-			imported[name] = true
-		}
-		legacy := slices.Contains(imports, "holon-sh/browser") || slices.Contains(imports, "holon-sh/browser-runtime")
-		if legacy {
-			return fmt.Errorf("%s imports holon-sh/browser, which moved to the holon-ui package; depend on holon-ui and import from \"holon-ui\"", app.Name)
-		}
-		var missing []string
-		for _, kind := range pkg.kinds(imported) {
-			runtime := slotPackages[kind]
-			if !pkg.declares(runtime) {
-				missing = append(missing, runtime)
-			}
-		}
-		if len(missing) > 0 {
-			manager, _, _ := strings.Cut(pkg.PackageManager, "@")
-			if manager == "" {
-				manager = "npm"
-				for dir := app.Path; ; dir = filepath.Dir(dir) {
-					found := false
-					for _, lock := range []struct{ file, manager string }{{"pnpm-lock.yaml", "pnpm"}, {"yarn.lock", "yarn"}, {"bun.lock", "bun"}, {"bun.lockb", "bun"}, {"package-lock.json", "npm"}} {
-						if isFile(filepath.Join(dir, lock.file)) {
-							manager = lock.manager
-							found = true
-							break
-						}
-					}
-					if found || filepath.Dir(dir) == dir {
-						break
-					}
+// packageManager is the project's declared package manager, else the one its nearest lockfile
+// belongs to, else npm. The second value is that manager's verb for adding a dependency.
+func packageManager(dir string, pkg packageJSON) (string, string) {
+	manager, _, _ := strings.Cut(pkg.PackageManager, "@")
+	if manager == "" {
+		manager = "npm"
+		for current := dir; ; current = filepath.Dir(current) {
+			found := false
+			for _, lock := range []struct{ file, manager string }{{"pnpm-lock.yaml", "pnpm"}, {"yarn.lock", "yarn"}, {"bun.lock", "bun"}, {"bun.lockb", "bun"}, {"package-lock.json", "npm"}} {
+				if isFile(filepath.Join(current, lock.file)) {
+					manager = lock.manager
+					found = true
+					break
 				}
 			}
-			verb := "add"
-			switch manager {
-			case "npm":
-				verb = "install"
-			case "pnpm", "yarn", "bun":
-			default:
-				return fmt.Errorf("unsupported package manager %q", manager)
-			}
-			if err := installDependency(ctx, app.Path, manager, append([]string{verb}, missing...), o); err != nil {
-				return err
+			if found || filepath.Dir(current) == current {
+				break
 			}
 		}
 	}
-	_, language, err := analysisEntry(app.Path)
-	if err != nil {
-		return err
+	if manager == "npm" {
+		return manager, "install"
 	}
-	if language != "python" {
-		return nil
-	}
-	found := false
-	hasPyproject := isFile(filepath.Join(app.Path, "pyproject.toml"))
-	var project string
-	for _, name := range []string{"pyproject.toml", "requirements.txt", "requirements.in"} {
-		data, _ := os.ReadFile(filepath.Join(app.Path, name))
-		if name == "pyproject.toml" {
-			project = string(data)
-		}
-		if regexp.MustCompile(`(?im)(?:^|["'\s])holon[-_]sh(?:\[|[\s"'<=>!~;]|$)`).Match(data) {
-			found = true
-		}
-	}
-	if found {
-		return nil
-	}
-	if isFile(filepath.Join(app.Path, "uv.lock")) || hasPyproject && !strings.Contains(project, "[tool.poetry") {
-		return installDependency(ctx, app.Path, "uv", []string{"add", "holon-sh"}, o)
-	}
-	if strings.Contains(project, "[tool.poetry") {
-		return installDependency(ctx, app.Path, "poetry", []string{"add", "holon-sh"}, o)
-	}
-	fmt.Fprintf(o.Stderr, "%s: install runtime with pip install holon-sh and add holon-sh to your requirements\n", app.Name)
-	return nil
+	return manager, "add"
 }
-func installDependency(ctx context.Context, root, program string, args []string, o Options) error {
-	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(root), program, strings.Join(args, " "))
-	if o.NoInstall {
-		return nil
+
+// ensureNodeRuntime returns the installed slot package for dir. A package that package.json
+// declares but node_modules lacks is installed with the project's package manager; an undeclared
+// one is an error naming the command that adds it.
+func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string, error) {
+	if slot, err := InstalledRuntime(dir, pkg); err == nil {
+		return slot, nil
 	}
+	var manifest packageJSON
+	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("%s has no package.json; create one and run npm install %s", dir, pkg)
+		}
+		return "", err
+	}
+	manager, verb := packageManager(dir, manifest)
+	if !manifest.declares(pkg) {
+		return "", fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, pkg, manager, verb, pkg)
+	}
+	if err := run(ctx, dir, manager, []string{"install"}, o); err != nil {
+		return "", err
+	}
+	return InstalledRuntime(dir, pkg)
+}
+
+var pythonRuntime = regexp.MustCompile(`(?im)(?:^|["'\s])holon[-_]sh(?:\[|[\s"'<=>!~;]|$)`)
+
+// ensurePythonRuntime requires holon-sh among the project's declared Python dependencies.
+func ensurePythonRuntime(dir string) error {
+	for _, name := range []string{"pyproject.toml", "requirements.txt", "requirements.in"} {
+		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil && pythonRuntime.Match(data) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s does not depend on holon-sh; run uv add holon-sh (or add it to requirements.txt)", dir)
+}
+
+func run(ctx context.Context, dir, program string, args []string, o Options) error {
+	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(dir), program, strings.Join(args, " "))
 	env, err := commandenv.Environ(o.Env)
 	if err != nil {
 		return err
 	}
 	command := exec.CommandContext(ctx, program, args...)
-	command.Dir = root
+	command.Dir = dir
 	command.Env = env
 	command.Stdout = o.Stderr
 	command.Stderr = o.Stderr
 	if err = command.Run(); err != nil {
-		return fmt.Errorf("install runtime in %s: %w", root, err)
+		return fmt.Errorf("%s %s in %s: %w", program, strings.Join(args, " "), dir, err)
 	}
 	return nil
 }

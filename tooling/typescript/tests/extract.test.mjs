@@ -136,18 +136,3 @@ export default handler(() => {const s = new Server({name:"x",version:"1"}); cons
   assert.equal(result.tools[0].inputSchema.properties.id.type, "string");
   assert.equal(result.tools[0].outputSchema, undefined);
 });
-
-test("recognizes generated app imports", t => {
-  for (const specifier of ["holon-sh", "holon-sh/browser", "holon-ui", "holon-ui/runtime", "@holon-sh/apps", "@holon-sh/apps/browser"]) {
-    const root = fixture(t, `import {apps} from "${specifier}"; export default {};`);
-    assert.equal(extract(root, "server.ts").usesApps, true, specifier);
-  }
-});
-
-
-test("installed dependencies do not opt an application into generated apps", t => {
-  const root = fixture(t, 'import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export default createMcpHandler(()=>new McpServer({name:"x",version:"1"}));');
-  mkdirSync(join(root, "node_modules/dependency"), {recursive:true});
-  writeFileSync(join(root, "node_modules/dependency/index.js"), 'import {apps} from "holon-sh";');
-  assert.equal(extract(root, "server.ts").usesApps, false);
-});
