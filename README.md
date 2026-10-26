@@ -17,7 +17,7 @@ curl -fsSL https://holon-labs.dev/install.sh | sh
 
 Or alternatively
 
-With [Go 1.27 or newer](https://go.dev/doc/install), build and install from source:
+With [Go](https://go.dev/doc/install) 1.27 or newer, build and install from source:
 
 ```sh
 go install github.com/holon-sh/cli/cmd/holon@latest
