@@ -3,6 +3,7 @@ package mcptype
 import (
 	"bytes"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,17 +39,8 @@ func TestOutputsMatchNativeCompilerGoldens(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		for path, data := range got {
-			if expected, ok := want[path]; !ok {
-				t.Errorf("%s: unexpected file %s", c.name, path)
-			} else if !bytes.Equal(data, expected) {
-				t.Errorf("%s: %s differs\n--- got\n%s\n--- want\n%s", c.name, path, data, expected)
-			}
-		}
-		for path := range want {
-			if _, ok := got[path]; !ok {
-				t.Errorf("%s: missing file %s", c.name, path)
-			}
+		if !maps.EqualFunc(got, want, bytes.Equal) {
+			t.Errorf("%s: generated files differ\n--- got\n%q\n--- want\n%q", c.name, got, want)
 		}
 	}
 }

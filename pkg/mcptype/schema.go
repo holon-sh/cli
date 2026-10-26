@@ -72,10 +72,7 @@ func parseShape(ctx context.Context, schema Value) (shape, error) {
 	result := shape{value: value, named: map[string]typ{}}
 	root, _ := schema.(Object)
 	for _, section := range []string{"definitions", "$defs"} {
-		definitions, ok := root[section].(Object)
-		if !ok {
-			continue
-		}
+		definitions, _ := root[section].(Object)
 		for _, name := range sortedKeys(definitions) {
 			if result.named[name], err = parser.parse(definitions[name], 0); err != nil {
 				return shape{}, err
@@ -221,10 +218,8 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 				return typ{}, err
 			}
 			var min int
-			if count, ok := object["minItems"].(Number); ok {
-				if value, ok := count.asU64(); ok {
-					min = int(value)
-				}
+			if count, ok := object["minItems"].(Number); ok && count.kind == posInt {
+				min = int(count.u)
 			}
 			return typ{kind: kindTuple, prefix: items, min: min, extra: extra}, nil
 		}
@@ -239,18 +234,16 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 		return typ{kind: kindArray, item: &item}, nil
 	}
 	_, hasProperties := object["properties"]
-	isObject := isString && kind == "object"
-	if (isObject || !isString) && (hasProperties || isObject) {
+	if kind == "object" || !isString && hasProperties {
 		required, _ := object["required"].([]Value)
 		fields := map[string]field{}
-		if properties, ok := object["properties"].(Object); ok {
-			for _, key := range sortedKeys(properties) {
-				value, err := p.parse(properties[key], depth+1)
-				if err != nil {
-					return typ{}, err
-				}
-				fields[key] = field{value: value, required: slices.Contains(required, Value(key))}
+		properties, _ := object["properties"].(Object)
+		for _, key := range sortedKeys(properties) {
+			value, err := p.parse(properties[key], depth+1)
+			if err != nil {
+				return typ{}, err
 			}
+			fields[key] = field{value: value, required: slices.Contains(required, Value(key))}
 		}
 		additional, declared := object["additionalProperties"]
 		extra, err := p.extra(additional, declared, depth)

@@ -180,12 +180,11 @@ func decodeMetadata(value Value) (Metadata, error) {
 	if !ok {
 		return Metadata{}, fmt.Errorf("invalid type: %s, expected u32", describe(raw))
 	}
-	unsigned, ok := version.asU64()
-	if !ok || unsigned > 1<<32-1 {
+	if version.kind != posInt || version.u > 1<<32-1 {
 		return Metadata{}, fmt.Errorf("invalid value: %s, expected u32", describe(raw))
 	}
-	if unsigned != 1 {
-		return Metadata{}, fmt.Errorf("unsupported metadata version %d", unsigned)
+	if version.u != 1 {
+		return Metadata{}, fmt.Errorf("unsupported metadata version %d", version.u)
 	}
 	metadata := Metadata{Version: 1, Requires: map[string]Expectation{}}
 	if raw, err = requiredField(object, "identity"); err != nil {
@@ -194,7 +193,7 @@ func decodeMetadata(value Value) (Metadata, error) {
 	if metadata.Identity, err = decodeIdentity(raw); err != nil {
 		return Metadata{}, err
 	}
-	if raw, ok := object["contract"]; ok && raw != nil {
+	if raw := object["contract"]; raw != nil {
 		contract, err := decodeContract(raw)
 		if err != nil {
 			return Metadata{}, err

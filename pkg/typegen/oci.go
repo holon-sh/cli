@@ -37,11 +37,6 @@ func fetchImageJSON(ctx context.Context, source content.Fetcher, descriptor ocis
 	return json.Unmarshal(data, value)
 }
 
-// rejectedCredential is a registry's 401 for a credential that Options.Credential supplied.
-type rejectedCredential struct{ error }
-
-func (e rejectedCredential) Unwrap() error { return e.error }
-
 // imageRepository authenticates with supplied, then Docker-stored, credentials. The returned
 // function reports whether supplied returned a credential for the repository's registry.
 func imageRepository(name string, extraEnv []string, client *http.Client, supplied auth.CredentialFunc) (*remote.Repository, func() bool, error) {
@@ -150,7 +145,7 @@ func resolveTypeMetadata(ctx context.Context, image string, o Options) (*mcpcont
 	rejected := func(err error) error {
 		var response *errcode.ErrorResponse
 		if supplied() && errors.As(err, &response) && response.StatusCode == http.StatusUnauthorized {
-			return rejectedCredential{fmt.Errorf("%s rejected the supplied registry credential: %w", reference.Domain(named), err)}
+			return fmt.Errorf("%s rejected the supplied registry credential: %w", reference.Domain(named), err)
 		}
 		return err
 	}

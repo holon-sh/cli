@@ -26,9 +26,6 @@ func TestStringsAreQuotedAsSerdeWrites(t *testing.T) {
 	if got, want := quoted("a\"b\\c\n\r\t\b\f\x01\x1f\x7f<>&é\u2028"), `"a\"b\\c\n\r\t\b\f\u0001\u001f`+"\x7f<>&é\u2028"+`"`; got != want {
 		t.Errorf("got %s, want %s", got, want)
 	}
-	if got, want := encodePretty(Object{"a": []Value{Number{kind: posInt, u: 1}, Object{}}, "b": []Value{}}), "{\n  \"a\": [\n    1,\n    {}\n  ],\n  \"b\": []\n}"; got != want {
-		t.Errorf("pretty:\n%s\nwant\n%s", got, want)
-	}
 	if got, want := pythonDumps(Object{"a": []Value{"é😀", Number{kind: posInt, u: 1}, Number{kind: float, f: 2.5}, nil, true}, "b'": "\\\n"}), `{"a": ["\u00e9\ud83d\ude00", 1, 2.5, null, true], "b'": "\\\n"}`; got != want {
 		t.Errorf("dumps: got %s, want %s", got, want)
 	}

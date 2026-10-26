@@ -51,10 +51,7 @@ func normalizeObject(object Object) {
 	for key, item := range object {
 		switch {
 		case slices.Contains(unordered, key):
-			items, ok := item.([]Value)
-			if !ok {
-				continue
-			}
+			items, _ := item.([]Value)
 			if key != "enum" {
 				for _, item := range items {
 					normalize(item)
@@ -73,10 +70,9 @@ func normalizeObject(object Object) {
 				items[i] = item.value
 			}
 		case slices.Contains(schemaMaps, key):
-			if schemas, ok := item.(Object); ok {
-				for _, schema := range schemas {
-					normalize(schema)
-				}
+			schemas, _ := item.(Object)
+			for _, schema := range schemas {
+				normalize(schema)
 			}
 		case slices.Contains(schemaValues, key):
 			normalize(item)

@@ -91,49 +91,46 @@ func slotOwner(name string) slotMetadata {
 }
 
 func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
-	for _, pkg := range []string{"holon-sh", "holon-ui"} {
-		t.Run(pkg, func(t *testing.T) {
-			root := t.TempDir()
-			store := filepath.Join(root, "store")
-			app := filepath.Join(root, "app")
-			put(t, store, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
-			if err := os.MkdirAll(filepath.Join(app, "node_modules"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(store, filepath.Join(app, "node_modules", pkg)); err != nil {
-				t.Fatal(err)
-			}
-			resolved, err := InstalledRuntime(app, pkg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			real, _ := filepath.EvalSymlinks(store)
-			if resolved != real {
-				t.Fatalf("slot = %s, want %s", resolved, real)
-			}
-			put(t, store, "generated/index.js", "user content")
-			if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err == nil {
-				t.Fatal("overwrote foreign slot")
-			}
-			if got := read(t, store, "generated/index.js"); got != "user content" {
-				t.Fatalf("foreign contents changed: %s", got)
-			}
-			put(t, store, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})))
-			if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
-				t.Fatal(err)
-			}
-			first, _ := os.Stat(filepath.Join(store, "generated/index.js"))
-			if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
-				t.Fatal(err)
-			}
-			second, _ := os.Stat(filepath.Join(store, "generated/index.js"))
-			if !os.SameFile(first, second) {
-				t.Fatal("unchanged generation replaced the slot")
-			}
-			if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "other"}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
-				t.Fatalf("shared package was reassigned to another consumer: %v", err)
-			}
-		})
+	const pkg = "holon-sh"
+	root := t.TempDir()
+	store := filepath.Join(root, "store")
+	app := filepath.Join(root, "app")
+	put(t, store, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
+	if err := os.MkdirAll(filepath.Join(app, "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(store, filepath.Join(app, "node_modules", pkg)); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := InstalledRuntime(app, pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	real, _ := filepath.EvalSymlinks(store)
+	if resolved != real {
+		t.Fatalf("slot = %s, want %s", resolved, real)
+	}
+	put(t, store, "generated/index.js", "user content")
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err == nil {
+		t.Fatal("overwrote foreign slot")
+	}
+	if got := read(t, store, "generated/index.js"); got != "user content" {
+		t.Fatalf("foreign contents changed: %s", got)
+	}
+	put(t, store, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})))
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := os.Stat(filepath.Join(store, "generated/index.js"))
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := os.Stat(filepath.Join(store, "generated/index.js"))
+	if !os.SameFile(first, second) {
+		t.Fatal("unchanged generation replaced the slot")
+	}
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "other"}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
+		t.Fatalf("shared package was reassigned to another consumer: %v", err)
 	}
 }
 

@@ -36,10 +36,6 @@ type Number struct {
 	f    float64
 }
 
-func (n Number) asU64() (uint64, bool) {
-	return n.u, n.kind == posInt
-}
-
 func (n Number) isInteger() bool { return n.kind != float }
 
 // String formats the number as serde_json writes it: integers in decimal, floats in ryu's shortest form.
@@ -138,10 +134,9 @@ func decodeJSON(data []byte) (Value, error) {
 	return fromAny(raw)
 }
 
+// fromAny normalizes the private tree produced by json.Decoder.UseNumber.
 func fromAny(raw any) (Value, error) {
 	switch raw := raw.(type) {
-	case nil, bool, string:
-		return raw, nil
 	case json.Number:
 		return parseNumber(string(raw))
 	case []any:
@@ -163,7 +158,7 @@ func fromAny(raw any) (Value, error) {
 		}
 		return Object(raw), nil
 	}
-	return nil, fmt.Errorf("unsupported JSON value %T", raw)
+	return raw, nil // null, booleans and strings already have their final representation.
 }
 
 // encode writes compact JSON with object keys sorted, as serde_json serializes a Value.
@@ -313,8 +308,8 @@ func requiredField(object Object, name string) (Value, error) {
 
 // optionalString reads an Option<String> field: absent and null are both none.
 func optionalString(object Object, name string) (*string, error) {
-	value, ok := object[name]
-	if !ok || value == nil {
+	value := object[name]
+	if value == nil {
 		return nil, nil
 	}
 	text, err := asString(value)

@@ -34,10 +34,7 @@ func (r Reference) Identity() mcpcontract.Identity {
 	return mcpcontract.Identity{Name: r.Name, Version: r.Version}
 }
 func (r Reference) RegistryURL() string {
-	if r.Registry == "" {
-		return RegistryOrigin
-	}
-	return strings.TrimRight(r.Registry, "/")
+	return strings.TrimRight(cmp.Or(r.Registry, RegistryOrigin), "/")
 }
 func (r Reference) Validate() error {
 	if len(r.Name) > 200 || !serverNamePattern.MatchString(r.Name) {
@@ -144,8 +141,6 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 	return &d, nil
 }
 
-var errIdentityMismatch = errors.New("MCP registry returned a different server name or version")
-
 type HTTPError int
 
 func (e HTTPError) Error() string { return fmt.Sprintf("HTTP %d", e) }
@@ -172,7 +167,7 @@ func (c Client) Get(ctx context.Context, name, version string) (*Descriptor, err
 		return nil, err
 	}
 	if d.Name != name || d.Version != version {
-		return nil, errIdentityMismatch
+		return nil, errors.New("MCP registry returned a different server name or version")
 	}
 	return d, nil
 }
