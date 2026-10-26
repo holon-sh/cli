@@ -92,7 +92,7 @@ func Changes(ctx context.Context, expected mcpcontract.Expectation, published *m
 	}
 	result := make([]Change, len(found))
 	for i, change := range found {
-		result[i] = Change{Kind: change.kind, Name: change.name + change.uri, Text: change.text()}
+		result[i] = Change{Kind: change.kind, Name: change.name + change.uri, Text: change.text}
 	}
 	return result, nil
 }

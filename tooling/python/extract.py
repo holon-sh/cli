@@ -6,7 +6,7 @@ import os
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Never
+from typing import Any, Never, cast
 
 IGNORED = frozenset(
     {
@@ -69,10 +69,6 @@ CATALOG = {
 DUPLICATE = "duplicate"
 
 
-class ExtractionError(ValueError):
-    pass
-
-
 class Analyzer:
     def __init__(self, root: Path):
         self.root = root.resolve()
@@ -83,7 +79,7 @@ class Analyzer:
         self.definitions: dict[str, dict[str, Any]] = {}
 
     def fail(self, path: Path, node: ast.AST, message: str) -> Never:
-        raise ExtractionError(
+        raise ValueError(
             f"{path.relative_to(self.root)}:{getattr(node, 'lineno', 1)}:{getattr(node, 'col_offset', 0) + 1}: {message}"
         )
 
@@ -521,11 +517,7 @@ class Analyzer:
             self.fail(path, call, "Computed registration options are unsupported.")
         if call.args:
             options["name"] = call.args[0]
-        return [
-            self.tool(
-                path, function, {str(name): value for name, value in options.items()}
-            )
-        ]
+        return [self.tool(path, function, cast(Mapping[str, ast.AST], options))]
 
     def resource(
         self,

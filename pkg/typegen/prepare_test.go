@@ -36,8 +36,8 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 	return c, fakeExtract(t, results, &calls), &calls
 }
 
-func TestPrepareGeneratesEveryTargetFromExplicitSources(t *testing.T) {
-	c, extract, calls := checkoutConsumer(t, TargetUI, TargetTS, TargetPy)
+func TestPrepareGeneratesNodeAndBrowserSlotsFromExplicitSources(t *testing.T) {
+	c, extract, calls := checkoutConsumer(t, TargetUI, TargetTS)
 	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: extract})
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestPrepareGeneratesEveryTargetFromExplicitSources(t *testing.T) {
 	if metadata.Identity.Name != "example.com/checkout" || metadata.Contract == nil || len(metadata.Requires["orders"].Contract.Tools) != 1 {
 		t.Fatalf("consumer metadata = %+v", metadata)
 	}
-	if got := prepared.Targets("checkout"); !slices.Equal(got, []string{TargetUI, TargetTS, TargetPy}) {
+	if got := prepared.Targets("checkout"); !slices.Equal(got, []string{TargetUI, TargetTS}) {
 		t.Fatalf("targets = %v", got)
 	}
 	stage := t.TempDir()
@@ -63,9 +63,6 @@ func TestPrepareGeneratesEveryTargetFromExplicitSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = prepared.WriteBrowserSlot("checkout", filepath.Join(stage, "holon-ui")); err != nil {
-		t.Fatal(err)
-	}
-	if err = prepared.WritePythonSlot("checkout", stage); err != nil {
 		t.Fatal(err)
 	}
 	node := read(t, stage, "holon-sh/generated/index.js")
@@ -86,9 +83,6 @@ func TestPrepareGeneratesEveryTargetFromExplicitSources(t *testing.T) {
 	}
 	if !strings.Contains(declarations, `export declare class App extends HostApp { readonly tools: Apps["checkout"]["tools"];`) {
 		t.Fatalf("holon-ui index.d.ts lacks the App class:\n%s", declarations)
-	}
-	if module := read(t, stage, "holon/apps/__init__.py"); !strings.Contains(module, "async def lookup(") || !strings.HasPrefix(module, "# "+mcpcontract.Marker+" app=checkout\n") {
-		t.Fatalf("python module:\n%s", module)
 	}
 	var marker slotMetadata
 	if err = readTypeJSON(filepath.Join(stage, "holon-ui/generated/holon-generated.json"), &marker); err != nil || marker.App != "checkout" || marker.Digests["checkout"] == "" || marker.Digests["orders"] == "" {
@@ -214,13 +208,6 @@ func TestGenerateWritesSlotsAndRequiresDeclaredRuntimes(t *testing.T) {
 	err = Generate(t.Context(), []Consumer{py}, Options{Extract: extract})
 	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run uv add holon-sh") {
 		t.Fatalf("undeclared python runtime = %v", err)
-	}
-	put(t, py.Dir, "requirements.txt", "holon-sh\n")
-	if err = Generate(t.Context(), []Consumer{py}, Options{Extract: extract}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(read(t, py.Dir, "holon/apps/__init__.py"), "async def lookup(") {
-		t.Fatal("python slot not written")
 	}
 }
 
@@ -399,7 +386,7 @@ func TestPythonSourcesWithTheRealExtractor(t *testing.T) {
 		t.Fatal(err)
 	}
 	module := read(t, app, "holon/apps/__init__.py")
-	if !strings.Contains(module, "async def read(") || !strings.Contains(module, "orders") {
+	if !strings.Contains(module, "async def read(") || !strings.Contains(module, "orders") || !strings.HasPrefix(module, "# "+mcpcontract.Marker+" app=app\n") {
 		t.Fatalf("module:\n%s", module)
 	}
 	contract, err := Resolve(t.Context(), Source{Path: orders}, Options{})
