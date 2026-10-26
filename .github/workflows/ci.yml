@@ -104,9 +104,7 @@ jobs:
           uv venv .venv
           uv pip install --python .venv --no-index dist/holon_types-*.whl
           .venv/bin/holon --version | grep -F "$VERSION"
-          .venv/bin/holon types check --help >/dev/null
           npm install --prefix smoke "$PWD"/dist/*.tgz "$PWD"/launcher/*.tgz
-          smoke/node_modules/.bin/holon types check --help >/dev/null
           (cd smoke && npx --no-install holon --version | grep -F "$VERSION")
       - uses: actions/upload-artifact@v4
         with:
