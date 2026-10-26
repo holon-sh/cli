@@ -1,1 +1,0 @@
-{"canonical":{"enum":["a","z","é","é"],"properties":{"a\"b":{"type":"string"},"tab\t":{"type":"string"},"é":{"type":"string"}},"required":["a\"b","é"],"type":"object"},"digest":"sha256:494a530e8e194d12ab2f5f2dc83b6371148b23d15784162d2104d6ec74f18946"}

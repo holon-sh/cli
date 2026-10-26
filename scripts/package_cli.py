@@ -1,20 +1,31 @@
 #!/usr/bin/env python3
-"""Build/package one CLI platform for npm, PyPI, and direct download. Never publishes."""
+"""Build a CLI tarball for direct download. Never publishes."""
 
 import argparse
 import gzip
-import json
 import os
-import shutil
+import re
 import struct
 import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
-
-from release_common import TARGETS, Target, python_version, sha256
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+class Target(NamedTuple):
+    goos: str
+    goarch: str
+
+    @property
+    def platform(self) -> str:
+        return f"{self.goos}_{self.goarch}"
+
+
+TARGETS = tuple(Target(os, arch) for os in ("darwin", "linux") for arch in ("amd64", "arm64"))
+VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc|dev)\.[0-9]+)?")
 
 
 def write_tarball(binary: Path, archive: Path) -> None:
@@ -60,66 +71,24 @@ def build_binary(binary: Path, target: Target, version: str) -> None:
     subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
 
 
-def build_wheel(stage: Path, dist: Path, binary: Path, target: Target, version: str) -> None:
-    project = stage / "pypi"
-    shutil.copytree(ROOT / "packaging/pypi", project)
-    shutil.copyfile(ROOT / "LICENSE", project / "LICENSE")
-    # The repository README (the tutorial) is the PyPI long description.
-    shutil.copyfile(ROOT / "README.md", project / "README.md")
-    manifest = project / "pyproject.toml"
-    manifest.write_text(manifest.read_text().replace('version = "0.0.1"', f'version = "{python_version(version)}"'))
-    destination = project / "holon_types/bin/holon"
-    destination.parent.mkdir(parents=True)
-    shutil.copyfile(binary, destination)
-    destination.chmod(0o755)
-    subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(dist), str(project)],
-        env=os.environ | {"HOLON_WHEEL_TAG": f"py3-none-{target.wheel_platform}"},
-        check=True,
-    )
-
-
-def build_npm(stage: Path, dist: Path, binary: Path, target: Target, version: str) -> None:
-    platform = stage / "npm-platform"
-    (platform / "bin").mkdir(parents=True)
-    shutil.copyfile(binary, platform / "bin/holon")
-    (platform / "bin/holon").chmod(0o755)
-    shutil.copyfile(ROOT / "LICENSE", platform / "LICENSE")
-    manifest = {"name": f"holon-types-{target.goos}-{target.npm_arch}", "version": version, "description": "Holon standalone CLI platform binary", "repository": {"type": "git", "url": "git+https://github.com/holon-sh/cli.git"}, "license": "MIT", "os": [target.goos], "cpu": [target.npm_arch], "files": ["bin/holon", "LICENSE"], "exports": {"./bin/holon": "./bin/holon"}, "publishConfig": {"access": "public"}}
-    (platform / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    package = stage / "npm"
-    shutil.copytree(ROOT / "packaging/npm", package)
-    shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
-    manifest = json.loads((package / "package.json").read_text())
-    manifest["version"] = version
-    manifest["optionalDependencies"] = {name: version for name in manifest["optionalDependencies"]}
-    (package / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    for directory in (platform, package):
-        subprocess.run(["npm", "pack", "--ignore-scripts", "--pack-destination", str(dist)], cwd=directory, check=True)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default=os.environ.get("HOLON_VERSION", "0.0.1"))
-    parser.add_argument("--target", choices=[target.platform for target in TARGETS], default=os.environ.get("HOLON_TARGET"), required="HOLON_TARGET" not in os.environ)
+    parser.add_argument("--version", default="0.0.1")
+    parser.add_argument("--target", choices=[target.platform for target in TARGETS], required=True)
     parser.add_argument("--binary", type=Path, help="package an already-built binary")
     parser.add_argument("--out", type=Path, default=ROOT / "dist")
     args = parser.parse_args()
-    python_version(args.version)
-    target = next(target for target in TARGETS if target.platform == args.target)
+    if not VERSION_PATTERN.fullmatch(args.version):
+        raise ValueError("version must be X.Y.Z or X.Y.Z-{alpha,beta,rc,dev}.N")
+    target = Target(*args.target.split("_"))
     dist = args.out.resolve()
     dist.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="holon-package-") as directory:
-        stage = Path(directory)
-        binary = args.binary.resolve() if args.binary else stage / "holon"
+        binary = args.binary.resolve() if args.binary else Path(directory) / "holon"
         if args.binary is None:
             build_binary(binary, target, args.version)
         verify_binary(binary, target)
         write_tarball(binary, dist / f"holon_{args.version}_{target.platform}.tar.gz")
-        build_wheel(stage, dist, binary, target, args.version)
-        build_npm(stage, dist, binary, target, args.version)
-    artifacts = sorted(path for path in dist.iterdir() if path.suffix in (".whl", ".tgz") or path.name.endswith(".tar.gz"))
-    (dist / "SHA256SUMS").write_text("".join(f"{sha256(path)}  {path.name}\n" for path in artifacts))
 
 
 if __name__ == "__main__":

@@ -88,7 +88,7 @@ func TestConsumerValidation(t *testing.T) {
 }
 
 func slotOwner(name string) slotMetadata {
-	return slotMetadata{Marker: mcpcontract.Marker, App: name, Identity: mcpcontract.Identity{Name: "example.com/" + name, Version: "1"}, Digests: map[string]string{"orders": "sha256:one"}}
+	return slotMetadata{Marker: mcpcontract.Marker, App: name, Identity: mcpcontract.Identity{Name: "example.com/" + name, Version: "1"}}
 }
 
 func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
@@ -129,6 +129,11 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	second, _ := os.Stat(filepath.Join(store, "generated/index.js"))
 	if !os.SameFile(first, second) {
 		t.Fatal("unchanged generation replaced the slot")
+	}
+	// Older markers may carry digests; ownership still permits refreshing their slot.
+	put(t, store, "generated/holon-generated.json", `{"marker":"holon-generated-apps-v1","app":"one","digests":{"orders":"sha256:old"}}`)
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
+		t.Fatal(err)
 	}
 	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "other"}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
 		t.Fatalf("shared package was reassigned to another consumer: %v", err)

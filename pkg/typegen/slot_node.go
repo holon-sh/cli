@@ -16,7 +16,6 @@ type slotMetadata struct {
 	Placeholder bool                 `json:"placeholder,omitempty"`
 	App         string               `json:"app,omitempty"`
 	Identity    mcpcontract.Identity `json:"identity,omitempty"`
-	Digests     map[string]string    `json:"digests,omitempty"`
 }
 
 // InstalledRuntime resolves a Node runtime package from root and verifies its generated-slot contract.
