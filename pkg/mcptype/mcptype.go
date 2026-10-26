@@ -84,19 +84,11 @@ func Changes(ctx context.Context, expected mcpcontract.Expectation, published *m
 	if err != nil {
 		return nil, err
 	}
-	found, err := changesRequest(value)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]Change, len(found))
-	for i, change := range found {
-		result[i] = Change{Kind: change.kind, Name: change.name + change.uri, Text: change.text}
-	}
-	return result, nil
+	return changesRequest(value)
 }
 
 // changesRequest answers {"expected": Expectation, "published": Metadata | null}.
-func changesRequest(value Value) ([]change, error) {
+func changesRequest(value Value) ([]Change, error) {
 	object, err := asObject(value)
 	if err != nil {
 		return nil, err
