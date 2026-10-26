@@ -20,14 +20,23 @@ type extraction struct {
 	Diagnostic string                 `json:"diagnostic"`
 	Sources    map[string]string      `json:"sources"`
 }
+
+// typeLanguage is how one language's tooling runs: the extractor and checker commands, relative to
+// the language's tooling directory, and the host interpreters that can run them.
 type typeLanguage struct {
-	runner          string
-	programs, probe []string
+	extractor, checker []string
+	programs, probe    []string
 }
 
 var typeLanguages = map[string]typeLanguage{
-	"typescript": {"runner.mjs", []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
-	"python":     {"runner.py", []string{"python3.15", "python3.14", "python3.13", "python3.12", "python3.11", "python3"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
+	"typescript": {[]string{"runner.mjs", "extract"}, []string{"runner.mjs", "check"}, []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
+	"python":     {[]string{"extract.py"}, []string{"runner.py", "check"}, []string{"python3.15", "python3.14", "python3.13", "python3.12", "python3.11", "python3"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
+}
+
+// command runs step, one of the language's tooling commands, unpacked under tooling, with args.
+func (l typeLanguage) command(ctx context.Context, program, tooling, language string, step []string, args ...string) *exec.Cmd {
+	arguments := append([]string{filepath.Join(tooling, language, step[0])}, step[1:]...)
+	return exec.CommandContext(ctx, program, append(arguments, args...)...)
 }
 
 func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
@@ -71,7 +80,7 @@ func extractTypes(ctx context.Context, root string, batches map[string][]extract
 			if err != nil {
 				return nil, err
 			}
-			command := exec.CommandContext(ctx, program, filepath.Join(tooling, language, l.runner), "extract", config, output)
+			command := l.command(ctx, program, tooling, language, l.extractor, config, output)
 			command.Env = append(command.Environ(), o.Env...)
 			command.Stdout, command.Stderr = o.Stderr, o.Stderr
 			if err = command.Run(); err != nil {

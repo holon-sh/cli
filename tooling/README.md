@@ -10,8 +10,10 @@ directory holds their sources; the public SDKs are runtime-only.
   `verify` through the embedded runner. `build.mjs` bundles it with esbuild,
   adds the TypeScript standard declarations under `lib/`, and writes
   `pkg/tooling/cli-tooling-ts-<version>.zip`.
-- `python/`: `extract.py` and `runner.py` are the same tools for Python
-  applications; `build.py` writes `pkg/tooling/cli-tooling-py-<version>.zip`.
+- `python/`: `extract.py` is the same extractor for Python applications and
+  runs on any Python 3.11+ without site-packages; `runner.py` is the `check`
+  and `verify` runner, which imports mypy from the application's environment.
+  `build.py` writes `pkg/tooling/cli-tooling-py-<version>.zip`.
 
 `scripts/build-tooling` rebuilds both archives and `pkg/tooling/SHA256SUMS`.
 The archives are committed; CI rebuilds them and fails when they differ.

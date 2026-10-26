@@ -1,4 +1,4 @@
-"""The bundled runner extracts and verifies without the SDK or site-packages."""
+"""The bundled extractor needs no site-packages; the runner detects changed sources."""
 
 import hashlib
 import json
@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_bundle_extracts_without_runtime_and_detects_changed_sources(tmp_path):
+def test_bundle_extracts_without_site_packages_and_detects_changed_sources(tmp_path):
     archive = Path(
         subprocess.check_output(
             [sys.executable, "-I", str(ROOT / "build.py")], text=True
@@ -40,8 +40,9 @@ def read(id: str) -> str:
             {"apps": [{"name": "orders", "path": str(app), "entry": "server.py"}]}
         )
     )
-    runner = [sys.executable, "-S", str(tmp_path / "tooling/runner.py")]
-    subprocess.run([*runner, "extract", str(config), str(output)], check=True)
+    extractor = [sys.executable, "-S", str(tmp_path / "tooling/extract.py")]
+    subprocess.run([*extractor, str(config), str(output)], check=True)
+    runner = [sys.executable, str(tmp_path / "tooling/runner.py")]
     result = json.loads(output.read_text())["orders"]
     assert [tool["name"] for tool in result["tools"]] == ["read"]
     assert result["sources"] == {

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 import os
+import sys
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -733,3 +735,12 @@ GENERICS: dict[object, Callable[[Analyzer, Path, list[ast.expr]], dict[str, Any]
     "builtins:dict": Analyzer.mapping,
     "typing:Dict": Analyzer.mapping,
 }
+
+
+if __name__ == "__main__":
+    # extract.py CONFIG OUTPUT: contracts for every app in the config, as JSON.
+    config, output = sys.argv[1:]
+    apps = json.loads(Path(config).read_text())["apps"]
+    Path(output).write_text(
+        json.dumps({app["name"]: extract(app["path"], app["entry"]) for app in apps})
+    )
