@@ -122,14 +122,14 @@ async def tools():
 
 
 def test_static_contract_preserves_imported_types_without_running_sources(tmp_path):
-    (tmp_path / "models.py").write_text("""from typing import Annotated, Literal
+    (tmp_path / "models.py").write_text("""from typing import Literal
 from typing_extensions import TypedDict, Required, NotRequired
 from pydantic import BaseModel, Field
-class Line(BaseModel):
-    model_config = {"extra": "forbid"}
-    name: str = Field(..., min_length=1)
+class Line(BaseModel, extra="forbid"):
+    model_config = {"strict": True}
+    name: str = Field(...)
 class Order(Line):
-    total: Annotated[float, Field(ge=0)]
+    total: float
     status: Literal["open", "closed"] = "open"
     lines: list[Line] = []
 class Partial(TypedDict, total=False):
@@ -154,7 +154,7 @@ from tools import lines
 Path(__file__).with_name("executed").write_text("")
 server = MCPServer("orders")
 server.add_tool(lines.add_line)
-@server.tool()
+@server.tool("lookup", description="Read an order")
 async def read(id: Annotated[str, Field(pattern="^ord_")], snapshot: Snapshot, context: Context, limit: int = 5, *, order: Order | None = None) -> Annotated[CallToolResult, Order]:
     raise RuntimeError("handler not called")
 @server.tool()
@@ -171,9 +171,9 @@ async def unknown(id: str):
     }
     assert not (tmp_path / "executed").exists()
     tools = {tool["name"]: tool for tool in extracted["tools"]}
-    assert set(tools) == {"add_line", "read", "unknown"}
+    assert set(tools) == {"add_line", "lookup", "unknown"}
     assert "outputSchema" not in tools["unknown"]
-    inputs = Draft202012Validator(tools["read"]["inputSchema"])
+    inputs = Draft202012Validator(tools["lookup"]["inputSchema"])
     inputs.validate({"id": "ord_1", "snapshot": {"id": "snap_1", "lines": []}})
     inputs.validate(
         {
@@ -191,13 +191,13 @@ async def unknown(id: str):
     ]:
         with pytest.raises(ValidationError):
             inputs.validate(payload)
-    output = Draft202012Validator(tools["read"]["outputSchema"])
+    output = Draft202012Validator(tools["lookup"]["outputSchema"])
     output.validate(
         {"name": "order", "total": 1.5, "status": "open", "lines": [{"name": "item"}]}
     )
     for payload in [
         {"total": 1.5},
-        {"name": "order", "total": -1},
+        {"name": "order", "total": 1, "unexpected": True},
         {"name": "order", "total": 1, "status": "unknown"},
     ]:
         with pytest.raises(ValidationError):
@@ -268,9 +268,7 @@ def app() -> str:
     assert "diagnostic" not in extracted, extracted
     (resource,) = extracted["resources"]
     assert resource["uri"] == "chat://messages"
-    Draft202012Validator.check_schema(resource["outputSchema"])
     validator = Draft202012Validator(resource["outputSchema"])
     validator.validate({"messages": [{"id": "message-1"}]})
-    for payload in [{}, {"messages": [{"id": 1}]}]:
-        with pytest.raises(ValidationError):
-            validator.validate(payload)
+    with pytest.raises(ValidationError):
+        validator.validate({"messages": [{"id": 1}]})

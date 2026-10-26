@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Never, cast
 
 import typing_extensions as typing
+from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import InvalidSignature
 from mcp.server.mcpserver.tools import Tool as SDKTool
@@ -76,15 +77,6 @@ TYPES: dict[object, Any] = {
             "TypedDict",
         )
     },
-}
-OPTIONS = {
-    "name",
-    "title",
-    "description",
-    "annotations",
-    "icons",
-    "meta",
-    "structured_output",
 }
 DUPLICATE = "duplicate"
 
@@ -333,10 +325,7 @@ class Analyzer:
                         if member.value is not None:
                             namespace[name] = self.default(path, member.value)
                     case ast.Assign(targets=[ast.Name(id="model_config")]):
-                        config = self.literal(path, member.value)
-                        if set(config) - {"extra"}:
-                            self.fail(path, member, "Unsupported model configuration.")
-                        namespace["model_config"] = config
+                        namespace["model_config"] = self.literal(path, member.value)
                     case ast.Pass() | ast.Expr(value=ast.Constant()):
                         pass
                     case _:
@@ -348,8 +337,6 @@ class Analyzer:
             keywords = {
                 item.arg: self.literal(path, item.value) for item in value.keywords
             }
-            if set(keywords) - {"total"}:
-                self.fail(path, value, "Unsupported model configuration.")
             # types.new_class invokes only the trusted BaseModel/TypedDict machinery
             # with this inert namespace, never the original class body or decorators.
             model = types.new_class(
@@ -458,14 +445,14 @@ class Analyzer:
         function: ast.FunctionDef | ast.AsyncFunctionDef,
         call: ast.Call,
     ) -> list[dict[str, Any]]:
-        options: dict[str | None, ast.AST] = {
-            item.arg: item.value for item in call.keywords
-        }
-        if None in options or len(call.args) > 1 or set(options) - OPTIONS:
-            self.fail(path, call, "Computed registration options are unsupported.")
-        if call.args:
-            options["name"] = call.args[0]
-        return [self.tool(path, function, cast(Mapping[str, ast.AST], options))]
+        signature = inspect.signature(MCPServer.tool)
+        options = signature.bind(
+            None,
+            *call.args,
+            **{cast(str, item.arg): item.value for item in call.keywords},
+        ).arguments
+        del options["self"]
+        return [self.tool(path, function, options)]
 
     def resource(
         self,
@@ -473,11 +460,12 @@ class Analyzer:
         function: ast.FunctionDef | ast.AsyncFunctionDef,
         call: ast.Call,
     ) -> list[dict[str, Any]]:
-        options: dict[str | None, ast.AST] = {
-            item.arg: item.value for item in call.keywords
-        }
-        if call.args:
-            options["uri"] = call.args[0]
+        signature = inspect.signature(MCPServer.resource)
+        options = signature.bind(
+            None,
+            *call.args,
+            **{cast(str, item.arg): item.value for item in call.keywords},
+        ).arguments
         mime_type = self.constant(path, options.get("mime_type", ast.Constant(None)))
         if mime_type != "application/json" or function.returns is None:
             return []
