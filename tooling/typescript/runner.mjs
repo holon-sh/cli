@@ -16,13 +16,12 @@ if (mode === "analyze") {
   const config = JSON.parse(readFileSync(0, "utf8"));
   const root = resolve(config.root);
   const require = createRequire(join(root, "package.json"));
-  let compiler = ts, lib = join(assets, "lib");
-  try { compiler = require("typescript"); lib = dirname(require.resolve("typescript")); } catch {}
+  let compiler = ts, lib = join(assets, "lib"), installed;
+  try { installed = require.resolve("typescript"); } catch {}
+  if (installed) { compiler = require(installed); lib = dirname(installed); }
   const tsconfig = existsSync(join(root, "tsconfig.json")) ? join(root, "tsconfig.json") : undefined;
   const sources = config.entry ? [join(root, config.entry)] : compiler.sys.readDirectory(root, [".ts", ".mts", ".js", ".mjs"], ["node_modules", ".holon", ".holon-types"]);
-  let options = { noEmit: true, strict: true, skipLibCheck: true, allowJs: true, target: compiler.ScriptTarget.ES2023, module: compiler.ModuleKind.NodeNext, moduleResolution: compiler.ModuleResolutionKind.NodeNext, allowImportingTsExtensions: true };
-  let files = sources;
-  let configurationErrors = [];
+  let { options, fileNames: files, errors: configurationErrors } = compiler.parseCommandLine(["--noEmit", "--strict", "--skipLibCheck", "--allowJs", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--allowImportingTsExtensions", ...sources]);
   if (tsconfig) {
     const parsed = compiler.getParsedCommandLineOfConfigFile(tsconfig, { noEmit: true }, { ...compiler.sys, onUnRecoverableConfigFileDiagnostic: d => { throw new Error(compiler.flattenDiagnosticMessageText(d.messageText, "\n")); } });
     options = parsed.options;

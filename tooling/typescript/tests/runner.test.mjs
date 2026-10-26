@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, realpathSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -52,4 +52,11 @@ test("check uses bundled declarations or the application's compiler", t => {
   const configuredError = run("check", config);
   assert.notEqual(configuredError.status, 0);
   assert.match(configuredError.stdout + configuredError.stderr, /TS2322/);
+  unlinkSync(join(app, "node_modules/typescript"));
+  mkdirSync(join(app, "node_modules/typescript"));
+  writeFileSync(join(app, "node_modules/typescript/package.json"), '{"main":"index.cjs"}');
+  writeFileSync(join(app, "node_modules/typescript/index.cjs"), 'throw new Error("broken application compiler");');
+  const broken = run("check", config);
+  assert.notEqual(broken.status, 0);
+  assert.match(broken.stderr, /broken application compiler/);
 });
