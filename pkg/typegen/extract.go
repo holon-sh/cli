@@ -19,7 +19,6 @@ type extraction struct {
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`
 	Diagnostic string                 `json:"diagnostic"`
-	UsesApps   bool                   `json:"usesApps"`
 	Sources    map[string]string      `json:"sources"`
 }
 type typeLanguage struct {
@@ -44,50 +43,20 @@ func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
 	}
 	return "", fmt.Errorf("install a supported interpreter (%s)", strings.Join(l.programs, ", "))
 }
-func analysisEntry(root string) (string, string, error) {
-	entry, err := sourceEntry(root)
-	if err != nil {
-		return "", "", err
-	}
-	if strings.HasSuffix(entry, ".py") {
-		return entry, "python", nil
-	}
-	if isFile(filepath.Join(root, "package.json")) {
-		// Browser-only apps also receive a slot for their own contract and dependencies.
-		var pkg struct {
-			Main    string            `json:"main"`
-			Scripts map[string]string `json:"scripts"`
-		}
-		if err := readTypeJSON(filepath.Join(root, "package.json"), &pkg); err != nil {
-			return "", "", err
-		}
-		if entry == "" {
-			entry = pkg.Main
-			if start := strings.Fields(pkg.Scripts["start"]); len(start) == 2 && slices.Contains([]string{"node", "tsx", "ts-node", "bun"}, start[0]) {
-				entry = start[1]
-			}
-			if !filepath.IsLocal(entry) || !isFile(filepath.Join(root, entry)) {
-				entry = ""
-			}
-		}
-		return entry, "typescript", nil
-	}
-	return entry, "", nil
+
+// extractionEntry is one snapshot to extract: the runner reads entry under path.
+type extractionEntry struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	Entry string `json:"entry"`
 }
-func extractTypes(ctx context.Context, root string, apps []App, o Options) (map[string]extraction, error) {
+
+// extractTypes runs one extractor batch per language under root and returns the results by name.
+func extractTypes(ctx context.Context, root string, batches map[string][]extractionEntry, o Options) (map[string]extraction, error) {
 	results := map[string]extraction{}
-	for language := range typeLanguages {
-		var entries []map[string]string
-		for _, app := range apps {
-			if p := app.prepared; p != nil && p.language == language {
-				entries = append(entries, map[string]string{"name": app.Name, "path": p.root, "entry": p.entry})
-			}
-		}
-		if len(entries) == 0 {
-			continue
-		}
+	for _, language := range slices.Sorted(maps.Keys(batches)) {
 		var found map[string]extraction
-		if err := runTypeTool(ctx, root, language, "extract", map[string]any{"apps": entries}, &found, o); err != nil {
+		if err := runTypeTool(ctx, root, language, "extract", map[string]any{"apps": batches[language]}, &found, o); err != nil {
 			return nil, err
 		}
 		maps.Copy(results, found)

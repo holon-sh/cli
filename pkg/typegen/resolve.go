@@ -5,15 +5,89 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/holon-sh/cli/pkg/mcptype"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"net/http"
 	"net/url"
-	"oras.land/oras-go/v2/errdef"
-	"oras.land/oras-go/v2/registry/remote/errcode"
+	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcptype"
+	"github.com/holon-sh/cli/pkg/tooling"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// Resolve returns one source's contract document without writing anything: a path source is
+// extracted from its snapshot, the others are fetched as Prepare would fetch them.
+func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.Metadata, error) {
+	o := options.defaults()
+	if err := source.validate(); err != nil {
+		return nil, err
+	}
+	switch source.kind() {
+	case "path":
+		root, err := os.MkdirTemp("", "holon-types-")
+		if err != nil {
+			return nil, err
+		}
+		defer os.RemoveAll(root)
+		if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
+			return nil, err
+		}
+		prepared, err := prepareSource(ctx, root, "source", source.Path, o)
+		if err != nil {
+			return nil, err
+		}
+		if prepared.language == "go" {
+			return nil, fmt.Errorf("%s: Go server contracts are not statically extracted", source.Path)
+		}
+		results, err := extractTypes(ctx, root, map[string][]extractionEntry{prepared.language: {{Name: "source", Path: prepared.root, Entry: prepared.entry}}}, o)
+		if err != nil {
+			return nil, err
+		}
+		return prepared.contract(results["source"])
+	case "registry":
+		return resolveRegistry(ctx, *source.Registry, o)
+	case "endpoint":
+		return liveContract(ctx, source.Endpoint, nil, o.HTTPClient)
+	default:
+		return resolveTypeMetadata(ctx, source.Image, o)
+	}
+}
+
+// resolveRegistry fetches a registry record and its contract: the record's sh.holon.types document,
+// or else the schemas its streamable-http remote advertises. A record offering neither is an error.
+func resolveRegistry(ctx context.Context, ref Reference, o Options) (*mcpcontract.Metadata, error) {
+	d, err := (Client{HTTP: o.HTTPClient, Origin: ref.RegistryURL()}).Get(ctx, ref.Name, ref.Version)
+	if err != nil {
+		return nil, fmt.Errorf("%s@%s: %w", ref.Name, ref.Version, err)
+	}
+	var metadata *mcpcontract.Metadata
+	switch {
+	case d.Types != "":
+		metadata, err = fetchContract(ctx, d.Types, o)
+	default:
+		remote := ""
+		for _, transport := range d.Remotes {
+			if transport.Type == "streamable-http" {
+				remote = transport.URL
+				break
+			}
+		}
+		if remote == "" {
+			return nil, fmt.Errorf("%s@%s publishes neither a sh.holon.types contract nor a streamable-http remote", ref.Name, ref.Version)
+		}
+		identity := d.Identity()
+		metadata, err = liveContract(ctx, remote, &identity, o.HTTPClient)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s@%s: %w", ref.Name, ref.Version, err)
+	}
+	if metadata.Identity != d.Identity() {
+		return nil, fmt.Errorf("%s@%s: its contract document belongs to %s@%s", ref.Name, ref.Version, metadata.Identity.Name, metadata.Identity.Version)
+	}
+	return metadata, nil
+}
 
 func fetchContract(ctx context.Context, location string, o Options) (*mcpcontract.Metadata, error) {
 	if err := validateTypesURL(location); err != nil {
@@ -61,14 +135,11 @@ func fetchContract(ctx context.Context, location string, o Options) (*mcpcontrac
 	return &metadata, nil
 }
 
-// LiveContract initializes an MCP session and retrieves its advertised schemas.
-// Identity must be supplied by the caller because MCP serverInfo is not a registry identity.
-func LiveContract(ctx context.Context, location string, identity mcpcontract.Identity, client *http.Client) (*mcpcontract.Metadata, error) {
+// liveContract initializes an MCP session and retrieves its advertised schemas. With a nil identity
+// the server's own serverInfo names the contract; a registry source supplies its record's identity.
+func liveContract(ctx context.Context, location string, identity *mcpcontract.Identity, client *http.Client) (*mcpcontract.Metadata, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	if err := (Reference{Name: identity.Name, Version: identity.Version}).Validate(); err != nil {
-		return nil, err
 	}
 	u, err := url.Parse(location)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" {
@@ -76,14 +147,16 @@ func LiveContract(ctx context.Context, location string, identity mcpcontract.Ide
 	}
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon-types", Version: "0.0.1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: location, HTTPClient: client}, nil)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, err
-		}
-		// A remote that cannot be initialized (unreachable, or requiring authentication the
-		// CLI does not have) offers no contract; callers fall back to untyped clients.
-		return nil, remoteUnavailable{err}
+		return nil, fmt.Errorf("%s: %w", location, err)
 	}
 	defer session.Close()
+	if identity == nil {
+		info := session.InitializeResult().ServerInfo
+		if info == nil || info.Name == "" {
+			return nil, fmt.Errorf("%s does not report a server name; give the client an alias", location)
+		}
+		identity = &mcpcontract.Identity{Name: info.Name, Version: info.Version}
+	}
 	contract := &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}
 	if session.InitializeResult().Capabilities.Tools != nil {
 		for tool, err := range session.Tools(ctx, nil) {
@@ -119,105 +192,9 @@ func LiveContract(ctx context.Context, location string, identity mcpcontract.Ide
 			contract.Resources = append(contract.Resources, mcpcontract.Resource{URI: resource.URI, Output: output})
 		}
 	}
-	metadata := &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: identity, Contract: contract}
+	metadata := &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: *identity, Contract: contract}
 	if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": metadata}); err != nil {
 		return nil, err
 	}
 	return metadata, nil
-}
-
-func resolveRequired(ctx context.Context, name string, ref Reference, local map[string]*mcpcontract.Metadata, declared map[string]App, o Options) (*mcpcontract.Metadata, string, error) {
-	if app, ok := declared[name]; ok && app.Path != "" {
-		m := local[name]
-		diagnostic := "source contract is not statically extracted; its clients are untyped"
-		if app.prepared != nil && app.prepared.diagnostic != "" {
-			diagnostic = app.prepared.diagnostic
-		}
-		return m, diagnostic, nil
-	}
-	app := declared[name]
-	if app.unavailable != "" {
-		return nil, app.unavailable, nil
-	}
-	if app.Image != "" {
-		metadata, err := resolveTypeMetadata(ctx, app.Image, o)
-		if err != nil {
-			if ctx.Err() == nil && contractUnavailable(err) {
-				return nil, err.Error(), nil
-			}
-			return nil, "", err
-		}
-		return metadata, "provider has no available typed contract; its clients are untyped", nil
-	}
-	descriptor := app.descriptor
-	if descriptor == nil {
-		var err error
-		descriptor, err = (Client{HTTP: o.HTTPClient, Origin: ref.RegistryURL()}).Get(ctx, ref.Name, ref.Version)
-		if err != nil {
-			if ctx.Err() != nil || !contractUnavailable(err) {
-				return nil, "", err
-			}
-			return nil, err.Error(), nil
-		}
-	}
-	if descriptor.Identity() != ref.Identity() {
-		return nil, "", fmt.Errorf("%s requires %s@%s, but %s image contract belongs to %s@%s", name, ref.Name, ref.Version, name, descriptor.Name, descriptor.Version)
-	}
-	metadata, err := resolveDescriptor(ctx, descriptor, o)
-	if err != nil {
-		if ctx.Err() == nil && contractUnavailable(err) {
-			return nil, err.Error(), nil
-		}
-		return nil, "", err
-	}
-	return metadata, "provider has no available typed contract; its clients are untyped", nil
-}
-func resolveDescriptor(ctx context.Context, d *Descriptor, o Options) (*mcpcontract.Metadata, error) {
-	var metadata *mcpcontract.Metadata
-	var err error
-	if d.Types != "" {
-		metadata, err = fetchContract(ctx, d.Types, o)
-	} else {
-		for _, pkg := range d.Packages {
-			if pkg.RegistryType == "oci" {
-				metadata, err = resolveTypeMetadata(ctx, pkg.Identifier, o)
-				break
-			}
-		}
-		if err == nil && metadata == nil {
-			for _, remote := range d.Remotes {
-				if remote.Type == "streamable-http" {
-					metadata, err = LiveContract(ctx, remote.URL, d.Identity(), o.HTTPClient)
-					break
-				}
-			}
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	if metadata != nil && metadata.Identity != d.Identity() {
-		return nil, fmt.Errorf("%s descriptor identity does not match the retained image contract; use the original release identity or a new image tag", d.Name)
-	}
-	return metadata, nil
-}
-
-// remoteUnavailable marks a live fetch whose MCP session could not be initialized.
-type remoteUnavailable struct{ error }
-
-func (e remoteUnavailable) Error() string { return "remote MCP server unavailable: " + e.error.Error() }
-func (e remoteUnavailable) Unwrap() error { return e.error }
-
-func contractUnavailable(err error) bool {
-	if errors.As(err, new(rejectedCredential)) {
-		return false
-	}
-	if errors.As(err, new(remoteUnavailable)) {
-		return true
-	}
-	var status HTTPError
-	var transport *url.Error
-	var registry *errcode.ErrorResponse
-	return errors.As(err, &status) || errors.As(err, &transport) || errors.Is(err, errdef.ErrNotFound) ||
-		errors.As(err, &registry) && (registry.StatusCode == 401 || registry.StatusCode == 403 || registry.StatusCode == 404)
 }

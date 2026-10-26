@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
@@ -15,22 +18,111 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// appDirs returns the application directories: args, or the working directory when there are none.
-func appDirs(args []string) []string {
-	if len(args) == 0 {
-		return []string{"."}
+const sourceUsage = `SOURCE is [ALIAS=]PATH or [ALIAS=]URL: a server entry (server.py, server.ts, server.js, or the
+same under src/) or a directory holding one; an MCP registry server version URL
+(https://registry.modelcontextprotocol.io/v0.1/servers/NAME/versions/VERSION); or a live MCP endpoint.
+ALIAS names the client (apps.ALIAS); it defaults to the server's name.`
+
+var alias = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?=`)
+var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
+
+// parseSource reads one SOURCE argument. Paths are resolved against the working directory.
+func parseSource(arg string) (typegen.Source, error) {
+	var source typegen.Source
+	if match := alias.FindString(arg); match != "" {
+		source.Alias, arg = strings.TrimSuffix(match, "="), arg[len(match):]
 	}
-	return args
+	if arg == "" {
+		return source, errors.New("a source is required after ALIAS=")
+	}
+	if u, err := url.Parse(arg); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
+			name, err := url.PathUnescape(m[1])
+			if err != nil {
+				return source, err
+			}
+			version, err := url.PathUnescape(m[2])
+			if err != nil {
+				return source, err
+			}
+			source.Registry = &typegen.Reference{Name: name, Version: version, Registry: u.Scheme + "://" + u.Host}
+			return source, nil
+		}
+		source.Endpoint = arg
+		return source, nil
+	}
+	path, err := filepath.Abs(arg)
+	if err != nil {
+		return source, err
+	}
+	source.Path = path
+	return source, nil
 }
 
-// printContract prints the app's own contract document, without caller expectations, and writes no files.
-func printContract(cmd *cobra.Command, manifest typegen.Manifest, app string) error {
-	metadata, err := typegen.Contract(cmd.Context(), manifest, app, typegen.Options{Stderr: cmd.ErrOrStderr()})
+// consumer builds the working directory's consumer for one target. For the ui target the one
+// path source inside the working directory is the own server; other targets reject such a source.
+func consumer(target string, args []string) (typegen.Consumer, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return typegen.Consumer{}, err
+	}
+	if dir, err = filepath.EvalSymlinks(dir); err != nil {
+		return typegen.Consumer{}, err
+	}
+	c := typegen.Consumer{Name: filepath.Base(dir), Dir: dir, Targets: []string{target}}
+	for _, arg := range args {
+		source, err := parseSource(arg)
+		if err != nil {
+			return c, fmt.Errorf("%s: %w", arg, err)
+		}
+		if source.Path != "" && insideDir(source.Path, dir) {
+			if target != typegen.TargetUI {
+				return c, fmt.Errorf("%s is this project's own server; a project does not depend on itself (--target ui makes it the App class for a view)", arg)
+			}
+			if c.Server != nil {
+				return c, fmt.Errorf("%s: --target ui takes exactly one own server inside %s", arg, dir)
+			}
+			c.Server = &source
+			continue
+		}
+		c.Sources = append(c.Sources, source)
+	}
+	if target == typegen.TargetUI && c.Server == nil {
+		return c, fmt.Errorf("--target ui needs the own server, a path inside %s (for example ./server.ts)", dir)
+	}
+	if len(args) == 0 {
+		return c, errors.New("at least one SOURCE is required")
+	}
+	return c, nil
+}
+
+func insideDir(path, dir string) bool {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
+	relative, err := filepath.Rel(dir, path)
+	return err == nil && (relative == "." || filepath.IsLocal(relative))
+}
+
+func validTarget(target string) error {
+	switch target {
+	case typegen.TargetTS, typegen.TargetUI, typegen.TargetPy:
+		return nil
+	case "":
+		return errors.New("--target is required: ts, ui or py")
+	}
+	return fmt.Errorf("unknown target %q: expected ts, ui or py", target)
+}
+
+// printContract prints one source's contract document and writes no files.
+func printContract(cmd *cobra.Command, arg string) error {
+	source, err := parseSource(arg)
+	if err != nil {
+		return fmt.Errorf("%s: %w", arg, err)
+	}
+	metadata, err := typegen.Resolve(cmd.Context(), source, typegen.Options{Stderr: cmd.ErrOrStderr()})
 	if err != nil {
 		return err
-	}
-	if metadata == nil || metadata.Contract == nil {
-		return fmt.Errorf("%s has no statically extracted contract", app)
 	}
 	document := struct {
 		Version  int                   `json:"version"`
@@ -45,18 +137,24 @@ func printContract(cmd *cobra.Command, manifest typegen.Manifest, app string) er
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
-	return &cobra.Command{Use: "check [DIR...]", Short: short, Long: "Type-check apps", RunE: func(cmd *cobra.Command, args []string) error {
-		manifest, names, err := typegen.Directories(appDirs(args))
+	var target string
+	check := &cobra.Command{Use: "check --target ts|ui|py SOURCE...", Short: short, Long: "Type-check the current directory against its typed clients, in a temporary copy.\n\n" + sourceUsage, RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validTarget(target); err != nil {
+			return err
+		}
+		c, err := consumer(target, args)
 		if err != nil {
 			return err
 		}
-		return typegen.Check(cmd.Context(), manifest, typegen.Options{Apps: names, NoPublished: true, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
+		return typegen.Check(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
 	}}
+	check.Flags().StringVar(&target, "target", "", "Slot to check: ts (holon-sh), ui (holon-ui) or py (holon/apps)")
+	return check
 }
 
 // NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string) *cobra.Command {
-	root := &cobra.Command{Use: "holon", Short: "Generate and check typed MCP clients for MCP server directories", Version: version + " (standalone types CLI)", SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "holon", Short: "Generate and check typed MCP clients", Version: version + " (standalone types CLI)", SilenceUsage: true, SilenceErrors: true}
 	root.SetVersionTemplate("holon {{.Version}}\n")
 	root.AddCommand(NewTypesCommand(), newCheck("Shortcut for holon types check"))
 	return root
@@ -67,28 +165,36 @@ func NewCommand(version string) *cobra.Command {
 func NewTypesCommand() *cobra.Command {
 	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
 	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	var target string
 	var verbose, contract bool
-	generate := &cobra.Command{Use: "generate [DIR...]", Short: "Generate typed clients for MCP servers", RunE: func(cmd *cobra.Command, args []string) error {
-		if contract && len(args) > 1 {
-			return errors.New("--contract takes at most one DIR")
+	generate := &cobra.Command{Use: "generate --target ts|ui|py SOURCE...", Short: "Generate typed clients for MCP servers into the current directory", Long: "Generate typed clients for MCP servers into the current directory's SDK slot.\n\n" + sourceUsage, RunE: func(cmd *cobra.Command, args []string) error {
+		if contract {
+			if target != "" {
+				return errors.New("--contract prints one source's contract and takes no --target")
+			}
+			if len(args) != 1 {
+				return errors.New("--contract takes exactly one SOURCE")
+			}
+			return printContract(cmd, args[0])
 		}
-		manifest, names, err := typegen.Directories(appDirs(args))
-		if err != nil {
+		if err := validTarget(target); err != nil {
 			return err
 		}
-		if contract {
-			return printContract(cmd, manifest, manifest.Apps[0].Name)
+		c, err := consumer(target, args)
+		if err != nil {
+			return err
 		}
 		progress := io.Discard
 		if verbose {
 			progress = cmd.ErrOrStderr()
 		}
-		return typegen.Generate(cmd.Context(), manifest, typegen.Options{Apps: names, Stdout: progress, Stderr: cmd.ErrOrStderr()})
+		return typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
 	}}
-	generate.Flags().BoolVar(&contract, "contract", false, "Output the app's MCP contract")
+	generate.Flags().StringVar(&target, "target", "", "Slot to write: ts (holon-sh), ui (holon-ui) or py (holon/apps)")
+	generate.Flags().BoolVar(&contract, "contract", false, "Print one source's MCP contract instead of generating")
 	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")
 	types.AddCommand(generate)
-	types.AddCommand(newCheck("Type-check apps"))
+	types.AddCommand(newCheck("Type-check the current directory against its typed clients"))
 
 	// Plumbing for the SDK repositories' test fixtures: compile one generate request
 	// (the JSON form of mcptype.GenerateRequest, from a file or stdin) into a directory.

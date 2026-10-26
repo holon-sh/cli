@@ -1,11 +1,8 @@
 package typegen
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,131 +12,22 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type registryResponse func(*http.Request) (*http.Response, error)
-
-func (response registryResponse) RoundTrip(request *http.Request) (*http.Response, error) {
-	return response(request)
-}
-
-func TestPrepareUsesUntypedClientsOnlyForUnavailableRegistryContracts(t *testing.T) {
-	if _, err := typeLanguages["python"].localProgram(context.Background()); err != nil {
-		t.Skip(err)
-	}
-	for _, test := range []struct {
-		name, body       string
-		status           int
-		transportFailure bool
-		unavailable      bool
-		noRuntime        bool
-	}{
-		{name: "missing registry record", status: http.StatusNotFound, unavailable: true},
-		{name: "unused runtime", status: http.StatusNotFound, unavailable: true, noRuntime: true},
-		{name: "registry transport unavailable", transportFailure: true, unavailable: true},
-		{name: "wrong registry identity", status: http.StatusOK, body: `{"server":{"name":"example.com/wrong","version":"1.0.0","description":"Wrong identity"}}`},
-		{name: "malformed registry descriptor", status: http.StatusOK, body: `{"server":{"name":"example.com/dependency","version":"1.0.0","description":123}}`},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			app := t.TempDir()
-			ref := Reference{Name: "example.com/dependency", Version: "1.0.0", Registry: "https://registry.example"}
-			source := pythonProvider
-			if !test.noRuntime {
-				source = "from holon.apps import apps\n" + source
-			}
-			put(t, app, "server.py", source)
-			put(t, app, "server.json", string(mustJSON(t, map[string]any{
-				"name": "example.com/provider", "version": "1.0.0", "description": "Provider",
-				"_meta": map[string]any{PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]Reference{"dependency": ref}}}},
-			})))
-			client := &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {
-				if test.transportFailure {
-					return nil, errors.New("registry offline")
-				}
-				return &http.Response{StatusCode: test.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(test.body)), Request: request}, nil
-			})}
-			manifest := Manifest{Apps: []App{{Name: "provider", Path: app}, {Name: "dependency", Registry: &RegistrySource{Reference: ref}, Access: json.RawMessage(`{"server":{}}`)}}}
-			var diagnostics bytes.Buffer
-			prepared, err := Prepare(context.Background(), manifest, Options{HTTPClient: client, Stderr: &diagnostics})
-			if !test.unavailable {
-				if prepared != nil {
-					defer prepared.Close()
-				}
-				if err == nil {
-					t.Fatal("invalid registry identity or descriptor became an untyped client")
-				}
-				if test.name == "wrong registry identity" && !errors.Is(err, errIdentityMismatch) {
-					t.Fatalf("identity mismatch was not preserved: %v", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unavailable dependency blocked generation: %v", err)
-			}
-			defer prepared.Close()
-			if strings.Contains(diagnostics.String(), "typed dependency dependency unavailable:") == test.noRuntime {
-				t.Fatalf("unavailable diagnostic does not match runtime usage: %s", &diagnostics)
-			}
-			if len(prepared.Metadata()["provider"].Requires) != 0 {
-				t.Fatal("unavailable dependency was advertised as a typed expectation")
-			}
-			var module string
-			for _, app := range prepared.Manifest.Apps {
-				if app.Name == "provider" {
-					module = app.prepared.packages["python"]["holon/apps/__init__.py"]
-				}
-			}
-			if !strings.Contains(module, "dependency") || !strings.Contains(module, "async def call_tool(self, name: _builtins.str") {
-				t.Fatalf("generated client does not expose untyped tool calls:\n%s", module)
-			}
-		})
-	}
-}
-
-func TestHTTPSContractValidationAndIdentity(t *testing.T) {
-	identity := mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"}
-	metadata := mcpcontract.Metadata{Version: 1, Identity: identity, Contract: &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}}
-	for _, tc := range []struct {
-		name, body string
-		want       string
-	}{
-		{"valid", string(mustJSON(t, metadata)), ""},
-		{"oversized", strings.Repeat(" ", MaxDescriptorBytes+1), "exceeds"},
-		{"invalid-contract", `{"version":1,"identity":{"name":"example.com/orders","version":"1.0.0"},"contract":{"tools":"invalid"}}`, ""},
-		{"identity", `{"version":1,"identity":{"name":"example.com/other","version":"1.0.0"},"contract":{"tools":[]}}`, "identity"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(tc.body))
-			}))
-			defer server.Close()
-			result, err := resolveDescriptor(context.Background(), &Descriptor{Name: identity.Name, Version: identity.Version, Types: server.URL}, Options{HTTPClient: server.Client()})
-			if tc.name == "valid" {
-				if err != nil || result.Identity != identity {
-					t.Fatalf("contract: %+v %v", result, err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatal("accepted invalid contract document")
-			}
-			if tc.want != "" && !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("unexpected error: %v", err)
-			}
-		})
-	}
-	t.Run("redirect downgrade", func(t *testing.T) {
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "http://example.com/contract", http.StatusFound)
-		}))
-		defer server.Close()
-		if _, err := fetchContract(context.Background(), server.URL, Options{HTTPClient: server.Client()}); err == nil || !strings.Contains(err.Error(), "HTTPS") {
-			t.Fatalf("insecure redirect accepted: %v", err)
+// registry serves one record for example.com/orders@1.0.0 whose server document is body.
+func registry(t *testing.T, server string) *httptest.Server {
+	t.Helper()
+	return httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/v0.1/servers/example.com%2Forders/versions/1.0.0" {
+			http.NotFound(w, r)
+			return
 		}
-	})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server":` + server + `}`))
+	}))
 }
 
-func TestLiveContractUsesSuppliedIdentityAndAdvertisedSchemas(t *testing.T) {
-	server := mcp.NewServer(&mcp.Implementation{Name: "unrelated serverInfo name", Version: "99"}, nil)
+func liveServer(t *testing.T, name string) *httptest.Server {
+	t.Helper()
+	server := mcp.NewServer(&mcp.Implementation{Name: name, Version: "99"}, nil)
 	schema := json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`)
 	server.AddTool(&mcp.Tool{Name: "read", InputSchema: schema, OutputSchema: schema}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		t.Error("contract discovery executed a tool")
@@ -151,48 +39,131 @@ func TestLiveContractUsesSuppliedIdentityAndAdvertisedSchemas(t *testing.T) {
 			return &mcp.ReadResourceResult{}, nil
 		})
 	}
-	httpServer := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
-	defer httpServer.Close()
+	return httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+}
+
+func TestRegistrySourcesUseTheContractDocumentThenTheRemote(t *testing.T) {
 	identity := mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"}
-	result, err := LiveContract(context.Background(), httpServer.URL, identity, httpServer.Client())
+	document := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(mustJSON(t, mcpcontract.Metadata{Version: 1, Identity: identity, Contract: &mcpcontract.Contract{Tools: []mcpcontract.Tool{lookupTool}}}))
+	}))
+	defer document.Close()
+	live := liveServer(t, "orders-live")
+	defer live.Close()
+	record := func(extra string) string {
+		return `{"name":"example.com/orders","version":"1.0.0","description":"Orders"` + extra + `}`
+	}
+	for _, test := range []struct{ name, server, tool, want string }{
+		{"types document", record(`,"_meta":{"` + PublisherMetadata + `":{"sh.holon":{"types":"` + document.URL + `"}}},"remotes":[{"type":"streamable-http","url":"` + live.URL + `"}]`), "lookup", ""},
+		{"remote", record(`,"remotes":[{"type":"streamable-http","url":"` + live.URL + `"}]`), "read", ""},
+		{"neither", record(`,"packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]`), "", "publishes neither a sh.holon.types contract nor a streamable-http remote"},
+		{"wrong identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "different server name"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := registry(t, test.server)
+			defer server.Close()
+			registryTransport, documentTransport := server.Client().Transport, document.Client().Transport
+			client := &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {
+				switch request.URL.Host {
+				case document.Listener.Addr().String():
+					return documentTransport.RoundTrip(request)
+				case live.Listener.Addr().String():
+					return http.DefaultTransport.RoundTrip(request)
+				}
+				return registryTransport.RoundTrip(request)
+			})}
+			ref := Reference{Name: identity.Name, Version: identity.Version, Registry: server.URL}
+			metadata, err := Resolve(t.Context(), Source{Registry: &ref}, Options{HTTPClient: client})
+			if test.want != "" {
+				if err == nil || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("Resolve = %v, want %q", err, test.want)
+				}
+				return
+			}
+			if err != nil || metadata.Identity != identity || len(metadata.Contract.Tools) != 1 || metadata.Contract.Tools[0].Name != test.tool {
+				t.Fatalf("Resolve = %+v, %v", metadata, err)
+			}
+		})
+	}
+}
+
+func TestContractDocumentValidation(t *testing.T) {
+	identity := mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"}
+	for _, tc := range []struct{ name, body, want string }{
+		{"oversized", strings.Repeat(" ", MaxDescriptorBytes+1), "exceeds"},
+		{"invalid-contract", `{"version":1,"identity":{"name":"example.com/orders","version":"1.0.0"},"contract":{"tools":"invalid"}}`, ""},
+		{"identity", `{"version":1,"identity":{"name":"example.com/other","version":"1.0.0"},"contract":{"tools":[]}}`, "belongs to example.com/other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer document.Close()
+			server := registry(t, `{"name":"example.com/orders","version":"1.0.0","description":"Orders","_meta":{"`+PublisherMetadata+`":{"sh.holon":{"types":"`+document.URL+`"}}}}`)
+			defer server.Close()
+			registryTransport, documentTransport := server.Client().Transport, document.Client().Transport
+			client := &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Host == document.Listener.Addr().String() {
+					return documentTransport.RoundTrip(request)
+				}
+				return registryTransport.RoundTrip(request)
+			})}
+			_, err := resolveRegistry(t.Context(), Reference{Name: identity.Name, Version: identity.Version, Registry: server.URL}, Options{HTTPClient: client})
+			if err == nil {
+				t.Fatal("accepted an invalid contract document")
+			}
+			if tc.want != "" && !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+	t.Run("redirect downgrade", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "http://example.com/contract", http.StatusFound)
+		}))
+		defer server.Close()
+		if _, err := fetchContract(t.Context(), server.URL, Options{HTTPClient: server.Client()}); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+			t.Fatalf("insecure redirect accepted: %v", err)
+		}
+	})
+}
+
+func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
+	live := liveServer(t, "Orders Live")
+	defer live.Close()
+	metadata, err := Resolve(t.Context(), Source{Endpoint: live.URL}, Options{HTTPClient: live.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Identity != identity || len(result.Contract.Tools) != 1 || result.Contract.Tools[0].Name != "read" {
-		t.Fatalf("unexpected live contract: %+v", result)
+	if metadata.Identity != (mcpcontract.Identity{Name: "Orders Live", Version: "99"}) || len(metadata.Contract.Tools) != 1 {
+		t.Fatalf("live contract = %+v", metadata)
 	}
 	outputs := map[string]string{}
-	for _, resource := range result.Contract.Resources {
+	for _, resource := range metadata.Contract.Resources {
 		outputs[resource.URI] = string(resource.Output)
 	}
 	if outputs["orders://typed"] != `{"type":"string"}` || outputs["orders://untyped"] != `{}` {
 		t.Fatalf("resource schemas: %v", outputs)
 	}
-}
+	// As a consumer source the alias derives from that name.
+	c := Consumer{Name: "app", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Endpoint: live.URL}}}
+	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: live.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	if _, ok := prepared.Metadata()["app"].Requires["orders-live"]; !ok {
+		t.Fatalf("alias not derived from serverInfo: %+v", prepared.Metadata()["app"].Requires)
+	}
 
-func TestLiveContractAuthProtectedRemoteIsUnavailableNotFatal(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	unauthorized := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="example"`)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	}))
-	defer server.Close()
-	identity := mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"}
-	_, err := LiveContract(context.Background(), server.URL, identity, server.Client())
-	if err == nil {
-		t.Fatal("expected the live fetch to fail")
-	}
-	if !contractUnavailable(err) {
-		t.Fatalf("auth-protected remote must be classified as unavailable, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "remote MCP server unavailable") {
-		t.Fatalf("unexpected error text: %v", err)
-	}
-	descriptor := &Descriptor{Name: identity.Name, Version: identity.Version, Remotes: []Transport{{Type: "streamable-http", URL: server.URL}}}
-	metadata, diagnostic, err := resolveRequired(context.Background(), "orders", Reference{Name: identity.Name, Version: identity.Version}, nil, map[string]App{"orders": {Name: "orders", descriptor: descriptor}}, Options{HTTPClient: server.Client()})
-	if err != nil {
-		t.Fatalf("resolution must not fail on an auth-protected remote: %v", err)
-	}
-	if metadata != nil || !strings.Contains(diagnostic, "unavailable") {
-		t.Fatalf("expected an untyped client with a diagnostic, got metadata=%v diagnostic=%q", metadata, diagnostic)
+	defer unauthorized.Close()
+	if _, err := Resolve(t.Context(), Source{Endpoint: unauthorized.URL}, Options{HTTPClient: unauthorized.Client()}); err == nil || !strings.Contains(err.Error(), unauthorized.URL) {
+		t.Fatalf("auth-protected endpoint = %v", err)
 	}
 }

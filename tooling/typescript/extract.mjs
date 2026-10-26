@@ -74,26 +74,10 @@ export function extract(root, entry) {
       if (!resource.outputSchema || typeof resource.outputSchema !== "object" || Array.isArray(resource.outputSchema)) analyzer.fail(module.file, `Invalid contents schema for ${resource.uri}.`);
       try { validator(resource.outputSchema); } catch (error) { analyzer.fail(module.file, `Unsupported JSON Schema in ${resource.uri}: ${error.message}`); }
     }
-    return { tools: tools.sort((a, b) => a.name.localeCompare(b.name)), resources, usesApps: analyzer.usesApps, sources: analyzer.sources };
+    return { tools: tools.sort((a, b) => a.name.localeCompare(b.name)), resources, sources: analyzer.sources };
   } catch (error) {
-    return { diagnostic: error.message, usesApps: analyzer.usesApps };
+    return { diagnostic: error.message };
   }
-}
-
-export function clientUsage(paths) {
-  const references = new Set(), imports = new Set();
-  for (const path of paths) {
-    const source = readFileSync(path, "utf8");
-    const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
-    for (const imported of ts.preProcessFile(source, true, true).importedFiles) imports.add(imported.fileName);
-    function visit(node) {
-      if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "apps") references.add(node.name.text);
-      if (ts.isElementAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "apps" && ts.isStringLiteralLike(node.argumentExpression)) references.add(node.argumentExpression.text);
-      ts.forEachChild(node, visit);
-    }
-    visit(file);
-  }
-  return { references: [...references], imports: [...imports], usesApps: references.size > 0 || [...imports].some(specifier => ["holon-sh", "holon-ui", "@holon-sh/apps"].some(pkg => specifier === pkg || specifier.startsWith(pkg + "/"))) };
 }
 
 class Analyzer {
@@ -105,7 +89,6 @@ class Analyzer {
     this.calls = new Set();
     this.analyzedFunctions = new Set();
     this.blocks = [];
-    this.usesApps = clientUsage(ts.sys.readDirectory(this.root, [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"], ["node_modules", ".git", ".holon", ".holon-types"])).usesApps;
     this.steps = 0;
   }
   fail(node, message) {

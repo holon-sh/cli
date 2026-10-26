@@ -1,0 +1,260 @@
+// Package typegen turns explicit MCP server sources into typed client slots.
+//
+// A Consumer is a project directory that receives clients for the servers it names as Sources.
+// Nothing is discovered: every dependency, where its schema comes from, and which SDK slot
+// receives it is stated by the caller, and whatever cannot be resolved from that is an error.
+package typegen
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+const dockerignoreFile = ".dockerignore"
+
+// appName constrains aliases and target names: a DNS label usable as apps.<alias>.
+var appName = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
+
+// Targets name the SDK slot a consumer receives clients in.
+const (
+	TargetTS = "ts" // node_modules/holon-sh/generated, resolved upward from the consumer
+	TargetUI = "ui" // node_modules/holon-ui/generated; the consumer's own server becomes App
+	TargetPy = "py" // holon/apps/__init__.py in the consumer
+	TargetGo = "go" // holon/ Go package in the consumer; needs Options.GoModule
+)
+
+var targets = []string{TargetTS, TargetUI, TargetPy, TargetGo}
+
+// slotPackages are the installed packages that own a Node slot, by target.
+var slotPackages = map[string]string{TargetTS: "holon-sh", TargetUI: "holon-ui"}
+
+// Source is one MCP server whose contract becomes a client. Exactly one of Path, Registry,
+// Endpoint or Image is set.
+type Source struct {
+	// Alias names the client (apps.<alias>). Empty derives it: the last segment of the server's
+	// name (example.com/orders → orders), or the live server's serverInfo name for an Endpoint.
+	Alias string
+	// Path is a server entry file (server.py, server.ts, server.js, or the same under src/) or a
+	// directory containing exactly one. Its contract is extracted from source; server.json beside
+	// the entry supplies the identity.
+	Path string
+	// Registry is an MCP registry server version. The record's sh.holon.types document is the
+	// contract; without one, its streamable-http remote is asked; without either it is an error.
+	Registry *Reference
+	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract.
+	Endpoint string
+	// Image is an OCI image carrying a contract artifact (Options.Credential authenticates).
+	Image string
+}
+
+func (s Source) kind() string {
+	switch {
+	case s.Path != "":
+		return "path"
+	case s.Registry != nil:
+		return "registry"
+	case s.Endpoint != "":
+		return "endpoint"
+	case s.Image != "":
+		return "image"
+	}
+	return ""
+}
+
+// key identifies the server independently of its alias, so one server resolves once.
+func (s Source) key() string {
+	switch s.kind() {
+	case "registry":
+		return "registry:" + s.Registry.RegistryURL() + "#" + s.Registry.Name + "@" + s.Registry.Version
+	case "endpoint":
+		return "endpoint:" + s.Endpoint
+	case "image":
+		return "image:" + s.Image
+	}
+	return "path:" + s.Path
+}
+
+func (s Source) String() string {
+	switch s.kind() {
+	case "registry":
+		return s.Registry.Name + "@" + s.Registry.Version
+	case "endpoint":
+		return s.Endpoint
+	case "image":
+		return s.Image
+	}
+	return s.Path
+}
+
+func (s Source) validate() error {
+	set := 0
+	for _, present := range []bool{s.Path != "", s.Registry != nil, s.Endpoint != "", s.Image != ""} {
+		if present {
+			set++
+		}
+	}
+	if set != 1 {
+		return errors.New("a source is exactly one of a path, a registry version, an endpoint or an image")
+	}
+	if s.Alias != "" && (len(s.Alias) > 49 || !appName.MatchString(s.Alias)) {
+		return fmt.Errorf("alias %q must be a DNS label of at most 49 characters", s.Alias)
+	}
+	if s.Registry != nil {
+		return s.Registry.Validate()
+	}
+	return nil
+}
+
+// Consumer is a project directory that receives typed clients.
+type Consumer struct {
+	// Name owns the written slots (holon-generated.json, the Python banner) and labels output.
+	Name string
+	// Dir is the absolute project directory.
+	Dir string
+	// Server is the consumer's own MCP server, a path source inside Dir. Required for the ui
+	// target, where it becomes the App class; otherwise it only supplies the consumer's identity,
+	// contract (Metadata) and check configuration.
+	Server *Source
+	// Targets are the slots to write, from TargetTS, TargetUI, TargetPy and TargetGo.
+	Targets []string
+	// Sources are the servers that become apps.<alias> clients.
+	Sources []Source
+}
+
+func (c Consumer) validate() error {
+	if c.Name == "" {
+		return errors.New("consumer name is required")
+	}
+	if !filepath.IsAbs(c.Dir) {
+		return fmt.Errorf("%s: directory must be absolute", c.Name)
+	}
+	if info, err := os.Stat(c.Dir); err != nil || !info.IsDir() {
+		return fmt.Errorf("%s: %s is not a directory", c.Name, c.Dir)
+	}
+	if len(c.Targets) == 0 {
+		return fmt.Errorf("%s: at least one target is required", c.Name)
+	}
+	for i, target := range c.Targets {
+		if !slices.Contains(targets, target) {
+			return fmt.Errorf("%s: unknown target %q (expected one of %s)", c.Name, target, strings.Join(targets, ", "))
+		}
+		if slices.Contains(c.Targets[:i], target) {
+			return fmt.Errorf("%s: target %s listed twice", c.Name, target)
+		}
+	}
+	if c.Server != nil {
+		if err := c.Server.validate(); err != nil {
+			return fmt.Errorf("%s: %w", c.Name, err)
+		}
+		if c.Server.Path == "" {
+			return fmt.Errorf("%s: the own server must be a path source", c.Name)
+		}
+	}
+	if slices.Contains(c.Targets, TargetUI) && c.Server == nil {
+		return fmt.Errorf("%s: the ui target needs the consumer's own server (a path source inside %s) to become App", c.Name, c.Dir)
+	}
+	for _, source := range c.Sources {
+		if err := source.validate(); err != nil {
+			return fmt.Errorf("%s: %s: %w", c.Name, source, err)
+		}
+	}
+	return nil
+}
+
+// serverEntry resolves a path source: path is an entry file, or a directory holding exactly one of
+// server.py, src/server.py, server.ts, src/server.ts, server.js, src/server.js (and server.go).
+// It returns the application root (the directory above src/), the entry relative to it, and its language.
+func serverEntry(path string) (root, entry, language string, err error) {
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return "", "", "", err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", "", "", err
+	}
+	if info.IsDir() {
+		root = path
+		if entry, err = sourceEntry(root); err != nil {
+			return "", "", "", fmt.Errorf("%s: %w", path, err)
+		}
+		if entry == "" {
+			return "", "", "", fmt.Errorf("%s has no server entry: expected one of %s", path, strings.Join(entryFiles, ", "))
+		}
+	} else {
+		if err = regularNoSymlink(path, "server entry"); err != nil {
+			return "", "", "", err
+		}
+		root = filepath.Dir(path)
+		if filepath.Base(root) == "src" {
+			root = filepath.Dir(root)
+		}
+		if entry, err = filepath.Rel(root, path); err != nil {
+			return "", "", "", err
+		}
+		if !slices.Contains(entryFiles, filepath.ToSlash(entry)) {
+			return "", "", "", fmt.Errorf("%s is not a server entry: expected one of %s", path, strings.Join(entryFiles, ", "))
+		}
+	}
+	switch filepath.Ext(entry) {
+	case ".py":
+		language = "python"
+	case ".ts", ".js":
+		language = "typescript"
+	case ".go":
+		language = "go"
+	}
+	return root, filepath.ToSlash(entry), language, nil
+}
+
+// serverKey is the client name derived from a server name: its last segment, lower-cased, with
+// runs of other characters as hyphens, trimmed to a 49-character label.
+func serverKey(serverName string) string {
+	key := serverName[strings.LastIndex(serverName, "/")+1:]
+	key = strings.Trim(regexp.MustCompile(`[^a-z0-9-]+`).ReplaceAllString(strings.ToLower(key), "-"), "-")
+	if len(key) > 49 {
+		key = strings.TrimRight(key[:49], "-")
+	}
+	return key
+}
+
+func decodeStrict(data []byte, out any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(out); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return errors.New("expected a single JSON document")
+	}
+	return nil
+}
+func regularNoSymlink(path, kind string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s must be a regular file: %s", kind, path)
+	}
+	return nil
+}
+func readTypeJSON(path string, out any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
+}
+func pathInsideContext(path, root string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && (relative == "." || filepath.IsLocal(relative))
+}

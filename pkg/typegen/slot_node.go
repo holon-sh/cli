@@ -10,10 +10,6 @@ import (
 	"strings"
 )
 
-// Client kinds a TypeScript app can receive, by the installed package that owns the slot:
-// typescript is the Node runtime holon-sh, browser is the browser runtime holon-ui.
-var slotPackages = map[string]string{"typescript": "holon-sh", "browser": "holon-ui"}
-
 type slotMetadata struct {
 	Marker      string               `json:"marker"`
 	Placeholder bool                 `json:"placeholder,omitempty"`
