@@ -72,7 +72,6 @@ func TestConsumerValidation(t *testing.T) {
 		{"repeated target", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS, TargetTS}}, "listed twice"},
 		{"server by endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Server: &Source{Endpoint: "https://x.example/mcp"}}, "must be a path source"},
 		{"contract and endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata()), Endpoint: "https://x.example/mcp"}}}, "exactly one of"},
-		{"image and contract", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Image: "images.example/orders:1.0.0", Document: document(t, ordersMetadata())}}}, "exactly one of"},
 		{"two kinds", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Path: dir, Endpoint: "https://x.example/mcp"}}}, "exactly one of"},
 		{"bad alias", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Alias: "Bad_Alias", Registry: ref}}}, "must be a DNS label"},
 		{"bad version", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Registry: &Reference{Name: "example.com/orders", Version: "latest"}}}}, "exact"},
@@ -103,7 +102,7 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	if err := os.Symlink(store, filepath.Join(app, "node_modules", pkg)); err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := InstalledRuntime(app, pkg)
+	resolved, err := InstalledRuntime(app)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,18 +111,18 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 		t.Fatalf("slot = %s, want %s", resolved, real)
 	}
 	put(t, store, "generated/index.js", "user content")
-	if err := writeNodeSlot(resolved, pkg, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err == nil {
+	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err == nil {
 		t.Fatal("overwrote foreign slot")
 	}
 	if got := read(t, store, "generated/index.js"); got != "user content" {
 		t.Fatalf("foreign contents changed: %s", got)
 	}
 	put(t, store, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})))
-	if err := writeNodeSlot(resolved, pkg, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
+	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := os.Stat(filepath.Join(store, "generated/index.js"))
-	if err := writeNodeSlot(resolved, pkg, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
+	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := os.Stat(filepath.Join(store, "generated/index.js"))
@@ -132,10 +131,10 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	}
 	// Older markers may carry digests; ownership still permits refreshing their slot.
 	put(t, store, "generated/holon-generated.json", `{"marker":"holon-generated-apps-v1","app":"one","digests":{"orders":"sha256:old"}}`)
-	if err := writeNodeSlot(resolved, pkg, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
+	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeNodeSlot(resolved, pkg, map[string][]byte{"index.js": []byte("other")}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
+	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("other")}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
 		t.Fatalf("shared package was reassigned to another consumer: %v", err)
 	}
 }

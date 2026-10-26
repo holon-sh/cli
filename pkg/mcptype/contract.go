@@ -10,188 +10,188 @@ import (
 
 // The v1 contract document. Decoding a value validates it; there is no separate validate step.
 
-// Identity names a published app.
-type Identity struct {
+// contractIdentity names a published app.
+type contractIdentity struct {
 	Name, Version string
 }
 
-// Tool is one tool's schemas. Output is nil when the tool declares no outputSchema.
-type Tool struct {
+// contractTool is one tool's schemas. Output is nil when the tool declares no outputSchema.
+type contractTool struct {
 	Input  Object
 	Output Object
 }
 
-// Resource is one resource's contents schema.
-type Resource struct {
+// contractResource is one resource's contents schema.
+type contractResource struct {
 	Output Object
 }
 
-// Contract holds tools keyed by name and resources keyed by URI. The wire format is v1's arrays, written in key order.
-type Contract struct {
-	Tools     map[string]Tool
-	Resources map[string]Resource
+// contract holds tools keyed by name and resources keyed by URI. The wire format is v1's arrays, written in key order.
+type contract struct {
+	Tools     map[string]contractTool
+	Resources map[string]contractResource
 }
 
-// Metadata is the document an image publishes.
-type Metadata struct {
-	Identity Identity
-	Schema   *Contract
+// metadata is the document an image publishes.
+type metadata struct {
+	Identity contractIdentity
+	Schema   *contract
 	Requires map[string]string
 }
 
-func decodeIdentity(value Value) (Identity, error) {
+func decodeIdentity(value Value) (contractIdentity, error) {
 	object, err := asObject(value)
 	if err != nil {
-		return Identity{}, err
+		return contractIdentity{}, err
 	}
-	var identity Identity
+	var identity contractIdentity
 	for name, target := range map[string]*string{"name": &identity.Name, "version": &identity.Version} {
 		raw, err := requiredField(object, name)
 		if err != nil {
-			return Identity{}, err
+			return contractIdentity{}, err
 		}
 		if *target, err = asString(raw); err != nil {
-			return Identity{}, err
+			return contractIdentity{}, err
 		}
 		if *target == "" {
-			return Identity{}, errors.New("identity name and version must be nonempty")
+			return contractIdentity{}, errors.New("identity name and version must be nonempty")
 		}
 	}
 	return identity, nil
 }
 
-func decodeContract(value Value) (Contract, error) {
+func decodeContract(value Value) (contract, error) {
 	object, err := asObject(value)
 	if err != nil {
-		return Contract{}, err
+		return contract{}, err
 	}
 	raw, err := requiredField(object, "tools")
 	if err != nil {
-		return Contract{}, err
+		return contract{}, err
 	}
 	tools, err := asArray(raw)
 	if err != nil {
-		return Contract{}, err
+		return contract{}, err
 	}
-	contract := Contract{Tools: map[string]Tool{}, Resources: map[string]Resource{}}
+	result := contract{Tools: map[string]contractTool{}, Resources: map[string]contractResource{}}
 	for _, item := range tools {
 		entry, err := asObject(item)
 		if err != nil {
-			return Contract{}, err
+			return contract{}, err
 		}
 		raw, err := requiredField(entry, "name")
 		if err != nil {
-			return Contract{}, err
+			return contract{}, err
 		}
 		name, err := asString(raw)
 		if err != nil {
-			return Contract{}, err
+			return contract{}, err
 		}
 		if raw, err = requiredField(entry, "inputSchema"); err != nil {
-			return Contract{}, err
+			return contract{}, err
 		}
-		tool := Tool{}
+		tool := contractTool{}
 		if tool.Input, err = asObject(raw); err != nil {
-			return Contract{}, err
+			return contract{}, err
 		}
 		// "outputSchema": null is rejected rather than read as absent.
 		if raw, ok := entry["outputSchema"]; ok {
 			if tool.Output, err = asObject(raw); err != nil {
-				return Contract{}, err
+				return contract{}, err
 			}
 		}
 		if tool.Input["type"] != "object" {
-			return Contract{}, fmt.Errorf("%s: inputSchema must have type object", name)
+			return contract{}, fmt.Errorf("%s: inputSchema must have type object", name)
 		}
-		if _, exists := contract.Tools[name]; name == "" || exists {
-			return Contract{}, errors.New("tool names must be nonempty and unique")
+		if _, exists := result.Tools[name]; name == "" || exists {
+			return contract{}, errors.New("tool names must be nonempty and unique")
 		}
-		contract.Tools[name] = tool
+		result.Tools[name] = tool
 	}
 	if raw, ok := object["resources"]; ok {
 		resources, err := asArray(raw)
 		if err != nil {
-			return Contract{}, err
+			return contract{}, err
 		}
 		for _, item := range resources {
 			entry, err := asObject(item)
 			if err != nil {
-				return Contract{}, err
+				return contract{}, err
 			}
 			raw, err := requiredField(entry, "uri")
 			if err != nil {
-				return Contract{}, err
+				return contract{}, err
 			}
 			uri, err := asString(raw)
 			if err != nil {
-				return Contract{}, err
+				return contract{}, err
 			}
 			if raw, err = requiredField(entry, "outputSchema"); err != nil {
-				return Contract{}, err
+				return contract{}, err
 			}
-			resource := Resource{}
+			resource := contractResource{}
 			if resource.Output, err = asObject(raw); err != nil {
-				return Contract{}, err
+				return contract{}, err
 			}
-			if _, exists := contract.Resources[uri]; uri == "" || exists {
-				return Contract{}, errors.New("resource URIs must be nonempty and unique")
+			if _, exists := result.Resources[uri]; uri == "" || exists {
+				return contract{}, errors.New("resource URIs must be nonempty and unique")
 			}
-			contract.Resources[uri] = resource
+			result.Resources[uri] = resource
 		}
 	}
-	return contract, nil
+	return result, nil
 }
 
-func decodeMetadata(value Value) (Metadata, error) {
+func decodeMetadata(value Value) (metadata, error) {
 	object, err := asObject(value)
 	if err != nil {
-		return Metadata{}, err
+		return metadata{}, err
 	}
 	for key := range object {
 		if key != "identity" && key != "schema" && key != "requires" {
-			return Metadata{}, fmt.Errorf("unknown metadata field %q", key)
+			return metadata{}, fmt.Errorf("unknown metadata field %q", key)
 		}
 	}
-	metadata := Metadata{Requires: map[string]string{}}
+	result := metadata{Requires: map[string]string{}}
 	raw, err := requiredField(object, "identity")
 	if err != nil {
-		return Metadata{}, err
+		return metadata{}, err
 	}
-	if metadata.Identity, err = decodeIdentity(raw); err != nil {
-		return Metadata{}, err
+	if result.Identity, err = decodeIdentity(raw); err != nil {
+		return metadata{}, err
 	}
 	if raw, ok := object["schema"]; ok {
 		contract, err := decodeContract(raw)
 		if err != nil {
-			return Metadata{}, err
+			return metadata{}, err
 		}
-		metadata.Schema = &contract
+		result.Schema = &contract
 	}
 	if raw, ok := object["requires"]; ok {
 		requires, err := asObject(raw)
 		if err != nil {
-			return Metadata{}, err
+			return metadata{}, err
 		}
 		for alias, item := range requires {
 			if alias == "" {
-				return Metadata{}, errors.New("dependency aliases must be nonempty")
+				return metadata{}, errors.New("dependency aliases must be nonempty")
 			}
 			value, err := asString(item)
 			if err != nil {
-				return Metadata{}, err
+				return metadata{}, err
 			}
 			d, err := digest.Parse(value)
 			if err != nil || d.Algorithm() != digest.SHA256 {
-				return Metadata{}, fmt.Errorf("dependency %s requires a SHA-256 digest", alias)
+				return metadata{}, fmt.Errorf("dependency %s requires a SHA-256 digest", alias)
 			}
-			metadata.Requires[alias] = value
+			result.Requires[alias] = value
 		}
 	}
-	return metadata, nil
+	return result, nil
 }
 
 // MarshalJSON writes the contract with tools and resources sorted by name or URI.
-func (c Contract) MarshalJSON() ([]byte, error) {
+func (c contract) MarshalJSON() ([]byte, error) {
 	tools := make([]Value, 0, len(c.Tools))
 	for _, name := range sortedKeys(c.Tools) {
 		tool := c.Tools[name]

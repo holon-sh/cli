@@ -150,20 +150,18 @@ func (e *pythonEmitter) input(value typ, name string) (string, []string) {
 }
 
 // generatePython writes the typing-only module body: shapes, export classes, protocols and _Clients.
-func generatePython(contracts map[string]catalog, untyped []string) string {
+func generatePython(contracts map[string]catalog) string {
 	emitter := &pythonEmitter{names: map[string]bool{"Inputs": true, "Outputs": true, "InputTypes": true, "OutputTypes": true}}
 	var clients []string
 	exportNames := []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"}
 	exports := make([][]string, 4)
 	var fields, indices []string
-	bindings := append(sortedKeys(contracts), untyped...)
-	slices.Sort(bindings)
-	for _, binding := range bindings {
+	for _, binding := range sortedKeys(contracts) {
 		appName := unique(emitter.names, typeIdentifier(binding)+"App")
 		toolsName := unique(emitter.names, typeIdentifier(binding)+"Tools")
 		var methods, calls []string
 		appExports := make([][]string, 4)
-		tools, typed := contracts[binding]
+		tools := contracts[binding]
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
 			shapes := []shape{tool.input, tool.output}
@@ -191,20 +189,14 @@ func generatePython(contracts map[string]catalog, untyped []string) string {
 			}
 		}
 		var app []string
-		if typed {
-			clients = append(clients, pythonBlock(fmt.Sprintf("class %s(_typing.Protocol):", toolsName), methods, "    "))
-			app = append(app, "    tools: "+toolsName)
-		} else {
-			calls = append(calls, "    async def call_tool(self, name: _builtins.str, options: _CallOptions | None = ..., /, **arguments: _builtins.object) -> _ToolResult[_builtins.object]: ...")
-		}
+		clients = append(clients, pythonBlock(fmt.Sprintf("class %s(_typing.Protocol):", toolsName), methods, "    "))
+		app = append(app, "    tools: "+toolsName)
 		app = append(app, pythonOverloaded(calls)...)
 		clients = append(clients, pythonBlock(fmt.Sprintf("class %s(_typing.Protocol):", appName), app, "    "))
 		if pythonIdentifier(binding) {
 			fields = append(fields, fmt.Sprintf("    %s: %s", binding, appName))
-			if typed {
-				for i := range exports {
-					exports[i] = append(exports[i], pythonBlock(fmt.Sprintf("    class %s:", binding), appExports[i], "        "))
-				}
+			for i := range exports {
+				exports[i] = append(exports[i], pythonBlock(fmt.Sprintf("    class %s:", binding), appExports[i], "        "))
 			}
 		}
 		indices = append(indices, fmt.Sprintf("    def __getitem__(self, name: _typing.Literal[%s]) -> %s: ...", quoted(binding), appName))

@@ -14,7 +14,7 @@ var (
 
 // canonicalContract normalizes the private JSON tree decoded by each public entrypoint.
 // Caller-owned input never reaches this tree.
-func canonicalContract(contract Contract) Contract {
+func canonicalContract(contract contract) contract {
 	for _, tool := range contract.Tools {
 		normalizeObject(tool.Input)
 		normalizeObject(tool.Output)

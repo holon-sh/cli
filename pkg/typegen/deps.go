@@ -38,25 +38,25 @@ func packageManager(dir string, pkg packageJSON) string {
 	}
 }
 
-func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string, error) {
+func ensureNodeRuntime(ctx context.Context, dir string, o Options) (string, error) {
 	const installCommand = "install"
-	if slot, err := InstalledRuntime(dir, pkg); err == nil {
+	if slot, err := InstalledRuntime(dir); err == nil {
 		return slot, nil
 	}
 	var manifest packageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("%s has no package.json; create one and run npm install %s", dir, pkg)
+			return "", fmt.Errorf("%s has no package.json; create one and run npm install %s", dir, nodePackage)
 		}
 		return "", err
 	}
 	manager := packageManager(dir, manifest)
-	if !manifest.declares(pkg) {
+	if !manifest.declares(nodePackage) {
 		verb := "add"
 		if manager == "npm" {
 			verb = installCommand
 		}
-		return "", fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, pkg, manager, verb, pkg)
+		return "", fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, nodePackage, manager, verb, nodePackage)
 	}
 	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(dir), manager, installCommand)
 	if err := validateEnv(o.Env); err != nil {
@@ -69,7 +69,7 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string,
 	if err := command.Run(); err != nil {
 		return "", fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
 	}
-	return InstalledRuntime(dir, pkg)
+	return InstalledRuntime(dir)
 }
 
 // ErrNoRuntime identifies a project without a declared Holon SDK runtime.

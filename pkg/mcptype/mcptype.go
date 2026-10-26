@@ -77,7 +77,7 @@ func Changes(ctx context.Context, expected *mcpcontract.Metadata, published *mcp
 	if err != nil {
 		return nil, err
 	}
-	var publishedMetadata *Metadata
+	var publishedMetadata *metadata
 	if raw := object["published"]; raw != nil {
 		metadata, err := decodeMetadata(raw)
 		if err != nil {
@@ -101,19 +101,15 @@ type GenerateRequest struct {
 	Contracts map[string]*mcpcontract.Contract `json:"contracts,omitempty"`
 	Runtime   map[string][]byte                `json:"runtime,omitempty"`
 	// Protocol is inlined into TypeScript declarations unless ProtocolSpecifier imports them.
-	Protocol                string `json:"protocol,omitempty"`
-	RuntimeSpecifier        string `json:"runtime_specifier,omitempty"`
-	BrowserRuntimeSpecifier string `json:"browser_runtime_specifier,omitempty"`
-	ProtocolSpecifier       string `json:"protocol_specifier,omitempty"`
+	Protocol          string `json:"protocol,omitempty"`
+	RuntimeSpecifier  string `json:"runtime_specifier,omitempty"`
+	ProtocolSpecifier string `json:"protocol_specifier,omitempty"`
 	// PythonModule defaults to holon/apps/__init__.py; PythonRuntimeModule to holon.client.
 	PythonModule        string `json:"python_module,omitempty"`
 	PythonRuntimeModule string `json:"python_runtime_module,omitempty"`
 	// Banner is the first-line comment on generated sources, excluding copied Runtime files.
 	Banner   string `json:"banner,omitempty"`
 	GoModule string `json:"go_module,omitempty"`
-	// Entry names the TypeScript entry point files: "index" gives index.js, index.d.ts and resources.d.ts.
-	// Empty means index for node and browser for browser.
-	Entry string `json:"entry,omitempty"`
 }
 
 // marshal decodes a private JSON tree, preserving schema number semantics.

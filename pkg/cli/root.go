@@ -85,14 +85,9 @@ func clientDir(path string) (string, error) {
 
 // consumer selects dependencies from -s or server.json. A -s path inside dir is the project's own
 // server, which supplies its identity and contract.
-func consumer(dir, typed string, servers []string) (typegen.Consumer, error) {
+func consumer(dir string, servers []string) (typegen.Consumer, error) {
 	targets, err := typegen.DeclaredTargets(dir)
 	if err != nil {
-		if typed != "" && len(servers) == 0 && errors.Is(err, typegen.ErrNoRuntime) {
-			if entry, _ := typegen.SourceEntry(dir); entry != "" {
-				return typegen.Consumer{}, fmt.Errorf("%w (it looks like a server; did you mean -s %s?)", err, typed)
-			}
-		}
 		return typegen.Consumer{}, err
 	}
 	c := typegen.Consumer{Name: filepath.Base(dir), Dir: dir, Targets: targets}
@@ -153,7 +148,7 @@ func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (
 	if err != nil {
 		return "", err
 	}
-	c, err := consumer(dir, typed, servers)
+	c, err := consumer(dir, servers)
 	if err != nil {
 		return "", err
 	}

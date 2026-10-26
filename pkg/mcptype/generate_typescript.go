@@ -4,19 +4,11 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"strings"
 )
 
-// The @holon-sh/apps-style package: index.* for Node, browser.* for browsers, unless the request names the entry.
+// Generated entries are index.* for Node and browser.* for browsers.
 
 const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
-export interface HostBinding { host: { callServerTool(params: { name: string; arguments?: Record<string, unknown> }, options?: { signal?: AbortSignal }): Promise<unknown>; readServerResource(params: { uri: string }, options?: { signal?: AbortSignal }): Promise<unknown> } }
-export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
-export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding | HostBinding }, options?: CreateOptions): Pick<Apps,K>;
-`
-
-// Browser bindings reach endpoints directly.
-const browserBindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 `
@@ -33,14 +25,14 @@ export declare function registerPageTools<S extends { [name: string]: PageSchema
 `
 
 // resourceContracts compiles resources as tools named by URI, so Outputs[alias][uri] is the resource's contents.
-func resourceContracts(contracts map[string]Contract) map[string]Contract {
-	result := make(map[string]Contract, len(contracts))
-	for alias, contract := range contracts {
-		tools := make(map[string]Tool, len(contract.Resources))
-		for uri, resource := range contract.Resources {
-			tools[uri] = Tool{Input: Object{"type": "object", "additionalProperties": false}, Output: resource.Output}
+func resourceContracts(contracts map[string]contract) map[string]contract {
+	result := make(map[string]contract, len(contracts))
+	for alias, source := range contracts {
+		tools := make(map[string]contractTool, len(source.Resources))
+		for uri, resource := range source.Resources {
+			tools[uri] = contractTool{Input: Object{"type": "object", "additionalProperties": false}, Output: resource.Output}
 		}
-		result[alias] = Contract{Tools: tools}
+		result[alias] = contract{Tools: tools}
 	}
 	return result
 }
@@ -61,18 +53,16 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		protocol = request.Protocol
 	}
 	identity, contracts := encode(request.caller()), encode(request.contracts)
-	untyped := untypedTypeScript(request)
 	types := func(resources string) string {
-		return fmt.Sprintf("import type { Outputs as Resources } from \"./%s.js\";\n%s\nexport type { Resources };\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> }%s;\n", resources, protocol, tools, untyped)
+		return fmt.Sprintf("import type { Outputs as Resources } from \"./%s.js\";\n%s\nexport type { Resources };\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", resources, protocol, tools)
 	}
 	bound := fmt.Sprintf("export function createApps(bindings,options){return bindApps(%s,%s,bindings,options)}\n", identity, contracts)
 	runtime := quoted(cmp.Or(request.RuntimeSpecifier, "./runtime.mjs"))
-	browserRuntime := quoted(cmp.Or(request.BrowserRuntimeSpecifier, "./browser-runtime.mjs"))
+	browserRuntime := quoted("./browser-runtime.mjs")
 	entry := "index"
 	if request.Target == "browser" {
 		entry = "browser"
 	}
-	entry = cmp.Or(request.Entry, entry)
 	resourcesEntry := "resources"
 	if entry != "index" {
 		resourcesEntry = entry + "-resources"
@@ -82,7 +72,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	case request.Target == "browser":
 		files = map[string]string{
 			entry + ".js":   fmt.Sprintf("import { bindApps } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", browserRuntime, browserRuntime, bound),
-			entry + ".d.ts": types(resourcesEntry) + browserBindingTypes + exposeTypes,
+			entry + ".d.ts": types(resourcesEntry) + bindingTypes + exposeTypes,
 		}
 	default:
 		files = map[string]string{
@@ -92,16 +82,4 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	}
 	files[resourcesEntry+".d.ts"] = resources
 	return files, nil
-}
-
-// untypedTypeScript declares members for aliases without a contract: callTool and listTools by any name, no tools or resources.
-func untypedTypeScript(request generateRequest) string {
-	var aliases strings.Builder
-	for _, alias := range request.untyped() {
-		fmt.Fprintf(&aliases, " readonly %s: UntypedClient;", quoted(alias))
-	}
-	if aliases.Len() == 0 {
-		return ""
-	}
-	return fmt.Sprintf(" & {%s };\nexport type UntypedClient = Omit<ToolClient<Record<string, Record<string, unknown>>, Record<never, never>, Record<never, never>>, \"tools\"> & { readonly tools: Record<never, never> }", aliases.String())
 }

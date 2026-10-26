@@ -75,7 +75,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="0.0.1")
     parser.add_argument("--target", choices=[target.platform for target in TARGETS], required=True)
-    parser.add_argument("--binary", type=Path, help="package an already-built binary")
     parser.add_argument("--out", type=Path, default=ROOT / "dist")
     args = parser.parse_args()
     if not VERSION_PATTERN.fullmatch(args.version):
@@ -84,9 +83,8 @@ def main() -> None:
     dist = args.out.resolve()
     dist.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="holon-package-") as directory:
-        binary = args.binary.resolve() if args.binary else Path(directory) / "holon"
-        if args.binary is None:
-            build_binary(binary, target, args.version)
+        binary = Path(directory) / "holon"
+        build_binary(binary, target, args.version)
         verify_binary(binary, target)
         write_tarball(binary, dist / f"holon_{args.version}_{target.platform}.tar.gz")
 

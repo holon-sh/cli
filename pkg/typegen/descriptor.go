@@ -54,35 +54,33 @@ func (r Reference) Validate() error {
 	return errors.New("MCP registry must be an HTTPS URL (loopback HTTP is allowed)")
 }
 
-type Descriptor struct {
+type descriptor struct {
 	Name        string                     `json:"name"`
 	Version     string                     `json:"version"`
 	Description string                     `json:"description"`
-	Packages    []Package                  `json:"packages"`
-	Remotes     []Transport                `json:"remotes"`
+	Packages    []registryPackage          `json:"packages"`
+	Remotes     []transport                `json:"remotes"`
 	Meta        map[string]json.RawMessage `json:"_meta"`
 	Requires    map[string]Reference       `json:"-"`
-	Raw         json.RawMessage            `json:"-"`
 }
-type Package struct {
-	RegistryType string    `json:"registryType"`
-	Identifier   string    `json:"identifier"`
-	Transport    Transport `json:"transport"`
+type registryPackage struct {
+	RegistryType string `json:"registryType"`
+	Identifier   string `json:"identifier"`
 }
-type Transport struct {
+type transport struct {
 	Type string `json:"type"`
 	URL  string `json:"url"`
 }
-type HolonMetadata struct {
+type holonMetadata struct {
 	Requires map[string]Reference `json:"requires"`
 	Egress   json.RawMessage      `json:"egress,omitempty"`
 }
 
-func (d *Descriptor) Identity() mcpcontract.Identity {
+func (d *descriptor) Identity() mcpcontract.Identity {
 	return mcpcontract.Identity{Name: d.Name, Version: d.Version}
 }
-func ParseDescriptor(data []byte) (*Descriptor, error) {
-	var d Descriptor
+func ParseDescriptor(data []byte) (*descriptor, error) {
+	var d descriptor
 	if len(data) > MaxDescriptorBytes {
 		return nil, errors.New("server descriptor exceeds 1 MiB")
 	}
@@ -104,7 +102,7 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 			return nil, err
 		}
 		if extension := publisher["sh.holon"]; extension != nil {
-			var h HolonMetadata
+			var h holonMetadata
 			// Unmarshal above already guarantees a single JSON value.
 			decoder := json.NewDecoder(bytes.NewReader(extension))
 			decoder.DisallowUnknownFields()
@@ -122,7 +120,6 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 			return nil, fmt.Errorf("dependency %s: %w", name, err)
 		}
 	}
-	d.Raw = data
 	return &d, nil
 }
 
@@ -135,7 +132,7 @@ type Client struct {
 	Origin string
 }
 
-func (c Client) Get(ctx context.Context, name, version string) (*Descriptor, error) {
+func (c Client) Get(ctx context.Context, name, version string) (*descriptor, error) {
 	origin := (Reference{Registry: c.Origin}).RegistryURL()
 	data, err := fetchJSON(ctx, c.HTTP, origin+"/v0.1/servers/"+url.PathEscape(name)+"/versions/"+url.PathEscape(version))
 	if err != nil {

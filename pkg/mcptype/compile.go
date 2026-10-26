@@ -12,7 +12,7 @@ type compiledTool struct {
 	input, output shape
 }
 
-func parseCatalog(ctx context.Context, contract Contract) (catalog, error) {
+func parseCatalog(ctx context.Context, contract contract) (catalog, error) {
 	result := make(catalog, len(contract.Tools))
 	for _, name := range sortedKeys(contract.Tools) {
 		tool := contract.Tools[name]
@@ -32,7 +32,7 @@ func parseCatalog(ctx context.Context, contract Contract) (catalog, error) {
 }
 
 // compileCatalogs validates the binding names and compiles every contract's schemas.
-func compileCatalogs(ctx context.Context, contracts map[string]Contract) (map[string]catalog, error) {
+func compileCatalogs(ctx context.Context, contracts map[string]contract) (map[string]catalog, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

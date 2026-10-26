@@ -21,7 +21,7 @@ from .client import CallOptions as _CallOptions
 from .client import ToolResult as _ToolResult`
 
 func generatePythonPackage(request generateRequest, catalogs map[string]catalog) map[string]string {
-	declarations := generatePython(catalogs, request.untyped())
+	declarations := generatePython(catalogs)
 	// Go's ASCII quoted literals also evaluate as Python strings.
 	literal := strconv.QuoteToASCII(string(encode([]Value{request.caller(), request.contracts})))
 	header := strings.ReplaceAll(pythonHeader, "from .client import", fmt.Sprintf("from %s import", cmp.Or(request.PythonRuntimeModule, "holon.client")))

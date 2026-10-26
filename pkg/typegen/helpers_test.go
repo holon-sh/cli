@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -188,4 +189,20 @@ func authenticatedRegistry(t *testing.T, metadata *mcpcontract.Metadata) *http.C
 		}
 		return inner.RoundTrip(request)
 	})}
+}
+
+// registryImageSource resolves the test OCI package through the public registry source API.
+func registryImageSource(t *testing.T, image *http.Client) (Source, *http.Client) {
+	t.Helper()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server":{"name":"example.com/orders","version":"1.0.0","description":"Orders","packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]}}`))
+	}))
+	t.Cleanup(server.Close)
+	source := Source{Registry: &Reference{Name: "example.com/orders", Version: "1.0.0", Registry: server.URL}}
+	client := &http.Client{Transport: hostTransport{
+		strings.TrimPrefix(server.URL, "https://"): server.Client().Transport,
+		"images.example": image.Transport,
+	}}
+	return source, client
 }

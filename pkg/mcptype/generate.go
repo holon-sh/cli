@@ -17,7 +17,7 @@ import (
 // generateRequest retains the typed options and a private, validated schema tree.
 type generateRequest struct {
 	GenerateRequest
-	contracts map[string]Contract
+	contracts map[string]contract
 }
 
 // Generate returns the package files by relative path: copied runtime files plus generated sources.
@@ -27,7 +27,7 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	if err != nil {
 		return nil, err
 	}
-	request := generateRequest{GenerateRequest: options, contracts: map[string]Contract{}}
+	request := generateRequest{GenerateRequest: options, contracts: map[string]contract{}}
 	contracts, _ := value.(Object) // A nil Contracts map encodes as null.
 	for alias, raw := range contracts {
 		if request.contracts[alias], err = decodeContract(raw); err != nil {
@@ -94,16 +94,13 @@ func (r generateRequest) validate() error {
 	for _, option := range []struct {
 		name  string
 		value string
-	}{{"runtime_specifier", r.RuntimeSpecifier}, {"browser_runtime_specifier", r.BrowserRuntimeSpecifier}, {"protocol_specifier", r.ProtocolSpecifier}, {"banner", r.Banner}} {
+	}{{"runtime_specifier", r.RuntimeSpecifier}, {"protocol_specifier", r.ProtocolSpecifier}, {"banner", r.Banner}} {
 		if option.value == "" {
 			continue
 		}
 		if strings.TrimSpace(option.value) == "" || strings.ContainsFunc(option.value, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) {
 			return fmt.Errorf("%s must be nonempty and contain no line breaks or control characters", option.name)
 		}
-	}
-	if entry := r.Entry; entry != "" && (!relative(entry) || strings.ContainsAny(entry, "/\\:") || strings.ContainsFunc(entry, unicode.IsControl)) {
-		return errors.New("entry must be a nonempty file name without separators or control characters")
 	}
 	if path := r.PythonModule; path != "" && (!relative(path) || strings.ContainsAny(path, "\\:") || strings.ContainsFunc(path, unicode.IsControl) || !strings.HasSuffix(path, ".py")) {
 		return errors.New("python_module must be a relative, normalized .py path")
@@ -119,17 +116,6 @@ func (r generateRequest) validate() error {
 		return errors.New("go_module is required for the go target")
 	}
 	return nil
-}
-
-// untyped lists declared aliases without a contract: their clients call tools by name, unvalidated.
-func (r generateRequest) untyped() []string {
-	var aliases []string
-	for _, alias := range sortedKeys(r.Requires) {
-		if _, ok := r.contracts[alias]; !ok {
-			aliases = append(aliases, alias)
-		}
-	}
-	return aliases
 }
 
 // caller is the identity a generated client announces, with the aliases its app declares.
