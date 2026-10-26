@@ -1,21 +1,14 @@
 package typegen
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/content"
 )
 
 const pythonProvider = "from mcp.server import MCPServer\nserver = MCPServer(\"provider\")\n@server.tool()\ndef read(id: str) -> str:\n    return id\n"
@@ -116,64 +109,4 @@ func fakeExtract(t *testing.T, results map[string]extraction, calls *[]string) f
 		}
 		return writeJSON(output, found)
 	}
-}
-
-type registryResponse func(*http.Request) (*http.Response, error)
-
-func (response registryResponse) RoundTrip(request *http.Request) (*http.Response, error) {
-	return response(request)
-}
-
-// imageClient serves metadata as an OCI contract artifact of images.example/orders:1.0.0.
-func imageClient(t *testing.T, metadata *mcpcontract.Metadata, artifactType string) *http.Client {
-	t.Helper()
-	type document struct {
-		descriptor ocispec.Descriptor
-		data       []byte
-	}
-	documents := map[string]document{}
-	add := func(mediaType string, value any) ocispec.Descriptor {
-		data := mustJSON(t, value)
-		descriptor := content.NewDescriptorFromBytes(mediaType, data)
-		documents[descriptor.Digest.String()] = document{descriptor, data}
-		return descriptor
-	}
-	layer := add(mcpcontract.MediaType, metadata)
-	artifact := ocispec.Manifest{ArtifactType: artifactType, Layers: []ocispec.Descriptor{layer}}
-	artifact.SchemaVersion = 2
-	child := add(ocispec.MediaTypeImageManifest, artifact)
-	child.ArtifactType = mcpcontract.MediaType
-	index := ocispec.Index{Manifests: []ocispec.Descriptor{child}}
-	index.SchemaVersion = 2
-	descriptor := add(ocispec.MediaTypeImageIndex, index)
-	documents["1.0.0"] = documents[descriptor.Digest.String()]
-	return &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {
-		if request.URL.Host != "images.example" || !strings.HasPrefix(request.URL.Path, "/v2/orders/") {
-			t.Errorf("image dependency requested a different registry: %s", request.URL)
-			return nil, fmt.Errorf("unexpected registry request: %s", request.URL)
-		}
-		doc, ok := documents[filepath.Base(request.URL.Path)]
-		if !ok {
-			return nil, fmt.Errorf("unexpected OCI document: %s", request.URL)
-		}
-		header := make(http.Header)
-		header.Set("Content-Type", doc.descriptor.MediaType)
-		header.Set("Content-Length", strconv.Itoa(len(doc.data)))
-		header.Set("Docker-Content-Digest", doc.descriptor.Digest.String())
-		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(bytes.NewReader(doc.data)), ContentLength: int64(len(doc.data)), Request: request}, nil
-	})}
-}
-
-// authenticatedRegistry serves imageClient's documents only with HTTP basic credentials user:secret.
-func authenticatedRegistry(t *testing.T, metadata *mcpcontract.Metadata) *http.Client {
-	t.Helper()
-	inner := imageClient(t, metadata, mcpcontract.MediaType).Transport
-	return &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {
-		if user, password, ok := request.BasicAuth(); !ok || user != "user" || password != "secret" {
-			header := http.Header{"Www-Authenticate": {`Basic realm="images.example"`}, "Content-Type": {"application/json"}}
-			return &http.Response{StatusCode: http.StatusUnauthorized, Header: header, Request: request,
-				Body: io.NopCloser(strings.NewReader(`{"errors":[{"code":"UNAUTHORIZED","message":"authentication required"}]}`))}, nil
-		}
-		return inner.RoundTrip(request)
-	})}
 }

@@ -90,9 +90,7 @@ func TestTargetsComeFromTheProjectsDeclarations(t *testing.T) {
 	}{
 		{"", []string{"../orders"}, "declares no runtime"},
 		{`{"dependencies":{"holon-sh":"^0.0.1"}}`, nil, "at least one SERVER"},
-		{`{"dependencies":{"holon-sh":"^0.0.1"}}`, []string{"./server.ts"}, "does not depend on holon-ui"},
-		{`{"dependencies":{"holon-ui":"^0.0.1"}}`, []string{"../orders"}, "list its own server"},
-		{`{"dependencies":{"holon-ui":"^0.0.1"}}`, []string{"./server.ts", "./src.ts"}, "one own server"},
+		{`{"dependencies":{"holon-sh":"^0.0.1"}}`, []string{"./server.ts", "./src.ts"}, "one own server"},
 	} {
 		if test.manifest == "" {
 			_ = os.Remove(filepath.Join(root, "package.json"))
@@ -103,6 +101,24 @@ func TestTargetsComeFromTheProjectsDeclarations(t *testing.T) {
 		if _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%v with %s = %v, want %q", args, test.manifest, err, test.want)
 		}
+	}
+}
+
+func TestOwnServerSuppliesConsumerMetadata(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.WriteFile(filepath.Join(root, "server.ts"), []byte("export default {};\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"dependencies":{"holon-sh":"^0.0.1"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := consumer([]string{"./server.ts", "../orders"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Server == nil || c.Server.Path != filepath.Join(root, "server.ts") || len(c.Sources) != 1 || c.Sources[0].Path != filepath.Join(root, "../orders") {
+		t.Fatalf("consumer = %+v", c)
 	}
 }
 

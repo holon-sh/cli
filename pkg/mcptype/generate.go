@@ -35,11 +35,9 @@ type generateRequest struct {
 	goModule *string
 	// Node and browser: base name of the entry point files (<entry>.js, <entry>.d.ts) instead of index or browser.
 	entry *string
-	// Browser: the contracts key of the app's own server, reached through the MCP Apps host.
-	own *string
 }
 
-var generateFields = []string{"target", "identity", "requires", "contracts", "runtime", "protocol", "runtime_specifier", "browser_runtime_specifier", "protocol_specifier", "python_module", "python_runtime_module", "banner", "package_fields", "go_module", "entry", "own"}
+var generateFields = []string{"target", "identity", "requires", "contracts", "runtime", "protocol", "runtime_specifier", "browser_runtime_specifier", "protocol_specifier", "python_module", "python_runtime_module", "banner", "package_fields", "go_module", "entry"}
 
 func decodeGenerateRequest(value Value) (generateRequest, error) {
 	object, err := asObject(value)
@@ -108,7 +106,7 @@ func decodeGenerateRequest(value Value) (generateRequest, error) {
 	for name, target := range map[string]**string{
 		"protocol": &request.protocol, "runtime_specifier": &request.runtimeSpecifier, "browser_runtime_specifier": &request.browserRuntimeSpecifier,
 		"protocol_specifier": &request.protocolSpecifier, "python_module": &request.pythonModule, "python_runtime_module": &request.pythonRuntimeModule,
-		"banner": &request.banner, "go_module": &request.goModule, "entry": &request.entry, "own": &request.own,
+		"banner": &request.banner, "go_module": &request.goModule, "entry": &request.entry,
 	} {
 		if *target, err = optionalString(object, name); err != nil {
 			return generateRequest{}, err
@@ -179,11 +177,6 @@ func (r generateRequest) validate() error {
 	}
 	if entry := r.entry; entry != nil && (!relative(*entry) || strings.ContainsAny(*entry, "/\\:") || strings.ContainsFunc(*entry, unicode.IsControl)) {
 		return errors.New("entry must be a nonempty file name without separators or control characters")
-	}
-	if own := r.own; own != nil {
-		if _, ok := r.contracts[*own]; !ok {
-			return errors.New("own must name one of the contracts")
-		}
 	}
 	if path := r.pythonModule; path != nil && (!relative(*path) || strings.ContainsAny(*path, "\\:") || strings.ContainsFunc(*path, unicode.IsControl) || !strings.HasSuffix(*path, ".py")) {
 		return errors.New("python_module must be a relative, normalized .py path")
