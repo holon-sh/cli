@@ -89,15 +89,15 @@ func TestRegistrySourceResolution(t *testing.T) {
 				"images.example":                           image.Transport,
 			}}
 			ref := Reference{Name: identity.Name, Version: identity.Version, Registry: server.URL}
-			metadata, err := Resolve(t.Context(), Source{Registry: &ref}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}})
+			metadata, err := ResolveDocument(t.Context(), Source{Registry: &ref}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {
-					t.Fatalf("Resolve = %v, want %q", err, test.want)
+					t.Fatalf("ResolveDocument = %v, want %q", err, test.want)
 				}
 				return
 			}
 			if err != nil || metadata.Identity != identity || len(metadata.Schema.Tools) != 1 || metadata.Schema.Tools[0].Name != test.tool {
-				t.Fatalf("Resolve = %+v, %v", metadata, err)
+				t.Fatalf("ResolveDocument = %+v, %v", metadata, err)
 			}
 		})
 	}
@@ -106,7 +106,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	live := liveServer(t, "Orders Live")
 	defer live.Close()
-	metadata, err := Resolve(t.Context(), Source{Endpoint: live.URL}, Options{HTTPClient: live.Client()})
+	metadata, err := ResolveDocument(t.Context(), Source{Endpoint: live.URL}, Options{HTTPClient: live.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	}))
 	defer unauthorized.Close()
-	if _, err := Resolve(t.Context(), Source{Endpoint: unauthorized.URL}, Options{HTTPClient: unauthorized.Client()}); err == nil || !strings.Contains(err.Error(), unauthorized.URL) {
+	if _, err := ResolveDocument(t.Context(), Source{Endpoint: unauthorized.URL}, Options{HTTPClient: unauthorized.Client()}); err == nil || !strings.Contains(err.Error(), unauthorized.URL) {
 		t.Fatalf("auth-protected endpoint = %v", err)
 	}
 }

@@ -136,13 +136,13 @@ func printContract(cmd *cobra.Command, arg string) error {
 	if err != nil {
 		return err
 	}
-	metadata, err := typegen.Resolve(cmd.Context(), source, typegen.Options{Stderr: cmd.ErrOrStderr()})
+	document, err := typegen.ResolveDocument(cmd.Context(), source, typegen.Options{Stderr: cmd.ErrOrStderr()})
 	if err != nil {
 		return err
 	}
 	encoder := json.NewEncoder(cmd.OutOrStdout())
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(metadata)
+	return encoder.Encode(document.Metadata)
 }
 
 // generateProject resolves the client directory and generates its declared slots from -s

@@ -273,10 +273,10 @@ func TestCheckTypeChecksTheProjectAgainstItsGeneratedClients(t *testing.T) {
 
 func TestSuppliedContractsRemainDistinctAndValidated(t *testing.T) {
 	metadata := ordersMetadata()
-	source := Source{Contract: metadata}
+	source := Source{Document: document(t, metadata)}
 	alternate := ordersMetadata()
 	alternate.Schema = &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "status", Input: json.RawMessage(`{"type":"object"}`)}}}
-	c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{source, {Alias: "alternate", Contract: alternate}}}
+	c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{source, {Alias: "alternate", Document: document(t, alternate)}}}
 	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -299,7 +299,7 @@ func TestSuppliedContractsRemainDistinctAndValidated(t *testing.T) {
 		{Schema: metadata.Schema},
 		{Identity: metadata.Identity, Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "bad", Input: json.RawMessage(`{"type":"string"}`)}}}},
 	} {
-		c.Sources = []Source{source, {Alias: "invalid", Contract: invalid}}
+		c.Sources = []Source{source, {Alias: "invalid", Document: document(t, invalid)}}
 		if prepared, err := Prepare(t.Context(), []Consumer{c}, Options{}); err == nil {
 			prepared.Close()
 			t.Fatalf("accepted invalid contract after resolving a matching identity: %+v", invalid)
@@ -364,7 +364,7 @@ func TestGoConsumerClients(t *testing.T) {
 	put(t, root, "go.mod", "module example.com/caller\n\ngo 1.27.0\n")
 	put(t, root, "server.go", "package main\n\nfunc main() {}\n")
 	put(t, root, "server.json", `{"name":"example.com/caller","version":"1.0.0","description":"Caller"}`)
-	c := Consumer{Name: "caller", Dir: root, Targets: []string{TargetGo}, Server: &Source{Path: root}, Sources: []Source{{Contract: ordersMetadata()}}}
+	c := Consumer{Name: "caller", Dir: root, Targets: []string{TargetGo}, Server: &Source{Path: root}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
 	options := Options{GoModule: "github.com/holon-sh/sdk/go",
 		Extract: func(context.Context, string, string, string, string) error {
 			return errors.New("Go servers are not extracted")
@@ -424,8 +424,8 @@ func TestPythonSourcesWithTheRealExtractor(t *testing.T) {
 	if !strings.Contains(module, "async def read(") || !strings.Contains(module, "orders") || !strings.HasPrefix(module, "# "+mcpcontract.Marker+" app=app\n") {
 		t.Fatalf("module:\n%s", module)
 	}
-	contract, err := Resolve(t.Context(), Source{Path: orders}, Options{})
+	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
 	if err != nil || contract.Identity.Name != "example.com/orders" || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" || len(contract.Requires) != 0 {
-		t.Fatalf("Resolve = %+v, %v", contract, err)
+		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
 	}
 }

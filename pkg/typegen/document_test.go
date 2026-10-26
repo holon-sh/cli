@@ -91,7 +91,7 @@ func TestImageDocumentReadAndCopy(t *testing.T) {
 
 func TestLocalDependencyDocumentsAreComplete(t *testing.T) {
 	checkout, extract, _ := checkoutConsumer(t, TargetPy)
-	orders := Consumer{Name: "orders", Dir: checkout.Sources[0].Path, Server: &Source{Path: checkout.Sources[0].Path}, Targets: []string{TargetPy}, Sources: []Source{{Alias: "inventory", Contract: ordersMetadata()}}}
+	orders := Consumer{Name: "orders", Dir: checkout.Sources[0].Path, Server: &Source{Path: checkout.Sources[0].Path}, Targets: []string{TargetPy}, Sources: []Source{{Alias: "inventory", Document: document(t, ordersMetadata())}}}
 	prepared, err := Prepare(t.Context(), []Consumer{checkout, orders}, Options{Extract: extract})
 	if err != nil {
 		t.Fatal(err)

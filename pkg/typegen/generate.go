@@ -234,7 +234,7 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 		}
 		return NewDocument(ctx, dependency.metadata)
 	}
-	if source.Contract != nil || source.Document != nil {
+	if source.Document != nil {
 		return ResolveDocument(ctx, source, p.options)
 	}
 	if document, done := external[source.key()]; done {

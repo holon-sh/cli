@@ -15,18 +15,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Resolve returns one source's contract document without writing anything: a path source is
-// extracted from its snapshot, a registry, endpoint or image source is fetched, and a supplied
-// contract is validated and returned as given.
-func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.Metadata, error) {
-	document, err := ResolveDocument(ctx, source, options)
-	if err != nil || document == nil {
-		return nil, err
-	}
-	return document.Metadata, nil
-}
-
-// ResolveDocument resolves a source while retaining the original blob bytes.
+// ResolveDocument returns one source's contract document without writing anything: a path source
+// is extracted from its snapshot, a registry, endpoint or image source is fetched, and a supplied
+// document is validated and returned with its bytes.
 func ResolveDocument(ctx context.Context, source Source, options Options) (*Document, error) {
 	o := options.defaults()
 	if err := source.validate(); err != nil {
@@ -63,10 +54,8 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 		return liveContract(ctx, source.Endpoint, nil, o.HTTPClient)
 	case source.Image != "":
 		return resolveTypeMetadata(ctx, source.Image, o)
-	case source.Document != nil:
-		return ParseDocument(ctx, source.Document.Data)
 	default:
-		return NewDocument(ctx, source.Contract)
+		return ParseDocument(ctx, source.Document.Data)
 	}
 }
 

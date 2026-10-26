@@ -49,7 +49,7 @@ func generate(ctx context.Context, request generateRequest) (map[string][]byte, 
 	if err != nil {
 		return nil, err
 	}
-	files := make(map[string][]byte, len(request.Runtime)+len(generated))
+	files := map[string][]byte{}
 	for path, data := range request.Runtime {
 		files[path] = bytes.Clone(data)
 	}

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
 )
@@ -27,6 +28,16 @@ var lookupTool = mcpcontract.Tool{Name: "lookup", Input: json.RawMessage(`{"type
 func ordersMetadata() *mcpcontract.Metadata {
 	return &mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"},
 		Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{lookupTool}}}
+}
+
+// document supplies metadata as a source document: its bytes as marshaled, validated only when resolved.
+func document(t *testing.T, metadata *mcpcontract.Metadata) *Document {
+	t.Helper()
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Document{Metadata: metadata, Data: data, Digest: digest.FromBytes(data).String()}
 }
 
 func put(t *testing.T, root, name, content string) {
