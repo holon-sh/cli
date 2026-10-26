@@ -106,9 +106,8 @@ func TestTargetsComeFromTheProjectsDeclarations(t *testing.T) {
 	}{
 		{"no runtime", "", []string{"server.ts"}, nil, "declares no runtime"},
 		{"no requires", `{"dependencies":{"holon-sh":"^0.0.1"}}`, []string{"server.ts"}, nil, "has no requires"},
-		{"own server flag", `{"dependencies":{"holon-sh":"^0.0.1"}}`, []string{"server.ts"}, []string{"-s", "./server.ts"}, "is inside"},
-		{"missing own server", `{"dependencies":{"holon-ui":"^0.0.1"}}`, nil, nil, "has no server entry"},
-		{"multiple own servers", `{"dependencies":{"holon-ui":"^0.0.1"}}`, []string{"server.ts", "src/server.ts"}, nil, "keep exactly one server entry"},
+		{"own server only", `{"dependencies":{"holon-sh":"^0.0.1"}}`, []string{"server.ts"}, []string{"-s", "./server.ts"}, "has no requires"},
+		{"two own servers", `{"dependencies":{"holon-sh":"^0.0.1"}}`, []string{"server.ts", "src/server.ts"}, []string{"-s", "./server.ts", "-s", "./src/server.ts"}, "one own server"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -124,6 +123,20 @@ func TestTargetsComeFromTheProjectsDeclarations(t *testing.T) {
 				t.Errorf("%v = %v, want %q", args, err, test.want)
 			}
 		})
+	}
+}
+
+func TestOwnServerSuppliesConsumerMetadata(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	writeCLIFile(t, root, "server.ts", "export default {};\n")
+	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
+	c, err := consumer(root, "", []string{"./server.ts", "../orders"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Server == nil || c.Server.Path != filepath.Join(root, "server.ts") || len(c.Sources) != 1 || c.Sources[0].Path != filepath.Join(root, "../orders") {
+		t.Fatalf("consumer = %+v", c)
 	}
 }
 
@@ -303,26 +316,5 @@ func TestGenerateReadsRequires(t *testing.T) {
 	after, err := os.Stat(filepath.Join(slot, "holon-generated.json"))
 	if err != nil || !after.ModTime().Equal(before.ModTime()) {
 		t.Fatalf("offline check changed the generated slot: %v", err)
-	}
-}
-
-func TestGenerateFindsOwnUIServer(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1","holon-ui":"^0.0.1"}}`)
-	writeCLIFile(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout"}`)
-	writeCLIFile(t, root, "server.py", "from mcp.server import MCPServer\nserver = MCPServer('checkout')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n")
-	installCLISlot(t, root, "holon-sh")
-	installCLISlot(t, root, "holon-ui")
-	if _, err := run(t, "types", "generate"); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts"))
-	if err != nil || !strings.Contains(string(data), "class App") || !strings.Contains(string(data), "read") {
-		t.Fatalf("ui own server types = %s, %v", data, err)
-	}
-	data, err = os.ReadFile(filepath.Join(root, "node_modules/holon-sh/generated/index.d.ts"))
-	if err != nil || strings.Contains(string(data), "readonly read") {
-		t.Fatalf("ts slot should have no dependencies = %s, %v", data, err)
 	}
 }

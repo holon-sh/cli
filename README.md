@@ -7,7 +7,7 @@
 
 `holon` generates typed clients for MCP servers. This allows invoking an MCP server as a function call your type checker understands.
 
-This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk-py), [TypeScript SDK](https://github.com/holon-sh/sdk-ts), and [UI SDK](https://github.com/holon-sh/sdk-ui).
+This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk-py) and [TypeScript SDK](https://github.com/holon-sh/sdk-ts).
 
 ## Install
 

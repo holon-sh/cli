@@ -50,12 +50,15 @@ func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.
 	case source.Endpoint != "":
 		return liveContract(ctx, source.Endpoint, nil, o.HTTPClient)
 	default:
-		return resolveTypeMetadata(ctx, source.Image, o)
+		if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": source.Contract}); err != nil {
+			return nil, err
+		}
+		return source.Contract, nil
 	}
 }
 
-// resolveRegistry fetches a registry record and its contract: its sh.holon.types document, then
-// its first OCI package's contract artifact, then its first streamable-http remote's schemas.
+// resolveRegistry fetches a registry record and its contract: the record's sh.holon.types document,
+// or else the schemas its streamable-http remote advertises. A record offering neither is an error.
 func resolveRegistry(ctx context.Context, ref Reference, o Options) (*mcpcontract.Metadata, error) {
 	d, err := (Client{HTTP: o.HTTPClient, Origin: ref.RegistryURL()}).Get(ctx, ref.Name, ref.Version)
 	if err != nil {
@@ -66,26 +69,18 @@ func resolveRegistry(ctx context.Context, ref Reference, o Options) (*mcpcontrac
 	case d.Types != "":
 		metadata, err = fetchContract(ctx, d.Types, o)
 	default:
-		for _, pkg := range d.Packages {
-			if pkg.RegistryType == "oci" {
-				if metadata, err = resolveTypeMetadata(ctx, pkg.Identifier, o); err != nil {
-					err = fmt.Errorf("package %s: %w", pkg.Identifier, err)
-				}
+		remote := ""
+		for _, transport := range d.Remotes {
+			if transport.Type == "streamable-http" {
+				remote = transport.URL
 				break
 			}
 		}
-		if err == nil && metadata == nil {
-			for _, transport := range d.Remotes {
-				if transport.Type == "streamable-http" {
-					identity := d.Identity()
-					metadata, err = liveContract(ctx, transport.URL, &identity, o.HTTPClient)
-					break
-				}
-			}
+		if remote == "" {
+			return nil, fmt.Errorf("%s@%s publishes neither a sh.holon.types contract nor a streamable-http remote", ref.Name, ref.Version)
 		}
-		if err == nil && metadata == nil {
-			return nil, fmt.Errorf("%s@%s publishes neither a sh.holon.types contract, an OCI package with a contract, nor a streamable-http remote", ref.Name, ref.Version)
-		}
+		identity := d.Identity()
+		metadata, err = liveContract(ctx, remote, &identity, o.HTTPClient)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s@%s: %w", ref.Name, ref.Version, err)

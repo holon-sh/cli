@@ -21,15 +21,12 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/tooling"
-	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
 type Options struct {
 	Env            []string
 	HTTPClient     *http.Client
 	Stdout, Stderr io.Writer
-	// Credential authenticates OCI registry requests ahead of the Docker credential store.
-	Credential auth.CredentialFunc
 	// Extract runs one language's extractor: the runner under toolingDir/<language> reads configPath and
 	// writes outputPath. It defaults to the host's Node.js or Python interpreter.
 	Extract func(ctx context.Context, language, toolingDir, configPath, outputPath string) error
@@ -214,13 +211,14 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 		absolute, _ := filepath.Abs(source.Path)
 		return p.paths[absolute].metadata, nil
 	}
+	// Supplied documents can differ even when their identities match; validate each one.
+	if source.Contract != nil {
+		return Resolve(ctx, source, p.options)
+	}
 	if metadata, done := external[source.key()]; done {
 		return metadata, nil
 	}
 	metadata, err := Resolve(ctx, source, p.options)
-	if err == nil && metadata == nil {
-		err = errors.New("image carries no MCP contract artifact")
-	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
@@ -286,15 +284,8 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 			p.resolved[alias] = metadata
 		}
 	}
-	own := ""
-	if c.server != nil {
-		own = cmp.Or(c.Server.Alias, serverKey(identity.Name))
-		if prior, taken := aliases[own]; taken && slices.Contains(c.Targets, TargetUI) {
-			return fmt.Errorf("%s: own server %s and %s both become %s; write ALIAS= for one of them", c.Name, identity.Name, prior, own)
-		}
-	}
 	for _, target := range c.Targets {
-		files, err := generateTypes(ctx, target, request, own, c.metadata.Contract, p.options.GoModule)
+		files, err := generateTypes(ctx, target, request, p.options.GoModule)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
 		}
@@ -303,19 +294,10 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	return nil
 }
 
-func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own string, contract *mcpcontract.Contract, goModule string) (map[string]string, error) {
+func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, goModule string) (map[string]string, error) {
 	switch target {
 	case TargetTS:
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
-	case TargetUI:
-		// The view calls its own server through the MCP Apps host: that server is the App class.
-		request.Target, request.BrowserRuntimeSpecifier, request.ProtocolSpecifier, request.Entry = "browser", "../runtime.mjs", "holon-core/protocol", "index"
-		if contract == nil {
-			return nil, errors.New("the ui target needs the own server's extracted contract")
-		}
-		request.Contracts = maps.Clone(request.Contracts)
-		request.Contracts[own] = contract
-		request.Own = own
 	case TargetPy:
 		request.Target = "python"
 		request.PythonModule = "holon/apps/__init__.py"
@@ -377,7 +359,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 	for _, c := range consumers {
 		for _, target := range c.Targets {
 			switch target {
-			case TargetTS, TargetUI:
+			case TargetTS:
 				slot, err := ensureNodeRuntime(ctx, c.Dir, slotPackages[target], o)
 				if err != nil {
 					return fmt.Errorf("%s: %w", c.Name, err)
@@ -403,7 +385,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 		for _, target := range c.Targets {
 			var err error
 			switch target {
-			case TargetTS, TargetUI:
+			case TargetTS:
 				err = validateNodeSlot(slots[slotKey{target, c.Name}], slotPackages[target], c.slot)
 			case TargetPy:
 				err = validatePythonSlot(c.Dir)
@@ -424,8 +406,6 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 			switch target {
 			case TargetTS:
 				err = prepared.WriteNodeSlot(c.Name, slots[slotKey{target, c.Name}])
-			case TargetUI:
-				err = prepared.WriteBrowserSlot(c.Name, slots[slotKey{target, c.Name}])
 			case TargetPy:
 				err = prepared.WritePythonSlot(c.Name, c.Dir)
 			case TargetGo:
@@ -469,16 +449,6 @@ func (p *Prepared) WriteNodeSlot(consumer, pkgDir string) error {
 		return err
 	}
 	return writeNodeSlot(pkgDir, slotPackages[TargetTS], files, c.slot)
-}
-
-// WriteBrowserSlot writes the consumer's ui clients into pkgDir/generated, where pkgDir is an
-// installed holon-ui package or a copy staged for an image. Same refusals as WriteNodeSlot.
-func (p *Prepared) WriteBrowserSlot(consumer, pkgDir string) error {
-	c, files, err := p.files(consumer, TargetUI)
-	if err != nil {
-		return err
-	}
-	return writeNodeSlot(pkgDir, slotPackages[TargetUI], files, c.slot)
 }
 
 // WritePythonSlot writes the consumer's holon/apps/__init__.py under root, a project directory or

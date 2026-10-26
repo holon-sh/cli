@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -92,7 +91,8 @@ func clientDir(args []string) (dir, typed string, err error) {
 	return dir, typed, err
 }
 
-// consumer selects dependencies from -s or server.json and finds the ui target's own server.
+// consumer selects dependencies from -s or server.json. A -s path inside dir is the project's own
+// server, which supplies its identity and contract.
 func consumer(dir, typed string, servers []string) (typegen.Consumer, error) {
 	targets, err := typegen.DeclaredTargets(dir)
 	if err != nil {
@@ -110,7 +110,11 @@ func consumer(dir, typed string, servers []string) (typegen.Consumer, error) {
 			return c, fmt.Errorf("%s: %w", arg, err)
 		}
 		if source.Path != "" && insideDir(source.Path, dir) {
-			return c, fmt.Errorf("%s is inside %s; the project's own server is found automatically, pass only dependencies with -s", arg, dir)
+			if c.Server != nil {
+				return c, fmt.Errorf("%s: a project has one own server", arg)
+			}
+			c.Server = &source
+			continue
 		}
 		c.Sources = append(c.Sources, source)
 	}
@@ -119,18 +123,9 @@ func consumer(dir, typed string, servers []string) (typegen.Consumer, error) {
 		if err != nil {
 			return c, err
 		}
-		if len(c.Sources) == 0 && !slices.Contains(targets, typegen.TargetUI) {
-			return c, fmt.Errorf("%s has no requires in server.json; pass -s", dir)
-		}
 	}
-	if slices.Contains(targets, typegen.TargetUI) {
-		c.Server, err = typegen.OwnServer(dir)
-		if err != nil {
-			return c, err
-		}
-		if c.Server == nil {
-			return c, fmt.Errorf("%s depends on holon-ui but has no server entry (expected one of %s)", dir, strings.Join(typegen.EntryFiles(), ", "))
-		}
+	if len(c.Sources) == 0 {
+		return c, fmt.Errorf("%s has no requires in server.json; pass -s", dir)
 	}
 	return c, nil
 }
@@ -217,7 +212,7 @@ func NewTypesCommand() *cobra.Command {
 	var verbose bool
 	var contract string
 	var servers []string
-	generate := &cobra.Command{Use: "generate [DIR]", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for the project's MCP servers, from server.json requires or the -s list. Generation may install the declared holon-sh/holon-ui package and rewrites the generated/ slot.", Example: examples("holon types generate"), Args: oneDir, RunE: func(cmd *cobra.Command, args []string) error {
+	generate := &cobra.Command{Use: "generate [DIR]", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for the project's MCP servers, from server.json requires or the -s list. Generation may install the declared holon-sh package and rewrites the generated/ slot.", Example: examples("holon types generate"), Args: oneDir, RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("contract") {
 			if len(args) > 0 || len(servers) > 0 {
 				return errors.New("--contract takes one SERVER and nothing else")
