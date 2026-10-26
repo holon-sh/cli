@@ -41,13 +41,13 @@ func TestGenerate(t *testing.T) {
 func TestChanges(t *testing.T) {
 	get := mcpcontract.Tool{Name: "get", Input: json.RawMessage(`{"type":"object"}`), Output: json.RawMessage(`{"type":"number"}`)}
 	summary := mcpcontract.Resource{URI: "orders://summary", Output: json.RawMessage(`{"type":"object"}`)}
-	expected := mcpcontract.Expectation{
+	expected := &mcpcontract.Metadata{
 		Identity: mcpcontract.Identity{Name: "example/orders", Version: "1"},
-		Contract: mcpcontract.Contract{Tools: []mcpcontract.Tool{get}, Resources: []mcpcontract.Resource{summary}},
+		Schema:   &mcpcontract.Contract{Tools: []mcpcontract.Tool{get}, Resources: []mcpcontract.Resource{summary}},
 	}
 	published := &mcpcontract.Metadata{
-		Version: mcpcontract.Version, Identity: mcpcontract.Identity{Name: "example/orders", Version: "2"},
-		Contract: &mcpcontract.Contract{Resources: []mcpcontract.Resource{{URI: summary.URI, Output: json.RawMessage(`{"type":"array"}`)}}},
+		Identity: mcpcontract.Identity{Name: "example/orders", Version: "2"},
+		Schema:   &mcpcontract.Contract{Resources: []mcpcontract.Resource{{URI: summary.URI, Output: json.RawMessage(`{"type":"array"}`)}}},
 	}
 	changes, err := Changes(t.Context(), expected, published)
 	if want := []Change{
@@ -73,7 +73,7 @@ func TestChanges(t *testing.T) {
 		{"resource removed", []mcpcontract.Tool{get}, nil, "resource_removed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			metadata := &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: expected.Identity, Contract: &mcpcontract.Contract{Tools: test.tools, Resources: test.resources}}
+			metadata := &mcpcontract.Metadata{Identity: expected.Identity, Schema: &mcpcontract.Contract{Tools: test.tools, Resources: test.resources}}
 			got, err := Changes(t.Context(), expected, metadata)
 			if err != nil {
 				t.Fatal(err)
@@ -87,7 +87,7 @@ func TestChanges(t *testing.T) {
 			}
 		})
 	}
-	published.Version = 2
+	published.Identity.Version = ""
 	if _, err := Changes(t.Context(), expected, published); err == nil {
 		t.Fatal("invalid published metadata accepted")
 	}
@@ -97,24 +97,24 @@ func TestChangesIgnoresSchemaOrderingAndNestedAnnotations(t *testing.T) {
 	const before = `{"type":"object","properties":{"id":{"type":["string","null"],"enum":["a","b",null]},"value":{"anyOf":[{"type":"string","description":"old"},{"type":"number"}]}},"dependentSchemas":{"id":{"properties":{"value":{"description":"old","type":"string"}}}},"not":{"properties":{"blocked":{"type":"boolean","title":"old"}}}}`
 	const after = `{"type":"object","properties":{"id":{"type":["null","string"],"enum":[null,"b","a"]},"value":{"anyOf":[{"type":"number"},{"description":"new","type":"string"}]}},"dependentSchemas":{"id":{"properties":{"value":{"type":"string","description":"new"}}}},"not":{"properties":{"blocked":{"title":"new","type":"boolean"}}}}`
 	identity := mcpcontract.Identity{Name: "example/orders", Version: "1"}
-	expected := mcpcontract.Expectation{Identity: identity, Contract: mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "read", Input: json.RawMessage(before)}}}}
-	published := &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: identity, Contract: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "read", Input: json.RawMessage(after)}}}}
+	expected := &mcpcontract.Metadata{Identity: identity, Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "read", Input: json.RawMessage(before)}}}}
+	published := &mcpcontract.Metadata{Identity: identity, Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "read", Input: json.RawMessage(after)}}}}
 	if changes, err := Changes(t.Context(), expected, published); err != nil || len(changes) != 0 {
 		t.Fatalf("equivalent schemas reported changes: %+v, %v", changes, err)
 	}
 }
 
 func TestCanonicalMetadata(t *testing.T) {
-	metadata := mcpcontract.Metadata{Version: mcpcontract.Version, Identity: mcpcontract.Identity{Name: "example/orders", Version: "1"}}
+	metadata := mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: "example/orders", Version: "1"}}
 	if form, err := Canonical(t.Context(), map[string]any{"metadata": metadata}); err != nil || form.Digest != "" {
 		t.Fatalf("metadata without a contract: %+v %v", form, err)
 	}
-	metadata.Contract = &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "get", Input: json.RawMessage(`{"type":"object","description":"docs"}`)}}}
+	metadata.Schema = &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "get", Input: json.RawMessage(`{"type":"object","description":"docs"}`)}}}
 	form, err := Canonical(t.Context(), map[string]any{"metadata": metadata})
 	if err != nil || string(form.Canonical) != `{"tools":[{"inputSchema":{"type":"object"},"name":"get"}]}` || !strings.HasPrefix(form.Digest, "sha256:") {
 		t.Fatalf("metadata contract: %s %q %v", form.Canonical, form.Digest, err)
 	}
-	metadata.Contract.Tools[0].Input = json.RawMessage(`{"type":"string"}`)
+	metadata.Schema.Tools[0].Input = json.RawMessage(`{"type":"string"}`)
 	if _, err := Canonical(t.Context(), map[string]any{"metadata": metadata}); err == nil {
 		t.Fatal("invalid published metadata accepted")
 	}

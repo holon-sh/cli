@@ -196,7 +196,7 @@ func TestContractOfAPathSource(t *testing.T) {
 	if err := json.Unmarshal([]byte(output), &metadata); err != nil {
 		t.Fatal(err)
 	}
-	if metadata.Identity.Name != "example.com/provider" || metadata.Contract == nil || len(metadata.Contract.Tools) != 1 || metadata.Contract.Tools[0].Name != "read" {
+	if metadata.Identity.Name != "example.com/provider" || metadata.Schema == nil || len(metadata.Schema.Tools) != 1 || metadata.Schema.Tools[0].Name != "read" {
 		t.Fatalf("provider contract = %s", output)
 	}
 }

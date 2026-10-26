@@ -20,7 +20,7 @@ func TestPythonPayloadPreservesStringLiterals(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Evaluate the generated payload without importing the separate Python runtime.
-	_, payload, found := strings.Cut(string(files["_apps.py"]), "_identity, _contracts = ")
+	_, payload, found := strings.Cut(string(files["holon/apps/__init__.py"]), "_identity, _contracts = ")
 	if !found {
 		t.Fatal("generated module has no payload")
 	}

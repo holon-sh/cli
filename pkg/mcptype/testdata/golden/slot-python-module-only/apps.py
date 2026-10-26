@@ -5,9 +5,9 @@ import json as _json
 from mcp.types import InputResponses as _InputResponses
 from mcp.types import RequestParamsMeta as _RequestParamsMeta
 
-from .client import Apps as _Apps
-from .client import Binding as _Binding
-from .client import ToolResult as _ToolResult
+from holon.client import Apps as _Apps
+from holon.client import Binding as _Binding
+from holon.client import ToolResult as _ToolResult
 
 import builtins as _builtins
 import typing as _typing
@@ -28,7 +28,7 @@ class _Clients(_typing.Protocol):
     pass
 
 
-_identity, _contracts = _json.loads('[{"name":"a","requires":{},"version":"1"},{}]')
+_identity, _contracts = _json.loads("[{\"name\":\"a\",\"requires\":{},\"version\":\"1\"},{}]")
 
 apps = _typing.cast(_Clients, _Apps(_identity, _contracts))
 

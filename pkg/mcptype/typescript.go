@@ -94,7 +94,7 @@ func generateTypeScript(contracts map[string]catalog) string {
 		for i := range exports {
 			fmt.Fprintf(&exports[i], "  %s: {\n", quoted(binding))
 		}
-		tools := contracts[binding].tools
+		tools := contracts[binding]
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
 			for index, shape := range []shape{tool.input, tool.output} {

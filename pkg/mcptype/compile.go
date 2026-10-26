@@ -6,16 +6,14 @@ import (
 )
 
 // catalog is one binding's compiled tools.
-type catalog struct {
-	tools map[string]compiledTool
-}
+type catalog map[string]compiledTool
 
 type compiledTool struct {
 	input, output shape
 }
 
 func parseCatalog(ctx context.Context, contract Contract) (catalog, error) {
-	result := catalog{tools: make(map[string]compiledTool, len(contract.Tools))}
+	result := make(catalog, len(contract.Tools))
 	for _, name := range sortedKeys(contract.Tools) {
 		tool := contract.Tools[name]
 		input, err := parseShape(ctx, tool.Input)
@@ -28,7 +26,7 @@ func parseCatalog(ctx context.Context, contract Contract) (catalog, error) {
 				return catalog{}, err
 			}
 		}
-		result.tools[name] = compiledTool{input: input, output: output}
+		result[name] = compiledTool{input: input, output: output}
 	}
 	return result, nil
 }
