@@ -6,11 +6,9 @@
 package typegen
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -55,43 +53,27 @@ type Source struct {
 	Image string
 }
 
-func (s Source) kind() string {
-	switch {
-	case s.Path != "":
-		return "path"
-	case s.Registry != nil:
-		return "registry"
-	case s.Endpoint != "":
-		return "endpoint"
-	case s.Image != "":
-		return "image"
-	}
-	return ""
-}
-
-// key identifies the server independently of its alias, so one server resolves once.
+// key identifies a non-path source independently of its alias, so it resolves once.
 func (s Source) key() string {
-	switch s.kind() {
-	case "registry":
+	switch {
+	case s.Registry != nil:
 		return "registry:" + s.Registry.RegistryURL() + "#" + s.Registry.Name + "@" + s.Registry.Version
-	case "endpoint":
+	case s.Endpoint != "":
 		return "endpoint:" + s.Endpoint
-	case "image":
-		return "image:" + s.Image
 	}
-	return "path:" + s.Path
+	return "image:" + s.Image
 }
 
 func (s Source) String() string {
-	switch s.kind() {
-	case "registry":
+	switch {
+	case s.Path != "":
+		return s.Path
+	case s.Registry != nil:
 		return s.Registry.Name + "@" + s.Registry.Version
-	case "endpoint":
+	case s.Endpoint != "":
 		return s.Endpoint
-	case "image":
-		return s.Image
 	}
-	return s.Path
+	return s.Image
 }
 
 func (s Source) validate() error {
@@ -190,17 +172,16 @@ func serverEntry(path string) (root, entry, language string, err error) {
 			return "", "", "", fmt.Errorf("%s has no server entry: expected one of %s", path, strings.Join(entryFiles, ", "))
 		}
 	} else {
-		if err = regularNoSymlink(path, "server entry"); err != nil {
-			return "", "", "", err
+		if !info.Mode().IsRegular() {
+			return "", "", "", fmt.Errorf("server entry must be a regular file: %s", path)
 		}
 		root = filepath.Dir(path)
+		entry = filepath.Base(path)
 		if filepath.Base(root) == "src" {
 			root = filepath.Dir(root)
+			entry = "src/" + entry
 		}
-		if entry, err = filepath.Rel(root, path); err != nil {
-			return "", "", "", err
-		}
-		if !slices.Contains(entryFiles, filepath.ToSlash(entry)) {
+		if !slices.Contains(entryFiles, entry) {
 			return "", "", "", fmt.Errorf("%s is not a server entry: expected one of %s", path, strings.Join(entryFiles, ", "))
 		}
 	}
@@ -226,17 +207,6 @@ func serverKey(serverName string) string {
 	return key
 }
 
-func decodeStrict(data []byte, out any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(out); err != nil {
-		return err
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return errors.New("expected a single JSON document")
-	}
-	return nil
-}
 func regularNoSymlink(path, kind string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -256,5 +226,5 @@ func readTypeJSON(path string, out any) error {
 }
 func pathInsideContext(path, root string) bool {
 	relative, err := filepath.Rel(root, path)
-	return err == nil && (relative == "." || filepath.IsLocal(relative))
+	return err == nil && filepath.IsLocal(relative)
 }

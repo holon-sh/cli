@@ -1,6 +1,8 @@
 package typegen
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -115,7 +117,10 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 		}
 		if extension := publisher["sh.holon"]; extension != nil {
 			var h HolonMetadata
-			if err := decodeStrict(extension, &h); err != nil {
+			// Unmarshal above already guarantees a single JSON value.
+			decoder := json.NewDecoder(bytes.NewReader(extension))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&h); err != nil {
 				return nil, fmt.Errorf("sh.holon metadata: %w", err)
 			}
 			d.Requires = h.Requires
@@ -151,28 +156,8 @@ type Client struct {
 }
 
 func (c Client) Get(ctx context.Context, name, version string) (*Descriptor, error) {
-	origin := c.Origin
-	if origin == "" {
-		origin = RegistryOrigin
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(origin, "/")+"/v0.1/servers/"+url.PathEscape(name)+"/versions/"+url.PathEscape(version), nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Accept", "application/json")
-	client := c.HTTP
-	if client == nil {
-		client = http.DefaultClient
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		return nil, HTTPError(response.StatusCode)
-	}
-	data, err := readLimited(response.Body, MaxDescriptorBytes)
+	origin := (Reference{Registry: c.Origin}).RegistryURL()
+	data, err := fetchJSON(ctx, c.HTTP, origin+"/v0.1/servers/"+url.PathEscape(name)+"/versions/"+url.PathEscape(version))
 	if err != nil {
 		return nil, err
 	}
@@ -191,6 +176,25 @@ func (c Client) Get(ctx context.Context, name, version string) (*Descriptor, err
 	}
 	return d, nil
 }
+
+// fetchJSON bounds both registry records and published contract documents.
+func fetchJSON(ctx context.Context, client *http.Client, location string) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/json")
+	response, err := cmp.Or(client, http.DefaultClient).Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, HTTPError(response.StatusCode)
+	}
+	return readLimited(response.Body, MaxDescriptorBytes)
+}
+
 func readLimited(r io.Reader, limit int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, limit+1))
 	if err == nil && int64(len(data)) > limit {

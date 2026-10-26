@@ -51,7 +51,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
 		return err
 	}
-	env, err := commandenv.Environ(append(append([]string{}, o.Env...), "PYTHONDONTWRITEBYTECODE=1"))
+	env, err := commandenv.Environ(append(slices.Clone(o.Env), "PYTHONDONTWRITEBYTECODE=1"))
 	if err != nil {
 		return err
 	}
@@ -89,10 +89,8 @@ func (p *Prepared) CheckConfig(consumer string) (map[string]any, bool) {
 	if c == nil || c.server == nil || c.server.metadata.Contract == nil {
 		return nil, false
 	}
-	sources := maps.Clone(c.server.sources)
-	if sources == nil {
-		sources = map[string]string{}
-	}
+	sources := map[string]string{}
+	maps.Copy(sources, c.server.sources)
 	entry, _ := filepath.Rel(c.Dir, filepath.Join(c.server.origin, c.server.entry))
 	return map[string]any{"entry": filepath.ToSlash(entry), "sources": sources, "check": true}, true
 }

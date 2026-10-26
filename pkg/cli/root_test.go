@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -50,7 +51,7 @@ func TestParseSource(t *testing.T) {
 			t.Errorf("parseSource(%q): %v", test.arg, err)
 			continue
 		}
-		if got.Alias != test.want.Alias || got.Path != test.want.Path || got.Endpoint != test.want.Endpoint || (got.Registry == nil) != (test.want.Registry == nil) || got.Registry != nil && *got.Registry != *test.want.Registry {
+		if !reflect.DeepEqual(got, test.want) {
 			t.Errorf("parseSource(%q) = %+v, want %+v", test.arg, got, test.want)
 		}
 	}
