@@ -16,8 +16,6 @@ import (
 	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
-// checkoutConsumer writes a TypeScript checkout server beside a Python orders server and returns
-// the consumer plus a fake extractor answering both.
 func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, string, string) error, *[]string) {
 	t.Helper()
 	root := t.TempDir()
@@ -195,13 +193,11 @@ func TestGenerateWritesSlotsAndRequiresDeclaredRuntimes(t *testing.T) {
 	if !strings.Contains(read(t, ui, "generated/index.js"), `appClass(identity, contracts, "checkout")`) {
 		t.Fatal("holon-ui slot has no App class")
 	}
-	// Orders, a source, is left exactly as it was.
 	orders := c.Sources[0].Path
 	if entries, _ := os.ReadDir(orders); len(entries) != 2 {
 		t.Fatalf("source directory changed: %v", entries)
 	}
 
-	// An undeclared slot package is an error naming the install command; a declared one is installed.
 	put(t, c.Dir, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
 	if err := os.RemoveAll(ui); err != nil {
 		t.Fatal(err)
@@ -226,7 +222,6 @@ func TestGenerateWritesSlotsAndRequiresDeclaredRuntimes(t *testing.T) {
 
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	c, extract, _ := checkoutConsumer(t, TargetTS)
-	// A fake npm on PATH records the install and creates the package.
 	bin := t.TempDir()
 	log := filepath.Join(bin, "calls")
 	put(t, bin, "npm", "#!/bin/sh\necho \"$PWD $* $INSTALL_MODE\" >> "+log+"\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")

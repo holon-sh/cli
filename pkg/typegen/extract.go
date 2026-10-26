@@ -49,7 +49,6 @@ type extractionEntry struct {
 	Entry string `json:"entry"`
 }
 
-// extractTypes runs one extractor batch per language under root and returns the results by name.
 func extractTypes(ctx context.Context, root string, batches map[string][]extractionEntry, o Options) (map[string]extraction, error) {
 	results := map[string]extraction{}
 	for _, language := range slices.Sorted(maps.Keys(batches)) {

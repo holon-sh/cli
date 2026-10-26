@@ -38,9 +38,6 @@ func packageManager(dir string, pkg packageJSON) string {
 	}
 }
 
-// ensureNodeRuntime returns the installed slot package for dir. A package that package.json
-// declares but node_modules lacks is installed with the project's package manager; an undeclared
-// one is an error naming the command that adds it.
 func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string, error) {
 	const installCommand = "install"
 	if slot, err := InstalledRuntime(dir, pkg); err == nil {

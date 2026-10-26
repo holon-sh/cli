@@ -54,14 +54,12 @@ func (o Options) defaults() Options {
 	return o
 }
 
-// preparedSource is one snapshotted server directory.
 type preparedSource struct {
 	origin, root, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
 }
 
-// contract turns an extraction into the source's contract document; a diagnostic is an error.
 func (s *preparedSource) contract(result extraction) (*mcpcontract.Metadata, error) {
 	if result.Diagnostic != "" {
 		return nil, fmt.Errorf("%s: %s", s.origin, result.Diagnostic)
@@ -110,7 +108,6 @@ func (p *Prepared) consumer(name string) *preparedConsumer {
 	return nil
 }
 
-// prepareSource snapshots one server directory under root and reads its identity from server.json.
 func prepareSource(ctx context.Context, root, name, path string, o Options) (*preparedSource, error) {
 	origin, entry, language, err := serverEntry(path)
 	if err != nil {
@@ -157,7 +154,6 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 		return nil, err
 	}
 	p := &Prepared{paths: map[string]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}}
-	// Every path source, including each consumer's own server, is snapshotted once.
 	batches := map[string][]extractionEntry{}
 	for _, c := range consumers {
 		pc := &preparedConsumer{Consumer: c, packages: map[string]map[string]string{}}
@@ -453,7 +449,6 @@ func (p *Prepared) Targets(consumer string) []string {
 	return nil
 }
 
-// files returns the generated files of one consumer for one target.
 func (p *Prepared) files(consumer, target string) (*preparedConsumer, map[string]string, error) {
 	c := p.consumer(consumer)
 	if c == nil {
