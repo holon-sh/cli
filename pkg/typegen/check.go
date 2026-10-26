@@ -13,10 +13,6 @@ import (
 	"github.com/holon-sh/cli/pkg/tooling"
 )
 
-// Check type-checks the project at dir against the clients Generate wrote: TypeScript when it
-// depends on holon-sh or holon-ui, Python when it depends on holon-sh in pyproject.toml or
-// requirements. Nothing is generated, written, installed or contacted; a missing or placeholder
-// slot is an error naming holon types generate.
 func Check(ctx context.Context, dir string, options Options) error {
 	o := options.defaults()
 	targets, err := DeclaredTargets(dir)
@@ -95,8 +91,6 @@ func (p *Prepared) CheckConfig(consumer string) (map[string]any, bool) {
 	return map[string]any{"entry": filepath.ToSlash(entry), "sources": sources, "check": true}, true
 }
 
-// pythonEnvironment is the nearest virtual environment's interpreter above dir, else the active one,
-// else fallback.
 func pythonEnvironment(dir, fallback string) string {
 	for current := dir; ; current = filepath.Dir(current) {
 		for _, venv := range []string{".venv", "venv"} {
