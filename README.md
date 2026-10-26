@@ -57,23 +57,10 @@ Flags:
 <summary><code>holon types check</code></summary>
 
 ```text
-Type-check a project's calls to MCP servers.
+Type-check the project's calls to MCP servers against the clients holon types generate wrote.
 
 Usage:
-  holon types check SERVER... [flags]
-
-Examples:
-  # A server directory
-  holon types check orders
-
-  # A server entry
-  holon types check orders/server.py
-
-  # An MCP registry server
-  holon types check https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
-
-  # A remote MCP server, with the client named docs
-  holon types check docs=https://mcp.context7.com/mcp
+  holon types check [flags]
 
 Flags:
   -h, --help   help for check

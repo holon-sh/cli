@@ -6,8 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io/fs"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -273,50 +271,29 @@ func TestGenerateRejectsASharedNodeSlotBeforeWritingEitherConsumer(t *testing.T)
 	}
 }
 
-func TestCheckRunsInACopyAndLeavesTheConsumerAlone(t *testing.T) {
+func TestCheckTypeChecksTheProjectAgainstItsGeneratedClients(t *testing.T) {
 	needNode(t)
-	needPython(t)
-	root := t.TempDir()
-	orders := filepath.Join(root, "orders")
-	writeProvider(t, orders, "orders", pythonProvider)
-	app := filepath.Join(root, "app")
+	app := t.TempDir()
 	pkg := slotPackage(t, app, "holon-sh")
-	put(t, pkg, "package.json", `{"name":"holon-sh","exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
-	put(t, pkg, "generated/index.d.ts", "export interface Inputs { stale: never }")
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
 	put(t, app, "src/index.ts", `import type { Inputs } from "holon-sh"; const inputs: Inputs["orders"]["read"] = { id: "A-1" }; export default inputs;`)
-	contents := func() map[string]string {
-		files := map[string]string{}
-		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if !entry.IsDir() {
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return err
-				}
-				files[path] = string(data)
-			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return files
-	}
-	before := contents()
 	var output bytes.Buffer
-	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Path: orders}}}
-	if err := Check(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output}); err != nil {
+	options := Options{Stdout: &output, Stderr: &output}
+	if err := Check(t.Context(), app, options); err == nil || !strings.Contains(err.Error(), "no generated clients; run holon types generate") {
+		t.Fatalf("check of a placeholder slot = %v", err)
+	}
+	put(t, pkg, "package.json", `{"name":"holon-sh","exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
+	put(t, pkg, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, App: filepath.Base(app)})))
+	put(t, pkg, "generated/index.d.ts", `export interface Inputs { orders: { read: { id: string } } }`)
+	if err := Check(t.Context(), app, options); err != nil {
 		t.Fatalf("check: %v\n%s", err, &output)
 	}
-	if !maps.Equal(before, contents()) {
-		t.Fatal("check modified the consumer, the source or the installed slot")
+	if !strings.Contains(output.String(), "Typed contracts check passed.") {
+		t.Fatalf("output = %q", &output)
 	}
 	put(t, app, "src/index.ts", `import type { Inputs } from "holon-sh"; const inputs: Inputs["orders"]["read"] = { id: 1 }; export default inputs;`)
 	output.Reset()
-	if err := Check(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output}); err == nil || !strings.Contains(err.Error(), "does not type-check") {
+	if err := Check(t.Context(), app, options); err == nil || !strings.Contains(err.Error(), "does not type-check") || !strings.Contains(output.String(), "TS2322") {
 		t.Fatalf("check accepted a wrong argument type: %v\n%s", err, &output)
 	}
 }
@@ -384,9 +361,6 @@ func TestGoConsumerClients(t *testing.T) {
 	}
 	if _, ok := prepared.CheckConfig("caller"); ok {
 		t.Fatal("Go consumers have no runner check")
-	}
-	if err = prepared.TypeCheck(t.Context()); err != nil {
-		t.Fatalf("TypeCheck of a Go consumer: %v", err)
 	}
 	stage := t.TempDir()
 	if err = prepared.WriteGoSlot("caller", stage); err != nil {

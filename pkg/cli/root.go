@@ -142,12 +142,15 @@ func printContract(cmd *cobra.Command, arg string) error {
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
-	return &cobra.Command{Use: "check SERVER...", Short: short, Long: "Type-check a project's calls to MCP servers.", Example: examples("holon types check"), RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := consumer(args)
+	return &cobra.Command{Use: "check", Short: short, Long: "Type-check the project's calls to MCP servers against the clients holon types generate wrote.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		dir, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		return typegen.Check(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
+		if dir, err = filepath.EvalSymlinks(dir); err != nil {
+			return err
+		}
+		return typegen.Check(cmd.Context(), dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
 	}}
 }
 
@@ -185,7 +188,7 @@ func NewTypesCommand() *cobra.Command {
 	generate.Flags().BoolVar(&contract, "contract", false, "Print one server's MCP contract instead of generating")
 	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")
 	types.AddCommand(generate)
-	types.AddCommand(newCheck("Type-check a project's calls to MCP servers"))
+	types.AddCommand(newCheck("Type-check the project's calls to MCP servers"))
 
 	// Plumbing for the SDK repositories' test fixtures: compile one generate request
 	// (the JSON form of mcptype.GenerateRequest, from a file or stdin) into a directory.

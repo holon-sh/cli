@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -106,39 +105,4 @@ func writeJSON(path string, value any) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
-}
-
-// copyTree copies real package content into a checking snapshot, without retaining shared slots.
-func copyTree(from, to string) error {
-	return filepath.WalkDir(from, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(from, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(to, rel)
-		if entry.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			real, err := filepath.EvalSymlinks(path)
-			if err != nil {
-				return err
-			}
-			info, err := os.Stat(real)
-			if err != nil {
-				return err
-			}
-			if info.IsDir() {
-				return copyTree(real, target)
-			}
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, 0o644)
-	})
 }
