@@ -16,7 +16,8 @@ import (
 	"github.com/moby/patternmatcher/ignorefile"
 )
 
-func sourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
+// SourceMatcher reads the project's .dockerignore rules, or returns an empty matcher when absent.
+func SourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
 	file, err := os.Open(filepath.Join(root, dockerignoreFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return patternmatcher.New(nil)
@@ -44,9 +45,9 @@ func GeneratedSource(root, path string) bool {
 	return pathInsideContext(path, managed) && generatedGo(managed) || pathInsideContext(path, filepath.Join(managed, "apps")) && generatedPython(managed)
 }
 
-// snapshotSource copies dir into destination (or only fingerprints it when destination is empty),
+// SnapshotSource copies dir into destination (or only fingerprints it when destination is empty),
 // honouring .dockerignore and skipping generated and dependency directories.
-func snapshotSource(name, dir, destination string) (string, error) {
+func SnapshotSource(name, dir, destination string) (string, error) {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return "", fmt.Errorf("build context for %s: %w", name, err)
@@ -58,7 +59,7 @@ func snapshotSource(name, dir, destination string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	matcher, err := sourceMatcher(root)
+	matcher, err := SourceMatcher(root)
 	if err != nil {
 		return "", err
 	}
@@ -67,7 +68,7 @@ func snapshotSource(name, dir, destination string) (string, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		ignored, err := ignoredSource(root, path, matcher)
+		ignored, err := IgnoredSource(root, path, matcher)
 		if err != nil {
 			return err
 		}
@@ -103,7 +104,7 @@ func snapshotSource(name, dir, destination string) (string, error) {
 			if !pathInsideContext(resolved, root) {
 				return fmt.Errorf("source symlink escapes application: %s", relative)
 			}
-			excluded, err := ignoredSource(root, resolved, matcher)
+			excluded, err := IgnoredSource(root, resolved, matcher)
 			if err != nil {
 				return err
 			}
@@ -170,7 +171,9 @@ func SourceEntry(root string) (string, error) {
 	return entry, nil
 }
 
-func ignoredSource(root, path string, matcher *patternmatcher.PatternMatcher) (bool, error) {
+// IgnoredSource applies the snapshot exclusions to path, including generated slots and dependency
+// directories. The root and .dockerignore remain observable so watchers can refresh their rules.
+func IgnoredSource(root, path string, matcher *patternmatcher.PatternMatcher) (bool, error) {
 	if path == filepath.Join(root, dockerignoreFile) {
 		return false, nil
 	}
