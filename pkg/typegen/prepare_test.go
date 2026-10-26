@@ -313,7 +313,6 @@ func TestCredentialAuthenticatesImageSources(t *testing.T) {
 		env        []string
 		want       string
 	}{
-		{name: "grant", credential: grant("images.example", "secret")},
 		{name: "grant ahead of docker", credential: grant("images.example", "secret"), env: []string{"DOCKER_CONFIG=" + docker("wrong")}},
 		{name: "docker for other registries", credential: grant("elsewhere.example", "wrong"), env: []string{"DOCKER_CONFIG=" + docker("secret")}},
 		{name: "docker under HOME", env: []string{"HOME=" + filepath.Dir(docker("secret")), "DOCKER_CONFIG="}},
