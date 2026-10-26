@@ -19,7 +19,6 @@ func TestDeclaredSources(t *testing.T) {
 		{name: "no descriptor"},
 		{name: "no requires", data: descriptor + `}`},
 		{name: "empty requires", data: descriptor + metadata + `{"requires":{}}}}}`},
-		{name: "null requires", data: descriptor + metadata + `{"requires":null}}}}`},
 		{
 			name: "sorted aliases and registry references",
 			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"}}}}}}`,

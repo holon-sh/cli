@@ -32,8 +32,8 @@ const (
 
 var targets = []string{TargetTS, TargetPy, TargetGo}
 
-// slotPackages are the installed packages that own a Node slot, by target.
-var slotPackages = map[string]string{TargetTS: "holon-sh"}
+// nodeSlotPackage is the installed package that owns the Node slot.
+const nodeSlotPackage = "holon-sh"
 
 // Source is one MCP server whose contract becomes a client, supplied explicitly or declared in
 // sh.holon.requires. Exactly one of Path, Registry, Endpoint or Contract is set.

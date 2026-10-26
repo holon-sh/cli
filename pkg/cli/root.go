@@ -158,6 +158,16 @@ func printContract(cmd *cobra.Command, arg string) error {
 	return encoder.Encode(document)
 }
 
+// generateProject rewrites dir's generated slots for progress: dependencies come from -s
+// or its server.json requires.
+func generateProject(cmd *cobra.Command, dir, typed string, servers []string, progress io.Writer) error {
+	c, err := consumer(dir, typed, servers)
+	if err != nil {
+		return err
+	}
+	return typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
+}
+
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
@@ -179,11 +189,7 @@ func newCheck(short string) *cobra.Command {
 			return err
 		}
 		if !noGenerate {
-			c, err := consumer(dir, typed, servers)
-			if err != nil {
-				return err
-			}
-			if err := typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: io.Discard, Stderr: cmd.ErrOrStderr()}); err != nil {
+			if err := generateProject(cmd, dir, typed, servers, io.Discard); err != nil {
 				return err
 			}
 		}
@@ -223,15 +229,11 @@ func NewTypesCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		c, err := consumer(dir, typed, servers)
-		if err != nil {
-			return err
-		}
 		progress := io.Discard
 		if verbose {
 			progress = cmd.ErrOrStderr()
 		}
-		return typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
+		return generateProject(cmd, dir, typed, servers, progress)
 	}}
 	generate.Flags().StringVar(&contract, "contract", "", "Print one server's MCP contract instead of generating")
 	generate.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)

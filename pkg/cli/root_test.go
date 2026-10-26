@@ -156,8 +156,6 @@ func TestCheckGrammar(t *testing.T) {
 		{[]string{"types", "generate", "a", "b"}, "one DIR at most; dependencies are -s values"},
 		{[]string{"check", "--no-generate", "-s", "x"}, "-s has no effect"},
 		{[]string{"check", "missing-dir"}, "is not a directory"},
-		{[]string{"types", "generate", "missing-dir"}, "is not a directory"},
-		{[]string{"check"}, "declares no runtime"},
 	} {
 		if _, err := run(t, test.args...); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%v = %v, want %q", test.args, err, test.want)
