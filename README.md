@@ -5,20 +5,33 @@
 [![Downloads](https://img.shields.io/badge/releases-download-blue)](https://github.com/holon-sh/cli/releases/latest)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-`holon` turns the MCP servers your project calls into typed clients, so a tool call is an ordinary function call that your type checker verifies.
+`holon` generates typed clients for MCP servers. This allows invoking an MCP server as a function call your type checker understands.
 
-Your project declares the servers it depends on. `holon` fetches each server's **contract** (its tool and resource schemas), writes a typed client for it into the SDK package your project declares, and type-checks every call your code makes to it.
+This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk-py) and [TypeScript SDK](https://github.com/holon-sh/sdk-ts).
 
-```text
-server.json (requires) ──▶ holon types check ──▶ node_modules/holon-sh/generated/   TypeScript, checked with tsc
-                                              ──▶ holon/apps/__init__.py             Python, checked with mypy
+```mermaid
+flowchart LR
+  R["server.json<br/>sh.holon.requires"] --> H["holon types check"]
+  H -->|fetches| C["each server's contract<br/>(tool and resource schemas)"]
+  C --> TS["node_modules/holon-sh/generated/"] --> TSC["tsc"]
+  C --> PY["holon/apps/__init__.py"] --> MYPY["mypy"]
 ```
 
-Runtimes: [TypeScript SDK](https://github.com/holon-sh/sdk-ts), [Python SDK](https://github.com/holon-sh/sdk-py).
+## Install
+
+```sh
+curl -fsSL https://holon-labs.dev/install.sh | sh
+```
+
+Or alternatively with [Go](https://go.dev/doc/install) 1.27+, build and install from source:
+
+```sh
+go install github.com/holon-sh/cli/cmd/holon@latest
+```
 
 ## Walkthrough
 
-**1. Declare dependencies.** In your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json), list the servers you call under `sh.holon.requires` in the [publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing). Each key names the client (`apps.orders`) and its endpoint variable at run time (`ORDERS_MCP_URL`); each value is an exact registry version.
+**1. Declare dependencies** under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). The key names the client (`apps.orders`) and its endpoint variable at run time (`ORDERS_MCP_URL`); the value is an exact registry version.
 
 ```json
 {
@@ -37,17 +50,17 @@ Runtimes: [TypeScript SDK](https://github.com/holon-sh/sdk-ts), [Python SDK](htt
 }
 ```
 
-**2. Generate and check.** The project must depend on `holon-sh` (in `package.json`, `pyproject.toml` or `requirements.txt`); that is how `holon` knows which clients to write.
+**2. Generate and check.** The project must depend on `holon-sh` (`package.json`, `pyproject.toml` or `requirements.txt`).
 
 ```sh
 holon types check
 ```
 
-**3. Call the server.** Arguments and results are typed from the contract, so a wrong field is a compile error.
+**3. Call the server.** A wrong argument or result field is a type error.
 
 ```ts
 import { apps } from "holon-sh";
-const order = await apps.orders.tools.lookup({ id });   // typed from orders' contract
+const order = await apps.orders.tools.lookup({ id });
 ```
 
 ```python
@@ -65,30 +78,25 @@ order = await apps.orders.tools.lookup({"id": id})
 | `... -s [ALIAS=]PATH\|URL` (repeatable) | Use these dependencies instead of `requires`. Any `-s` replaces the whole list. |
 | `holon types generate --contract SERVER` | Print one server's contract and write nothing. |
 
-`DIR` is the project, default `.`. A dependency is any of:
+`DIR` is the project, default `.`. Where a dependency's contract comes from:
 
-| `-s` value or `requires` entry | Where the contract comes from |
-|---|---|
-| A server directory or entry file (`../orders`, `../orders/server.py`) | Extracted from its source. |
-| A registry server (`requires`, or its `https://registry.modelcontextprotocol.io/v0.1/servers/.../versions/...` URL) | The record's `sh.holon.types` document, else the contract attached to its OCI image (`holon publish`), else its `streamable-http` remote. |
-| A running MCP server (`docs=https://mcp.context7.com/mcp`) | Its live `tools/list` and `resources/list`. |
-
-## Install
-
-```sh
-curl -fsSL https://holon-labs.dev/install.sh | sh
-```
-
-Or alternatively with [Go](https://go.dev/doc/install) 1.27+, build and install from source:
-
-```sh
-go install github.com/holon-sh/cli/cmd/holon@latest
+```mermaid
+flowchart TD
+  D["dependency"] --> P["server directory or entry file<br/>-s ../orders"]
+  D --> G["registry server<br/>requires entry, or -s https://registry.modelcontextprotocol.io/v0.1/servers/…/versions/…"]
+  D --> L["running MCP server<br/>-s docs=https://mcp.context7.com/mcp"]
+  P --> PX["extracted from source"]
+  G --> G1{"sh.holon.types<br/>document?"} -->|yes| GX["fetched"]
+  G1 -->|no| G2{"OCI package with<br/>a contract artifact?<br/>(holon publish)"} -->|yes| GI["read from the image"]
+  G2 -->|no| G3{"streamable-http<br/>remote?"} -->|yes| GL["tools/list, resources/list"]
+  G3 -->|no| GE["error"]
+  L --> LX["tools/list, resources/list"]
 ```
 
 ## Reference
 
 <details>
-<summary><code>holon types generate --help</code></summary>
+<summary><code>holon types generate</code></summary>
 
 ```text
 Generate typed clients for MCP servers.
@@ -124,7 +132,7 @@ Flags:
 </details>
 
 <details>
-<summary><code>holon types check --help</code></summary>
+<summary><code>holon types check</code></summary>
 
 ```text
 Generate typed clients for MCP servers, then type-check the project's calls to them.
