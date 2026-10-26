@@ -41,6 +41,7 @@ func TestSnapshots(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
+				return
 			}
 			want := map[string][]byte{}
 			if err := fs.WalkDir(os.DirFS(directory), ".", func(path string, entry fs.DirEntry, err error) error {
