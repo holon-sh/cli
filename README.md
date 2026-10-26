@@ -5,9 +5,73 @@
 [![Downloads](https://img.shields.io/badge/releases-download-blue)](https://github.com/holon-sh/cli/releases/latest)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-`holon` generates typed clients for MCP servers. This allows invoking an MCP server as a function call your type checker understands.
+`holon` turns the MCP servers your project calls into typed clients, so a tool call is an ordinary function call that your type checker verifies.
 
-This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk-py) and [TypeScript SDK](https://github.com/holon-sh/sdk-ts).
+Your project declares the servers it depends on. `holon` fetches each server's **contract** (its tool and resource schemas), writes a typed client for it into the SDK package your project declares, and type-checks every call your code makes to it.
+
+```text
+server.json (requires) ──▶ holon types check ──▶ node_modules/holon-sh/generated/   TypeScript, checked with tsc
+                                              ──▶ holon/apps/__init__.py             Python, checked with mypy
+```
+
+Runtimes: [TypeScript SDK](https://github.com/holon-sh/sdk-ts), [Python SDK](https://github.com/holon-sh/sdk-py).
+
+## Walkthrough
+
+**1. Declare dependencies.** In your project's [`server.json`](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md), list the servers you call under `sh.holon.requires` in the [publisher-provided metadata](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/official-registry-requirements.md#publisher-provided-metadata). Each key names the client (`apps.orders`) and its endpoint variable at run time (`ORDERS_MCP_URL`); each value is an exact registry version.
+
+```json
+{
+  "name": "io.github.acme/checkout",
+  "version": "0.1.0",
+  "description": "Checkout service",
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "sh.holon": {
+        "requires": {
+          "orders": { "name": "io.github.acme/orders", "version": "1.0.0" }
+        }
+      }
+    }
+  }
+}
+```
+
+**2. Generate and check.** The project must depend on `holon-sh` (in `package.json`, `pyproject.toml` or `requirements.txt`); that is how `holon` knows which clients to write.
+
+```sh
+holon types check
+```
+
+**3. Call the server.** Arguments and results are typed from the contract, so a wrong field is a compile error.
+
+```ts
+import { apps } from "holon-sh";
+const order = await apps.orders.tools.lookup({ id });   // typed from orders' contract
+```
+
+```python
+from holon.apps import apps
+order = await apps.orders.tools.lookup({"id": id})
+```
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `holon types generate [DIR]` | Resolve the dependencies, write the typed clients. |
+| `holon types check [DIR]` (or `holon check`) | Generate, then type-check `DIR`'s calls to them. |
+| `holon types check --no-generate` | Type-check the clients already generated: no network, no install, no writes. |
+| `... -s [ALIAS=]PATH\|URL` (repeatable) | Use these dependencies instead of `requires`. Any `-s` replaces the whole list. |
+| `holon types generate --contract SERVER` | Print one server's contract and write nothing. |
+
+`DIR` is the project, default `.`. A dependency is any of:
+
+| `-s` value or `requires` entry | Where the contract comes from |
+|---|---|
+| A server directory or entry file (`../orders`, `../orders/server.py`) | Extracted from its source. |
+| A registry server (`requires`, or its `https://registry.modelcontextprotocol.io/v0.1/servers/.../versions/...` URL) | The record's `sh.holon.types` document, else the contract attached to its OCI image (`holon publish`), else its `streamable-http` remote. |
+| A running MCP server (`docs=https://mcp.context7.com/mcp`) | Its live `tools/list` and `resources/list`. |
 
 ## Install
 
@@ -21,16 +85,16 @@ Or alternatively with [Go](https://go.dev/doc/install) 1.27+, build and install 
 go install github.com/holon-sh/cli/cmd/holon@latest
 ```
 
-## Usage
+## Reference
 
-<details open>
-<summary><code>holon types generate</code></summary>
-
-Generate typed clients for MCP servers.
-
-Leverages `sh.holon.requires` in the [publisher-provided metadata field](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/official-registry-requirements.md#publisher-provided-metadata) from [`server.json`](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md) to resolve dependencies, or the `-s` list for explicit dependencies.
+<details>
+<summary><code>holon types generate --help</code></summary>
 
 ```text
+Generate typed clients for MCP servers.
+
+Leverages sh.holon.requires in the publisher-provided metadata field (https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/official-registry-requirements.md#publisher-provided-metadata) from server.json (https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md) to resolve dependencies, or the -s list for explicit dependencies.
+
 Usage:
   holon types generate [DIR] [flags]
 
@@ -59,14 +123,14 @@ Flags:
 
 </details>
 
-<details open>
-<summary><code>holon types check</code></summary>
-
-Generate typed clients for MCP servers, then type-check the project's calls to them.
-
-Leverages `sh.holon.requires` in the [publisher-provided metadata field](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/official-registry-requirements.md#publisher-provided-metadata) from [`server.json`](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md) to resolve dependencies, or the `-s` list for explicit dependencies.
+<details>
+<summary><code>holon types check --help</code></summary>
 
 ```text
+Generate typed clients for MCP servers, then type-check the project's calls to them.
+
+Leverages sh.holon.requires in the publisher-provided metadata field (https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/official-registry-requirements.md#publisher-provided-metadata) from server.json (https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md) to resolve dependencies, or the -s list for explicit dependencies.
+
 Usage:
   holon types check [DIR] [flags]
 
