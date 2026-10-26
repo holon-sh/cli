@@ -50,7 +50,8 @@ func canonicalRequest(value Value) (Value, string, error) {
 	}
 	variant := sortedKeys(object)[0]
 	contract := func(contract Contract) (Value, string, error) {
-		return canonicalContract(contract).toValue(), digest(contract), nil
+		form := canonicalContract(contract).toValue()
+		return form, hash(form), nil
 	}
 	switch variant {
 	case "contract":
@@ -60,12 +61,12 @@ func canonicalRequest(value Value) (Value, string, error) {
 		}
 		return contract(document)
 	case "schema":
-		schema, err := decodeSchema(object[variant])
+		schema, err := asObject(object[variant])
 		if err != nil {
 			return nil, "", err
 		}
-		form := canonical(schema)
-		return form, hash(form), nil
+		normalizeObject(schema)
+		return schema, hash(schema), nil
 	case "metadata":
 		metadata, err := decodeMetadata(object[variant])
 		if err != nil {

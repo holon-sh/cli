@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 	"unicode"
@@ -144,10 +145,7 @@ func generate(ctx context.Context, request generateRequest) (map[string][]byte, 
 	if err != nil {
 		return nil, err
 	}
-	files := make(map[string][]byte, len(request.runtime)+len(generated))
-	for path, data := range request.runtime {
-		files[path] = data
-	}
+	files := request.runtime
 	for path, text := range generated {
 		if request.banner != nil && path != "package.json" {
 			comment := "//"
@@ -189,24 +187,12 @@ func (r generateRequest) validate() error {
 	}
 	if module := r.pythonRuntimeModule; module != nil {
 		for _, part := range strings.Split(*module, ".") {
-			if !pythonIdentifier(part) && !privatePythonIdentifier(part) {
+			if !pythonName.MatchString(part) || slices.Contains(pythonKeywords, part) {
 				return errors.New("python_runtime_module must be an absolute Python module name")
 			}
 		}
 	}
 	return nil
-}
-
-func privatePythonIdentifier(part string) bool {
-	if !strings.HasPrefix(part, "_") {
-		return false
-	}
-	for i := 0; i < len(part); i++ {
-		if c := part[i]; !isASCIIAlphanumeric(c) && c != '_' {
-			return false
-		}
-	}
-	return true
 }
 
 // slot reports whether the package fills an installed package's generation slot instead of being one itself.
@@ -227,30 +213,13 @@ func (r generateRequest) untyped() []string {
 
 // writeCaller is the identity a generated client announces, with the aliases its app declares.
 func (r generateRequest) writeCaller(out *bytes.Buffer) {
-	out.WriteString(`{"name":`)
-	writeQuoted(out, r.identity.Name)
-	out.WriteString(`,"requires":{`)
-	for i, alias := range sortedKeys(r.requires) {
-		if i > 0 {
-			out.WriteByte(',')
-		}
-		writeQuoted(out, alias)
-		out.WriteByte(':')
-		r.requires[alias].writeWire(out)
+	requires := make(Object, len(r.requires))
+	for alias, identity := range r.requires {
+		requires[alias] = Object{"name": identity.Name, "version": identity.Version}
 	}
-	out.WriteString(`},"version":`)
-	writeQuoted(out, r.identity.Version)
-	out.WriteByte('}')
+	writeValue(out, Object{"name": r.identity.Name, "requires": requires, "version": r.identity.Version})
 }
 
 func relative(path string) bool {
-	if strings.HasPrefix(path, "/") {
-		return false
-	}
-	for _, part := range strings.Split(path, "/") {
-		if part == "" || part == "." || part == ".." {
-			return false
-		}
-	}
-	return true
+	return path != "." && fs.ValidPath(path)
 }

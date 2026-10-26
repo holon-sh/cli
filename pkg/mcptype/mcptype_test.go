@@ -1,6 +1,7 @@
 package mcptype
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,10 @@ func TestGenerate(t *testing.T) {
 	files, err := Generate(t.Context(), request)
 	if err != nil || string(files["blob"]) != "\x00\x01" || !strings.Contains(string(files["clients.go"]), `holon "example.com/runtime"`) {
 		t.Fatalf("generated package: %v %v", slices.Sorted(maps.Keys(files)), err)
+	}
+	files["blob"][0] = 2
+	if len(request.Runtime) != 1 || string(request.Runtime["blob"]) != "\x00\x01" {
+		t.Fatal("generation changed caller-owned runtime files")
 	}
 	request.Contracts["orders"].Tools[0].Input = json.RawMessage(`{"type":"string"}`)
 	if _, err := Generate(t.Context(), request); err == nil || !strings.Contains(err.Error(), "inputSchema must have type object") {
@@ -79,5 +84,21 @@ func TestCanonicalMetadata(t *testing.T) {
 	metadata.Contract.Tools[0].Input = json.RawMessage(`{"type":"string"}`)
 	if _, err := Canonical(t.Context(), map[string]any{"metadata": metadata}); err == nil {
 		t.Fatal("invalid published metadata accepted")
+	}
+}
+
+func TestCanonicalLeavesInputUntouched(t *testing.T) {
+	var document map[string]any
+	if err := json.Unmarshal([]byte(`{"schema":{"type":"object","required":["b","a"],"properties":{"a":{"type":"string","description":"keep"}}}}`), &document); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := json.Marshal(document)
+	form, err := Canonical(t.Context(), document)
+	if err != nil || string(form.Canonical) != `{"properties":{"a":{"type":"string"}},"required":["a","b"],"type":"object"}` {
+		t.Fatalf("canonical schema: %s %v", form.Canonical, err)
+	}
+	after, _ := json.Marshal(document)
+	if !bytes.Equal(before, after) {
+		t.Fatalf("canonicalization changed the caller's document: %s", after)
 	}
 }

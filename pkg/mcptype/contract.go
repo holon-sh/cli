@@ -65,10 +65,6 @@ func decodeIdentity(value Value) (Identity, error) {
 	return identity, nil
 }
 
-func decodeSchema(value Value) (Object, error) {
-	return asObject(value)
-}
-
 func decodeContract(value Value) (Contract, error) {
 	object, err := asObject(value)
 	if err != nil {
@@ -100,16 +96,16 @@ func decodeContract(value Value) (Contract, error) {
 			return Contract{}, err
 		}
 		tool := Tool{}
-		if tool.Input, err = decodeSchema(raw); err != nil {
+		if tool.Input, err = asObject(raw); err != nil {
 			return Contract{}, err
 		}
 		// "outputSchema": null is rejected rather than read as absent.
 		if raw, ok := entry["outputSchema"]; ok {
-			if tool.Output, err = decodeSchema(raw); err != nil {
+			if tool.Output, err = asObject(raw); err != nil {
 				return Contract{}, err
 			}
 		}
-		if !valueEqual(tool.Input["type"], "object") {
+		if tool.Input["type"] != "object" {
 			return Contract{}, fmt.Errorf("%s: inputSchema must have type object", name)
 		}
 		if _, exists := contract.Tools[name]; name == "" || exists {
@@ -139,7 +135,7 @@ func decodeContract(value Value) (Contract, error) {
 				return Contract{}, err
 			}
 			resource := Resource{}
-			if resource.Output, err = decodeSchema(raw); err != nil {
+			if resource.Output, err = asObject(raw); err != nil {
 				return Contract{}, err
 			}
 			if _, exists := contract.Resources[uri]; uri == "" || exists {
@@ -291,13 +287,5 @@ func writeContracts(out *bytes.Buffer, contracts map[string]Contract) {
 		out.WriteByte(':')
 		contracts[alias].writeWire(out)
 	}
-	out.WriteByte('}')
-}
-
-func (i Identity) writeWire(out *bytes.Buffer) {
-	out.WriteString(`{"name":`)
-	writeQuoted(out, i.Name)
-	out.WriteString(`,"version":`)
-	writeQuoted(out, i.Version)
 	out.WriteByte('}')
 }

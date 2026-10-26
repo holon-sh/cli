@@ -2,20 +2,14 @@
 """Build/package one CLI platform for npm, PyPI, and direct download. Never publishes."""
 
 import argparse
-import base64
-import csv
 import gzip
-import hashlib
-import io
 import json
 import os
-import re
 import shutil
 import struct
 import subprocess
 import tarfile
 import tempfile
-import zipfile
 from pathlib import Path
 
 from release_common import TARGETS, Target, python_version, sha256
@@ -66,7 +60,7 @@ def build_binary(binary: Path, target: Target, version: str) -> None:
     subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
 
 
-def build_wheel(stage: Path, dist: Path, binary: Path, target: Target, version: str) -> Path:
+def build_wheel(stage: Path, dist: Path, binary: Path, target: Target, version: str) -> None:
     project = stage / "pypi"
     shutil.copytree(ROOT / "packaging/pypi", project)
     shutil.copyfile(ROOT / "LICENSE", project / "LICENSE")
@@ -78,32 +72,11 @@ def build_wheel(stage: Path, dist: Path, binary: Path, target: Target, version: 
     destination.parent.mkdir(parents=True)
     shutil.copyfile(binary, destination)
     destination.chmod(0o755)
-    subprocess.run(["uv", "build", "--wheel", "--out-dir", str(stage / "wheels"), str(project)], check=True)
-    original = next((stage / "wheels").glob("*.whl"))
-    wheel = dist / f"holon_types-{python_version(version)}-py3-none-{target.wheel_platform}.whl"
-    with zipfile.ZipFile(original) as archive:
-        entries = {name: archive.read(name) for name in archive.namelist()}
-    metadata = next(name for name in entries if name.endswith(".dist-info/WHEEL"))
-    record = next(name for name in entries if name.endswith(".dist-info/RECORD"))
-    text = entries[metadata].decode().replace("Root-Is-Purelib: true", "Root-Is-Purelib: false")
-    text = re.sub(r"(?m)^Tag: .*\n?", "", text)
-    entries[metadata] = (text.rstrip() + "\n" + "".join(f"Tag: py3-none-{platform}\n" for platform in target.wheel_platform.split("."))).encode()
-    rows = []
-    for name, data in entries.items():
-        if name != record:
-            digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
-            rows.append((name, f"sha256={digest}", len(data)))
-    rows.append((record, "", ""))
-    buffer = io.StringIO(newline="")
-    csv.writer(buffer, lineterminator="\n").writerows(rows)
-    entries[record] = buffer.getvalue().encode()
-    with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for name, data in entries.items():
-            info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = (0o100755 if name == "holon_types/bin/holon" else 0o100644) << 16
-            archive.writestr(info, data)
-    return wheel
+    subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(dist), str(project)],
+        env=os.environ | {"HOLON_WHEEL_TAG": f"py3-none-{target.wheel_platform}"},
+        check=True,
+    )
 
 
 def build_npm(stage: Path, dist: Path, binary: Path, target: Target, version: str) -> None:

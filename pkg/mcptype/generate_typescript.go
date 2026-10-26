@@ -38,7 +38,7 @@ func resourceContracts(contracts map[string]Contract) map[string]Contract {
 	for alias, contract := range contracts {
 		tools := make(map[string]Tool, len(contract.Resources))
 		for uri, resource := range contract.Resources {
-			tools[uri] = Tool{Input: Object{"type": "object", "additionalProperties": false}, Output: cloneObject(resource.Output)}
+			tools[uri] = Tool{Input: Object{"type": "object", "additionalProperties": false}, Output: resource.Output}
 		}
 		result[alias] = Contract{Tools: tools, Resources: map[string]Resource{}}
 	}
