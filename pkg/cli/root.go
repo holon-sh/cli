@@ -45,7 +45,7 @@ func printContract(cmd *cobra.Command, manifest typegen.Manifest, app string) er
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
-	return &cobra.Command{Use: "check [DIR...]", Short: short, Long: "Type-check apps against their typed contracts in temporary source copies.", RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: "check [DIR...]", Short: short, Long: "Type-check apps", RunE: func(cmd *cobra.Command, args []string) error {
 		manifest, names, err := typegen.Directories(appDirs(args))
 		if err != nil {
 			return err
@@ -67,8 +67,8 @@ func NewCommand(version string) *cobra.Command {
 func NewTypesCommand() *cobra.Command {
 	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
 	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
-	var noInstall, quiet, contract bool
-	generate := &cobra.Command{Use: "generate [DIR...]", Short: "Generate types in installed SDK slots", RunE: func(cmd *cobra.Command, args []string) error {
+	var verbose, contract bool
+	generate := &cobra.Command{Use: "generate [DIR...]", Short: "Generate typed clients for MCP servers", RunE: func(cmd *cobra.Command, args []string) error {
 		if contract && len(args) > 1 {
 			return errors.New("--contract takes at most one DIR")
 		}
@@ -79,17 +79,16 @@ func NewTypesCommand() *cobra.Command {
 		if contract {
 			return printContract(cmd, manifest, manifest.Apps[0].Name)
 		}
-		stdout := cmd.OutOrStdout()
-		if quiet {
-			stdout = io.Discard
+		progress := io.Discard
+		if verbose {
+			progress = cmd.ErrOrStderr()
 		}
-		return typegen.Generate(cmd.Context(), manifest, typegen.Options{Apps: names, NoInstall: noInstall, Stdout: stdout, Stderr: cmd.ErrOrStderr()})
+		return typegen.Generate(cmd.Context(), manifest, typegen.Options{Apps: names, Stdout: progress, Stderr: cmd.ErrOrStderr()})
 	}}
-	generate.Flags().BoolVar(&contract, "contract", false, "Print the app's language-neutral MCP contract document instead of generating; writes nothing")
-	generate.Flags().BoolVar(&noInstall, "no-install", false, "Print missing runtime installation commands without running them")
-	generate.Flags().BoolVar(&quiet, "quiet", false, "Suppress generation progress")
+	generate.Flags().BoolVar(&contract, "contract", false, "Output the app's MCP contract")
+	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")
 	types.AddCommand(generate)
-	types.AddCommand(newCheck("Type-check apps against their typed contracts in temporary source copies"))
+	types.AddCommand(newCheck("Type-check apps"))
 
 	// Plumbing for the SDK repositories' test fixtures: compile one generate request
 	// (the JSON form of mcptype.GenerateRequest, from a file or stdin) into a directory.

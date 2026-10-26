@@ -29,16 +29,14 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 <summary><code>holon types generate</code></summary>
 
 ```text
-Generate types in installed SDK slots
+Generate typed clients for MCP servers
 
 Usage:
   holon types generate [DIR...] [flags]
 
 Flags:
-      --contract     Print the app's language-neutral MCP contract document instead of generating; writes nothing
-  -h, --help         help for generate
-      --no-install   Print missing runtime installation commands without running them
-      --quiet        Suppress generation progress
+      --contract   Output the app's MCP contract
+  -v, --verbose    Show generation details
 ```
 
 </details>
@@ -47,15 +45,10 @@ Flags:
 <summary><code>holon types check</code></summary>
 
 ```text
-Type-check apps against their typed contracts in temporary source copies.
-
-holon check and holon types check are the same command.
+Type-check apps
 
 Usage:
   holon types check [DIR...] [flags]
-
-Flags:
-  -h, --help   help for check
 ```
 
 </details>

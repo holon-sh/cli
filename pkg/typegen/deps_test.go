@@ -26,7 +26,7 @@ func TestRuntimeSelection(t *testing.T) {
 			put(t, root, "src/view.tsx", test.source)
 			var output bytes.Buffer
 			app := App{Name: "app", Path: root}
-			o := Options{NoInstall: true, Stdout: &output}
+			o := Options{NoInstall: true, Stderr: &output}
 			usage, err := inspectClients(t.Context(), Manifest{Apps: []App{app}}, o)
 			if err != nil {
 				t.Fatal(err)

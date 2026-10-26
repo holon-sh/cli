@@ -12,7 +12,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
+func TestStandaloneVersionAndRemovedFlags(t *testing.T) {
 	var output bytes.Buffer
 	command := cli.NewCommand("0.0.1")
 	command.SetOut(&output)
@@ -23,13 +23,59 @@ func TestStandaloneVersionAndRemovedEmitFlag(t *testing.T) {
 	if !strings.Contains(output.String(), "standalone types CLI") {
 		t.Fatalf("ambiguous version: %s", &output)
 	}
-	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--project", "x"}, {"types", "contract"}} {
+	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--project", "x"}, {"types", "generate", "--no-install"}, {"types", "generate", "--quiet"}, {"types", "contract"}} {
 		command = cli.NewCommand("test")
 		command.SetArgs(args)
 		command.SetErr(new(bytes.Buffer))
 		if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "unknown") {
 			t.Fatalf("removed flag accepted: %v: %v", args, err)
 		}
+	}
+}
+
+func TestGenerateOutput(t *testing.T) {
+	for _, test := range []struct {
+		name, flag, wantStderr string
+		missingRuntime         bool
+	}{
+		{name: "quiet by default"},
+		{name: "verbose", flag: "--verbose", wantStderr: "provider: generated python types\n"},
+		{name: "installation advice", missingRuntime: true, wantStderr: "provider: install runtime with pip install holon-sh and add holon-sh to your requirements\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			files := map[string]string{
+				"server.json": `{"name":"example.com/provider","version":"1.0.0","description":"Provider"}`,
+				"server.py":   "from holon.apps import apps\nfrom mcp.server import MCPServer\nserver = MCPServer('provider')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n",
+			}
+			if !test.missingRuntime {
+				files["requirements.txt"] = "holon-sh\n"
+			}
+			for name, data := range files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var stdout, stderr bytes.Buffer
+			command := cli.NewCommand("test")
+			command.SetOut(&stdout)
+			command.SetErr(&stderr)
+			args := []string{"types", "generate", dir}
+			if test.flag != "" {
+				args = append(args, test.flag)
+			}
+			command.SetArgs(args)
+			if err := command.Execute(); err != nil {
+				t.Fatalf("generate: %v\n%s", err, &stderr)
+			}
+			if stdout.Len() != 0 || stderr.String() != test.wantStderr {
+				t.Fatalf("stdout = %q, stderr = %q; want empty stdout and stderr = %q", &stdout, &stderr, test.wantStderr)
+			}
+			generated, err := os.ReadFile(filepath.Join(dir, "holon/apps/__init__.py"))
+			if err != nil || !bytes.Contains(generated, []byte(mcpcontract.Marker)) {
+				t.Fatalf("generated client missing: %v\n%s", err, generated)
+			}
+		})
 	}
 }
 
@@ -97,7 +143,7 @@ func TestProviderOnlyContract(t *testing.T) {
 	var output bytes.Buffer
 	command := cli.NewCommand("test")
 	command.SetOut(&output)
-	command.SetArgs([]string{"types", "generate", "--contract", dir})
+	command.SetArgs([]string{"types", "generate", "--contract", "-v", dir})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
