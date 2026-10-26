@@ -57,7 +57,7 @@ Flags:
 <summary><code>holon types check</code></summary>
 
 ```text
-Type-check the project's calls to MCP servers against the clients holon types generate wrote.
+Type-check the project's calls to MCP servers.
 
 Usage:
   holon types check [flags]

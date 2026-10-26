@@ -142,7 +142,7 @@ func printContract(cmd *cobra.Command, arg string) error {
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
-	return &cobra.Command{Use: "check", Short: short, Long: "Type-check the project's calls to MCP servers against the clients holon types generate wrote.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	return &cobra.Command{Use: "check", Short: short, Long: "Type-check the project's calls to MCP servers.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		dir, err := os.Getwd()
 		if err != nil {
 			return err
