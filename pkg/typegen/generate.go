@@ -25,7 +25,6 @@ import (
 )
 
 type Options struct {
-	// Env appends KEY=VALUE overrides to the inherited environment.
 	Env            []string
 	HTTPClient     *http.Client
 	Stdout, Stderr io.Writer
