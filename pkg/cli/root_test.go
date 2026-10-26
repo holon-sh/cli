@@ -127,7 +127,11 @@ func TestTargetsComeFromTheProjectsDeclarations(t *testing.T) {
 }
 
 func TestOwnServerSuppliesConsumerMetadata(t *testing.T) {
-	root := t.TempDir()
+	// clientDir hands consumer a symlink-free directory; do the same here.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(root)
 	writeCLIFile(t, root, "server.ts", "export default {};\n")
 	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
