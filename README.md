@@ -112,7 +112,7 @@ def greet(name: str) -> str:
 Pass its entry file with `-s`.
 
 ```sh
-holon types check foo -s https://mcp.context7.com/mcp -s bar/server.py
+holon types check foo -s bar/server.py
 ```
 
 <details open>
@@ -236,22 +236,25 @@ Flags:
 
 ### Dependencies
 
-A dependency is an MCP server your project calls. For each one `holon` obtains a **contract**, the JSON Schemas of the server's tools and resources, and writes a typed client `apps.<alias>` into the SDK package your project declares. `check` then runs the language's type checker over your code against those clients.
+A dependency is an MCP server your project calls. For each one `holon` obtains a contract—the JSON Schemas of the server's tools and resources—and writes a typed client `apps.<alias>` into the SDK package your project declares. `holon types check` then runs the language's type checker over your code against those clients.
 
-```mermaid
-flowchart LR
-  D["dependencies<br/>server.json requires, or -s"] --> C["contracts"] --> G["generated clients<br/>holon-sh/generated (TypeScript)<br/>holon.apps (Python)"] --> T["tsc / mypy"]
-```
+A dependency is written in one of three ways.
 
-A dependency is written in one of three ways, and the contract comes from a different place for each.
+<details open>
+<summary><h4>Source code</h4></summary>
 
-**A server's source code.** A directory or entry file. The contract is extracted from the code; the server is never started.
+A directory or entry file. The contract is extracted from the code; the server is never started.
 
 ```sh
 holon types check -s bar/server.py
 ```
 
-**A registry record.** A `requires` entry in `server.json`, or `-s` with a registry version URL. The record is fetched and its contract is the first of these that the record has:
+</details>
+
+<details open>
+<summary><h4>Registry</h4></summary>
+
+A `requires` entry in `server.json`, or `-s` with a registry version URL. The record is fetched and its contract is the first of these that the record has:
 
 1. the `sh.holon.types` document it links to;
 2. the contract artifact attached to its OCI package, which `holon publish` adds;
@@ -261,10 +264,17 @@ holon types check -s bar/server.py
 holon types check -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
 ```
 
-**A running server.** An endpoint URL. The server is asked for `tools/list` and `resources/list`.
+</details>
+
+<details open>
+<summary><h4>Server</h4></summary>
+
+An endpoint URL. The running server is asked for `tools/list` and `resources/list`.
 
 ```sh
 holon types check -s https://mcp.context7.com/mcp
 ```
+
+</details>
 
 The alias names the client: the `requires` key, an `ALIAS=` prefix on `-s`, or otherwise the last segment of the server's name, so Context7 becomes `apps.context7`. Any `-s` replaces the whole `requires` list rather than adding to it.
