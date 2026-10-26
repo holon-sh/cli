@@ -7,7 +7,7 @@ import (
 
 // changes lists what breaks expected if published is deployed. Empty means compatible.
 // Identity first, then tools by name, then resources by URI.
-func changes(expected *Metadata, published *Metadata) []Change {
+func changes(expected *metadata, published *metadata) []Change {
 	if published == nil || published.Schema == nil {
 		return []Change{{Kind: "no_contract", Text: "no published contract"}}
 	}

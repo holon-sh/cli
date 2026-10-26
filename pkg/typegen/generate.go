@@ -20,15 +20,12 @@ import (
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/opencontainers/go-digest"
-	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
 type Options struct {
 	Env            []string
 	HTTPClient     *http.Client
 	Stdout, Stderr io.Writer
-	// Credential authenticates OCI registry requests ahead of the Docker credential store.
-	Credential auth.CredentialFunc
 	// Extract runs one language's extractor: the runner under toolingDir/<language> reads configPath and
 	// writes outputPath. It defaults to the host's Node.js or Python interpreter.
 	Extract func(ctx context.Context, language, toolingDir, configPath, outputPath string) error
@@ -241,9 +238,6 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 		return document, nil
 	}
 	document, err := ResolveDocument(ctx, source, p.options)
-	if err == nil && document == nil {
-		err = errors.New("image carries no MCP contract document")
-	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
@@ -371,7 +365,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 		for _, target := range c.Targets {
 			switch target {
 			case TargetTS:
-				slot, err := ensureNodeRuntime(ctx, c.Dir, nodePackage, o)
+				slot, err := ensureNodeRuntime(ctx, c.Dir, o)
 				if err != nil {
 					return fmt.Errorf("%s: %w", c.Name, err)
 				}
@@ -397,7 +391,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 			var err error
 			switch target {
 			case TargetTS:
-				err = validateNodeSlot(slots[c.Name], nodePackage, c.slot)
+				err = validateNodeSlot(slots[c.Name], c.slot)
 			case TargetPy:
 				err = validatePythonSlot(c.Dir)
 			case TargetGo:
@@ -459,7 +453,7 @@ func (p *Prepared) WriteNodeSlot(consumer, pkgDir string) error {
 	if err != nil {
 		return err
 	}
-	return writeNodeSlot(pkgDir, nodePackage, files, c.slot)
+	return writeNodeSlot(pkgDir, files, c.slot)
 }
 
 // WritePythonSlot writes the consumer's holon/apps/__init__.py under root, a project directory or
@@ -507,7 +501,7 @@ func AcquireLocks(consumers []Consumer) (func(), error) {
 			return release, err
 		}
 		paths[real] = true
-		if slot, err := InstalledRuntime(c.Dir, nodePackage); err == nil {
+		if slot, err := InstalledRuntime(c.Dir); err == nil {
 			paths[slot] = true
 		}
 	}

@@ -19,10 +19,10 @@ type slotMetadata struct {
 	Identity    mcpcontract.Identity `json:"identity,omitempty"`
 }
 
-// InstalledRuntime resolves a Node runtime package from root and verifies its generated-slot contract.
-func InstalledRuntime(root, pkg string) (string, error) {
+// InstalledRuntime resolves the holon-sh runtime package from root and verifies its generated-slot contract.
+func InstalledRuntime(root string) (string, error) {
 	for dir := root; ; dir = filepath.Dir(dir) {
-		candidate := filepath.Join(dir, "node_modules", pkg)
+		candidate := filepath.Join(dir, "node_modules", nodePackage)
 		real, err := filepath.EvalSymlinks(candidate)
 		if err == nil {
 			var manifest struct {
@@ -46,9 +46,9 @@ func InstalledRuntime(root, pkg string) (string, error) {
 			break
 		}
 	}
-	return "", fmt.Errorf("%s is not installed for %s; install it before generating types", pkg, root)
+	return "", fmt.Errorf("%s is not installed for %s; install it before generating types", nodePackage, root)
 }
-func validateNodeSlot(pkgDir, pkg string, meta slotMetadata) error {
+func validateNodeSlot(pkgDir string, meta slotMetadata) error {
 	directory := filepath.Join(pkgDir, "generated")
 	if info, err := os.Lstat(directory); err == nil {
 		if !info.IsDir() {
@@ -72,7 +72,7 @@ func validateNodeSlot(pkgDir, pkg string, meta slotMetadata) error {
 		return fmt.Errorf("refusing foreign generated slot %s", directory)
 	}
 	if !old.Placeholder && (old.App != meta.App) {
-		return fmt.Errorf("%s is owned by app %s; install a separate %s for each app", directory, old.App, pkg)
+		return fmt.Errorf("%s is owned by app %s; install a separate %s for each app", directory, old.App, nodePackage)
 	}
 	for _, entry := range entries {
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -81,8 +81,8 @@ func validateNodeSlot(pkgDir, pkg string, meta slotMetadata) error {
 	}
 	return nil
 }
-func writeNodeSlot(pkgDir, pkg string, files map[string][]byte, meta slotMetadata) error {
-	if err := validateNodeSlot(pkgDir, pkg, meta); err != nil {
+func writeNodeSlot(pkgDir string, files map[string][]byte, meta slotMetadata) error {
+	if err := validateNodeSlot(pkgDir, meta); err != nil {
 		return err
 	}
 	directory := filepath.Join(pkgDir, "generated")

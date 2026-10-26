@@ -67,7 +67,8 @@ func TestImageDocumentReadAndCopy(t *testing.T) {
 				}
 				return response, err
 			})
-			c := Consumer{Name: "checkout", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Image: "images.example/orders:1.0.0"}}}
+			source, client := registryImageSource(t, client)
+			c := Consumer{Name: "checkout", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{source}}
 			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}})
 			if !errors.Is(err, test.want) {
 				t.Fatalf("Prepare = %v, want %v", err, test.want)

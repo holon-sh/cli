@@ -16,7 +16,7 @@ import (
 )
 
 // ResolveDocument returns one source's contract document without writing anything: a path source
-// is extracted from its snapshot, a registry, endpoint or image source is fetched, and a supplied
+// is extracted from its snapshot, a registry or endpoint source is fetched, and a supplied
 // document is validated and returned with its bytes.
 func ResolveDocument(ctx context.Context, source Source, options Options) (*Document, error) {
 	o := options.defaults()
@@ -52,8 +52,6 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 		return resolveRegistry(ctx, *source.Registry, o)
 	case source.Endpoint != "":
 		return liveContract(ctx, source.Endpoint, nil, o.HTTPClient)
-	case source.Image != "":
-		return resolveTypeMetadata(ctx, source.Image, o)
 	default:
 		return ParseDocument(ctx, source.Document.Data)
 	}

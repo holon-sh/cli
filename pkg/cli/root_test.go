@@ -55,12 +55,9 @@ func TestParseSource(t *testing.T) {
 	}
 }
 
-func TestRemovedFlagsAndContractArity(t *testing.T) {
+func TestVersionAndContractArity(t *testing.T) {
 	if output := run(t, "", "--version"); !strings.Contains(output, "standalone types CLI") {
 		t.Fatalf("version = %q", output)
-	}
-	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--no-install", "x"}, {"types", "generate", "--quiet", "x"}, {"types", "generate", "--target", "ts", "x"}, {"types", "check", "--target", "ts"}, {"types", "contract"}, {"types", "compile"}} {
-		run(t, "unknown", args...)
 	}
 	for _, test := range []struct {
 		args []string
@@ -124,7 +121,7 @@ func TestOwnServerSuppliesConsumerMetadata(t *testing.T) {
 	t.Chdir(root)
 	writeCLIFile(t, root, "server.ts", "export default {};\n")
 	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
-	c, err := consumer(root, "", []string{"./server.ts", "../orders"})
+	c, err := consumer(root, []string{"./server.ts", "../orders"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,31 +155,6 @@ func TestCheckGrammar(t *testing.T) {
 		run(t, "has no generated clients; run holon types generate", append(args, "--no-generate")...)
 	}
 	run(t, "is not a directory", "check", "package.json")
-}
-
-func TestOldPositionalServerHint(t *testing.T) {
-	root := t.TempDir()
-	writeCLIFile(t, root, "orders/server.py", "")
-	writeCLIFile(t, root, "checkout/server.ts", "")
-	t.Chdir(filepath.Join(root, "checkout"))
-	for _, test := range []struct {
-		args []string
-		hint bool
-	}{
-		{[]string{"../orders"}, true},
-		{[]string{"."}, true},
-		{nil, false},
-		{[]string{"../orders", "-s", "../another"}, false},
-	} {
-		message := run(t, "declares no runtime", append([]string{"types", "generate"}, test.args...)...)
-		if strings.Contains(message, "did you mean -s") != test.hint {
-			t.Errorf("generate %v = %s, want hint %v", test.args, message, test.hint)
-		}
-	}
-	writeCLIFile(t, root, "orders/package.json", "{")
-	if message := run(t, "unexpected end of JSON input", "types", "generate", "../orders"); strings.Contains(message, "did you mean") {
-		t.Errorf("malformed manifest = %s, want no old-form hint", message)
-	}
 }
 
 const pythonServer = "from mcp.server import MCPServer\nserver = MCPServer('provider')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n"

@@ -6,7 +6,8 @@ directory holds their sources; the public SDKs are runtime-only.
 
 - `typescript/`: `extract.mjs` statically extracts an MCP handler's tool and
   resource contracts; `runner.mjs` wraps it with the `extract`, `check`, and
-  `verify` modes the CLI invokes. `build.mjs` bundles the runner with esbuild,
+  `verify` modes. CLI commands invoke `extract` and `check`; platform also uses
+  `verify` through the embedded runner. `build.mjs` bundles it with esbuild,
   adds the TypeScript standard declarations under `lib/`, and writes
   `pkg/tooling/cli-tooling-ts-<version>.zip`.
 - `python/`: `extract.py` and `runner.py` are the same tools for Python
