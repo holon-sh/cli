@@ -2,6 +2,7 @@ package mcptype
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -54,11 +55,11 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	resources := generateTypeScript(catalogs)
 	var protocol string
 	switch {
-	case request.protocolSpecifier != nil:
-		specifier := quoted(*request.protocolSpecifier)
+	case request.ProtocolSpecifier != "":
+		specifier := quoted(request.ProtocolSpecifier)
 		protocol = fmt.Sprintf("import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } from %s;\nexport { ToolCallError } from %s;", specifier, specifier)
-	case request.protocol != nil:
-		protocol = *request.protocol
+	case request.Protocol != "":
+		protocol = request.Protocol
 	}
 	var identity, contracts bytes.Buffer
 	request.writeCaller(&identity)
@@ -68,20 +69,20 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		return fmt.Sprintf("import type { Outputs as Resources } from \"./%s.js\";\n%s\nexport type { Resources };\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> }%s;\n", resources, protocol, tools, untyped)
 	}
 	bound := fmt.Sprintf("export function createApps(bindings,options){return bindApps(%s,%s,bindings,options)}\n", &identity, &contracts)
-	runtime := quoted(valueOr(request.runtimeSpecifier, "./runtime.mjs"))
-	browserRuntime := quoted(valueOr(request.browserRuntimeSpecifier, "./browser-runtime.mjs"))
+	runtime := quoted(cmp.Or(request.RuntimeSpecifier, "./runtime.mjs"))
+	browserRuntime := quoted(cmp.Or(request.BrowserRuntimeSpecifier, "./browser-runtime.mjs"))
 	entry := "index"
-	if request.target == "browser" {
+	if request.Target == "browser" {
 		entry = "browser"
 	}
-	entry = valueOr(request.entry, entry)
+	entry = cmp.Or(request.Entry, entry)
 	resourcesEntry := "resources"
 	if entry != "index" {
 		resourcesEntry = entry + "-resources"
 	}
 	var files map[string]string
 	switch {
-	case request.target == "browser":
+	case request.Target == "browser":
 		files = map[string]string{
 			entry + ".js":   fmt.Sprintf("import { bindApps } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", browserRuntime, browserRuntime, bound),
 			entry + ".d.ts": types(resourcesEntry) + browserBindingTypes + exposeTypes,
@@ -94,13 +95,6 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	}
 	files[resourcesEntry+".d.ts"] = resources
 	return files, nil
-}
-
-func valueOr(value *string, fallback string) string {
-	if value != nil {
-		return *value
-	}
-	return fallback
 }
 
 // untypedTypeScript declares members for aliases without a contract: callTool and listTools by any name, no tools or resources.

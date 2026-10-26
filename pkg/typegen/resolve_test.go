@@ -69,8 +69,8 @@ func TestRegistrySourceResolution(t *testing.T) {
 		{"removed types field", base + types + oci + `}`, "", "unknown field", nil},
 		{"oci package", base + oci + `}`, "lookup", "", nil},
 		{"oci before remote", base + oci + remote + `}`, "lookup", "", nil},
-		{"oci without a contract falls through to remote", base + oci + remote + `}`, "read", "", imageClient(t, nil, mcpcontract.MediaType)},
-		{"oci identity mismatch", base + oci + `}`, "", "belongs to example.com/other", imageClient(t, wrongIdentity, mcpcontract.MediaType)},
+		{"oci without a contract falls through to remote", base + oci + remote + `}`, "read", "", imageClient(t, nil, "")},
+		{"oci identity mismatch", base + oci + `}`, "", "belongs to example.com/other", imageClient(t, wrongIdentity, "")},
 		{"oci error propagates", base + `,"packages":[{"registryType":"oci","identifier":"orders:1.0.0"},{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]` + remote + `}`, "", "package orders:1.0.0: package identifier must use an explicit OCI registry", nil},
 		{"invalid OCI contract does not fall through", base + oci + remote + `}`, "", "requires a SHA-256 digest", imageClient(t, ordersMetadata(), "invalid")},
 		{"remote", base + remote + `}`, "read", "", nil},
@@ -81,7 +81,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 			record = test.record
 			image := test.image
 			if image == nil {
-				image = imageClient(t, ordersMetadata(), mcpcontract.MediaType)
+				image = imageClient(t, ordersMetadata(), "")
 			}
 			client := &http.Client{Transport: hostTransport{
 				strings.TrimPrefix(server.URL, "https://"): server.Client().Transport,

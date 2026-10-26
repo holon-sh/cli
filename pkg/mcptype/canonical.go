@@ -2,8 +2,6 @@ package mcptype
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"slices"
 )
 
@@ -25,12 +23,6 @@ func canonicalContract(contract Contract) Contract {
 		normalizeObject(resource.Output)
 	}
 	return contract
-}
-
-// hash is "sha256:<hex>" of the JSON with sorted keys and no whitespace.
-func hash(value Value) string {
-	sum := sha256.Sum256(encode(value))
-	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func normalize(value Value) {

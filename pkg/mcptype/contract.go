@@ -212,52 +212,10 @@ func (c Contract) toValue() Object {
 	return wire
 }
 
-// writeWire is serde's struct serialization of the contract: fields in declaration order
-// (name, inputSchema, outputSchema; tools, resources), schemas with sorted keys.
-func (c Contract) writeWire(out *bytes.Buffer) {
-	out.WriteString(`{"tools":[`)
-	for i, name := range sortedKeys(c.Tools) {
-		if i > 0 {
-			out.WriteByte(',')
-		}
-		tool := c.Tools[name]
-		out.WriteString(`{"name":`)
-		writeQuoted(out, name)
-		out.WriteString(`,"inputSchema":`)
-		writeValue(out, tool.Input)
-		if tool.Output != nil {
-			out.WriteString(`,"outputSchema":`)
-			writeValue(out, tool.Output)
-		}
-		out.WriteByte('}')
-	}
-	out.WriteByte(']')
-	if len(c.Resources) > 0 {
-		out.WriteString(`,"resources":[`)
-		for i, uri := range sortedKeys(c.Resources) {
-			if i > 0 {
-				out.WriteByte(',')
-			}
-			out.WriteString(`{"uri":`)
-			writeQuoted(out, uri)
-			out.WriteString(`,"outputSchema":`)
-			writeValue(out, c.Resources[uri].Output)
-			out.WriteByte('}')
-		}
-		out.WriteByte(']')
-	}
-	out.WriteByte('}')
-}
-
 func writeContracts(out *bytes.Buffer, contracts map[string]Contract) {
-	out.WriteByte('{')
-	for i, alias := range sortedKeys(contracts) {
-		if i > 0 {
-			out.WriteByte(',')
-		}
-		writeQuoted(out, alias)
-		out.WriteByte(':')
-		contracts[alias].writeWire(out)
+	values := make(Object, len(contracts))
+	for alias, contract := range contracts {
+		values[alias] = contract.toValue()
 	}
-	out.WriteByte('}')
+	writeValue(out, values)
 }

@@ -60,7 +60,7 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	node := read(t, stage, "holon-sh/generated/index.js")
-	for _, want := range []string{`import { createApps as create, bindApps } from "../runtime.mjs";`, `"orders":{"tools":[{"name":"lookup"`} {
+	for _, want := range []string{`import { createApps as create, bindApps } from "../runtime.mjs";`, `"name":"lookup"`} {
 		if !strings.Contains(node, want) {
 			t.Fatalf("holon-sh index.js lacks %s:\n%s", want, node)
 		}

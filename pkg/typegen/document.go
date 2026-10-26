@@ -9,6 +9,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/opencontainers/go-digest"
+	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry"
 )
 
@@ -72,12 +73,11 @@ func FetchDocument(ctx context.Context, blobs registry.BlobStore, reference stri
 	if descriptor.Size <= 0 || descriptor.Size > maxContractBytes {
 		return nil, fmt.Errorf("invalid contract document size %d", descriptor.Size)
 	}
-	data, err := readLimited(reader, maxContractBytes)
+	// Verify the requested digest even for a caller-supplied BlobStore.
+	descriptor.Digest = expected
+	data, err := content.ReadAll(reader, descriptor)
 	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) != descriptor.Size || digest.FromBytes(data) != expected {
-		return nil, fmt.Errorf("contract blob %s failed digest or size verification", reference)
+		return nil, fmt.Errorf("contract blob %s failed verification: %w", reference, err)
 	}
 	return ParseDocument(ctx, data)
 }

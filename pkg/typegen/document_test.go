@@ -3,13 +3,14 @@ package typegen
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/opencontainers/go-digest"
+	"oras.land/oras-go/v2/content"
 )
 
 func TestDocumentBytesAndValidation(t *testing.T) {
@@ -46,32 +47,34 @@ func TestImageDocumentReadAndCopy(t *testing.T) {
 	// The fixture's struct JSON has a different key order from the writer's canonical
 	// JSON. A consumer must pin and copy those original bytes, without re-encoding.
 	original := mustJSON(t, ordersMetadata())
-	for _, corrupt := range []bool{false, true} {
-		t.Run(map[bool]string{false: "preserved", true: "corrupt"}[corrupt], func(t *testing.T) {
-			client := imageClient(t, ordersMetadata(), mcpcontract.MediaType)
+	for _, test := range []struct {
+		name string
+		data []byte
+		want error
+	}{
+		{"preserved", original, nil},
+		{"corrupt", bytes.Replace(original, []byte("lookup"), []byte("broken"), 1), content.ErrMismatchedDigest},
+		{"truncated", original[:len(original)-1], io.ErrUnexpectedEOF},
+		{"trailing", append(bytes.Clone(original), ' '), content.ErrTrailingData},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := imageClient(t, ordersMetadata(), "")
 			transport := client.Transport
 			client.Transport = registryResponse(func(request *http.Request) (*http.Response, error) {
-
 				response, err := transport.RoundTrip(request)
-				if err == nil && response.Header.Get("Content-Type") == "application/vnd.oci.image.manifest.v1+json" {
-					t.Fatal("read scanned the index manifests")
-				}
-				if err == nil && corrupt && strings.Contains(request.URL.Path, "/blobs/") {
-					data := bytes.Replace(original, []byte("lookup"), []byte("broken"), 1)
-					response.Body = io.NopCloser(bytes.NewReader(data))
+				if err == nil && strings.Contains(request.URL.Path, "/blobs/") {
+					response.Body.Close()
+					response.Body = io.NopCloser(bytes.NewReader(test.data))
 				}
 				return response, err
 			})
 			c := Consumer{Name: "checkout", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Image: "images.example/orders:1.0.0"}}}
 			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}})
-			if corrupt {
-				if err == nil || !strings.Contains(err.Error(), "verification") {
-					t.Fatalf("corrupt blob: %v", err)
-				}
-				return
+			if !errors.Is(err, test.want) {
+				t.Fatalf("Prepare = %v, want %v", err, test.want)
 			}
 			if err != nil {
-				t.Fatal(err)
+				return
 			}
 			defer prepared.Close()
 			reference := prepared.Metadata()["checkout"].Requires["orders"]
@@ -104,8 +107,10 @@ func TestLocalDependencyDocumentsAreComplete(t *testing.T) {
 		t.Fatalf("consumer did not pin provider's published document: %v", err)
 	}
 	orders.Sources = []Source{{Path: checkout.Dir}}
-	if p, err := Prepare(t.Context(), []Consumer{checkout, orders}, Options{Extract: extract}); err == nil {
-		p.Close()
-		t.Fatal("accepted a cyclic document graph")
+	if p, err := Prepare(t.Context(), []Consumer{checkout, orders}, Options{Extract: extract}); err == nil || !strings.Contains(err.Error(), "contract dependency cycle") {
+		if p != nil {
+			p.Close()
+		}
+		t.Fatalf("cyclic document graph: %v", err)
 	}
 }

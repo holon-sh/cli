@@ -17,7 +17,7 @@ var updateSnapshots = flag.Bool("update", false, "rewrite expected compiler pack
 func TestSnapshots(t *testing.T) {
 	for _, c := range generationCases(t) {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := c.run()
+			got, err := c.run(t)
 			if c.wantError {
 				if err == nil {
 					t.Fatal("accepted an invalid generation request")

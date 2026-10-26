@@ -166,15 +166,6 @@ func writeValue(out *bytes.Buffer, value Value) {
 	}
 }
 
-// encodePretty is serde_json's to_string_pretty: two-space indentation, ": " after keys.
-func encodePretty(value Value) string {
-	var out bytes.Buffer
-	if err := json.Indent(&out, encode(value), "", "  "); err != nil {
-		panic(err) // encode only receives validated JSON values.
-	}
-	return out.String()
-}
-
 // quoted is a JSON string literal as serde_json writes it: only quotes, backslashes and
 // control characters are escaped, with lowercase hex.
 func quoted(text string) string {
@@ -267,19 +258,6 @@ func requiredField(object Object, name string) (Value, error) {
 		return nil, fmt.Errorf("missing field `%s`", name)
 	}
 	return value, nil
-}
-
-// optionalString reads an Option<String> field: absent and null are both none.
-func optionalString(object Object, name string) (*string, error) {
-	value := object[name]
-	if value == nil {
-		return nil, nil
-	}
-	text, err := asString(value)
-	if err != nil {
-		return nil, err
-	}
-	return &text, nil
 }
 
 // pointer resolves a JSON pointer as serde_json's Value::pointer does.

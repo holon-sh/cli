@@ -28,7 +28,7 @@ class _Clients(_typing.Protocol):
     pass
 
 
-_identity, _contracts = _json.loads('[{"name":"a","requires":{},"version":"1"},{}]')
+_identity, _contracts = _json.loads("[{\"name\":\"a\",\"requires\":{},\"version\":\"1\"},{}]")
 
 apps = _typing.cast(_Clients, _Apps(_identity, _contracts))
 

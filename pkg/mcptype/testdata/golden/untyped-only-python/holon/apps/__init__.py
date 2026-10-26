@@ -34,7 +34,7 @@ class _AllClients(_Clients, _typing.Protocol):
     payments: _Untyped
 
 
-_identity, _contracts = _json.loads('[{"name":"a","requires":{"pay-ments":{"name":"p","version":"1"},"payments":{"name":"payments","version":"1"}},"version":"1"},{}]')
+_identity, _contracts = _json.loads("[{\"name\":\"a\",\"requires\":{\"pay-ments\":{\"name\":\"p\",\"version\":\"1\"},\"payments\":{\"name\":\"payments\",\"version\":\"1\"}},\"version\":\"1\"},{}]")
 
 apps = _typing.cast(_AllClients, _Apps(_identity, _contracts))
 

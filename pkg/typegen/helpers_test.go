@@ -2,6 +2,7 @@ package typegen
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -124,9 +125,9 @@ func (response registryResponse) RoundTrip(request *http.Request) (*http.Respons
 	return response(request)
 }
 
-// imageClient serves metadata as an OCI contract artifact of images.example/orders:1.0.0.
-// With nil metadata, the image index contains no contract artifact.
-func imageClient(t *testing.T, metadata *mcpcontract.Metadata, artifactType string) *http.Client {
+// imageClient serves an annotated index and its document blob. An empty annotation
+// uses the blob digest; nil metadata leaves the index without a contract.
+func imageClient(t *testing.T, metadata *mcpcontract.Metadata, annotation string) *http.Client {
 	t.Helper()
 	type document struct {
 		descriptor ocispec.Descriptor
@@ -142,15 +143,7 @@ func imageClient(t *testing.T, metadata *mcpcontract.Metadata, artifactType stri
 	index := ocispec.Index{Manifests: []ocispec.Descriptor{}}
 	if metadata != nil {
 		layer := add(mcpcontract.MediaType, metadata)
-		artifact := ocispec.Manifest{ArtifactType: artifactType, Layers: []ocispec.Descriptor{layer}}
-		artifact.SchemaVersion = 2
-		child := add(ocispec.MediaTypeImageManifest, artifact)
-		child.ArtifactType = mcpcontract.MediaType
-		index.Manifests = append(index.Manifests, child)
-		index.Annotations = map[string]string{mcpcontract.DigestAnnotation: layer.Digest.String()}
-		if artifactType == "invalid" {
-			index.Annotations[mcpcontract.DigestAnnotation] = "invalid"
-		}
+		index.Annotations = map[string]string{mcpcontract.DigestAnnotation: cmp.Or(annotation, layer.Digest.String())}
 	}
 	index.SchemaVersion = 2
 	descriptor := add(ocispec.MediaTypeImageIndex, index)
@@ -175,7 +168,7 @@ func imageClient(t *testing.T, metadata *mcpcontract.Metadata, artifactType stri
 // authenticatedRegistry serves imageClient's documents only with HTTP basic credentials user:secret.
 func authenticatedRegistry(t *testing.T, metadata *mcpcontract.Metadata) *http.Client {
 	t.Helper()
-	inner := imageClient(t, metadata, mcpcontract.MediaType).Transport
+	inner := imageClient(t, metadata, "").Transport
 	return &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {
 		if user, password, ok := request.BasicAuth(); !ok || user != "user" || password != "secret" {
 			header := http.Header{"Www-Authenticate": {`Basic realm="images.example"`}, "Content-Type": {"application/json"}}

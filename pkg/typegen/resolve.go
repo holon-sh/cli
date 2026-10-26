@@ -53,11 +53,10 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 		if err != nil {
 			return nil, err
 		}
-		metadata, err := prepared.contract(ctx, results["source"])
-		if err != nil {
+		if err := prepared.extract(results["source"]); err != nil {
 			return nil, err
 		}
-		return NewDocument(ctx, metadata)
+		return NewDocument(ctx, prepared.metadata)
 	case source.Registry != nil:
 		return resolveRegistry(ctx, *source.Registry, o)
 	case source.Endpoint != "":

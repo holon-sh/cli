@@ -3,8 +3,6 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +19,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/tooling"
+	"github.com/opencontainers/go-digest"
 	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
@@ -59,26 +58,22 @@ type preparedSource struct {
 	sources                                    map[string]string
 }
 
-func (s *preparedSource) contract(ctx context.Context, result extraction) (*mcpcontract.Metadata, error) {
+func (s *preparedSource) extract(result extraction) error {
 	if result.Diagnostic != "" {
-		return nil, fmt.Errorf("%s: %s", s.origin, result.Diagnostic)
+		return fmt.Errorf("%s: %s", s.origin, result.Diagnostic)
 	}
 	s.sources = result.Sources
 	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
-	if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": s.metadata}); err != nil {
-		return nil, fmt.Errorf("%s: %w", s.origin, err)
-	}
-	return s.metadata, nil
+	return nil
 }
 
 type preparedConsumer struct {
 	Consumer
-	server    *preparedSource
-	metadata  *mcpcontract.Metadata
-	packages  map[string]map[string]string // files by target
-	slot      slotMetadata
-	preparing bool
-	prepared  bool
+	server   *preparedSource
+	metadata *mcpcontract.Metadata
+	packages map[string]map[string]string // files by target
+	slot     slotMetadata
+	document *Document
 }
 
 // Prepared owns temporary source snapshots. Close releases them; preparation never modifies consumers.
@@ -201,7 +196,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			continue
 		}
 		name := filepath.Base(s.root)
-		if _, err = s.contract(ctx, results[name]); err != nil {
+		if err = s.extract(results[name]); err != nil {
 			return nil, err
 		}
 	}
@@ -235,7 +230,7 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 			if err := p.prepareConsumer(ctx, consumer, external); err != nil {
 				return nil, err
 			}
-			return NewDocument(ctx, consumer.metadata)
+			return consumer.document, nil
 		}
 		return NewDocument(ctx, dependency.metadata)
 	}
@@ -257,14 +252,13 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 }
 
 func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, external map[string]*Document) error {
-	if c.prepared {
+	if c.document != nil {
 		return nil
 	}
-	if c.preparing {
+	// Metadata exists while visiting dependencies; a document marks completion.
+	if c.metadata != nil {
 		return fmt.Errorf("contract dependency cycle at %s", c.Name)
 	}
-	c.preparing = true
-	defer func() { c.preparing = false }()
 	identity := mcpcontract.Identity{Name: c.Name, Version: "0.0.0"}
 	if c.Server != nil {
 		absolute, _ := filepath.Abs(c.Server.Path)
@@ -323,7 +317,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		return err
 	}
 	p.documents[document.Digest] = document
-	c.prepared = true
+	c.document = document
 	return nil
 }
 
@@ -530,8 +524,7 @@ func AcquireLocks(consumers []Consumer) (func(), error) {
 		}
 	}
 	for _, path := range slices.Sorted(maps.Keys(paths)) {
-		sum := sha256.Sum256([]byte(path))
-		lock := flock.New(filepath.Join(directory, hex.EncodeToString(sum[:])+".lock"))
+		lock := flock.New(filepath.Join(directory, digest.FromString(path).Encoded()+".lock"))
 		ok, err := lock.TryLock()
 		if err != nil || !ok {
 			release()
