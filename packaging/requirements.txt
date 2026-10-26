@@ -1,1 +1,4 @@
+altgraph==0.17.5
+macholib==1.16.4
 pdm-backend==2.5.0
+pyelftools==0.33

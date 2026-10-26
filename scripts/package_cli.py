@@ -9,7 +9,6 @@ import json
 import os
 import re
 import shutil
-import struct
 import subprocess
 import tarfile
 import tempfile
@@ -50,35 +49,34 @@ def write_tarball(archive: Path, binary: Path) -> None:
 
 def verify_binary(binary: Path, target: Target) -> list[str]:
     """Return verified wheel tags: never label dynamic Linux as musl-compatible or guess macOS support."""
-    data = binary.read_bytes()
     if target.goos == "darwin":
-        if data[:4] != b"\xcf\xfa\xed\xfe":
-            raise ValueError("expected a 64-bit Mach-O binary")
-        cpu = struct.unpack_from("<I", data, 4)[0]
-        if cpu != {"arm64": 0x0100000C, "amd64": 0x01000007}[target.goarch]:
+        from macholib import mach_o
+        from macholib.MachO import MachO
+
+        executable = MachO(str(binary))
+        header = executable.headers[0]
+        if executable.fat or not isinstance(header.header, mach_o.mach_header_64) or header.endian != "<":
+            raise ValueError("expected a thin little-endian 64-bit Mach-O binary")
+        if mach_o.CPU_TYPE_NAMES.get(header.header.cputype) != {"arm64": "ARM64", "amd64": "x86_64"}[target.goarch]:
             raise ValueError("Mach-O architecture does not match target")
-        offset = 32
-        minimum = None
-        for _ in range(struct.unpack_from("<I", data, 16)[0]):
-            command, size = struct.unpack_from("<II", data, offset)
-            if command in (0x24, 0x32):
-                version_offset = 12 if command == 0x32 else 8
-                minimum = max(minimum or 0, struct.unpack_from("<I", data, offset + version_offset)[0])
-                if minimum > 15 << 16:
-                    raise ValueError("Mach-O binary requires newer than macOS 15.0; rebuild with MACOSX_DEPLOYMENT_TARGET=15.0")
-            offset += size
-        if minimum is None:
+        version_fields = {mach_o.LC_VERSION_MIN_MACOSX: "version", mach_o.LC_BUILD_VERSION: "minos"}
+        versions = [getattr(command, version_fields[load.cmd]) for load, command, _ in header.commands if load.cmd in version_fields]
+        if not versions:
             raise ValueError("Mach-O binary has no minimum macOS version")
+        minimum = mach_o.mach_version_helper(max(versions))
+        if (minimum.major, minimum.minor, minimum.rev) > (15, 0, 0):
+            raise ValueError("Mach-O binary requires newer than macOS 15.0; rebuild with MACOSX_DEPLOYMENT_TARGET=15.0")
         arch = "x86_64" if target.goarch == "amd64" else "arm64"
-        return [f"macosx_{minimum >> 16}_{(minimum >> 8) & 0xFF}_{arch}"]
-    if data[:6] != b"\x7fELF\x02\x01":
-        raise ValueError("expected a little-endian 64-bit ELF binary")
-    if struct.unpack_from("<H", data, 18)[0] != {"arm64": 183, "amd64": 62}[target.goarch]:
-        raise ValueError("ELF architecture does not match target")
-    offset = struct.unpack_from("<Q", data, 32)[0]
-    size, count = struct.unpack_from("<HH", data, 54)
-    for index in range(count):
-        if struct.unpack_from("<I", data, offset + index * size)[0] in (2, 3):
+        return [f"macosx_{minimum.major}_{minimum.minor}_{arch}"]
+    from elftools.elf.elffile import ELFFile
+
+    with binary.open("rb") as stream:
+        executable = ELFFile(stream)
+        if executable.elfclass != 64 or not executable.little_endian:
+            raise ValueError("expected a little-endian 64-bit ELF binary")
+        if executable["e_machine"] != {"arm64": "EM_AARCH64", "amd64": "EM_X86_64"}[target.goarch]:
+            raise ValueError("ELF architecture does not match target")
+        if any(segment["p_type"] in ("PT_DYNAMIC", "PT_INTERP") for segment in executable.iter_segments()):
             raise ValueError("Linux binaries must be static (no PT_DYNAMIC or PT_INTERP)")
     arch = "x86_64" if target.goarch == "amd64" else "aarch64"
     return [f"manylinux_2_17_{arch}", f"manylinux2014_{arch}", f"musllinux_1_2_{arch}"]
@@ -92,6 +90,7 @@ def build_binary(binary: Path, target: Target, version: str) -> None:
 
 def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None:
     from pdm.backend import build_wheel
+    from pdm.backend.config import Config
 
     with tempfile.TemporaryDirectory(prefix="holon-wheel-") as directory:
         package = Path(directory)
@@ -102,7 +101,10 @@ def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None
         (package / "holon_types/bin/holon").chmod(0o755)
         shutil.copyfile(ROOT / "packaging/README.md", package / "README.md")
         shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
-        (package / "pyproject.toml").write_text((source / "pyproject.toml").read_text().replace('"0.0.0"', json.dumps(version)))
+        shutil.copyfile(source / "pyproject.toml", package / "pyproject.toml")
+        config = Config.from_pyproject(package)
+        config.metadata["version"] = version
+        config.write_to(package / "pyproject.toml")
         with chdir(package):
             build_wheel(str(dist), {"--python-tag": "py3", "--py-limited-api": "none", "--plat-name": tags})
 
