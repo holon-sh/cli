@@ -229,17 +229,17 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	// A fake npm on PATH records the install and creates the package.
 	bin := t.TempDir()
 	log := filepath.Join(bin, "calls")
-	put(t, bin, "npm", "#!/bin/sh\necho \"$PWD $*\" >> "+log+"\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
+	put(t, bin, "npm", "#!/bin/sh\necho \"$PWD $* $INSTALL_MODE\" >> "+log+"\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
 	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("INSTALL_MODE", "inherited")
 	var output bytes.Buffer
-	if err := Generate(t.Context(), []Consumer{c}, Options{Stderr: &output, Extract: extract}); err != nil {
+	if err := Generate(t.Context(), []Consumer{c}, Options{Stderr: &output, Extract: extract, Env: []string{"INSTALL_MODE=first", "INSTALL_MODE=last=value"}}); err != nil {
 		t.Fatalf("generate: %v\n%s", err, &output)
 	}
-	real, _ := filepath.EvalSymlinks(c.Dir)
-	if calls := read(t, bin, "calls"); calls != real+" install\n" {
+	if calls := read(t, bin, "calls"); calls != c.Dir+" install last=value\n" {
 		t.Fatalf("npm calls = %q", calls)
 	}
 	if !isFile(filepath.Join(c.Dir, "node_modules/holon-sh/generated/index.js")) {
@@ -296,6 +296,8 @@ func TestCheckTypeChecksTheProjectAgainstItsGeneratedClients(t *testing.T) {
 }
 
 func TestCredentialAuthenticatesImageSources(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
 	grant := func(host, password string) auth.CredentialFunc {
 		return auth.StaticCredential(host, auth.Credential{Username: "user", Password: password})
 	}
@@ -303,22 +305,32 @@ func TestCredentialAuthenticatesImageSources(t *testing.T) {
 		name       string
 		credential auth.CredentialFunc
 		docker     string // password stored for images.example in the Docker config
+		home       bool
+		env        []string
 		want       string
 	}{
 		{name: "grant", credential: grant("images.example", "secret")},
 		{name: "grant ahead of docker", credential: grant("images.example", "secret"), docker: "wrong"},
 		{name: "docker for other registries", credential: grant("elsewhere.example", "wrong"), docker: "secret"},
+		{name: "docker under HOME", docker: "secret", home: true},
+		{name: "malformed environment", env: []string{"INVALID"}, want: "must be KEY=VALUE"},
 		{name: "rejected grant", credential: grant("images.example", "wrong"), docker: "secret", want: "rejected the supplied registry credential"},
 		{name: "rejected docker credential", docker: "wrong", want: "images.example/orders:1.0.0"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			docker := t.TempDir()
+			home := filepath.Join(t.TempDir(), "home=override")
+			docker := filepath.Join(home, ".docker")
+			env := []string{"HOME=" + t.TempDir(), "DOCKER_CONFIG=", "DOCKER_CONFIG=" + docker}
+			if test.home {
+				env = append(env, "HOME="+home, "DOCKER_CONFIG="+t.TempDir(), "DOCKER_CONFIG=")
+			}
+			env = append(env, test.env...)
 			if test.docker != "" {
 				encoded := base64.StdEncoding.EncodeToString([]byte("user:" + test.docker))
 				put(t, docker, "config.json", `{"auths":{"images.example":{"auth":"`+encoded+`"}}}`)
 			}
 			c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Image: "images.example/orders:1.0.0"}}}
-			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: authenticatedRegistry(t, ordersMetadata()), Env: []string{"DOCKER_CONFIG=" + docker}, Credential: test.credential})
+			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: authenticatedRegistry(t, ordersMetadata()), Env: env, Credential: test.credential})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {
 					t.Fatalf("Prepare = %v, want %q", err, test.want)

@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/holon-sh/cli/internal/commandenv"
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
 type extraction struct {
@@ -64,17 +64,14 @@ func extractTypes(ctx context.Context, root string, batches map[string][]extract
 				return nil, err
 			}
 		} else {
-			env, err := commandenv.Environ(o.Env)
-			if err != nil {
-				return nil, err
-			}
 			l := typeLanguages[language]
 			program, err := l.localProgram(ctx)
 			if err != nil {
 				return nil, err
 			}
 			command := exec.CommandContext(ctx, program, filepath.Join(tooling, language, l.runner), "extract", config, output)
-			command.Env, command.Stdout, command.Stderr = env, o.Stderr, o.Stderr
+			command.Env = append(command.Environ(), o.Env...)
+			command.Stdout, command.Stderr = o.Stderr, o.Stderr
 			if err = command.Run(); err != nil {
 				if ctx.Err() != nil {
 					return nil, ctx.Err()

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 
 	"github.com/distribution/reference"
@@ -22,8 +23,6 @@ import (
 	"oras.land/oras-go/v2/registry/remote/credentials"
 	"oras.land/oras-go/v2/registry/remote/errcode"
 	"oras.land/oras-go/v2/registry/remote/retry"
-
-	"github.com/holon-sh/cli/internal/commandenv"
 )
 
 func fetchImageJSON(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor, value any) error {
@@ -47,13 +46,17 @@ func imageRepository(name string, extraEnv []string, client *http.Client, suppli
 	}
 	authClient := &auth.Client{Client: cmp.Or(client, retry.DefaultClient), Cache: auth.NewCache()}
 	repository.Client = authClient
-	env, err := commandenv.Environ(extraEnv)
-	if err != nil {
-		return nil, used.Load, err
+	configDir, home := os.Getenv("DOCKER_CONFIG"), os.Getenv("HOME")
+	for _, entry := range extraEnv {
+		key, value, _ := strings.Cut(entry, "=")
+		switch key {
+		case "DOCKER_CONFIG":
+			configDir = value
+		case "HOME":
+			home = value
+		}
 	}
-	configDir := commandenv.Value(env, "DOCKER_CONFIG")
 	if configDir == "" {
-		home := commandenv.Value(env, "HOME")
 		if home == "" {
 			home, err = os.UserHomeDir()
 			if err != nil {

@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/tooling"
 )
 
 func Check(ctx context.Context, dir string, options Options) error {
-	o := options.defaults()
+	o, err := options.defaults()
+	if err != nil {
+		return err
+	}
 	targets, err := DeclaredTargets(dir)
 	if err != nil {
 		return err
@@ -47,10 +49,6 @@ func Check(ctx context.Context, dir string, options Options) error {
 	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
 		return err
 	}
-	env, err := commandenv.Environ(append(slices.Clone(o.Env), "PYTHONDONTWRITEBYTECODE=1"))
-	if err != nil {
-		return err
-	}
 	for _, language := range slices.Sorted(maps.Keys(languages)) {
 		l := typeLanguages[language]
 		program, err := l.localProgram(ctx)
@@ -66,7 +64,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 		}
 		command := exec.CommandContext(ctx, program, filepath.Join(root, "tooling", language, l.runner), "check", config)
 		command.Dir = dir
-		command.Env = env
+		command.Env = append(append(command.Environ(), o.Env...), "PYTHONDONTWRITEBYTECODE=1")
 		command.Stdout = o.Stdout
 		command.Stderr = o.Stderr
 		if err = command.Run(); err != nil {

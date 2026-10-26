@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/holon-sh/cli/internal/commandenv"
 )
 
 type packageJSON struct {
@@ -62,8 +60,13 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string,
 		}
 		return "", fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, pkg, manager, verb, pkg)
 	}
-	if err := run(ctx, dir, manager, []string{"install"}, o); err != nil {
-		return "", err
+	fmt.Fprintf(o.Stderr, "%s: %s install\n", filepath.Base(dir), manager)
+	command := exec.CommandContext(ctx, manager, "install")
+	command.Dir = dir
+	command.Env = append(command.Environ(), o.Env...)
+	command.Stdout, command.Stderr = o.Stderr, o.Stderr
+	if err := command.Run(); err != nil {
+		return "", fmt.Errorf("%s install in %s: %w", manager, dir, err)
 	}
 	return InstalledRuntime(dir, pkg)
 }
@@ -100,21 +103,4 @@ func ensurePythonRuntime(dir string) error {
 		}
 	}
 	return fmt.Errorf("%s does not depend on holon-sh; run uv add holon-sh (or add it to requirements.txt)", dir)
-}
-
-func run(ctx context.Context, dir, program string, args []string, o Options) error {
-	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(dir), program, strings.Join(args, " "))
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
-		return err
-	}
-	command := exec.CommandContext(ctx, program, args...)
-	command.Dir = dir
-	command.Env = env
-	command.Stdout = o.Stderr
-	command.Stderr = o.Stderr
-	if err = command.Run(); err != nil {
-		return fmt.Errorf("%s %s in %s: %w", program, strings.Join(args, " "), dir, err)
-	}
-	return nil
 }
