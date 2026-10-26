@@ -109,7 +109,7 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 		client := unique(names, typeIdentifier(binding))
 		methods := map[string]bool{"CallTool": true}
 		tools := map[string]goTool{}
-		catalog := contracts[binding].tools
+		catalog := contracts[binding]
 		for _, name := range sortedKeys(catalog) {
 			tool := catalog[name]
 			method := unique(methods, typeIdentifier(name))

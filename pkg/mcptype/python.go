@@ -31,14 +31,12 @@ func pythonBlock(header string, lines []string, indent string) string {
 }
 
 func pythonOverloaded(lines []string) []string {
-	if len(lines) <= 1 {
-		return lines
+	if len(lines) > 1 {
+		for i, line := range lines {
+			lines[i] = "    @_typing.overload\n" + line
+		}
 	}
-	result := make([]string, len(lines))
-	for i, line := range lines {
-		result[i] = "    @_typing.overload\n" + line
-	}
-	return result
+	return lines
 }
 
 type pythonEmitter struct {
@@ -143,7 +141,7 @@ func (e *pythonEmitter) input(value typ, name string) (string, []string) {
 		return strings.Join(inputs, " | "), arguments
 	}
 	input, argument := e.render(value, name), "_builtins.object"
-	if pythonName.MatchString(input) {
+	if e.names[input] {
 		argument = "_typing.Unpack[" + input + "]"
 	} else if item, ok := strings.CutPrefix(input, "_builtins.dict[_builtins.str, "); ok {
 		argument = strings.TrimSuffix(item, "]")
@@ -165,8 +163,7 @@ func generatePython(contracts map[string]catalog, untyped []string) string {
 		toolsName := unique(emitter.names, typeIdentifier(binding)+"Tools")
 		var methods, calls []string
 		appExports := make([][]string, 4)
-		contract, typed := contracts[binding]
-		tools := contract.tools
+		tools, typed := contracts[binding]
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
 			shapes := []shape{tool.input, tool.output}

@@ -5,7 +5,7 @@
 [![Downloads](https://img.shields.io/badge/releases-download-blue)](https://github.com/holon-sh/cli/releases/latest)
 [![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-`holon` generates typed clients for MCP servers. This allows invoking an MCP server as a function call your type checker understands.
+`holon` provides type-safety for MCP servers, e.g. invoking an MCP server as a function call your type checker understands.
 
 This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk-py) and [TypeScript SDK](https://github.com/holon-sh/sdk-ts).
 
@@ -272,3 +272,19 @@ Flags:
 ```
 
 </details>
+
+## Contract documents
+
+Images publish `application/vnd.holon.mcp-contract.v1+json` documents with an
+`identity`, an optional `schema` containing tools and resources, and `requires`
+mapping dependency aliases to SHA-256 blob digests. The image index annotation
+`sh.holon.contract.digest` points to the own document. Each dependency document
+is stored in the consumer's repository, including snapshots observed from live
+MCP endpoints. Readers verify the fetched bytes before comparing schemas and
+provider identities.
+
+This replaces inline dependency contracts and `sh.holon.types` document URLs.
+Rebuild and republish alpha images, and regenerate client slots. Remove legacy
+managed `holon/` runtime copies first; generation only replaces marked slots.
+Python apps install `holon-sh` and import generated clients with
+`from holon.apps import apps`.

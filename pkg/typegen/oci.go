@@ -14,7 +14,6 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
@@ -92,39 +91,22 @@ func imageRepository(name string, extraEnv []string, client *http.Client, suppli
 	return repository, used.Load, nil
 }
 
-func readTypeMetadata(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor) (*mcpcontract.Metadata, error) {
+// ReadDocument reads an image index's contract annotation, then the named blob.
+// The contract manifest remains in the index for copying and garbage collection;
+// it is not part of the read path.
+func ReadDocument(ctx context.Context, repository *remote.Repository, descriptor ocispec.Descriptor) (*Document, error) {
 	if descriptor.MediaType != ocispec.MediaTypeImageIndex && descriptor.MediaType != "application/vnd.docker.distribution.manifest.list.v2+json" {
 		return nil, nil
 	}
 	var index ocispec.Index
-	if err := fetchImageJSON(ctx, source, descriptor, &index); err != nil {
+	if err := fetchImageJSON(ctx, repository, descriptor, &index); err != nil {
 		return nil, err
 	}
-	var result *mcpcontract.Metadata
-	for _, child := range index.Manifests {
-		if child.ArtifactType != mcpcontract.MediaType {
-			continue
-		}
-		if result != nil {
-			return nil, errors.New("image contains multiple MCP contracts")
-		}
-		var manifest ocispec.Manifest
-		if err := fetchImageJSON(ctx, source, child, &manifest); err != nil {
-			return nil, err
-		}
-		if manifest.ArtifactType != mcpcontract.MediaType || len(manifest.Layers) != 1 || manifest.Layers[0].MediaType != mcpcontract.MediaType {
-			return nil, errors.New("invalid MCP contract artifact")
-		}
-		var metadata mcpcontract.Metadata
-		if err := fetchImageJSON(ctx, source, manifest.Layers[0], &metadata); err != nil {
-			return nil, err
-		}
-		if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": metadata}); err != nil {
-			return nil, err
-		}
-		result = &metadata
+	reference := index.Annotations[mcpcontract.DigestAnnotation]
+	if reference == "" {
+		return nil, nil
 	}
-	return result, nil
+	return FetchDocument(ctx, repository.Blobs(), reference)
 }
 
 func parseImportedImage(image string) (reference.Named, error) {
@@ -144,7 +126,7 @@ func parseImportedImage(image string) (reference.Named, error) {
 	return named, nil
 }
 
-func resolveTypeMetadata(ctx context.Context, image string, o Options) (*mcpcontract.Metadata, error) {
+func resolveTypeMetadata(ctx context.Context, image string, o Options) (*Document, error) {
 	named, err := parseImportedImage(image)
 	if err != nil {
 		return nil, err
@@ -164,6 +146,6 @@ func resolveTypeMetadata(ctx context.Context, image string, o Options) (*mcpcont
 	if err != nil {
 		return nil, fmt.Errorf("resolve dependency contract for %s: %w", image, rejected(err))
 	}
-	metadata, err := readTypeMetadata(ctx, repository, descriptor)
+	metadata, err := ReadDocument(ctx, repository, descriptor)
 	return metadata, rejected(err)
 }

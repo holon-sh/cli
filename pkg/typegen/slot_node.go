@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,7 +34,7 @@ func InstalledRuntime(root, pkg string) (string, error) {
 			if err := readTypeJSON(filepath.Join(real, "package.json"), &manifest); err != nil {
 				return "", err
 			}
-			if manifest.Holon.Slot != "generated" || manifest.Holon.ContractVersion != mcpcontract.Version {
+			if manifest.Holon.Slot != "generated" || manifest.Holon.ContractVersion != 1 {
 				return "", fmt.Errorf("%s does not declare a compatible holon.slot", candidate)
 			}
 			return real, nil
@@ -80,7 +81,7 @@ func validateNodeSlot(pkgDir, pkg string, meta slotMetadata) error {
 	}
 	return nil
 }
-func writeNodeSlot(pkgDir, pkg string, files map[string]string, meta slotMetadata) error {
+func writeNodeSlot(pkgDir, pkg string, files map[string][]byte, meta slotMetadata) error {
 	if err := validateNodeSlot(pkgDir, pkg, meta); err != nil {
 		return err
 	}
@@ -90,17 +91,17 @@ func writeNodeSlot(pkgDir, pkg string, files map[string]string, meta slotMetadat
 		return err
 	}
 	files = maps.Clone(files)
-	files["holon-generated.json"] = string(data) + "\n"
+	files["holon-generated.json"] = append(data, '\n')
 	return replaceDirectory(pkgDir, directory, files)
 }
 
 // replaceDirectory atomically replaces directory, inside parent, with exactly files.
 // An identical directory is left untouched.
-func replaceDirectory(parent, directory string, files map[string]string) error {
+func replaceDirectory(parent, directory string, files map[string][]byte) error {
 	same := true
 	for name, content := range files {
 		old, err := os.ReadFile(filepath.Join(directory, name))
-		if err != nil || string(old) != content {
+		if err != nil || !bytes.Equal(old, content) {
 			same = false
 			break
 		}
@@ -120,7 +121,7 @@ func replaceDirectory(parent, directory string, files map[string]string) error {
 		if filepath.Base(name) != name || strings.HasPrefix(name, ".") {
 			return fmt.Errorf("invalid generated file %q", name)
 		}
-		if err := os.WriteFile(filepath.Join(temp, name), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(temp, name), content, 0o644); err != nil {
 			return err
 		}
 	}

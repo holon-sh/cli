@@ -3,128 +3,44 @@ package mcptype
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"slices"
 	"strings"
 	"unicode"
+
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-// generateRequest is one target's package request, decoded and validated.
+// generateRequest retains the typed options and a private, validated schema tree.
 type generateRequest struct {
-	target    string
-	identity  Identity
-	requires  map[string]Identity // every declared dependency alias, whether or not it has a contract
-	contracts map[string]Contract // the typed dependencies for this target, by alias
-	runtime   map[string][]byte   // files copied into the package verbatim
-	// Node and browser: protocol declarations spliced into each .d.ts entry point.
-	protocol *string
-	// Import the installed runtime instead of a copied runtime file.
-	runtimeSpecifier, browserRuntimeSpecifier *string
-	// Import protocol declarations instead of inlining protocol.
-	protocolSpecifier *string
-	// Python: normalized relative output path instead of _apps.py, and the absolute runtime module instead of .client.
-	pythonModule, pythonRuntimeModule *string
-	// First-line comment on generated source files (not JSON or copied runtime files).
-	banner *string
-	// Extra package.json fields.
-	packageFields Object
-	// Go: import path of the runtime module.
-	goModule *string
-	// Node and browser: base name of the entry point files (<entry>.js, <entry>.d.ts) instead of index or browser.
-	entry *string
+	GenerateRequest
+	contracts map[string]Contract
 }
 
-var generateFields = []string{"target", "identity", "requires", "contracts", "runtime", "protocol", "runtime_specifier", "browser_runtime_specifier", "protocol_specifier", "python_module", "python_runtime_module", "banner", "package_fields", "go_module", "entry"}
-
-func decodeGenerateRequest(value Value) (generateRequest, error) {
-	object, err := asObject(value)
+// Generate returns the package files by relative path: copied runtime files plus generated sources.
+func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, error) {
+	// Only schemas need JSON decoding; the remaining options are already typed.
+	value, err := marshal(ctx, options.Contracts)
 	if err != nil {
-		return generateRequest{}, err
+		return nil, err
 	}
-	for _, key := range sortedKeys(object) {
-		if !slices.Contains(generateFields, key) {
-			return generateRequest{}, fmt.Errorf("unknown field `%s`", key)
+	request := generateRequest{GenerateRequest: options, contracts: map[string]Contract{}}
+	contracts, _ := value.(Object) // A nil Contracts map encodes as null.
+	for alias, raw := range contracts {
+		if request.contracts[alias], err = decodeContract(raw); err != nil {
+			return nil, err
 		}
 	}
-	request := generateRequest{requires: map[string]Identity{}, contracts: map[string]Contract{}, runtime: map[string][]byte{}, packageFields: Object{}}
-	raw, err := requiredField(object, "target")
-	if err != nil {
-		return generateRequest{}, err
-	}
-	if request.target, err = asString(raw); err != nil {
-		return generateRequest{}, err
-	}
-	if !slices.Contains([]string{"node", "browser", "python", "go"}, request.target) {
-		return generateRequest{}, fmt.Errorf("unknown variant `%s`, expected one of `node`, `browser`, `python`, `go`", request.target)
-	}
-	if raw, err = requiredField(object, "identity"); err != nil {
-		return generateRequest{}, err
-	}
-	if request.identity, err = decodeIdentity(raw); err != nil {
-		return generateRequest{}, err
-	}
-	if raw, ok := object["requires"]; ok {
-		requires, err := asObject(raw)
-		if err != nil {
-			return generateRequest{}, err
-		}
-		for alias, item := range requires {
-			if request.requires[alias], err = decodeIdentity(item); err != nil {
-				return generateRequest{}, err
-			}
-		}
-	}
-	if raw, ok := object["contracts"]; ok {
-		contracts, err := asObject(raw)
-		if err != nil {
-			return generateRequest{}, err
-		}
-		for alias, item := range contracts {
-			if request.contracts[alias], err = decodeContract(item); err != nil {
-				return generateRequest{}, err
-			}
-		}
-	}
-	if raw, ok := object["runtime"]; ok {
-		runtime, err := asObject(raw)
-		if err != nil {
-			return generateRequest{}, err
-		}
-		for path, item := range runtime {
-			text, err := asString(item)
-			if err != nil {
-				return generateRequest{}, err
-			}
-			if request.runtime[path], err = base64.StdEncoding.DecodeString(text); err != nil {
-				return generateRequest{}, fmt.Errorf("runtime %s: %w", path, err)
-			}
-		}
-	}
-	for name, target := range map[string]**string{
-		"protocol": &request.protocol, "runtime_specifier": &request.runtimeSpecifier, "browser_runtime_specifier": &request.browserRuntimeSpecifier,
-		"protocol_specifier": &request.protocolSpecifier, "python_module": &request.pythonModule, "python_runtime_module": &request.pythonRuntimeModule,
-		"banner": &request.banner, "go_module": &request.goModule, "entry": &request.entry,
-	} {
-		if *target, err = optionalString(object, name); err != nil {
-			return generateRequest{}, err
-		}
-	}
-	if raw, ok := object["package_fields"]; ok {
-		if request.packageFields, err = asObject(raw); err != nil {
-			return generateRequest{}, err
-		}
-	}
-	return request, nil
-}
 
-// generate lays out one target's package: copied runtime files plus the generated sources.
-func generate(ctx context.Context, request generateRequest) (map[string][]byte, error) {
-	for _, path := range sortedKeys(request.runtime) {
+	for _, path := range sortedKeys(request.Runtime) {
 		if !relative(path) {
 			return nil, fmt.Errorf("runtime path %q must be relative and normalized", path)
+		}
+		if request.Runtime[path] == nil {
+			return nil, fmt.Errorf("runtime %s must contain bytes", path)
 		}
 	}
 	if err := request.validate(); err != nil {
@@ -135,7 +51,7 @@ func generate(ctx context.Context, request generateRequest) (map[string][]byte, 
 		return nil, err
 	}
 	var generated map[string]string
-	switch request.target {
+	switch request.Target {
 	case "node", "browser":
 		generated, err = generateTypeScriptPackage(ctx, request, catalogs)
 	case "python":
@@ -146,14 +62,17 @@ func generate(ctx context.Context, request generateRequest) (map[string][]byte, 
 	if err != nil {
 		return nil, err
 	}
-	files := request.runtime
+	files := map[string][]byte{}
+	for path, data := range request.Runtime {
+		files[path] = bytes.Clone(data)
+	}
 	for path, text := range generated {
-		if request.banner != nil && path != "package.json" {
+		if request.Banner != "" {
 			comment := "//"
 			if strings.HasSuffix(path, ".py") {
 				comment = "#"
 			}
-			text = comment + " " + *request.banner + "\n" + text
+			text = comment + " " + request.Banner + "\n" + text
 		}
 		files[path] = []byte(text)
 	}
@@ -161,48 +80,51 @@ func generate(ctx context.Context, request generateRequest) (map[string][]byte, 
 }
 
 func (r generateRequest) validate() error {
-	if r.protocol != nil && r.protocolSpecifier != nil {
+	if !slices.Contains([]string{"node", "browser", "python", "go"}, r.Target) {
+		return fmt.Errorf("unknown target %q", r.Target)
+	}
+	for _, identity := range slices.AppendSeq([]mcpcontract.Identity{r.Identity}, maps.Values(r.Requires)) {
+		if identity.Name == "" || identity.Version == "" {
+			return errors.New("identity name and version must be nonempty")
+		}
+	}
+	if r.Protocol != "" && r.ProtocolSpecifier != "" {
 		return errors.New("protocol and protocol_specifier are mutually exclusive")
 	}
 	for _, option := range []struct {
 		name  string
-		value *string
-	}{{"runtime_specifier", r.runtimeSpecifier}, {"browser_runtime_specifier", r.browserRuntimeSpecifier}, {"protocol_specifier", r.protocolSpecifier}, {"banner", r.banner}} {
-		if option.value == nil {
+		value string
+	}{{"runtime_specifier", r.RuntimeSpecifier}, {"browser_runtime_specifier", r.BrowserRuntimeSpecifier}, {"protocol_specifier", r.ProtocolSpecifier}, {"banner", r.Banner}} {
+		if option.value == "" {
 			continue
 		}
-		if strings.TrimSpace(*option.value) == "" || strings.ContainsFunc(*option.value, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) {
+		if strings.TrimSpace(option.value) == "" || strings.ContainsFunc(option.value, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) {
 			return fmt.Errorf("%s must be nonempty and contain no line breaks or control characters", option.name)
 		}
 	}
-	if entry := r.entry; entry != nil && (!relative(*entry) || strings.ContainsAny(*entry, "/\\:") || strings.ContainsFunc(*entry, unicode.IsControl)) {
+	if entry := r.Entry; entry != "" && (!relative(entry) || strings.ContainsAny(entry, "/\\:") || strings.ContainsFunc(entry, unicode.IsControl)) {
 		return errors.New("entry must be a nonempty file name without separators or control characters")
 	}
-	if path := r.pythonModule; path != nil && (!relative(*path) || strings.ContainsAny(*path, "\\:") || strings.ContainsFunc(*path, unicode.IsControl) || !strings.HasSuffix(*path, ".py")) {
+	if path := r.PythonModule; path != "" && (!relative(path) || strings.ContainsAny(path, "\\:") || strings.ContainsFunc(path, unicode.IsControl) || !strings.HasSuffix(path, ".py")) {
 		return errors.New("python_module must be a relative, normalized .py path")
 	}
-	if module := r.pythonRuntimeModule; module != nil {
-		for _, part := range strings.Split(*module, ".") {
+	if module := r.PythonRuntimeModule; module != "" {
+		for _, part := range strings.Split(module, ".") {
 			if !pythonName.MatchString(part) || slices.Contains(pythonKeywords, part) {
 				return errors.New("python_runtime_module must be an absolute Python module name")
 			}
 		}
 	}
-	if r.target == "go" && r.goModule == nil {
+	if r.Target == "go" && r.GoModule == "" {
 		return errors.New("go_module is required for the go target")
 	}
 	return nil
 }
 
-// slot reports whether the package fills an installed package's generation slot instead of being one itself.
-func (r generateRequest) slot() bool {
-	return r.runtimeSpecifier != nil || r.browserRuntimeSpecifier != nil || r.pythonModule != nil
-}
-
 // untyped lists declared aliases without a contract: their clients call tools by name, unvalidated.
 func (r generateRequest) untyped() []string {
 	var aliases []string
-	for _, alias := range sortedKeys(r.requires) {
+	for _, alias := range sortedKeys(r.Requires) {
 		if _, ok := r.contracts[alias]; !ok {
 			aliases = append(aliases, alias)
 		}
@@ -210,13 +132,13 @@ func (r generateRequest) untyped() []string {
 	return aliases
 }
 
-// writeCaller is the identity a generated client announces, with the aliases its app declares.
-func (r generateRequest) writeCaller(out *bytes.Buffer) {
-	requires := make(Object, len(r.requires))
-	for alias, identity := range r.requires {
-		requires[alias] = Object{"name": identity.Name, "version": identity.Version}
+// caller is the identity a generated client announces, with the aliases its app declares.
+func (r generateRequest) caller() Object {
+	requires := make(Object, len(r.Requires))
+	for alias, identity := range r.Requires {
+		requires[alias] = identity
 	}
-	writeValue(out, Object{"name": r.identity.Name, "requires": requires, "version": r.identity.Version})
+	return Object{"name": r.Identity.Name, "requires": requires, "version": r.Identity.Version}
 }
 
 func relative(path string) bool {

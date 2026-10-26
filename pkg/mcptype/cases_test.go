@@ -1,8 +1,8 @@
 package mcptype
 
 import (
-	"context"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,16 +14,12 @@ type generationCase struct {
 	wantError   bool
 }
 
-func (c generationCase) run() (map[string][]byte, error) {
-	value, err := decodeJSON([]byte(c.input))
-	if err != nil {
-		return nil, err
+func (c generationCase) run(t *testing.T) (map[string][]byte, error) {
+	var request GenerateRequest
+	if err := json.Unmarshal([]byte(c.input), &request); err != nil {
+		t.Fatal(err)
 	}
-	request, err := decodeGenerateRequest(value)
-	if err != nil {
-		return nil, err
-	}
-	return generate(context.Background(), request)
+	return Generate(t.Context(), request)
 }
 
 const kitchenSink = `{
@@ -95,8 +91,9 @@ const kitchenSink = `{
 
 const sinkRequires = `{"orders": {"name": "orders", "version": "1.0.0"}, "orders!": {"name": "example/orders", "version": "2"}, "123": {"name": "n", "version": "1"}, "for": {"name": "keyword", "version": "1"}, "with-hyphen": {"name": "h", "version": "1"}, "_private": {"name": "p", "version": "1"}, "ünï": {"name": "ü", "version": "1"}, "payments": {"name": "payments", "version": "2.0.0"}, "pay-ments": {"name": "pay", "version": "1"}, "class": {"name": "c", "version": "1"}, "untyped_ok": {"name": "u", "version": "1"}}`
 
+// The second orders alias exercises identifier collisions without repeating every schema case.
 func sinkContracts() string {
-	return `{"orders": ` + kitchenSink + `, "orders!": ` + kitchenSink + `, "123": {"tools": []}, "for": {"tools": [{"name": "x", "inputSchema": {"type": "object"}}]}, "with-hyphen": {"tools": [{"name": "y", "inputSchema": {"type": "object"}}], "resources": []}, "_private": {"tools": []}, "ünï": {"tools": [{"name": "z", "inputSchema": {"type": "object"}}]}}`
+	return `{"orders": ` + kitchenSink + `, "orders!": {"tools": [{"name": "kitchen-sink", "inputSchema": {"type":"object", "properties":{"id":{"type":"string"}}, "required":["id"], "additionalProperties":false}, "outputSchema":{"type":"boolean"}}]}, "123": {"tools": []}, "for": {"tools": [{"name": "x", "inputSchema": {"type": "object"}}]}, "with-hyphen": {"tools": [{"name": "y", "inputSchema": {"type": "object"}}], "resources": []}, "_private": {"tools": []}, "ünï": {"tools": [{"name": "z", "inputSchema": {"type": "object"}}]}}`
 }
 
 func generationCases(t *testing.T) []generationCase {
@@ -114,32 +111,29 @@ func generationCases(t *testing.T) []generationCase {
          "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}},
         {"name": "then", "inputSchema": {"type": "object", "additionalProperties": false}}
     ], "resources": [{"uri": "orders://summary", "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}}]}`
-	legacyContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}}`
+	sampleContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}}`
 	runtime := `{"runtime.mjs": "` + base64.StdEncoding.EncodeToString([]byte("export {};\n")) + `", "browser-runtime.mjs": "` + base64.StdEncoding.EncodeToString([]byte("export {};\n")) + `", "nested/bytes.dat": "` + base64.StdEncoding.EncodeToString([]byte{0, 128, 255, '\n'}) + `"}`
 	for _, target := range []string{"node", "browser", "python", "go"} {
-		add("legacy-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}, "payments": {"name": "payments", "version": "2.0.0"}}, "contracts": `+legacyContracts+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "package_fields": {"holon": "holon-generated-apps-v1"}, "go_module": "example.com/runtime"}`)
-		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "package_fields": {"holon": "holon-generated-apps-v1", "nested": {"list": [1, 2.5, "é", null, {"k": [true, false]}], "empty": {}, "emptyList": []}, "number": 1e21, "zero": -0, "float": 1.0}, "go_module": "example.com/é/runtime", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
+		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "go_module": "example.com/é/runtime", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
 		add("empty-"+target, `{"target": "`+target+`", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
-		add("untyped-only-"+target, `{"target": "`+target+`", "identity": {"name": "a", "version": "1"}, "requires": {"payments": {"name": "payments", "version": "1"}, "pay-ments": {"name": "p", "version": "1"}}, "go_module": "example.com/runtime", "package_fields": {}}`)
+		add("untyped-only-"+target, `{"target": "`+target+`", "identity": {"name": "a", "version": "1"}, "requires": {"payments": {"name": "payments", "version": "1"}, "pay-ments": {"name": "p", "version": "1"}}, "go_module": "example.com/runtime"}`)
 	}
 	for _, target := range []string{"node", "browser", "python"} {
 		options := `"runtime_specifier": "../runtime.mjs", "browser_runtime_specifier": "../browser-runtime.mjs", "protocol_specifier": "../protocol.js"`
 		if target == "python" {
 			options = `"python_module": "holon/apps/__init__.py", "python_runtime_module": "holon.client"`
 		}
-		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+legacyContracts+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
-		add("slot-sink-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
+		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+sampleContracts+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
 	}
 	add("slot-node-runtime-only", `{"target": "node", "identity": {"name": "a", "version": "1"}, "runtime_specifier": "@holon/apps/runtime.mjs", "protocol": "type X = 1;"}`)
 	add("slot-python-module-only", `{"target": "python", "identity": {"name": "a", "version": "1"}, "python_module": "apps.py"}`)
 	add("slot-python-runtime-only", `{"target": "python", "identity": {"name": "a", "version": "1"}, "python_runtime_module": "_holon.client_1"}`)
 	add("banner-runtime", `{"target": "node", "identity": {"name": "a", "version": "1"}, "banner": "generated by a caller", "runtime": {"runtime.mjs": "`+base64.StdEncoding.EncodeToString([]byte("export {};\n"))+`", "index.js": "`+base64.StdEncoding.EncodeToString([]byte("overwritten\n"))+`"}}`)
 	for _, test := range []struct{ name, patch string }{
-		{"go-module-missing", `"target": "go", "go_module": null`},
+		{"go-module-missing", `"target": "go", "go_module": ""`},
 		{"runtime-escape", `"runtime": {"../escape": ""}`},
-		{"runtime-bad-base64", `"runtime": {"file": "%%"}`},
-		{"protocol-exclusive", `"protocol": "", "protocol_specifier": "../protocol.js"`},
-		{"runtime-specifier-empty", `"runtime_specifier": ""`},
+		{"runtime-null", `"runtime": {"file": null}`},
+		{"protocol-exclusive", `"protocol": "type X = 1;", "protocol_specifier": "../protocol.js"`},
 		{"browser-specifier-newline", `"browser_runtime_specifier": "bad\nmodule"`},
 		{"protocol-specifier-blank", `"protocol_specifier": " "`},
 		{"python-module-escape", `"python_module": "../escape.py"`},
@@ -150,10 +144,8 @@ func generationCases(t *testing.T) []generationCase {
 		{"python-runtime-relative", `"python_runtime_module": ".client"`},
 		{"python-runtime-keyword", `"python_runtime_module": "holon.class"`},
 		{"banner-newline", `"banner": "marker\nimport os"`},
-		{"entry-empty", `"entry": ""`},
 		{"entry-separator", `"entry": "a/b"`},
 		{"binding-empty", `"contracts": {"": {"tools": []}}`},
-		{"unknown-field", `"unknown": true`},
 		{"bad-target", `"target": "wasm"`},
 		{"identity-empty", `"identity": {"name": "", "version": "1"}`},
 		{"requires-empty-identity", `"requires": {"x": {"name": "x", "version": ""}}`},
