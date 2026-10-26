@@ -17,7 +17,7 @@ import (
 )
 
 // Resolve returns one source's contract document without writing anything: a path source is
-// extracted from its snapshot, a registry or endpoint source is fetched, and a supplied
+// extracted from its snapshot, a registry, endpoint or image source is fetched, and a supplied
 // contract is validated and returned as given.
 func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.Metadata, error) {
 	o := options.defaults()
@@ -45,11 +45,13 @@ func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.
 		if err != nil {
 			return nil, err
 		}
-		return prepared.contract(results["source"])
+		return prepared.contract(ctx, results["source"])
 	case source.Registry != nil:
 		return resolveRegistry(ctx, *source.Registry, o)
 	case source.Endpoint != "":
 		return liveContract(ctx, source.Endpoint, nil, o.HTTPClient)
+	case source.Image != "":
+		return resolveTypeMetadata(ctx, source.Image, o)
 	default:
 		if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": source.Contract}); err != nil {
 			return nil, err
@@ -58,8 +60,9 @@ func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.
 	}
 }
 
-// resolveRegistry fetches a registry record and its contract: the record's sh.holon.types document,
-// or else the schemas its streamable-http remote advertises. A record offering neither is an error.
+// resolveRegistry fetches a registry record and its contract: its sh.holon.types document, then
+// its first OCI package's contract artifact, then its first streamable-http remote's schemas.
+// A package error is an error; a package without a contract artifact falls through to the remote.
 func resolveRegistry(ctx context.Context, ref Reference, o Options) (*mcpcontract.Metadata, error) {
 	d, err := (Client{HTTP: o.HTTPClient, Origin: ref.RegistryURL()}).Get(ctx, ref.Name, ref.Version)
 	if err != nil {
@@ -70,18 +73,26 @@ func resolveRegistry(ctx context.Context, ref Reference, o Options) (*mcpcontrac
 	case d.Types != "":
 		metadata, err = fetchContract(ctx, d.Types, o)
 	default:
-		remote := ""
-		for _, transport := range d.Remotes {
-			if transport.Type == "streamable-http" {
-				remote = transport.URL
+		for _, pkg := range d.Packages {
+			if pkg.RegistryType == "oci" {
+				if metadata, err = resolveTypeMetadata(ctx, pkg.Identifier, o); err != nil {
+					err = fmt.Errorf("package %s: %w", pkg.Identifier, err)
+				}
 				break
 			}
 		}
-		if remote == "" {
-			return nil, fmt.Errorf("%s@%s publishes neither a sh.holon.types contract nor a streamable-http remote", ref.Name, ref.Version)
+		if err == nil && metadata == nil {
+			for _, transport := range d.Remotes {
+				if transport.Type == "streamable-http" {
+					identity := d.Identity()
+					metadata, err = liveContract(ctx, transport.URL, &identity, o.HTTPClient)
+					break
+				}
+			}
 		}
-		identity := d.Identity()
-		metadata, err = liveContract(ctx, remote, &identity, o.HTTPClient)
+		if err == nil && metadata == nil {
+			return nil, fmt.Errorf("%s@%s publishes neither a sh.holon.types contract, an OCI package with a contract, nor a streamable-http remote", ref.Name, ref.Version)
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s@%s: %w", ref.Name, ref.Version, err)

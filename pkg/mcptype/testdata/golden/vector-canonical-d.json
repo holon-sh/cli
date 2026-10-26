@@ -1,1 +1,0 @@
-{"canonical":{"resources":[{"outputSchema":{"type":"object"},"uri":"orders://summary"}],"tools":[{"inputSchema":{"required":["a","b"],"type":"object"},"name":"get"}]},"digest":"sha256:33b664de30dcad2d1d24b069249079d7676c10679ce162831323e7e1f126a807"}

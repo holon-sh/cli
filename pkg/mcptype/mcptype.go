@@ -1,6 +1,4 @@
 // Package mcptype compares MCP typed contracts and generates typed client packages.
-// It is a Go port of the mcptype compiler (hughhan1/mcptype 0.0.6) and produces the
-// same bytes: canonical forms, digests, change texts and package files.
 package mcptype
 
 import (
@@ -86,19 +84,11 @@ func Changes(ctx context.Context, expected mcpcontract.Expectation, published *m
 	if err != nil {
 		return nil, err
 	}
-	found, err := changesRequest(value)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]Change, len(found))
-	for i, change := range found {
-		result[i] = Change{Kind: change.kind, Name: change.name + change.uri, Text: change.text}
-	}
-	return result, nil
+	return changesRequest(value)
 }
 
 // changesRequest answers {"expected": Expectation, "published": Metadata | null}.
-func changesRequest(value Value) ([]change, error) {
+func changesRequest(value Value) ([]Change, error) {
 	object, err := asObject(value)
 	if err != nil {
 		return nil, err
@@ -157,8 +147,8 @@ func Generate(ctx context.Context, request GenerateRequest) (map[string][]byte, 
 	return generate(ctx, decoded)
 }
 
-// marshal takes the request through its JSON wire form, which validates it exactly as the
-// compiler's JSON entry points do.
+// marshal takes the request through its JSON wire form, the request representation
+// decodeGenerateRequest validates.
 func marshal(ctx context.Context, request any) (Value, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

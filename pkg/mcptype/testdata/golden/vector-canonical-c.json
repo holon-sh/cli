@@ -1,1 +1,0 @@
-{"canonical":{"anyOf":[{"properties":{"a":{},"z":{}},"type":"object"},{"type":"string"}],"dependentSchemas":{"description":{"required":["a","b"]}},"type":"object"},"digest":"sha256:ce5b4f183ca78963b0c0d8f4a99930827275540f2e1e68068a3931c525897c13"}

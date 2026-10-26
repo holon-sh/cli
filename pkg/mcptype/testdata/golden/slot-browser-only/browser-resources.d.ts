@@ -1,8 +1,0 @@
-export interface Inputs {
-}
-export interface Outputs {
-}
-export interface InputTypes {
-}
-export interface OutputTypes {
-}

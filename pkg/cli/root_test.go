@@ -67,7 +67,7 @@ func TestRemovedFlagsAndContractArity(t *testing.T) {
 	if output := run(t, "", "--version"); !strings.Contains(output, "standalone types CLI") {
 		t.Fatalf("version = %q", output)
 	}
-	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--no-install", "x"}, {"types", "generate", "--quiet", "x"}, {"types", "generate", "--target", "ts", "x"}, {"types", "check", "--target", "ts"}, {"types", "contract"}} {
+	for _, args := range [][]string{{"check", "--emit"}, {"check", "--no-published"}, {"types", "generate", "-p", "x"}, {"types", "generate", "--no-install", "x"}, {"types", "generate", "--quiet", "x"}, {"types", "generate", "--target", "ts", "x"}, {"types", "check", "--target", "ts"}, {"types", "contract"}, {"types", "compile"}} {
 		run(t, "unknown", args...)
 	}
 	for _, test := range []struct {
@@ -188,28 +188,6 @@ func TestOldPositionalServerHint(t *testing.T) {
 	writeCLIFile(t, root, "orders/package.json", "{")
 	if message := run(t, "unexpected end of JSON input", "types", "generate", "../orders"); strings.Contains(message, "did you mean") {
 		t.Errorf("malformed manifest = %s, want no old-form hint", message)
-	}
-}
-
-func TestTypesCompileNamesBrowserEntryFiles(t *testing.T) {
-	root := t.TempDir()
-	command := NewCommand("test")
-	command.SetOut(new(bytes.Buffer))
-	command.SetIn(strings.NewReader(`{"target":"browser","identity":{"name":"checkout","version":"1.0.0"},"contracts":{"orders":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}},"browser_runtime_specifier":"../runtime.mjs","protocol_specifier":"holon-core/protocol","entry":"index"}`))
-	command.SetArgs([]string{"types", "compile", "--out", root})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, entry := range entries {
-		names = append(names, entry.Name())
-	}
-	if got := strings.Join(names, " "); got != "index.d.ts index.js resources.d.ts" {
-		t.Fatalf("compiled files = %s", got)
 	}
 }
 

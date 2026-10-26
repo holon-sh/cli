@@ -36,7 +36,7 @@ var targets = []string{TargetTS, TargetPy, TargetGo}
 const nodePackage = "holon-sh"
 
 // Source is one MCP server whose contract becomes a client, supplied explicitly or declared in
-// sh.holon.requires. Exactly one of Path, Registry, Endpoint or Contract is set.
+// sh.holon.requires. Exactly one of Path, Registry, Endpoint, Image or Contract is set.
 type Source struct {
 	// Alias names the client (apps.<alias>). Empty derives it: the last segment of the server's
 	// name (example.com/orders → orders), or the live server's serverInfo name for an Endpoint.
@@ -46,21 +46,27 @@ type Source struct {
 	// the entry supplies the identity.
 	Path string
 	// Registry is an MCP registry server version. The record's sh.holon.types document is the
-	// contract; without one, its streamable-http remote is asked; without either it is an error.
+	// contract; without one, its OCI package's contract artifact; without that, its streamable-http
+	// remote; without any it is an error.
 	Registry *Reference
 	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract.
 	Endpoint string
+	// Image is an OCI image carrying a contract artifact (Options.Credential authenticates).
+	Image string
 	// Contract is an already resolved contract document the caller obtained elsewhere.
 	Contract *mcpcontract.Metadata
 }
 
-// key identifies a fetched source (registry or endpoint) independently of its alias, so it
-// resolves once per Prepare; path and contract sources never reach it.
+// key identifies a fetched source (registry, endpoint or image) independently of its alias, so
+// it resolves once per Prepare; path and contract sources never reach it.
 func (s Source) key() string {
-	if s.Registry != nil {
+	switch {
+	case s.Registry != nil:
 		return "registry:" + s.Registry.RegistryURL() + "#" + s.Registry.Name + "@" + s.Registry.Version
+	case s.Endpoint != "":
+		return "endpoint:" + s.Endpoint
 	}
-	return "endpoint:" + s.Endpoint
+	return "image:" + s.Image
 }
 
 func (s Source) String() string {
@@ -71,6 +77,8 @@ func (s Source) String() string {
 		return s.Registry.Name + "@" + s.Registry.Version
 	case s.Endpoint != "":
 		return s.Endpoint
+	case s.Image != "":
+		return s.Image
 	case s.Contract != nil:
 		return s.Contract.Identity.Name + "@" + s.Contract.Identity.Version
 	}
@@ -79,13 +87,13 @@ func (s Source) String() string {
 
 func (s Source) validate() error {
 	set := 0
-	for _, present := range []bool{s.Path != "", s.Registry != nil, s.Endpoint != "", s.Contract != nil} {
+	for _, present := range []bool{s.Path != "", s.Registry != nil, s.Endpoint != "", s.Image != "", s.Contract != nil} {
 		if present {
 			set++
 		}
 	}
 	if set != 1 {
-		return errors.New("a source is exactly one of a path, a registry version, an endpoint or a contract")
+		return errors.New("a source is exactly one of a path, a registry version, an endpoint, an image or a contract")
 	}
 	if s.Alias != "" && (len(s.Alias) > 49 || !appName.MatchString(s.Alias)) {
 		return fmt.Errorf("alias %q must be a DNS label of at most 49 characters", s.Alias)

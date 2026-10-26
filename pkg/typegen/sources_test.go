@@ -72,6 +72,7 @@ func TestConsumerValidation(t *testing.T) {
 		{"repeated target", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS, TargetTS}}, "listed twice"},
 		{"server by endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Server: &Source{Endpoint: "https://x.example/mcp"}}, "must be a path source"},
 		{"contract and endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Contract: ordersMetadata(), Endpoint: "https://x.example/mcp"}}}, "exactly one of"},
+		{"image and contract", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Image: "images.example/orders:1.0.0", Contract: ordersMetadata()}}}, "exactly one of"},
 		{"two kinds", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Path: dir, Endpoint: "https://x.example/mcp"}}}, "exactly one of"},
 		{"bad alias", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Alias: "Bad_Alias", Registry: ref}}}, "must be a DNS label"},
 		{"bad version", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Registry: &Reference{Name: "example.com/orders", Version: "latest"}}}}, "exact"},
@@ -87,7 +88,7 @@ func TestConsumerValidation(t *testing.T) {
 }
 
 func slotOwner(name string) slotMetadata {
-	return slotMetadata{Marker: mcpcontract.Marker, App: name, Identity: mcpcontract.Identity{Name: "example.com/" + name, Version: "1"}, Digests: map[string]string{"orders": "sha256:one"}}
+	return slotMetadata{Marker: mcpcontract.Marker, App: name, Identity: mcpcontract.Identity{Name: "example.com/" + name, Version: "1"}}
 }
 
 func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
@@ -128,6 +129,11 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	second, _ := os.Stat(filepath.Join(store, "generated/index.js"))
 	if !os.SameFile(first, second) {
 		t.Fatal("unchanged generation replaced the slot")
+	}
+	// Older markers may carry digests; ownership still permits refreshing their slot.
+	put(t, store, "generated/holon-generated.json", `{"marker":"holon-generated-apps-v1","app":"one","digests":{"orders":"sha256:old"}}`)
+	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "generated"}, slotOwner("one")); err != nil {
+		t.Fatal(err)
 	}
 	if err := writeNodeSlot(resolved, pkg, map[string]string{"index.js": "other"}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
 		t.Fatalf("shared package was reassigned to another consumer: %v", err)
