@@ -21,12 +21,15 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/tooling"
+	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
 type Options struct {
 	Env            []string
 	HTTPClient     *http.Client
 	Stdout, Stderr io.Writer
+	// Credential authenticates OCI registry requests ahead of the Docker credential store.
+	Credential auth.CredentialFunc
 	// Extract runs one language's extractor: the runner under toolingDir/<language> reads configPath and
 	// writes outputPath. It defaults to the host's Node.js or Python interpreter.
 	Extract func(ctx context.Context, language, toolingDir, configPath, outputPath string) error
@@ -220,6 +223,9 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 		return metadata, nil
 	}
 	metadata, err := Resolve(ctx, source, p.options)
+	if err == nil && metadata == nil {
+		err = errors.New("image carries no MCP contract artifact")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
