@@ -62,7 +62,7 @@ jobs:
           enable-cache: false
       - run: go vet ./...
       - run: go test ./...
-      - run: python3 -m unittest discover -s scripts
+      - run: uv run --with-requirements packaging/requirements.txt python -m unittest discover -s scripts
   test-package:
     name: test-package (${{ matrix.target }})
     needs: [tooling, package-launcher]
@@ -94,7 +94,7 @@ jobs:
         with:
           python-version: '3.11'
           enable-cache: false
-      - run: python3 scripts/package_cli.py --target '${{ matrix.target }}' --version "$VERSION" --format tarball --format wheel --format npm-platform
+      - run: uv run --with-requirements packaging/requirements.txt python scripts/package_cli.py --target '${{ matrix.target }}' --version "$VERSION" --format tarball --format wheel --format npm-platform
       - uses: actions/download-artifact@v4
         with:
           name: holon-types-launcher

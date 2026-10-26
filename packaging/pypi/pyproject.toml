@@ -1,0 +1,17 @@
+[build-system]
+requires = ["pdm-backend==2.5.0"]
+build-backend = "pdm.backend"
+
+[project]
+name = "holon-types"
+version = "0.0.0"
+description = "The holon CLI: typed clients for MCP servers, generated and type-checked"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+urls.Repository = "https://github.com/holon-sh/cli"
+scripts.holon = "holon_types:main"
+
+[tool.pdm.build]
+is-purelib = false

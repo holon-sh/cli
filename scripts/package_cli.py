@@ -4,19 +4,16 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import csv
 import gzip
-import hashlib
-import io
 import json
 import os
 import re
+import shutil
 import struct
 import subprocess
 import tarfile
 import tempfile
-import zipfile
+from contextlib import chdir
 from pathlib import Path
 from typing import NamedTuple
 
@@ -44,12 +41,11 @@ TARGETS = tuple(Target(os, arch) for os in ("darwin", "linux") for arch in ("amd
 VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc|dev)\.[0-9]+)?")
 
 
-def write_tarball(archive: Path, entries: list[tuple[str, bytes, int]]) -> None:
-    with archive.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar:
-        for name, data, mode in entries:
-            entry = tarfile.TarInfo(name)
-            entry.size, entry.mode, entry.mtime = len(data), mode, 0
-            tar.addfile(entry, io.BytesIO(data))
+def write_tarball(archive: Path, binary: Path) -> None:
+    with archive.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar, binary.open("rb") as executable:
+        entry = tarfile.TarInfo("holon")
+        entry.size, entry.mode = binary.stat().st_size, 0o755
+        tar.addfile(entry, executable)
 
 
 def verify_binary(binary: Path, target: Target) -> list[str]:
@@ -94,58 +90,33 @@ def build_binary(binary: Path, target: Target, version: str) -> None:
     subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
 
 
-def python_version(version: str) -> str:
-    """Translate the CLI's prerelease version into PEP 440."""
-    return version.replace("-alpha.", "a").replace("-beta.", "b").replace("-rc.", "rc").replace("-dev.", ".dev")
-
-
 def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None:
-    version = python_version(version)
-    info = f"holon_types-{version}.dist-info"
-    metadata = (
-        "Metadata-Version: 2.1\n"
-        "Name: holon-types\n"
-        f"Version: {version}\n"
-        "Summary: The holon CLI: typed clients for MCP servers, generated and type-checked\n"
-        "Home-page: https://github.com/holon-sh/cli\n"
-        "License: MIT\n"
-        "Requires-Python: >=3.11\n"
-        "Description-Content-Type: text/markdown\n\n"
-        + (ROOT / "packaging/README.md").read_text()
-    )
-    wheel = "Wheel-Version: 1.0\nGenerator: holon-package-cli\nRoot-Is-Purelib: false\n"
-    wheel += "".join(f"Tag: py3-none-{tag}\n" for tag in tags)
-    entries = [
-        ("holon_types/__init__.py", (ROOT / "packaging/pypi/holon_types/__init__.py").read_bytes(), 0o644),
-        ("holon_types/bin/holon", binary.read_bytes(), 0o755),
-        (f"{info}/METADATA", metadata.encode(), 0o644),
-        (f"{info}/WHEEL", wheel.encode(), 0o644),
-        (f"{info}/entry_points.txt", b"[console_scripts]\nholon = holon_types:main\n", 0o644),
-        (f"{info}/LICENSE", (ROOT / "LICENSE").read_bytes(), 0o644),
-    ]
-    record = io.StringIO(newline="")
-    writer = csv.writer(record, lineterminator="\n")
-    for name, data, _ in entries:
-        digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
-        writer.writerow([name, f"sha256={digest}", len(data)])
-    writer.writerow([f"{info}/RECORD", "", ""])
-    entries.append((f"{info}/RECORD", record.getvalue().encode(), 0o644))
-    archive = dist / f"holon_types-{version}-py3-none-{'.'.join(tags)}.whl"
-    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as wheel_file:
-        for name, data, mode in entries:
-            entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-            entry.create_system = 3
-            entry.external_attr = mode << 16
-            wheel_file.writestr(entry, data, compress_type=zipfile.ZIP_DEFLATED)
+    from pdm.backend import build_wheel
+
+    with tempfile.TemporaryDirectory(prefix="holon-wheel-") as directory:
+        package = Path(directory)
+        source = ROOT / "packaging/pypi"
+        shutil.copytree(source / "holon_types", package / "holon_types")
+        (package / "holon_types/bin").mkdir()
+        shutil.copyfile(binary, package / "holon_types/bin/holon")
+        (package / "holon_types/bin/holon").chmod(0o755)
+        shutil.copyfile(ROOT / "packaging/README.md", package / "README.md")
+        shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
+        (package / "pyproject.toml").write_text((source / "pyproject.toml").read_text().replace('"0.0.0"', json.dumps(version)))
+        with chdir(package):
+            build_wheel(str(dist), {"--python-tag": "py3", "--py-limited-api": "none", "--plat-name": tags})
 
 
-def write_npm_package(archive: Path, manifest: dict, executable: str, data: bytes, readme: Path) -> None:
-    write_tarball(archive, [
-        ("package/package.json", (json.dumps(manifest, indent=2) + "\n").encode(), 0o644),
-        (f"package/{executable}", data, 0o755),
-        ("package/README.md", readme.read_bytes(), 0o644),
-        ("package/LICENSE", (ROOT / "LICENSE").read_bytes(), 0o644),
-    ])
+def write_npm_package(dist: Path, manifest: dict, source: Path, executable: str, readme: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="holon-npm-") as directory:
+        package = Path(directory)
+        (package / "bin").mkdir()
+        shutil.copyfile(source, package / "bin" / executable)
+        (package / "bin" / executable).chmod(0o755)
+        shutil.copyfile(readme, package / "README.md")
+        shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
+        (package / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        subprocess.run(["npm", "pack", "--ignore-scripts", "--offline", "--pack-destination", str(dist)], cwd=package, check=True)
 
 
 def write_npm_launcher(dist: Path, version: str) -> None:
@@ -153,7 +124,7 @@ def write_npm_launcher(dist: Path, version: str) -> None:
     manifest = json.loads((source / "package.json").read_text())
     manifest["version"] = version
     manifest["optionalDependencies"] = {target.npm_name: version for target in TARGETS}
-    write_npm_package(dist / f"holon-types-{version}.tgz", manifest, "bin/holon.js", (source / "bin/holon.js").read_bytes(), ROOT / "packaging/README.md")
+    write_npm_package(dist, manifest, source / "bin/holon.js", "holon.js", ROOT / "packaging/README.md")
 
 
 def write_npm_platform(binary: Path, dist: Path, version: str, target: Target) -> None:
@@ -166,7 +137,7 @@ def write_npm_platform(binary: Path, dist: Path, version: str, target: Target) -
         "os": [target.goos],
         "cpu": [target.npm_cpu],
     }
-    write_npm_package(dist / f"{target.npm_name}-{version}.tgz", manifest, "bin/holon", binary.read_bytes(), ROOT / "packaging/npm/platform/README.md")
+    write_npm_package(dist, manifest, binary, "holon", ROOT / "packaging/npm/platform/README.md")
 
 
 def main() -> None:
@@ -194,7 +165,7 @@ def main() -> None:
             build_binary(binary, target, args.version)
         tags = verify_binary(binary, target)
         if "tarball" in formats:
-            write_tarball(dist / f"holon_{args.version}_{target.platform}.tar.gz", [("holon", binary.read_bytes(), 0o755)])
+            write_tarball(dist / f"holon_{args.version}_{target.platform}.tar.gz", binary)
         if "wheel" in formats:
             write_wheel(binary, dist, args.version, tags)
         if "npm-platform" in formats:

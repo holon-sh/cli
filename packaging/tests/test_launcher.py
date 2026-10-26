@@ -7,8 +7,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.package_cli import python_version
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -73,13 +71,3 @@ class LauncherTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 1)
                     self.assertRegex(result.stderr, missing)
                     self.assertIn("reinstall holon-types", result.stderr)
-
-
-class VersionTests(unittest.TestCase):
-    def test_python_versions(self):
-        for version, expected in {
-            "1.2.3": "1.2.3", "1.2.3-rc.1": "1.2.3rc1", "1.2.3-alpha.2": "1.2.3a2",
-            "1.2.3-beta.1": "1.2.3b1", "1.2.3-dev.4": "1.2.3.dev4",
-        }.items():
-            with self.subTest(version=version):
-                self.assertEqual(python_version(version), expected)

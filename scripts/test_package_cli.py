@@ -1,8 +1,8 @@
-import base64
-import csv
+import configparser
 import hashlib
 import json
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -28,7 +28,7 @@ class PackageTests(unittest.TestCase):
         cls.directory = Path(directory.name)
         host = subprocess.check_output(["go", "env", "GOHOSTOS", "GOHOSTARCH"], text=True).split()
         cls.target = package_cli.Target(*host)
-        cls.binary = cls.directory / "holon"
+        cls.binary = cls.directory / "prebuilt holon"
         package_cli.build_binary(cls.binary, cls.target, VERSION)
         cls.dist = cls.directory / "first"
         cls.package(cls.dist)
@@ -46,19 +46,23 @@ class PackageTests(unittest.TestCase):
         path = next(self.dist.glob("*.whl"))
         with zipfile.ZipFile(path) as wheel:
             expected = ["holon_types/__init__.py", "holon_types/bin/holon", f"{info}/METADATA",
-                        f"{info}/WHEEL", f"{info}/entry_points.txt", f"{info}/LICENSE", f"{info}/RECORD"]
+                        f"{info}/WHEEL", f"{info}/entry_points.txt", f"{info}/licenses/LICENSE", f"{info}/RECORD"]
             self.assertEqual(set(wheel.namelist()), set(expected))
             self.assertEqual(wheel.read("holon_types/bin/holon"), self.binary.read_bytes())
-            self.assertEqual(wheel.read(f"{info}/LICENSE"), (ROOT / "LICENSE").read_bytes())
+            self.assertEqual(wheel.read(f"{info}/licenses/LICENSE"), (ROOT / "LICENSE").read_bytes())
             for entry in wheel.infolist():
-                self.assertEqual(entry.external_attr >> 16, 0o755 if entry.filename.endswith("/bin/holon") else 0o644)
+                mode = entry.external_attr >> 16
+                self.assertTrue(mode & 0o400)
+                self.assertEqual(mode & 0o111, 0o111 if entry.filename.endswith("/bin/holon") else 0)
             metadata = BytesParser().parsebytes(wheel.read(f"{info}/METADATA"))
             self.assertEqual((metadata["Name"], metadata["Version"], metadata["Requires-Python"]), ("holon-types", PYVERSION, ">=3.11"))
             self.assertEqual(metadata.get_payload(), (ROOT / "packaging/README.md").read_text())
-            self.assertEqual(wheel.read(f"{info}/entry_points.txt"), b"[console_scripts]\nholon = holon_types:main\n")
+            entry_points = configparser.ConfigParser()
+            entry_points.read_string(wheel.read(f"{info}/entry_points.txt").decode())
+            self.assertEqual(dict(entry_points["console_scripts"]), {"holon": "holon_types:main"})
             wheel_metadata = BytesParser().parsebytes(wheel.read(f"{info}/WHEEL"))
             self.assertEqual(wheel_metadata["Root-Is-Purelib"], "false")
-            tags = [tag.removeprefix("py3-none-") for tag in wheel_metadata.get_all("Tag")]
+            tags = [platform for tag in wheel_metadata.get_all("Tag") for platform in tag.removeprefix("py3-none-").split(".")]
             self.assertEqual(path.name, f"holon_types-{PYVERSION}-py3-none-{'.'.join(tags)}.whl")
             arch = "x86_64" if self.target.goarch == "amd64" else "aarch64"
             if self.target.goos == "linux":
@@ -67,22 +71,15 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual(len(tags), 1)
                 arch = "arm64" if self.target.goarch == "arm64" else arch
                 self.assertRegex(tags[0], rf"^macosx_\d+_\d+_{arch}$")
-            records = list(csv.reader(wheel.read(f"{info}/RECORD").decode().splitlines()))
-            self.assertEqual({row[0] for row in records}, set(expected))
-            self.assertEqual(records[-1], [f"{info}/RECORD", "", ""])
-            for name, digest, size in records[:-1]:
-                contents = wheel.read(name)
-                self.assertEqual(int(size), len(contents))
-                self.assertEqual(digest[:7], "sha256=")
-                self.assertEqual(base64.urlsafe_b64decode(digest[7:] + "="), hashlib.sha256(contents).digest())
+            self.assertIsNone(wheel.testzip())
 
     def test_npm_packages(self):
         cpu = "x64" if self.target.goarch == "amd64" else "arm64"
         platform_name = f"holon-types-{self.target.goos}-{cpu}"
         for name, executable in ((platform_name, "bin/holon"), ("holon-types", "bin/holon.js")):
             with self.subTest(package=name), tarfile.open(self.dist / f"{name}-{VERSION}.tgz") as archive:
-                self.assertEqual(archive.getnames(), ["package/package.json", f"package/{executable}",
-                                                      "package/README.md", "package/LICENSE"])
+                self.assertEqual(set(archive.getnames()), {"package/package.json", f"package/{executable}",
+                                                          "package/README.md", "package/LICENSE"})
                 for entry in archive.getmembers():
                     self.assertEqual(entry.mode, 0o755 if entry.name == f"package/{executable}" else 0o644)
                 self.assertEqual(archive.extractfile("package/LICENSE").read(), (ROOT / "LICENSE").read_bytes())
@@ -154,9 +151,13 @@ class PackageMetadataTests(unittest.TestCase):
 
     def test_launcher_needs_neither_target_nor_go(self):
         with tempfile.TemporaryDirectory() as directory:
+            tools = Path(directory) / "tools"
+            tools.mkdir()
+            for name in ("node", "npm"):
+                (tools / name).symlink_to(Path(shutil.which(name)).resolve())
             subprocess.run([sys.executable, str(ROOT / "scripts/package_cli.py"), "--format", "npm-launcher",
-                            "--out", directory, "--version", VERSION], env=os.environ | {"PATH": ""}, check=True)
-            self.assertEqual([p.name for p in Path(directory).iterdir()], [f"holon-types-{VERSION}.tgz"])
+                            "--out", directory, "--version", VERSION], env=os.environ | {"PATH": str(tools)}, check=True)
+            self.assertEqual([p.name for p in Path(directory).glob("*.tgz")], [f"holon-types-{VERSION}.tgz"])
 
     def test_binary_formats_require_a_target(self):
         for kind in ("tarball", "wheel", "npm-platform"):
