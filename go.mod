@@ -3,14 +3,10 @@ module github.com/holon-sh/cli
 go 1.27.0
 
 require (
-	github.com/distribution/reference v0.6.0
 	github.com/gofrs/flock v0.13.1
 	github.com/moby/patternmatcher v0.6.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/opencontainers/go-digest v1.0.0
-	github.com/opencontainers/image-spec v1.1.1
 	github.com/spf13/cobra v1.10.2
-	oras.land/oras-go/v2 v2.6.2
 )
 
 require (

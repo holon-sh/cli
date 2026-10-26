@@ -15,7 +15,7 @@ export interface CreateOptions { validator?: (schema: object) => (value: unknown
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding | HostBinding }, options?: CreateOptions): Pick<Apps,K>;
 `
 
-// Browser bindings reach endpoints only; the app's own server is reached through the App class.
+// Browser bindings reach endpoints directly.
 const browserBindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
@@ -81,14 +81,6 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	}
 	var files map[string]string
 	switch {
-	case request.target == "browser" && request.own != nil:
-		// The view's own server is reached through the MCP Apps host that embeds the page: App is the
-		// ext-apps App with that server's tools and resources typed.
-		own := quoted(*request.own)
-		files = map[string]string{
-			entry + ".js":   fmt.Sprintf("import { bindApps, appClass } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\nconst identity = %s, contracts = %s;\nexport const App = appClass(identity, contracts, %s);\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", browserRuntime, browserRuntime, &identity, &contracts, own),
-			entry + ".d.ts": types(resourcesEntry) + browserBindingTypes + exposeTypes + fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\nexport declare class App extends HostApp { readonly tools: Apps[%s][\"tools\"]; readonly resources: Apps[%s][\"resources\"]; readonly callTool: Apps[%s][\"callTool\"] }\n", own, own, own),
-		}
 	case request.target == "browser":
 		// Legacy (pre-slot) packages keep the host binding form their consumers were built against.
 		bindings := browserBindingTypes

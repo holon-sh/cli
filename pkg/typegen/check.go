@@ -21,7 +21,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 	languages := map[string]bool{}
 	for _, target := range targets {
 		switch target {
-		case TargetTS, TargetUI:
+		case TargetTS:
 			slot, err := InstalledRuntime(dir, slotPackages[target])
 			if err != nil {
 				return err

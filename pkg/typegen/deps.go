@@ -72,24 +72,22 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) (string,
 	return InstalledRuntime(dir, pkg)
 }
 
-// DeclaredTargets are the slots a project declares: ts when package.json depends on holon-sh, ui when
-// it depends on holon-ui, py when pyproject.toml or requirements declare holon-sh. None is an error.
+// DeclaredTargets are the slots a project declares: ts when package.json depends on holon-sh,
+// py when pyproject.toml or requirements declare holon-sh. None is an error.
 func DeclaredTargets(dir string) ([]string, error) {
 	var targets []string
 	var manifest packageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	for _, target := range []string{TargetTS, TargetUI} {
-		if manifest.declares(slotPackages[target]) {
-			targets = append(targets, target)
-		}
+	if manifest.declares(slotPackages[TargetTS]) {
+		targets = append(targets, TargetTS)
 	}
 	if ensurePythonRuntime(dir) == nil {
 		targets = append(targets, TargetPy)
 	}
 	if len(targets) == 0 {
-		return nil, fmt.Errorf("%s declares no runtime: depend on holon-sh or holon-ui in package.json, or on holon-sh in pyproject.toml", dir)
+		return nil, fmt.Errorf("%s declares no runtime: depend on holon-sh in package.json, or on holon-sh in pyproject.toml", dir)
 	}
 	return targets, nil
 }

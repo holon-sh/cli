@@ -142,9 +142,6 @@ type GenerateRequest struct {
 	// Entry names the TypeScript entry point files: "index" gives index.js, index.d.ts and resources.d.ts.
 	// Empty means index for node and browser for browser.
 	Entry string `json:"entry,omitempty"`
-	// Own, for browser targets, is the contracts key of the app's own server. The module then exports
-	// App: the ext-apps App with that server's tools and resources typed, called through the host.
-	Own string `json:"own,omitempty"`
 }
 
 // Generate returns the package files by relative path.

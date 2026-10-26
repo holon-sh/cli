@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
 const dockerignoreFile = ".dockerignore"
@@ -24,18 +26,17 @@ var appName = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 // Targets name the SDK slot a consumer receives clients in.
 const (
 	TargetTS = "ts" // node_modules/holon-sh/generated, resolved upward from the consumer
-	TargetUI = "ui" // node_modules/holon-ui/generated; the consumer's own server becomes App
 	TargetPy = "py" // holon/apps/__init__.py in the consumer
 	TargetGo = "go" // holon/ Go package in the consumer; needs Options.GoModule
 )
 
-var targets = []string{TargetTS, TargetUI, TargetPy, TargetGo}
+var targets = []string{TargetTS, TargetPy, TargetGo}
 
 // slotPackages are the installed packages that own a Node slot, by target.
-var slotPackages = map[string]string{TargetTS: "holon-sh", TargetUI: "holon-ui"}
+var slotPackages = map[string]string{TargetTS: "holon-sh"}
 
 // Source is one MCP server whose contract becomes a client. Exactly one of Path, Registry,
-// Endpoint or Image is set.
+// Endpoint or Contract is set.
 type Source struct {
 	// Alias names the client (apps.<alias>). Empty derives it: the last segment of the server's
 	// name (example.com/orders → orders), or the live server's serverInfo name for an Endpoint.
@@ -49,8 +50,8 @@ type Source struct {
 	Registry *Reference
 	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract.
 	Endpoint string
-	// Image is an OCI image carrying a contract artifact (Options.Credential authenticates).
-	Image string
+	// Contract is an already resolved contract document the caller obtained elsewhere.
+	Contract *mcpcontract.Metadata
 }
 
 // key identifies a non-path source independently of its alias, so it resolves once.
@@ -61,7 +62,7 @@ func (s Source) key() string {
 	case s.Endpoint != "":
 		return "endpoint:" + s.Endpoint
 	}
-	return "image:" + s.Image
+	return "contract:" + s.String()
 }
 
 func (s Source) String() string {
@@ -73,18 +74,21 @@ func (s Source) String() string {
 	case s.Endpoint != "":
 		return s.Endpoint
 	}
-	return s.Image
+	if s.Contract != nil {
+		return s.Contract.Identity.Name + "@" + s.Contract.Identity.Version
+	}
+	return ""
 }
 
 func (s Source) validate() error {
 	set := 0
-	for _, present := range []bool{s.Path != "", s.Registry != nil, s.Endpoint != "", s.Image != ""} {
+	for _, present := range []bool{s.Path != "", s.Registry != nil, s.Endpoint != "", s.Contract != nil} {
 		if present {
 			set++
 		}
 	}
 	if set != 1 {
-		return errors.New("a source is exactly one of a path, a registry version, an endpoint or an image")
+		return errors.New("a source is exactly one of a path, a registry version, an endpoint or a contract")
 	}
 	if s.Alias != "" && (len(s.Alias) > 49 || !appName.MatchString(s.Alias)) {
 		return fmt.Errorf("alias %q must be a DNS label of at most 49 characters", s.Alias)
@@ -101,11 +105,10 @@ type Consumer struct {
 	Name string
 	// Dir is the absolute project directory.
 	Dir string
-	// Server is the consumer's own MCP server, a path source inside Dir. Required for the ui
-	// target, where it becomes the App class; otherwise it only supplies the consumer's identity,
-	// contract (Metadata) and check configuration.
+	// Server is the consumer's own MCP server, a path source inside Dir. It supplies the
+	// consumer's identity, contract (Metadata) and check configuration.
 	Server *Source
-	// Targets are the slots to write, from TargetTS, TargetUI, TargetPy and TargetGo.
+	// Targets are the slots to write, from TargetTS, TargetPy and TargetGo.
 	Targets []string
 	// Sources are the servers that become apps.<alias> clients.
 	Sources []Source
@@ -139,9 +142,6 @@ func (c Consumer) validate() error {
 		if c.Server.Path == "" {
 			return fmt.Errorf("%s: the own server must be a path source", c.Name)
 		}
-	}
-	if slices.Contains(c.Targets, TargetUI) && c.Server == nil {
-		return fmt.Errorf("%s: the ui target needs the consumer's own server (a path source inside %s) to become App", c.Name, c.Dir)
 	}
 	for _, source := range c.Sources {
 		if err := source.validate(); err != nil {

@@ -50,7 +50,10 @@ func Resolve(ctx context.Context, source Source, options Options) (*mcpcontract.
 	case source.Endpoint != "":
 		return liveContract(ctx, source.Endpoint, nil, o.HTTPClient)
 	default:
-		return resolveTypeMetadata(ctx, source.Image, o)
+		if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": source.Contract}); err != nil {
+			return nil, err
+		}
+		return source.Contract, nil
 	}
 }
 

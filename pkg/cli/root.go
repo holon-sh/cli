@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -65,7 +64,7 @@ func parseSource(arg string) (typegen.Source, error) {
 }
 
 // consumer builds the working directory's consumer. Its targets are the runtimes the project declares;
-// a server inside the directory is the project's own and serves the ui target.
+// a server inside the directory supplies the project's own identity and contract.
 func consumer(args []string) (typegen.Consumer, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -85,9 +84,6 @@ func consumer(args []string) (typegen.Consumer, error) {
 			return c, fmt.Errorf("%s: %w", arg, err)
 		}
 		if source.Path != "" && insideDir(source.Path, dir) {
-			if !slices.Contains(targets, typegen.TargetUI) {
-				return c, fmt.Errorf("%s is this project's own server, which only a holon-ui view calls; %s does not depend on holon-ui", arg, dir)
-			}
 			if c.Server != nil {
 				return c, fmt.Errorf("%s: a project has one own server", arg)
 			}
@@ -95,9 +91,6 @@ func consumer(args []string) (typegen.Consumer, error) {
 			continue
 		}
 		c.Sources = append(c.Sources, source)
-	}
-	if slices.Contains(targets, typegen.TargetUI) && c.Server == nil {
-		return c, fmt.Errorf("%s depends on holon-ui, so list its own server (for example ./server.ts) for the view's App class", dir)
 	}
 	if len(args) == 0 {
 		return c, errors.New("at least one SERVER is required")
