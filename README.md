@@ -56,10 +56,16 @@ Generate the typed clients and type-check the calls to them.
 holon types check
 ```
 
+Or name the servers yourself, for example a sibling checkout. Any `-s` replaces the whole `requires` list, so `server.json` is not needed.
+
+```sh
+holon types check -s orders=../orders
+```
+
 Call the server. A wrong tool, argument or result field is a type error.
 
 <details open>
-<summary>TypeScript</summary>
+<summary><h3>TypeScript</h3></summary>
 
 ```ts
 import { apps } from "holon-sh";
@@ -79,8 +85,8 @@ const total: number = order.total;
 
 </details>
 
-<details>
-<summary>Python</summary>
+<details open>
+<summary><h3>Python</h3></summary>
 
 ```python
 from holon.apps import apps
