@@ -75,49 +75,17 @@ func parseNumber(literal string) (Number, error) {
 
 // formatFloat is ryu's pretty printing of a finite f64, which serde_json uses for floats.
 func formatFloat(value float64) string {
-	if value == 0 {
-		if math.Signbit(value) {
-			return "-0.0"
-		}
-		return "0.0"
-	}
-	var out strings.Builder
-	if value < 0 {
-		out.WriteByte('-')
-		value = -value
-	}
 	mantissa, exponent, _ := strings.Cut(strconv.FormatFloat(value, 'e', -1, 64), "e")
-	digits := strings.Replace(mantissa, ".", "", 1)
 	power, _ := strconv.Atoi(exponent)
-	// 10^(kk-1) <= value < 10^kk; the last digit has weight 10^last.
-	kk := power + 1
-	last := kk - len(digits)
-	switch {
-	case last >= 0 && kk <= 16:
-		out.WriteString(digits)
-		out.WriteString(strings.Repeat("0", last))
-		out.WriteString(".0")
-	case kk > 0 && kk <= 16:
-		out.WriteString(digits[:kk])
-		out.WriteByte('.')
-		out.WriteString(digits[kk:])
-	case kk > -5 && kk <= 0:
-		out.WriteString("0.")
-		out.WriteString(strings.Repeat("0", -kk))
-		out.WriteString(digits)
-	default:
-		out.WriteByte(digits[0])
-		if len(digits) > 1 {
-			out.WriteByte('.')
-			out.WriteString(digits[1:])
+	// Serde uses fixed notation for decimal exponents -5 through 15.
+	if power >= -5 && power < 16 {
+		fixed := strconv.FormatFloat(value, 'f', -1, 64)
+		if !strings.Contains(fixed, ".") {
+			fixed += ".0"
 		}
-		out.WriteByte('e')
-		if kk-1 >= 0 {
-			out.WriteByte('+')
-		}
-		out.WriteString(strconv.Itoa(kk - 1))
+		return fixed
 	}
-	return out.String()
+	return mantissa + "e" + fmt.Sprintf("%+d", power)
 }
 
 // decodeJSON parses one JSON document.

@@ -463,7 +463,7 @@ class Analyzer {
           return;
         }
         if (!(receiver instanceof Server)) {
-          if (receiver instanceof Schema || Array.isArray(receiver) || receiver && typeof receiver === "object" && !(receiver instanceof Builtin)) this.fail(expression, "Mutation of schema or catalog data is unsupported.");
+          if (receiver && typeof receiver === "object" && !(receiver instanceof Builtin)) this.fail(expression, "Mutation of schema or catalog data is unsupported.");
           if (this.containsRegistration(expression, scope)) this.fail(expression, "Server escape or deferred registration is unsupported.");
           if (this.containsContractData(expression, scope)) this.fail(expression, "Schema data escapes static analysis.");
           return;

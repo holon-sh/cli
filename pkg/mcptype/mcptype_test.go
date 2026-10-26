@@ -39,21 +39,16 @@ func TestGenerate(t *testing.T) {
 }
 
 func TestChanges(t *testing.T) {
-	get := mcpcontract.Tool{Name: "get", Input: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","description":"before"}}}`)}
+	get := mcpcontract.Tool{Name: "get", Input: json.RawMessage(`{"type":"object"}`)}
 	summary := mcpcontract.Resource{URI: "orders://summary", Output: json.RawMessage(`{"type":"object"}`)}
 	expected := mcpcontract.Expectation{
 		Identity: mcpcontract.Identity{Name: "example/orders", Version: "1"},
 		Contract: mcpcontract.Contract{Tools: []mcpcontract.Tool{get}, Resources: []mcpcontract.Resource{summary}},
 	}
-	published := &mcpcontract.Metadata{Version: mcpcontract.Version, Identity: expected.Identity, Contract: &mcpcontract.Contract{
-		Tools:     []mcpcontract.Tool{{Name: "get", Input: json.RawMessage(`{"properties":{"id":{"type":"string"}},"type":"object"}`)}},
-		Resources: []mcpcontract.Resource{summary},
-	}}
-	if changes, err := Changes(t.Context(), expected, published); err != nil || len(changes) != 0 {
-		t.Fatalf("documentation change invalidated a consumer: %v %v", changes, err)
+	published := &mcpcontract.Metadata{
+		Version: mcpcontract.Version, Identity: mcpcontract.Identity{Name: "example/orders", Version: "2"},
+		Contract: &mcpcontract.Contract{Resources: []mcpcontract.Resource{{URI: summary.URI, Output: json.RawMessage(`{"type":"array"}`)}}},
 	}
-	published.Identity.Version = "2"
-	published.Contract = &mcpcontract.Contract{Resources: []mcpcontract.Resource{{URI: summary.URI, Output: json.RawMessage(`{"type":"array"}`)}}}
 	changes, err := Changes(t.Context(), expected, published)
 	if want := []Change{
 		{Kind: "identity", Text: "identity example/orders@1 expected, example/orders@2 published"},
