@@ -121,7 +121,7 @@ func installDependency(ctx context.Context, root, program string, args []string,
 	if o.NoInstall {
 		return nil
 	}
-	env, err := commandenv.Environ(append(append([]string{}, o.Env...), "HOLON_SKIP_POSTINSTALL=1"))
+	env, err := commandenv.Environ(o.Env)
 	if err != nil {
 		return err
 	}
