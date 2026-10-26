@@ -22,7 +22,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 	for _, target := range targets {
 		switch target {
 		case TargetTS:
-			slot, err := InstalledRuntime(dir, nodeSlotPackage)
+			slot, err := InstalledRuntime(dir, nodePackage)
 			if err != nil {
 				return err
 			}

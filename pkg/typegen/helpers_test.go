@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -110,10 +109,4 @@ func fakeExtract(t *testing.T, results map[string]extraction, calls *[]string) f
 		}
 		return writeJSON(output, found)
 	}
-}
-
-type registryResponse func(*http.Request) (*http.Response, error)
-
-func (response registryResponse) RoundTrip(request *http.Request) (*http.Response, error) {
-	return response(request)
 }

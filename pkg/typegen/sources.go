@@ -32,8 +32,8 @@ const (
 
 var targets = []string{TargetTS, TargetPy, TargetGo}
 
-// nodeSlotPackage is the installed package that owns the Node slot.
-const nodeSlotPackage = "holon-sh"
+// nodePackage is the installed package that owns the ts target's generated slot.
+const nodePackage = "holon-sh"
 
 // Source is one MCP server whose contract becomes a client, supplied explicitly or declared in
 // sh.holon.requires. Exactly one of Path, Registry, Endpoint or Contract is set.
@@ -54,7 +54,8 @@ type Source struct {
 	Contract *mcpcontract.Metadata
 }
 
-// key identifies a registry or endpoint source independently of its alias, so it resolves once.
+// key identifies a fetched source (registry or endpoint) independently of its alias, so it
+// resolves once per Prepare; path and contract sources never reach it.
 func (s Source) key() string {
 	if s.Registry != nil {
 		return "registry:" + s.Registry.RegistryURL() + "#" + s.Registry.Name + "@" + s.Registry.Version
@@ -70,8 +71,7 @@ func (s Source) String() string {
 		return s.Registry.Name + "@" + s.Registry.Version
 	case s.Endpoint != "":
 		return s.Endpoint
-	}
-	if s.Contract != nil {
+	case s.Contract != nil:
 		return s.Contract.Identity.Name + "@" + s.Contract.Identity.Version
 	}
 	return ""
