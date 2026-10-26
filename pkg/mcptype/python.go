@@ -2,6 +2,8 @@ package mcptype
 
 import (
 	"fmt"
+	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -19,17 +21,11 @@ func isASCIIAlphanumeric(c byte) bool {
 	return isASCIIAlphabetic(c) || isASCIIDigit(c)
 }
 
-// pythonIdentifier reports whether name is a plain ASCII identifier that is not a keyword.
+var pythonName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// pythonIdentifier reports whether name is a public ASCII identifier that is not a keyword.
 func pythonIdentifier(name string) bool {
-	if name == "" || !isASCIIAlphabetic(name[0]) {
-		return false
-	}
-	for i := 0; i < len(name); i++ {
-		if c := name[i]; !isASCIIAlphanumeric(c) && c != '_' {
-			return false
-		}
-	}
-	return !slices.Contains(pythonKeywords, name)
+	return pythonName.MatchString(name) && !strings.HasPrefix(name, "_") && !slices.Contains(pythonKeywords, name)
 }
 
 func pythonBlock(header string, lines []string, indent string) string {
@@ -108,7 +104,7 @@ func (e *pythonEmitter) render(value typ) string {
 			}
 			for _, key := range sortedKeys(item.fields) {
 				member := item.fields[key]
-				if previous, ok := combined[key]; ok && (previous.required != member.required || !typeEqual(previous.value, member.value)) {
+				if previous, ok := combined[key]; ok && !reflect.DeepEqual(previous, member) {
 					return "_builtins.object"
 				}
 				combined[key] = member

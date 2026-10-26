@@ -16,3 +16,5 @@ holon = "holon_types:main"
 [tool.hatch.build.targets.wheel]
 packages = ["holon_types"]
 artifacts = ["holon_types/bin/holon"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]

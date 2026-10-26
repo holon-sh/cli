@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -59,47 +61,6 @@ type extra struct {
 type field struct {
 	value    typ
 	required bool
-}
-
-func typeEqual(a, b typ) bool {
-	if a.kind != b.kind || a.min != b.min || len(a.prefix) != len(b.prefix) || len(a.fields) != len(b.fields) || len(a.items) != len(b.items) {
-		return false
-	}
-	switch a.kind {
-	case kindLiteral:
-		return valueEqual(a.literal, b.literal)
-	case kindArray:
-		return typeEqual(*a.item, *b.item)
-	case kindTuple:
-		for i := range a.prefix {
-			if !typeEqual(a.prefix[i], b.prefix[i]) {
-				return false
-			}
-		}
-		return extraEqual(a.extra, b.extra)
-	case kindObject:
-		for name, item := range a.fields {
-			other, ok := b.fields[name]
-			if !ok || item.required != other.required || !typeEqual(item.value, other.value) {
-				return false
-			}
-		}
-		return extraEqual(a.extra, b.extra)
-	case kindUnion, kindIntersection:
-		for i := range a.items {
-			if !typeEqual(a.items[i], b.items[i]) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func extraEqual(a, b extra) bool {
-	if a.kind != b.kind {
-		return false
-	}
-	return a.kind != extraOpen || typeEqual(*a.value, *b.value)
 }
 
 func parseShape(ctx context.Context, schema Value) (shape, error) {
@@ -206,19 +167,19 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 		}
 	}
 	if value, ok := object["const"]; ok {
-		return typ{kind: kindLiteral, literal: cloneValue(value)}, nil
+		return typ{kind: kindLiteral, literal: value}, nil
 	}
 	if values, ok := object["enum"].([]Value); ok {
 		types := make([]typ, len(values))
 		for i, value := range values {
-			types[i] = typ{kind: kindLiteral, literal: cloneValue(value)}
+			types[i] = typ{kind: kindLiteral, literal: value}
 		}
 		return typ{kind: kindUnion, items: types}, nil
 	}
 	if kinds, ok := object["type"].([]Value); ok {
 		types := make([]typ, len(kinds))
 		for i, kind := range kinds {
-			variant := cloneObject(object)
+			variant := maps.Clone(object)
 			variant["type"] = kind
 			value, err := p.parse(variant, depth+1)
 			if err != nil {
@@ -288,14 +249,7 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 				if err != nil {
 					return typ{}, err
 				}
-				isRequired := false
-				for _, item := range required {
-					if valueEqual(item, key) {
-						isRequired = true
-						break
-					}
-				}
-				fields[key] = field{value: value, required: isRequired}
+				fields[key] = field{value: value, required: slices.Contains(required, Value(key))}
 			}
 		}
 		additional, declared := object["additionalProperties"]

@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-import re
+import tomllib
 import zipfile
 from pathlib import Path
 
 
 def build(root: Path) -> Path:
-    match = re.search(
-        r'(?m)^version = "([^"]+)"', (root / "pyproject.toml").read_text()
-    )
-    if match is None:
-        raise SystemExit("pyproject.toml has no version")
+    version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
     destination = root.parents[1] / "pkg/tooling"
     destination.mkdir(parents=True, exist_ok=True)
     for old in destination.glob("cli-tooling-py-*.zip"):
         old.unlink()
-    archive = destination / f"cli-tooling-py-{match[1]}.zip"
+    archive = destination / f"cli-tooling-py-{version}.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name in ("extract.py", "runner.py"):
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))

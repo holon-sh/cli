@@ -14,34 +14,20 @@ var (
 	schemaValues = []string{"additionalProperties", "unevaluatedProperties", "propertyNames", "contains", "items", "prefixItems", "additionalItems", "unevaluatedItems", "not", "if", "then", "else", "contentSchema"}
 )
 
-// canonical drops annotations and sorts order-insensitive keywords, recursively.
-func canonical(schema Object) Object {
-	clone := cloneObject(schema)
-	normalizeObject(clone)
-	return clone
-}
-
-// canonicalContract is the contract with every schema in canonical form.
+// canonicalContract normalizes the private JSON tree decoded by each public entrypoint.
+// Caller-owned input never reaches this tree.
 func canonicalContract(contract Contract) Contract {
-	result := Contract{Tools: make(map[string]Tool, len(contract.Tools)), Resources: make(map[string]Resource, len(contract.Resources))}
-	for name, tool := range contract.Tools {
-		canonicalTool := Tool{Input: canonical(tool.Input)}
-		if tool.Output != nil {
-			canonicalTool.Output = canonical(tool.Output)
-		}
-		result.Tools[name] = canonicalTool
+	for _, tool := range contract.Tools {
+		normalizeObject(tool.Input)
+		normalizeObject(tool.Output)
 	}
-	for uri, resource := range contract.Resources {
-		result.Resources[uri] = Resource{Output: canonical(resource.Output)}
+	for _, resource := range contract.Resources {
+		normalizeObject(resource.Output)
 	}
-	return result
+	return contract
 }
 
-// digest is "sha256:<hex>" of the canonical contract's JSON with sorted keys and no whitespace.
-func digest(contract Contract) string {
-	return hash(canonicalContract(contract).toValue())
-}
-
+// hash is "sha256:<hex>" of the JSON with sorted keys and no whitespace.
 func hash(value Value) string {
 	sum := sha256.Sum256(encode(value))
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -74,18 +60,18 @@ func normalizeObject(object Object) {
 					normalize(item)
 				}
 			}
-			encoded := make(map[int][]byte, len(items))
-			indices := make([]int, len(items))
-			for i := range items {
-				encoded[i] = encode(items[i])
-				indices[i] = i
+			type encodedItem struct {
+				value Value
+				key   []byte
 			}
-			slices.SortStableFunc(indices, func(a, b int) int { return bytes.Compare(encoded[a], encoded[b]) })
-			sorted := make([]Value, len(items))
-			for i, index := range indices {
-				sorted[i] = items[index]
+			ordered := make([]encodedItem, len(items))
+			for i, item := range items {
+				ordered[i] = encodedItem{item, encode(item)}
 			}
-			copy(items, sorted)
+			slices.SortStableFunc(ordered, func(a, b encodedItem) int { return bytes.Compare(a.key, b.key) })
+			for i, item := range ordered {
+				items[i] = item.value
+			}
 		case slices.Contains(schemaMaps, key):
 			if schemas, ok := item.(Object); ok {
 				for _, schema := range schemas {

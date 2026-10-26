@@ -2,11 +2,10 @@ package mcptype
 
 import (
 	"bytes"
-	"encoding/base64"
-	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -14,10 +13,10 @@ import (
 // The port must reproduce them byte for byte and reject what the binding rejected.
 func TestOutputsMatchNativeCompilerGoldens(t *testing.T) {
 	for _, c := range parityCases(t) {
-		got, err := runCase(c.op, c.input)
-		if c.wantError {
-			if err == nil {
-				t.Errorf("%s: accepted an invalid request", c.name)
+		got, err := c.run()
+		if c.wantError != "" {
+			if err == nil || !strings.Contains(err.Error(), c.wantError) {
+				t.Errorf("%s: expected %q, got %v", c.name, c.wantError, err)
 			}
 			continue
 		}
@@ -25,42 +24,21 @@ func TestOutputsMatchNativeCompilerGoldens(t *testing.T) {
 			t.Errorf("%s: %v", c.name, err)
 			continue
 		}
-		if c.op != "generate" {
-			want, err := os.ReadFile(filepath.Join("testdata", "golden", c.name+".json"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != string(want) {
-				t.Errorf("%s:\n got %s\nwant %s", c.name, got, want)
-			}
-			continue
+		directory, pattern := filepath.Join("testdata", "golden"), c.name+".json"
+		if c.op == "generate" {
+			directory, pattern = filepath.Join(directory, c.name), "."
 		}
-		var response struct {
-			Files map[string]string `json:"files"`
-		}
-		if err := json.Unmarshal([]byte(got), &response); err != nil {
-			t.Fatal(err)
-		}
-		directory := filepath.Join("testdata", "golden", c.name)
 		want := map[string][]byte{}
-		if err := filepath.WalkDir(directory, func(path string, entry fs.DirEntry, err error) error {
+		if err := fs.WalkDir(os.DirFS(directory), pattern, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil || entry.IsDir() {
 				return err
 			}
-			relative, err := filepath.Rel(directory, path)
-			if err != nil {
-				return err
-			}
-			want[filepath.ToSlash(relative)], err = os.ReadFile(path)
+			want[path], err = fs.ReadFile(os.DirFS(directory), path)
 			return err
 		}); err != nil {
 			t.Fatal(err)
 		}
-		for path, encoded := range response.Files {
-			data, err := base64.StdEncoding.DecodeString(encoded)
-			if err != nil {
-				t.Fatal(err)
-			}
+		for path, data := range got {
 			if expected, ok := want[path]; !ok {
 				t.Errorf("%s: unexpected file %s", c.name, path)
 			} else if !bytes.Equal(data, expected) {
@@ -68,7 +46,7 @@ func TestOutputsMatchNativeCompilerGoldens(t *testing.T) {
 			}
 		}
 		for path := range want {
-			if _, ok := response.Files[path]; !ok {
+			if _, ok := got[path]; !ok {
 				t.Errorf("%s: missing file %s", c.name, path)
 			}
 		}

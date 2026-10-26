@@ -1,6 +1,9 @@
 package mcptype
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 // change is one way a published contract breaks an expectation.
 type change struct {
@@ -61,9 +64,9 @@ func changes(expected Expectation, published *Metadata) []change {
 		switch {
 		case !ok:
 			result = append(result, change{kind: "tool_removed", name: name})
-		case !valueEqual(actual.Input, tool.Input):
+		case !reflect.DeepEqual(actual.Input, tool.Input):
 			result = append(result, change{kind: "tool_input_changed", name: name})
-		case !schemaEqual(actual.Output, tool.Output):
+		case !reflect.DeepEqual(actual.Output, tool.Output):
 			result = append(result, change{kind: "tool_output_changed", name: name})
 		}
 	}
@@ -72,17 +75,9 @@ func changes(expected Expectation, published *Metadata) []change {
 		switch {
 		case !ok:
 			result = append(result, change{kind: "resource_removed", uri: uri})
-		case !valueEqual(actual.Output, want.Resources[uri].Output):
+		case !reflect.DeepEqual(actual.Output, want.Resources[uri].Output):
 			result = append(result, change{kind: "resource_output_changed", uri: uri})
 		}
 	}
 	return result
-}
-
-// schemaEqual compares optional schemas: absent equals only absent.
-func schemaEqual(a, b Object) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return valueEqual(a, b)
 }

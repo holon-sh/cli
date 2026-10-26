@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -144,25 +145,23 @@ func fromAny(raw any) (Value, error) {
 	case json.Number:
 		return parseNumber(string(raw))
 	case []any:
-		items := make([]Value, len(raw))
 		for i, item := range raw {
 			value, err := fromAny(item)
 			if err != nil {
 				return nil, err
 			}
-			items[i] = value
+			raw[i] = value
 		}
-		return items, nil
+		return raw, nil
 	case map[string]any:
-		object := make(Object, len(raw))
 		for key, item := range raw {
 			value, err := fromAny(item)
 			if err != nil {
 				return nil, err
 			}
-			object[key] = value
+			raw[key] = value
 		}
-		return object, nil
+		return Object(raw), nil
 	}
 	return nil, fmt.Errorf("unsupported JSON value %T", raw)
 }
@@ -212,52 +211,10 @@ func writeValue(out *bytes.Buffer, value Value) {
 // encodePretty is serde_json's to_string_pretty: two-space indentation, ": " after keys.
 func encodePretty(value Value) string {
 	var out bytes.Buffer
-	writePretty(&out, value, 0)
-	return out.String()
-}
-
-func writePretty(out *bytes.Buffer, value Value, depth int) {
-	indent := func(depth int) { out.WriteString(strings.Repeat("  ", depth)) }
-	switch value := value.(type) {
-	case []Value:
-		if len(value) == 0 {
-			out.WriteString("[]")
-			return
-		}
-		out.WriteByte('[')
-		for i, item := range value {
-			if i > 0 {
-				out.WriteByte(',')
-			}
-			out.WriteByte('\n')
-			indent(depth + 1)
-			writePretty(out, item, depth+1)
-		}
-		out.WriteByte('\n')
-		indent(depth)
-		out.WriteByte(']')
-	case Object:
-		if len(value) == 0 {
-			out.WriteString("{}")
-			return
-		}
-		out.WriteByte('{')
-		for i, key := range sortedKeys(value) {
-			if i > 0 {
-				out.WriteByte(',')
-			}
-			out.WriteByte('\n')
-			indent(depth + 1)
-			writeQuoted(out, key)
-			out.WriteString(": ")
-			writePretty(out, value[key], depth+1)
-		}
-		out.WriteByte('\n')
-		indent(depth)
-		out.WriteByte('}')
-	default:
-		writeValue(out, value)
+	if err := json.Indent(&out, encode(value), "", "  "); err != nil {
+		panic(err) // encode only receives validated JSON values.
 	}
+	return out.String()
 }
 
 // quoted is a JSON string literal as serde_json writes it: only quotes, backslashes and
@@ -301,74 +258,7 @@ func writeQuoted(out *bytes.Buffer, text string) {
 }
 
 func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
-// valueEqual is serde_json's Value equality: 1 and 1.0 differ, object order does not matter.
-func valueEqual(a, b Value) bool {
-	switch a := a.(type) {
-	case nil:
-		return b == nil
-	case bool:
-		other, ok := b.(bool)
-		return ok && a == other
-	case Number:
-		other, ok := b.(Number)
-		return ok && a == other
-	case string:
-		other, ok := b.(string)
-		return ok && a == other
-	case []Value:
-		other, ok := b.([]Value)
-		if !ok || len(a) != len(other) {
-			return false
-		}
-		for i := range a {
-			if !valueEqual(a[i], other[i]) {
-				return false
-			}
-		}
-		return true
-	case Object:
-		other, ok := b.(Object)
-		if !ok || len(a) != len(other) {
-			return false
-		}
-		for key, item := range a {
-			if value, ok := other[key]; !ok || !valueEqual(item, value) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-func cloneValue(value Value) Value {
-	switch value := value.(type) {
-	case []Value:
-		items := make([]Value, len(value))
-		for i, item := range value {
-			items[i] = cloneValue(item)
-		}
-		return items
-	case Object:
-		return cloneObject(value)
-	}
-	return value
-}
-
-func cloneObject(object Object) Object {
-	clone := make(Object, len(object))
-	for key, item := range object {
-		clone[key] = cloneValue(item)
-	}
-	return clone
+	return slices.Sorted(maps.Keys(m))
 }
 
 // describe names a value in serde's "invalid type" errors.

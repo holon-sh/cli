@@ -12,50 +12,42 @@ import (
 // parityCase is one compiler request in its JSON wire form, as the C, Node and Python bindings send it.
 type parityCase struct {
 	name, op, input string
-	wantError       bool
+	wantError       string
 }
 
-// runCase answers a request exactly as the compiler's JSON entry points do, byte for byte.
-func runCase(op, input string) (string, error) {
-	value, err := decodeJSON([]byte(input))
+// run returns the compiler output in the same files as the native golden fixtures.
+func (c parityCase) run() (map[string][]byte, error) {
+	value, err := decodeJSON([]byte(c.input))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	switch op {
+	switch c.op {
 	case "canonical":
 		canonical, digest, err := canonicalRequest(value)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		output := Object{"canonical": canonical, "digest": digest}
 		if canonical == nil {
 			output["digest"] = nil
 		}
-		return string(encode(output)), nil
+		return map[string][]byte{c.name + ".json": encode(output)}, nil
 	case "changes":
 		found, err := changesRequest(value)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		records := make([]Value, len(found))
 		for i, change := range found {
 			records[i] = change.record()
 		}
-		return string(encode(Object{"changes": records})), nil
+		return map[string][]byte{c.name + ".json": encode(Object{"changes": records})}, nil
 	default:
 		request, err := decodeGenerateRequest(value)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		files, err := generate(context.Background(), request)
-		if err != nil {
-			return "", err
-		}
-		encoded := make(Object, len(files))
-		for path, data := range files {
-			encoded[path] = base64.StdEncoding.EncodeToString(data)
-		}
-		return string(encode(Object{"files": encoded})), nil
+		return generate(context.Background(), request)
 	}
 }
 
@@ -145,7 +137,10 @@ func parityCases(t *testing.T) []parityCase {
 	var vectors struct {
 		Canonical []struct{ Input json.RawMessage } `json:"canonical"`
 		Changes   []struct{ Input json.RawMessage } `json:"changes"`
-		Invalid   []json.RawMessage                 `json:"invalid"`
+		Invalid   []struct {
+			Input json.RawMessage
+			Error string
+		} `json:"invalid"`
 	}
 	if err := json.Unmarshal(data, &vectors); err != nil {
 		t.Fatal(err)
@@ -156,8 +151,8 @@ func parityCases(t *testing.T) []parityCase {
 	for i, vector := range vectors.Changes {
 		add("vector-changes-"+string(rune('a'+i)), "changes", string(vector.Input))
 	}
-	for i, input := range vectors.Invalid {
-		cases = append(cases, parityCase{name: "vector-invalid-" + string(rune('a'+i)), op: "changes", input: string(input), wantError: true})
+	for i, vector := range vectors.Invalid {
+		cases = append(cases, parityCase{name: "vector-invalid-" + string(rune('a'+i)), op: "changes", input: string(vector.Input), wantError: vector.Error})
 	}
 	nested, err := os.ReadFile(filepath.Join("testdata", "nested-types.json"))
 	if err != nil {
@@ -168,10 +163,10 @@ func parityCases(t *testing.T) []parityCase {
 	add("canonical-nested", "canonical", `{"contract": `+string(nested)+`}`)
 	add("canonical-metadata-sink", "canonical", `{"metadata": {"version": 1, "identity": {"name": "é", "version": "1"}, "contract": `+kitchenSink+`, "requires": {"x": {"identity": {"name": "x", "version": "1"}, "contract": {"tools": []}}}}}`)
 	add("canonical-unicode", "canonical", `{"schema": {"type": "object", "properties": {"é": {"type": "string", "description": " "}, "a\"b": {"type": "string"}, "tab\t": {"type": "string"}}, "required": ["é", "a\"b"], "enum": ["z", "é", "a", "é"]}}`)
-	cases = append(cases, parityCase{name: "canonical-schema-not-object", op: "canonical", input: `{"schema": []}`, wantError: true})
-	cases = append(cases, parityCase{name: "canonical-unknown-variant", op: "canonical", input: `{"other": {}}`, wantError: true})
-	cases = append(cases, parityCase{name: "canonical-two-keys", op: "canonical", input: `{"schema": {}, "contract": {"tools": []}}`, wantError: true})
-	cases = append(cases, parityCase{name: "canonical-version-float", op: "canonical", input: `{"metadata": {"version": 1.0, "identity": {"name": "a", "version": "1"}}}`, wantError: true})
+	cases = append(cases, parityCase{name: "canonical-schema-not-object", op: "canonical", input: `{"schema": []}`, wantError: "invalid type: sequence, expected a map"})
+	cases = append(cases, parityCase{name: "canonical-unknown-variant", op: "canonical", input: `{"other": {}}`, wantError: "unknown variant `other`, expected one of `contract`, `schema`, `metadata`"})
+	cases = append(cases, parityCase{name: "canonical-two-keys", op: "canonical", input: `{"schema": {}, "contract": {"tools": []}}`, wantError: "expected a map with a single key, one of `contract`, `schema`, `metadata`"})
+	cases = append(cases, parityCase{name: "canonical-version-float", op: "canonical", input: `{"metadata": {"version": 1.0, "identity": {"name": "a", "version": "1"}}}`, wantError: "invalid value: floating point `1.0`, expected u32"})
 	add("changes-sink-vs-nested", "changes", `{"expected": {"identity": {"name": "a", "version": "1"}, "contract": `+kitchenSink+`}, "published": {"version": 1, "identity": {"name": "a", "version": "1"}, "contract": `+string(nested)+`}}`)
 	add("changes-sink-same", "changes", `{"expected": {"identity": {"name": "a", "version": "1"}, "contract": `+kitchenSink+`}, "published": {"version": 1, "identity": {"name": "a", "version": "1"}, "contract": `+kitchenSink+`}}`)
 	add("changes-float-literals", "changes", `{"expected": {"identity": {"name": "a", "version": "1"}, "contract": {"tools": [{"name": "t", "inputSchema": {"type": "object", "minimum": 1}}, {"name": "u", "inputSchema": {"type": "object", "minimum": 1.0}, "outputSchema": {"type": "object"}}, {"name": "v", "inputSchema": {"type": "object"}, "outputSchema": {"type": "object"}}]}}, "published": {"version": 1, "identity": {"name": "a", "version": "1"}, "contract": {"tools": [{"name": "t", "inputSchema": {"type": "object", "minimum": 1.0}}, {"name": "u", "inputSchema": {"type": "object", "minimum": 1.0}}, {"name": "v", "inputSchema": {"type": "object"}, "outputSchema": {"type": "object", "description": "only docs"}}]}}}`)
@@ -208,34 +203,41 @@ func parityCases(t *testing.T) []parityCase {
 	add("slot-python-module-only", "generate", `{"target": "python", "identity": {"name": "a", "version": "1"}, "python_module": "apps.py"}`)
 	add("slot-python-runtime-only", "generate", `{"target": "python", "identity": {"name": "a", "version": "1"}, "python_runtime_module": "_holon.client_1"}`)
 	add("banner-runtime", "generate", `{"target": "node", "identity": {"name": "a", "version": "1"}, "banner": "generated by a caller", "runtime": {"runtime.mjs": "`+base64.StdEncoding.EncodeToString([]byte("export {};\n"))+`", "index.js": "`+base64.StdEncoding.EncodeToString([]byte("overwritten\n"))+`"}}`)
-	for _, test := range []struct{ name, patch string }{
-		{"go-module-missing", `"target": "go", "go_module": null`},
-		{"runtime-escape", `"runtime": {"../escape": ""}`},
-		{"runtime-bad-base64", `"runtime": {"file": "%%"}`},
-		{"protocol-exclusive", `"protocol": "", "protocol_specifier": "../protocol.js"`},
-		{"runtime-specifier-empty", `"runtime_specifier": ""`},
-		{"browser-specifier-newline", `"browser_runtime_specifier": "bad\nmodule"`},
-		{"protocol-specifier-blank", `"protocol_specifier": " "`},
-		{"python-module-escape", `"python_module": "../escape.py"`},
-		{"python-module-ext", `"python_module": "apps.json"`},
-		{"python-runtime-relative", `"python_runtime_module": ".client"`},
-		{"python-runtime-keyword", `"python_runtime_module": "holon.class"`},
-		{"banner-newline", `"banner": "marker\nimport os"`},
-		{"entry-empty", `"entry": ""`},
-		{"entry-separator", `"entry": "a/b"`},
-		{"own-unknown", `"target": "browser", "contracts": {"orders": {"tools": []}}, "own": "a"`},
-		{"binding-empty", `"contracts": {"": {"tools": []}}`},
-		{"unknown-field", `"unknown": true`},
-		{"bad-target", `"target": "wasm"`},
-		{"identity-empty", `"identity": {"name": "", "version": "1"}`},
-		{"requires-empty-identity", `"requires": {"x": {"name": "x", "version": ""}}`},
-		{"contract-null", `"contracts": {"x": null}`},
-		{"external-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "https://example.com"}}}}]}}`},
-		{"unresolved-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/nope"}}}}]}}`},
-		{"schema-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": 5}}}]}}`},
-		{"items-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"type": "array", "items": 5}}}}]}}`},
+	for _, test := range []struct{ name, patch, message string }{
+		{"go-module-missing", `"target": "go", "go_module": null`, "go_module is required for the go target"},
+		{"runtime-escape", `"runtime": {"../escape": ""}`, "runtime path \"../escape\" must be relative and normalized"},
+		{"runtime-bad-base64", `"runtime": {"file": "%%"}`, "runtime file: illegal base64 data at input byte 0"},
+		{"protocol-exclusive", `"protocol": "", "protocol_specifier": "../protocol.js"`, "protocol and protocol_specifier are mutually exclusive"},
+		{"runtime-specifier-empty", `"runtime_specifier": ""`, "runtime_specifier must be nonempty and contain no line breaks or control characters"},
+		{"browser-specifier-newline", `"browser_runtime_specifier": "bad\nmodule"`, "browser_runtime_specifier must be nonempty and contain no line breaks or control characters"},
+		{"protocol-specifier-blank", `"protocol_specifier": " "`, "protocol_specifier must be nonempty and contain no line breaks or control characters"},
+		{"python-module-escape", `"python_module": "../escape.py"`, "python_module must be a relative, normalized .py path"},
+		{"python-module-absolute", `"python_module": "/absolute.py"`, "relative, normalized .py path"},
+		{"python-module-dot", `"python_module": "holon/./apps.py"`, "relative, normalized .py path"},
+		{"python-module-backslash", `"python_module": "holon\\apps.py"`, "relative, normalized .py path"},
+		{"python-module-ext", `"python_module": "apps.json"`, "python_module must be a relative, normalized .py path"},
+		{"python-runtime-relative", `"python_runtime_module": ".client"`, "python_runtime_module must be an absolute Python module name"},
+		{"python-runtime-keyword", `"python_runtime_module": "holon.class"`, "python_runtime_module must be an absolute Python module name"},
+		{"banner-newline", `"banner": "marker\nimport os"`, "banner must be nonempty and contain no line breaks or control characters"},
+		{"entry-empty", `"entry": ""`, "entry must be a nonempty file name without separators or control characters"},
+		{"entry-separator", `"entry": "a/b"`, "entry must be a nonempty file name without separators or control characters"},
+		{"own-unknown", `"target": "browser", "contracts": {"orders": {"tools": []}}, "own": "a"`, "own must name one of the contracts"},
+		{"binding-empty", `"contracts": {"": {"tools": []}}`, "binding names must be nonempty"},
+		{"unknown-field", `"unknown": true`, "unknown field `unknown`"},
+		{"bad-target", `"target": "wasm"`, "unknown variant `wasm`, expected one of `node`, `browser`, `python`, `go`"},
+		{"identity-empty", `"identity": {"name": "", "version": "1"}`, "identity name and version must be nonempty"},
+		{"requires-empty-identity", `"requires": {"x": {"name": "x", "version": ""}}`, "identity name and version must be nonempty"},
+		{"contract-null", `"contracts": {"x": null}`, "invalid type: null, expected a map"},
+		{"duplicate-tool", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}}, {"name":"read", "inputSchema":{"type":"object"}}]}}`, "tool names must be nonempty and unique"},
+		{"empty-tool", `"contracts": {"x": {"tools": [{"name":"", "inputSchema":{"type":"object"}}]}}`, "tool names must be nonempty and unique"},
+		{"input-not-object", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"string"}}]}}`, "read: inputSchema must have type object"},
+		{"output-null", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}, "outputSchema":null}]}}`, "invalid type: null, expected a map"},
+		{"external-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "https://example.com"}}}}]}}`, "external schema reference is unsupported: https://example.com"},
+		{"unresolved-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/nope"}}}}]}}`, "unresolved schema reference: #/nope"},
+		{"schema-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": 5}}}]}}`, "schema must be an object or boolean"},
+		{"items-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"type": "array", "items": 5}}}}]}}`, "schema must be an object or boolean"},
 	} {
-		cases = append(cases, parityCase{name: "invalid-" + test.name, op: "generate", input: `{"target": "node", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime", ` + test.patch + `}`, wantError: true})
+		cases = append(cases, parityCase{name: "invalid-" + test.name, op: "generate", input: `{"target": "node", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime", ` + test.patch + `}`, wantError: test.message})
 	}
 	return cases
 }
