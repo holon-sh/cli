@@ -29,7 +29,7 @@ Or alternatively with [Go](https://go.dev/doc/install) 1.27+, build and install 
 go install github.com/holon-sh/cli/cmd/holon@latest
 ```
 
-## Walkthrough
+## Example
 
 Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example depends on [Context7](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4), a public server that needs no credentials.
 
@@ -182,14 +182,10 @@ Flags:
 ### Where a dependency's contract comes from
 
 ```mermaid
-flowchart TD
-  D["dependency<br/>(requires entry or -s)"] --> P["server directory or entry file<br/>-s ../orders"]
-  D --> G["registry server<br/>requires entry, or -s REGISTRY-VERSION-URL"]
-  D --> L["running MCP server<br/>-s docs=ENDPOINT-URL"]
-  P --> PX["extracted from source"]
-  G --> G1{"sh.holon.types<br/>document?"} -->|yes| GX["fetched"]
-  G1 -->|no| G2{"OCI package with<br/>a contract artifact?<br/>(holon publish)"} -->|yes| GI["read from the image"]
-  G2 -->|no| G3{"streamable-http<br/>remote?"} -->|yes| GL["tools/list, resources/list"]
-  G3 -->|no| GE["error"]
-  L --> LX["tools/list, resources/list"]
+flowchart LR
+  P["server directory or entry file<br/>-s ../orders"] --> PX["extracted from the source code"]
+  G["registry server<br/>requires entry, or -s REGISTRY-VERSION-URL"] --> T["its sh.holon.types document"]
+  T -. else .-> O["its OCI package's contract artifact<br/>(holon publish)"]
+  O -. else .-> R["its streamable-http remote"]
+  L["running MCP server<br/>-s docs=ENDPOINT-URL"] --> LX["tools/list and resources/list"]
 ```
