@@ -59,13 +59,13 @@ holon types check
 Or name the servers yourself. Any `-s` replaces the whole `requires` list, so `server.json` is not needed.
 
 ```sh
-holon types check -s context7=https://mcp.context7.com/mcp
+holon types check -s https://mcp.context7.com/mcp
 ```
 
 Call the server. A wrong tool name or argument is a type error.
 
 <details open>
-<summary><h3>TypeScript</h3></summary>
+<summary><h4>TypeScript</h4></summary>
 
 ```ts
 import { apps } from "holon-sh";
@@ -85,7 +85,7 @@ await apps.context7.tools["resolve-library"]({ libraryName: "Next.js", query: "a
 </details>
 
 <details open>
-<summary><h3>Python</h3></summary>
+<summary><h4>Python</h4></summary>
 
 ```python
 from holon.apps import apps
@@ -101,10 +101,12 @@ await apps.context7.call_tool("resolve-library", {"libraryName": "Next.js", "que
 
 </details>
 
-A server you are still building, say `com.example/bar` in a sibling directory, is not in the registry yet. Pass its directory with `-s`, restating the registry dependency since `-s` replaces the whole list.
+### Development Servers
+
+Let's say you have a server that you're still developing, and it's not in any [MCP Registry](https://modelcontextprotocol.io/registry/about) yet.
 
 ```python
-# ../bar/server.py
+# bar/server.py
 from mcp.server import MCPServer
 
 server = MCPServer("bar")
@@ -115,19 +117,53 @@ def greet(name: str) -> str:
     return f"hello {name}"
 ```
 
+From the directory that holds both `foo` and `bar`, pass its entry file with `-s`, restating the registry dependency since `-s` replaces the whole list.
+
 ```sh
-holon types check -s context7=https://mcp.context7.com/mcp -s bar=../bar
+holon types check foo -s https://mcp.context7.com/mcp -s bar/server.py
 ```
+
+<details open>
+<summary><h4>TypeScript</h4></summary>
 
 ```ts
+import { apps } from "holon-sh";
+
 const greeting = await apps.bar.tools.greet({ name: "world" });
 greeting.result;
+
+await apps.bar.tools.greet({ name: 1 });
+// error TS2322: Type 'number' is not assignable to type 'string'.
+
+await apps.bar.tools.hello({ name: "world" });
+// error TS2339: Property 'hello' does not exist on type '{ readonly greet: (input: { name: string; }, options?: CallOptions) => Promise<{ result: string; }>; }'.
+
+const text: string = greeting.text;
+// error TS2322: Type 'unknown' is not assignable to type 'string'.
 ```
 
+</details>
+
+<details open>
+<summary><h4>Python</h4></summary>
+
 ```python
+from holon.apps import apps
+
 greeting = await apps.bar.tools.greet({"name": "world"})
 greeting["result"]
+
+await apps.bar.tools.greet({"name": 1})
+# error: Incompatible types (expression has type "int", TypedDict item "name" has type "str")  [typeddict-item]
+
+await apps.bar.tools.hello({"name": "world"})
+# error: "_Tools0" has no attribute "hello"  [attr-defined]
+
+greeting["text"]
+# error: TypedDict "_Shape1" has no key "text"  [typeddict-item]
 ```
+
+</details>
 
 ## Reference
 
