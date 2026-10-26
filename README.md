@@ -15,7 +15,7 @@ This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk
 curl -fsSL https://holon-labs.dev/install.sh | sh
 ```
 
-Or alternatively, with [Go](https://go.dev/doc/install) 1.27 or newer, build and install from source:
+Or alternatively with [Go](https://go.dev/doc/install) 1.27+, build and install from source:
 
 ```sh
 go install github.com/holon-sh/cli/cmd/holon@latest
