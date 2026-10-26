@@ -19,7 +19,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// examples shows every SERVER form; cobra prints them under "Examples:".
 func examples(command string) string {
 	return `  # A server directory
   ` + command + ` orders
