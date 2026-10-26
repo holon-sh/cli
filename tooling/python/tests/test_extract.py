@@ -75,7 +75,6 @@ async def tools():
     assert result["tools"][0]["inputSchema"]["required"] == ["id"]
 
 
-
 @pytest.mark.parametrize(
     "annotation",
     [
