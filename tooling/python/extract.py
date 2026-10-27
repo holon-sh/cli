@@ -2,13 +2,26 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import inspect
 import json
 import os
 import sys
-from collections.abc import Callable, Iterator, Mapping
+import types
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Never, cast
+
+import typing_extensions as typing
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import InvalidSignature
+from mcp.server.mcpserver.tools import Tool as SDKTool
+from mcp.types import CallToolResult, InputRequiredResult, Tool
+from pydantic import BaseModel, Field, TypeAdapter
+from pydantic.errors import PydanticUserError
+from pydantic.fields import FieldInfo
+from pydantic_core import SchemaError
 
 IGNORED = frozenset(
     {
@@ -32,41 +45,38 @@ REGISTRATIONS = {"tool", "add_tool", "list_tools", "remove_tool"}
 CONSTRUCTOR_CATALOGS = {"tools", "on_list_tools", None}
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 ASSIGNMENTS = (ast.Assign, ast.AnnAssign, ast.AugAssign)
-SCALARS: dict[object, dict[str, Any]] = {
-    "builtins:str": {"type": "string"},
-    "builtins:int": {"type": "integer"},
-    "builtins:float": {"type": "number"},
-    "builtins:bool": {"type": "boolean"},
-    "builtins:None": {"type": "null"},
-    "typing:Any": {},
-    "builtins:object": {},
-}
-LITERALS = {str: "string", int: "integer", bool: "boolean", type(None): "null"}
-FIELDS = {
-    "default": "default",
-    "gt": "exclusiveMinimum",
-    "ge": "minimum",
-    "lt": "exclusiveMaximum",
-    "le": "maximum",
-    "multiple_of": "multipleOf",
-    "pattern": "pattern",
-    "description": "description",
-    "title": "title",
-}
-OPTIONS = {
-    "name",
-    "title",
-    "description",
-    "annotations",
-    "icons",
-    "meta",
-    "structured_output",
-}
-MODIFIERS: dict[object, bool] = {"typing:NotRequired": True, "typing:Required": False}
-CATALOG = {
-    "name": "name",
-    "input_schema": "inputSchema",
-    "output_schema": "outputSchema",
+# Only these trusted types may reach the SDK. Application symbols are resolved
+# from their AST; no application module, annotation or callback is evaluated.
+TYPES: dict[object, Any] = {
+    "builtins:str": str,
+    "builtins:int": int,
+    "builtins:float": float,
+    "builtins:bool": bool,
+    "builtins:None": type(None),
+    "builtins:object": object,
+    "builtins:list": list,
+    "builtins:tuple": tuple,
+    "builtins:dict": dict,
+    "pydantic:BaseModel": BaseModel,
+    "mcp.server:Context": Context,
+    "mcp.types:CallToolResult": CallToolResult,
+    "mcp.types:InputRequiredResult": InputRequiredResult,
+    **{
+        f"typing:{name}": getattr(typing, name)
+        for name in (
+            "Any",
+            "Annotated",
+            "NotRequired",
+            "Required",
+            "Literal",
+            "Optional",
+            "Union",
+            "List",
+            "Tuple",
+            "Dict",
+            "TypedDict",
+        )
+    },
 }
 DUPLICATE = "duplicate"
 
@@ -77,8 +87,7 @@ class Analyzer:
         self.trees: dict[Path, ast.Module] = {}
         self.modules: dict[Path, dict[str, ast.AST | str]] = {}
         self.active: set[tuple[Path, str]] = set()
-        self.sources: dict[str, str] = {}
-        self.definitions: dict[str, dict[str, Any]] = {}
+        self.models: dict[tuple[Path, str], type[Any]] = {}
 
     def fail(self, path: Path, node: ast.AST, message: str) -> Never:
         raise ValueError(
@@ -99,7 +108,7 @@ class Analyzer:
         path = path.resolve()
         if path not in self.trees:
             self.trees[path] = ast.parse(
-                path.read_text(), filename=str(path.relative_to(self.root))
+                path.read_bytes(), filename=str(path.relative_to(self.root))
             )
         return self.trees[path]
 
@@ -203,29 +212,6 @@ class Analyzer:
             return self.resolve(local, ast.Name(id=name))
         return path, f"{ALIASES.get(module, module)}:{name}"
 
-    def generic(
-        self, path: Path, node: ast.AST
-    ) -> tuple[Path, ast.AST | str, list[ast.expr]]:
-        source, value = self.resolve(path, node)
-        if isinstance(value, ast.Subscript):
-            args = (
-                value.slice.elts
-                if isinstance(value.slice, ast.Tuple)
-                else [value.slice]
-            )
-            return source, self.resolve(source, value.value)[1], args
-        return source, value, []
-
-    def arms(self, path: Path, node: ast.AST) -> list[tuple[Path, ast.AST]]:
-        source, origin, args = self.generic(path, node)
-        if isinstance(origin, ast.BinOp) and isinstance(origin.op, ast.BitOr):
-            return self.arms(source, origin.left) + self.arms(source, origin.right)
-        if origin == "typing:Optional":
-            return self.arms(source, args[0]) + [(source, ast.Constant(None))]
-        if origin == "typing:Union":
-            return [arm for arg in args for arm in self.arms(source, arg)]
-        return [(path, node)]
-
     def is_server(self, path: Path, node: ast.AST) -> bool:
         source, value = self.resolve(path, node)
         return (
@@ -243,10 +229,8 @@ class Analyzer:
         match node:
             case ast.Constant(value=constant):
                 return constant
-            case ast.UnaryOp(op=ast.USub(), operand=operand) if isinstance(
-                number := self.literal(path, operand), (int, float)
-            ):
-                return -number
+            case ast.UnaryOp(op=ast.USub(), operand=operand):
+                return -self.literal(path, operand)
             case ast.List(elts=items) | ast.Tuple(elts=items):
                 return [self.literal(path, item) for item in items]
             case ast.Dict(keys=keys, values=values):
@@ -267,101 +251,73 @@ class Analyzer:
             "Expected a literal contract value; application code is never evaluated.",
         )
 
-    def schema(self, path: Path, node: ast.AST) -> dict[str, Any]:
-        members = self.arms(path, node)
-        if len(members) > 1:
-            return {"anyOf": [self.schema(*member) for member in members]}
-        path, node = members[0]
-        source, origin, args = self.generic(path, node)
+    def annotation(self, path: Path, node: ast.AST) -> Any:
+        source, origin = self.resolve(path, node)
+        args = []
+        if isinstance(origin, ast.Subscript):
+            args = (
+                origin.slice.elts
+                if isinstance(origin.slice, ast.Tuple)
+                else [origin.slice]
+            )
+            _, origin = self.resolve(source, origin.value)
         if isinstance(origin, ast.ClassDef):
-            model = self.model(source, origin)
-            if self.definitions.setdefault(origin.name, model) != model:
-                self.fail(source, origin, "Conflicting model names in one tool schema.")
-            return {"$ref": f"#/$defs/{origin.name}"}
-        if origin in SCALARS:
-            return dict(SCALARS[origin])
-        if origin in GENERICS and args:
-            return GENERICS[origin](self, source, args)
-        return self.fail(path, node, "Schema cannot be established statically.")
-
-    def annotated(self, path: Path, args: list[ast.expr]) -> dict[str, Any]:
-        result = self.schema(path, args[0])
-        for extra in args[1:]:
-            result.update(self.field(path, extra))
-        return result
-
-    def required(self, path: Path, args: list[ast.expr]) -> dict[str, Any]:
-        return self.schema(path, args[0])
-
-    def enumeration(self, path: Path, args: list[ast.expr]) -> dict[str, Any]:
-        values = [self.literal(path, item) for item in args]
-        result: dict[str, Any] = (
-            {"const": values[0]} if len(values) == 1 else {"enum": values}
+            return self.model(source, origin)
+        if isinstance(origin, ast.BinOp) and isinstance(origin.op, ast.BitOr):
+            return self.annotation(source, origin.left) | self.annotation(
+                source, origin.right
+            )
+        if isinstance(origin, ast.Constant) and origin.value is Ellipsis:
+            return Ellipsis
+        if origin not in TYPES:
+            self.fail(path, node, "Schema cannot be established statically.")
+        target = TYPES[origin]
+        if not args:
+            return target
+        if target is typing.Literal:
+            return target[tuple(self.literal(source, arg) for arg in args)]
+        parameters = tuple(
+            self.field(source, arg)
+            if isinstance(arg, ast.Call)
+            else self.annotation(source, arg)
+            for arg in args
         )
-        kinds = {LITERALS.get(type(value)) for value in values}
-        if len(kinds) == 1 and None not in kinds:
-            result["type"] = kinds.pop()
-        return result
+        return target[parameters[0] if len(parameters) == 1 else parameters]
 
-    def array(self, path: Path, args: list[ast.expr]) -> dict[str, Any]:
-        return {"type": "array", "items": self.schema(path, args[0])}
-
-    def sequence(self, path: Path, args: list[ast.expr]) -> dict[str, Any]:
-        match args:
-            case [item, ast.Constant(value=builtin)] if builtin is Ellipsis:
-                return self.array(path, [item])
-        items = [self.schema(path, item) for item in args]
-        return {
-            "type": "array",
-            "prefixItems": items,
-            "minItems": len(items),
-            "maxItems": len(items),
-        }
-
-    def mapping(self, path: Path, args: list[ast.expr]) -> dict[str, Any]:
-        if self.schema(path, args[0]) != {"type": "string"}:
-            self.fail(path, args[0], "Wire dictionary keys must be strings.")
-        return {"type": "object", "additionalProperties": self.schema(path, args[1])}
-
-    def model(self, path: Path, value: ast.ClassDef) -> dict[str, Any]:
-        bases = [self.resolve(path, base) for base in value.bases]
-        if value.decorator_list or len(bases) != 1:
+    def model(self, path: Path, value: ast.ClassDef) -> type[Any]:
+        key = (path, value.name)
+        if key in self.models:
+            return self.models[key]
+        if value.decorator_list or len(value.bases) != 1:
             self.fail(
                 path, value, "Use an undecorated BaseModel or TypedDict contract."
             )
-        source, base = bases[0]
-        if isinstance(base, ast.ClassDef):
-            result = self.model(source, base)
-        elif base in ("pydantic:BaseModel", "typing:TypedDict"):
-            result = {"type": "object", "properties": {}}
-        else:
-            self.fail(
-                path, value, "Use an undecorated BaseModel or TypedDict contract."
-            )
-        total = all(
-            self.literal(path, item.value)
-            for item in value.keywords
-            if item.arg == "total"
-        )
-        required = result.pop("required", [])
         with self.visiting(path, value, value.name):
+            base = self.annotation(path, value.bases[0])
+            if not (
+                base is typing.TypedDict
+                or typing.is_typeddict(base)
+                or isinstance(base, type)
+                and issubclass(base, BaseModel)
+            ):
+                self.fail(
+                    path, value, "Use an undecorated BaseModel or TypedDict contract."
+                )
+            annotations: dict[str, Any] = {}
+            namespace: dict[str, Any] = {
+                "__annotations__": annotations,
+                "__module__": __name__,
+            }
             for member in value.body:
                 match member:
                     case ast.AnnAssign(
                         target=ast.Name(id=name), annotation=annotation
                     ) if not name.startswith("_"):
-                        field = self.declared(path, annotation, member.value)
-                        origin = self.generic(path, annotation)[1]
-                        optional = MODIFIERS.get(origin, not total)
-                        if "default" not in field and not optional:
-                            required.append(name)
-                        result["properties"][name] = field
+                        annotations[name] = self.annotation(path, annotation)
+                        if member.value is not None:
+                            namespace[name] = self.default(path, member.value)
                     case ast.Assign(targets=[ast.Name(id="model_config")]):
-                        config = self.literal(path, member.value)
-                        if set(config) - {"extra"}:
-                            self.fail(path, member, "Unsupported model configuration.")
-                        if config.get("extra") in {"forbid", "allow"}:
-                            result["additionalProperties"] = config["extra"] == "allow"
+                        namespace["model_config"] = self.literal(path, member.value)
                     case ast.Pass() | ast.Expr(value=ast.Constant()):
                         pass
                     case _:
@@ -370,41 +326,43 @@ class Analyzer:
                             member,
                             "Private fields, methods, validators and computed fields are unsupported.",
                         )
-        if required:
-            result["required"] = required
-        return result
+            keywords = {
+                item.arg: self.literal(path, item.value) for item in value.keywords
+            }
+            # types.new_class invokes only the trusted BaseModel/TypedDict machinery
+            # with this inert namespace, never the original class body or decorators.
+            model = types.new_class(
+                value.name,
+                (base,),
+                cast(dict[str, Any], keywords),
+                lambda ns: ns.update(namespace),
+            )
+            self.models[key] = model
+            return model
 
-    def field(self, path: Path, node: ast.AST) -> dict[str, Any]:
+    def field(self, path: Path, node: ast.AST) -> FieldInfo:
         if (
             not isinstance(node, ast.Call)
             or self.resolve(path, node.func)[1] != "pydantic:Field"
-            or len(node.args) > 1
         ):
             self.fail(path, node, "Only static pydantic.Field metadata is supported.")
-        result = {}
-        for name, value in [
-            *(("default", item) for item in node.args),
-            *((item.arg, item.value) for item in node.keywords),
-        ]:
-            if name not in FIELDS:
-                self.fail(
-                    path,
-                    value,
-                    f"Unsupported Field option {name}; no callbacks are evaluated.",
-                )
-            if (literal := self.literal(path, value)) is not Ellipsis:
-                result[FIELDS[name]] = literal
-        return result
+        return cast(
+            FieldInfo,
+            Field(
+                *(self.literal(path, arg) for arg in node.args),
+                **{
+                    cast(str, item.arg): self.literal(path, item.value)
+                    for item in node.keywords
+                },
+            ),
+        )
 
-    def declared(
-        self, path: Path, annotation: ast.expr, default: ast.expr | None
-    ) -> dict[str, Any]:
-        schema = self.schema(path, annotation)
-        if isinstance(default, ast.Call):
-            schema.update(self.field(path, default))
-        elif default is not None:
-            schema["default"] = self.literal(path, default)
-        return schema
+    def default(self, path: Path, node: ast.AST) -> Any:
+        return (
+            self.field(path, node)
+            if isinstance(node, ast.Call)
+            else self.literal(path, node)
+        )
 
     def tool(
         self,
@@ -412,9 +370,9 @@ class Analyzer:
         function: ast.FunctionDef | ast.AsyncFunctionDef,
         options: Mapping[str, ast.AST],
     ) -> dict[str, Any]:
-        name = self.literal(path, options.get("name", ast.Constant(function.name)))
-        if not isinstance(name, str) or not name:
-            self.fail(path, function, "Tool names must be literal nonempty strings.")
+        name = TypeAdapter(str | None).validate_python(
+            self.literal(path, options.get("name", ast.Constant(None)))
+        )
         signature = function.args
         if signature.posonlyargs or signature.vararg or signature.kwarg:
             self.fail(
@@ -422,81 +380,48 @@ class Analyzer:
                 function,
                 "Variadic and positional-only tool parameters are unsupported.",
             )
-        self.definitions = {}
-        properties = {}
-        required = []
         defaults = (
             [None] * (len(signature.args) - len(signature.defaults))
             + signature.defaults
             + signature.kw_defaults
         )
+        parameters = []
         for arg, default in zip(signature.args + signature.kwonlyargs, defaults):
             if arg.annotation is None:
                 self.fail(
                     path, arg, "Typed tool parameters require explicit annotations."
                 )
-            if self.generic(path, arg.annotation)[1] == "mcp.server:Context":
-                continue
-            schema = self.declared(path, arg.annotation, default)
-            if "default" not in schema:
-                required.append(arg.arg)
-            properties[arg.arg] = schema
-        result: dict[str, Any] = {
-            "name": name,
-            "inputSchema": {"type": "object", "properties": properties},
-        }
-        if required:
-            result["inputSchema"]["required"] = required
-        result["inputSchema"] = self.with_definitions(result["inputSchema"])
-        structured = options.get("structured_output", ast.Constant(None))
-        if (
-            function.returns
-            and self.literal(path, structured) is not False
-            and (output := self.output(path, function.returns))
-        ):
-            result["outputSchema"] = self.with_definitions(output)
-        return result
-
-    def with_definitions(self, schema: dict[str, Any]) -> dict[str, Any]:
-        definitions, self.definitions = self.definitions, {}
-        if "$ref" in schema:
-            schema = definitions.pop(schema["$ref"].removeprefix("#/$defs/"))
-        if definitions:
-            schema["$defs"] = definitions
-        return schema
-
-    def output(self, path: Path, returns: ast.expr) -> dict[str, Any] | None:
-        parts = [
-            arm
-            for arm in self.arms(path, returns)
-            if self.generic(*arm)[1] != "mcp.types:InputRequiredResult"
-        ]
-        if not parts:
-            return None
-        if len(parts) > 1:
-            return wrap({"anyOf": [self.schema(*part) for part in parts]})
-        source, node = parts[0]
-        _, origin, args = self.generic(source, node)
-        if (
-            origin == "typing:Annotated"
-            and self.generic(source, args[0])[1] == "mcp.types:CallToolResult"
-        ):
-            if len(args) != 2:
-                self.fail(
-                    source,
-                    node,
-                    "Use one explicit output model with Annotated[CallToolResult, Model].",
+            parameters.append(
+                inspect.Parameter(
+                    arg.arg,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    annotation=self.annotation(path, arg.annotation),
+                    default=inspect.Parameter.empty
+                    if default is None
+                    else self.default(path, default),
                 )
-            node = args[1]
-            origin = self.generic(source, node)[1]
-        if origin in {"mcp.types:CallToolResult", "typing:Any"}:
-            return None
-        schema = self.schema(source, node)
-        return (
-            schema
-            if isinstance(origin, ast.ClassDef) or origin == "builtins:dict"
-            else wrap(schema)
+            )
+
+        def stub() -> Never:
+            raise AssertionError("Contract extraction must never call a tool.")
+
+        stub.__name__ = function.name
+        stub.__annotations__ = {param.name: param.annotation for param in parameters}
+        structured = self.literal(
+            path, options.get("structured_output", ast.Constant(None))
         )
+        returns = inspect.Signature.empty
+        if function.returns is not None and structured is not False:
+            returns = self.annotation(path, function.returns)
+            stub.__annotations__["return"] = returns
+        # The SDK sees concrete trusted annotations and a signature, not source code.
+        stub.__signature__ = inspect.Signature(parameters, return_annotation=returns)  # type: ignore[attr-defined]
+        tool = SDKTool.from_function(stub, name=name, structured_output=structured)
+        return Tool(
+            name=tool.name,
+            input_schema=tool.parameters,
+            output_schema=tool.output_schema,
+        ).model_dump(by_alias=True, exclude_none=True)
 
     def registration(self, node: ast.AST, servers: set[str]) -> str | None:
         match node:
@@ -512,14 +437,13 @@ class Analyzer:
         function: ast.FunctionDef | ast.AsyncFunctionDef,
         call: ast.Call,
     ) -> list[dict[str, Any]]:
-        options: dict[str | None, ast.AST] = {
-            item.arg: item.value for item in call.keywords
-        }
-        if None in options or len(call.args) > 1 or set(options) - OPTIONS:
-            self.fail(path, call, "Computed registration options are unsupported.")
-        if call.args:
-            options["name"] = call.args[0]
-        return [self.tool(path, function, cast(Mapping[str, ast.AST], options))]
+        signature = inspect.signature(MCPServer.tool)
+        options = signature.bind(
+            None,
+            *call.args,
+            **{cast(str, item.arg): item.value for item in call.keywords},
+        ).arguments
+        return [self.tool(path, function, options)]
 
     def resource(
         self,
@@ -527,11 +451,12 @@ class Analyzer:
         function: ast.FunctionDef | ast.AsyncFunctionDef,
         call: ast.Call,
     ) -> list[dict[str, Any]]:
-        options: dict[str | None, ast.AST] = {
-            item.arg: item.value for item in call.keywords
-        }
-        if call.args:
-            options["uri"] = call.args[0]
+        signature = inspect.signature(MCPServer.resource)
+        options = signature.bind(
+            None,
+            *call.args,
+            **{cast(str, item.arg): item.value for item in call.keywords},
+        ).arguments
         mime_type = self.constant(path, options.get("mime_type", ast.Constant(None)))
         if mime_type != "application/json" or function.returns is None:
             return []
@@ -541,9 +466,9 @@ class Analyzer:
         return [
             {
                 "uri": uri,
-                "outputSchema": self.with_definitions(
-                    self.schema(path, function.returns)
-                ),
+                "outputSchema": TypeAdapter(
+                    self.annotation(path, function.returns)
+                ).json_schema(),
             }
         ]
 
@@ -570,17 +495,17 @@ class Analyzer:
             case ast.Call(func=func, args=[], keywords=keywords) if (
                 self.resolve(path, func)[1] == "mcp.types:Tool"
             ):
-                fields = {
-                    keyword.arg: self.literal(path, keyword.value)
-                    for keyword in keywords
-                }
-                tool = {
-                    CATALOG[name]: value
-                    for name, value in fields.items()
-                    if name in CATALOG
-                }
-                if None not in fields and {"name", "inputSchema"} <= set(tool):
-                    return tool
+                tool = Tool(
+                    **{
+                        cast(str, keyword.arg): self.literal(path, keyword.value)
+                        for keyword in keywords
+                    }
+                )
+                return tool.model_dump(
+                    by_alias=True,
+                    exclude_none=True,
+                    include={"name", "input_schema", "output_schema"},
+                )
         return self.fail(
             path,
             item,
@@ -686,23 +611,21 @@ class Analyzer:
         return {"tools": tools, "resources": resources}
 
 
-def wrap(schema: dict[str, Any]) -> dict[str, Any]:
-    return {"type": "object", "properties": {"result": schema}, "required": ["result"]}
-
-
 def extract(root: str | Path, entry: str) -> dict[str, Any]:
     analyzer = Analyzer(Path(root))
+    sources: dict[str, str] = {}
     try:
         for directory, folders, filenames in os.walk(analyzer.root):
             folders[:] = [name for name in folders if name not in IGNORED]
             for name in filenames:
                 if name.endswith(".py"):
                     path = Path(directory, name)
-                    analyzer.sources[str(path.relative_to(analyzer.root))] = (
-                        hashlib.sha256(path.read_text().encode()).hexdigest()
-                    )
+                    with path.open("rb") as source:
+                        sources[str(path.relative_to(analyzer.root))] = (
+                            hashlib.file_digest(source, "sha256").hexdigest()
+                        )
         catalog = analyzer.extract((analyzer.root / entry).resolve())
-        return {**catalog, "sources": analyzer.sources}
+        return {**catalog, "sources": sources}
     except (
         ValueError,
         SyntaxError,
@@ -710,11 +633,14 @@ def extract(root: str | Path, entry: str) -> dict[str, Any]:
         LookupError,
         TypeError,
         RecursionError,
+        PydanticUserError,
+        InvalidSignature,
+        SchemaError,
     ) as error:
         return {
             "tools": [],
             "diagnostic": str(error),
-            "sources": analyzer.sources,
+            "sources": sources,
         }
 
 
@@ -722,18 +648,6 @@ DECORATORS = {
     "tool": Analyzer.decorated,
     "list_tools": Analyzer.catalog,
     "resource": Analyzer.resource,
-}
-GENERICS: dict[object, Callable[[Analyzer, Path, list[ast.expr]], dict[str, Any]]] = {
-    "typing:Annotated": Analyzer.annotated,
-    "typing:NotRequired": Analyzer.required,
-    "typing:Required": Analyzer.required,
-    "typing:Literal": Analyzer.enumeration,
-    "builtins:list": Analyzer.array,
-    "typing:List": Analyzer.array,
-    "builtins:tuple": Analyzer.sequence,
-    "typing:Tuple": Analyzer.sequence,
-    "builtins:dict": Analyzer.mapping,
-    "typing:Dict": Analyzer.mapping,
 }
 
 

@@ -18,7 +18,9 @@ from mypy import api
 mode, config = sys.argv[1:]
 settings = json.loads(Path(config).read_text())
 for path, digest in settings["sources"].items():
-    if hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest:
+    with Path(path).open("rb") as source:
+        actual = hashlib.file_digest(source, "sha256").hexdigest()
+    if actual != digest:
         raise SystemExit(
             f"{path}: application sources changed after extraction; regenerate types before checking."
         )
