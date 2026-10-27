@@ -91,25 +91,21 @@ func installCLISlot(t *testing.T, root string) {
 }
 
 func TestExplicitOwnServer(t *testing.T) {
-	for _, test := range []struct {
-		name          string
-		entries, args []string
-		want          string
-	}{
-		{"own server only", []string{"server.ts"}, []string{"-s", "./server.ts"}, "has no requires"},
-		{"two own servers", []string{"server.ts", "src/server.ts"}, []string{"-s", "./server.ts", "-s", "./src/server.ts"}, "one own server"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			t.Chdir(root)
-			writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
-			for _, entry := range test.entries {
-				writeCLIFile(t, root, entry, "export default {};\n")
-			}
-			args := append([]string{"types", "generate"}, test.args...)
-			run(t, test.want, args...)
-		})
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Chdir(root)
+	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
+	writeCLIFile(t, root, "server.py", pythonServer)
+	writeCLIFile(t, root, "server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"}`)
+	installCLISlot(t, root)
+	run(t, "", "types", "generate", "-s", "./server.py")
+	browser, err := os.ReadFile(filepath.Join(root, "node_modules/holon-sh/generated/browser.d.ts"))
+	if err != nil || !strings.Contains(string(browser), `"view"`) || !strings.Contains(string(browser), `"read"`) {
+		t.Fatalf("own browser client = %s, %v", browser, err)
+	}
+	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")
 }
 
 func TestOwnServerSuppliesConsumerMetadata(t *testing.T) {

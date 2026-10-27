@@ -67,6 +67,12 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 	if strings.Contains(node, `"status"`) {
 		t.Fatal("the ts slot received the consumer's own contract")
 	}
+	browser := read(t, stage, "holon-sh/generated/browser.js")
+	for _, want := range []string{`from "../browser-runtime.mjs"`, `"status"`, `"lookup"`} {
+		if !strings.Contains(browser, want) {
+			t.Fatalf("browser client lacks %s: %s", want, browser)
+		}
+	}
 	var marker slotMetadata
 	if err = readTypeJSON(filepath.Join(stage, "holon-sh/generated/holon-generated.json"), &marker); err != nil || marker.App != "checkout" {
 		t.Fatalf("slot marker = %+v, %v", marker, err)
@@ -204,7 +210,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	c, extract, _ := checkoutConsumer(t, TargetTS)
 	bin := t.TempDir()
 	log := filepath.Join(bin, "calls")
-	put(t, bin, "npm", "#!/bin/sh\necho \"$PWD $* $INSTALL_MODE\" >> "+log+"\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
+	put(t, bin, "npm", "#!/bin/sh\n[ \"$HOLON_SKIP_POSTINSTALL\" = 1 ] || exit 9\nprintf '{}' > package-lock.json\necho \"$PWD $* $INSTALL_MODE\" >> "+log+"\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
 	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -220,6 +226,14 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	if !isFile(filepath.Join(c.Dir, "node_modules/holon-sh/generated/index.js")) {
 		t.Fatal("slot not written after installing")
 	}
+	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
+		t.Fatal(err)
+	}
+	put(t, bin, "npm", "#!/bin/sh\nexit 17\n")
+	if err := Generate(t.Context(), []Consumer{c}, Options{Extract: extract}); err == nil || !strings.Contains(err.Error(), "exit status 17") {
+		t.Fatalf("failed installation was not reported: %v", err)
+	}
+
 }
 
 func TestGenerateRejectsASharedNodeSlotBeforeWritingEitherConsumer(t *testing.T) {
@@ -399,9 +413,7 @@ func TestGoConsumerClients(t *testing.T) {
 	if err = prepared.WriteGoSlot("caller", other); err == nil || !strings.Contains(err.Error(), "unmarked") {
 		t.Fatalf("overwrote a user holon/ package: %v", err)
 	}
-	if _, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: options.HTTPClient, Env: options.Env}); err == nil || !strings.Contains(err.Error(), "GoModule") {
-		t.Fatalf("go target without GoModule = %v", err)
-	}
+
 }
 
 func TestPythonSourcesWithTheRealExtractor(t *testing.T) {

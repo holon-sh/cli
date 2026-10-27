@@ -10,7 +10,12 @@ import (
 
 const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
-export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
+`
+
+const factoryTypes = `export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: %s }, options?: CreateOptions): Pick<Apps,K>;
+`
+
+const hostBindingTypes = `export interface HostBinding { host: { callServerTool(params: { name: string; arguments?: Record<string, unknown> }, options?: { signal?: AbortSignal }): Promise<unknown>; readServerResource(params: { uri: string }, options?: { signal?: AbortSignal }): Promise<unknown> } }
 `
 
 const exposeTypes = `export interface ExposeOptions { signal?: AbortSignal; execute?: (name: string, args: Record<string, unknown>) => Promise<unknown> }
@@ -58,7 +63,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	}
 	bound := fmt.Sprintf("export function createApps(bindings,options){return bindApps(%s,%s,bindings,options)}\n", identity, contracts)
 	runtime := quoted(cmp.Or(request.RuntimeSpecifier, "./runtime.mjs"))
-	browserRuntime := quoted("./browser-runtime.mjs")
+	browserRuntime := quoted(cmp.Or(request.RuntimeSpecifier, "./browser-runtime.mjs"))
 	entry := "index"
 	if request.Target == "browser" {
 		entry = "browser"
@@ -72,12 +77,12 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	case request.Target == "browser":
 		files = map[string]string{
 			entry + ".js":   fmt.Sprintf("import { bindApps } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", browserRuntime, browserRuntime, bound),
-			entry + ".d.ts": types(resourcesEntry) + bindingTypes + exposeTypes,
+			entry + ".d.ts": types(resourcesEntry) + hostBindingTypes + bindingTypes + fmt.Sprintf(factoryTypes, "EndpointBinding | HostBinding") + exposeTypes,
 		}
 	default:
 		files = map[string]string{
 			entry + ".js":   fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\nexport const apps = create(%s, %s);\n%s", runtime, runtime, identity, contracts, bound),
-			entry + ".d.ts": types(resourcesEntry) + "export declare const apps: Apps;\n" + bindingTypes,
+			entry + ".d.ts": types(resourcesEntry) + "export declare const apps: Apps;\n" + bindingTypes + fmt.Sprintf(factoryTypes, "EndpointBinding"),
 		}
 	}
 	files[resourcesEntry+".d.ts"] = resources

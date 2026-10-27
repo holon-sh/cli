@@ -21,6 +21,8 @@ func Check(ctx context.Context, dir string, options Options) error {
 	languages := map[string]bool{}
 	for _, target := range targets {
 		switch target {
+		case TargetGo:
+			return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
 		case TargetTS:
 			slot, err := InstalledRuntime(dir)
 			if err != nil {

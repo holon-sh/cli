@@ -1,8 +1,10 @@
 package typegen
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -162,6 +164,33 @@ func TestPythonSlotProtectsUserFiles(t *testing.T) {
 			}
 			if got := read(t, root, name); got != "user content" {
 				t.Fatal("user file changed")
+			}
+		})
+	}
+}
+
+func TestDeclaredTargetsFollowSDKDependencies(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		files map[string]string
+		want  []string
+	}{
+		{"unrelated frontend", map[string]string{"package.json": `{"devDependencies":{"vite":"*"}}`, "server.py": ""}, nil},
+		{"node", map[string]string{"package.json": `{"dependencies":{"holon-sh":"*"}}`}, []string{TargetTS}},
+		{"optional node", map[string]string{"package.json": `{"optionalDependencies":{"holon-sh":"*"}}`}, []string{TargetTS}},
+		{"python with frontend", map[string]string{"package.json": `{}`, "pyproject.toml": `[project]
+dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetPy}},
+		{"both", map[string]string{"package.json": `{"devDependencies":{"holon-sh":"*"}}`, "requirements.txt": "holon-sh==1.0.0"}, []string{TargetTS, TargetPy}},
+		{"go", map[string]string{"go.mod": "module app\nrequire (\n github.com/holon-sh/sdk/go v0.0.1\n)\n"}, []string{TargetGo}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, data := range test.files {
+				put(t, dir, name, data)
+			}
+			got, err := DeclaredTargets(dir)
+			if !slices.Equal(got, test.want) || (len(test.want) == 0 && !errors.Is(err, ErrNoRuntime)) || (len(test.want) != 0 && err != nil) {
+				t.Fatalf("targets = %v, %v; want %v", got, err, test.want)
 			}
 		})
 	}

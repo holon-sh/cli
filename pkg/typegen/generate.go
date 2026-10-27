@@ -3,7 +3,6 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -29,7 +28,7 @@ type Options struct {
 	// Extract runs one language's extractor: the runner under toolingDir/<language> reads configPath and
 	// writes outputPath. It defaults to the host's Node.js or Python interpreter.
 	Extract func(ctx context.Context, language, toolingDir, configPath, outputPath string) error
-	// GoModule is the runtime module that generated Go clients import; the go target requires it.
+	// GoModule is the runtime module that generated Go clients import; it defaults to github.com/holon-sh/sdk/go.
 	GoModule string
 }
 
@@ -43,6 +42,7 @@ func validateEnv(env []string) error {
 }
 
 func (o Options) defaults() Options {
+	o.GoModule = cmp.Or(o.GoModule, "github.com/holon-sh/sdk/go")
 	o.HTTPClient = cmp.Or(o.HTTPClient, &http.Client{Timeout: 30 * time.Second})
 	o.Stdout = cmp.Or(o.Stdout, io.Discard)
 	o.Stderr = cmp.Or(o.Stderr, io.Discard)
@@ -112,9 +112,6 @@ func prepareSource(ctx context.Context, root, name, path string, o Options) (*pr
 	origin, entry, language, err := serverEntry(path)
 	if err != nil {
 		return nil, err
-	}
-	if language == "go" && o.GoModule == "" {
-		return nil, fmt.Errorf("%s: Go servers need Options.GoModule", origin)
 	}
 	s := &preparedSource{origin: origin, root: filepath.Join(root, "sources", name), entry: entry, language: language}
 	data, err := os.ReadFile(filepath.Join(origin, "server.json"))
@@ -300,7 +297,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		}
 	}
 	for _, target := range c.Targets {
-		files, err := generateTypes(ctx, target, request, p.options.GoModule)
+		files, err := generateTypes(ctx, target, request, c.metadata, p.options.GoModule)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
 		}
@@ -315,16 +312,32 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	return nil
 }
 
-func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, goModule string) (map[string][]byte, error) {
+func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, goModule string) (map[string][]byte, error) {
 	switch target {
 	case TargetTS:
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
+		files, err := mcptype.Generate(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		request.Target, request.RuntimeSpecifier = "browser", "../browser-runtime.mjs"
+		request.Requires, request.Contracts = maps.Clone(request.Requires), maps.Clone(request.Contracts)
+		if own.Schema != nil {
+			alias := serverKey(own.Identity.Name)
+			if _, exists := request.Contracts[alias]; exists {
+				return nil, fmt.Errorf("own browser client %s conflicts with a dependency alias", alias)
+			}
+			request.Requires[alias], request.Contracts[alias] = own.Identity, own.Schema
+		}
+		browser, err := mcptype.Generate(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(files, browser)
+		return files, nil
 	case TargetPy:
 		request.Target = "python"
 	case TargetGo:
-		if goModule == "" {
-			return nil, errors.New("the go target needs Options.GoModule")
-		}
 		request.Target = "go"
 		request.GoModule = goModule
 	}
@@ -345,81 +358,72 @@ func (p *Prepared) currentSources() error {
 	return nil
 }
 
-// Generate writes each consumer's slots: it requires the slot packages to be installed (installing
-// a declared but missing one), prepares, validates the slots, then writes them.
+// Generate installs declared runtimes, prepares clients, and writes the project slots.
 func Generate(ctx context.Context, consumers []Consumer, options Options) error {
-	o := options.defaults()
-	for _, c := range consumers {
-		if err := c.validate(); err != nil {
-			return err
-		}
-	}
 	release, err := AcquireLocks(consumers)
 	if err != nil {
 		return err
 	}
 	defer release()
+	if err := Install(ctx, consumers, options); err != nil {
+		return err
+	}
+	prepared, err := Prepare(ctx, consumers, options)
+	if err != nil {
+		return err
+	}
+	defer prepared.Close()
+	if err := prepared.currentSources(); err != nil {
+		return err
+	}
+	return prepared.Write()
+}
+
+// Write validates all consumer slots before writing any of them. Callers hold AcquireLocks
+// and install dependencies before Prepare. Repeating Write repairs slots replaced by an install.
+func (p *Prepared) Write() error {
 	slots := map[string]string{}
 	owners := map[string]string{}
-	for _, c := range consumers {
+	for _, c := range p.consumers {
 		for _, target := range c.Targets {
+			var err error
 			switch target {
 			case TargetTS:
-				slot, err := ensureNodeRuntime(ctx, c.Dir, o)
+				var slot string
+				slot, err = InstalledRuntime(c.Dir)
 				if err != nil {
 					return fmt.Errorf("%s: %w", c.Name, err)
 				}
 				if prior, ok := owners[slot]; ok && prior != c.Name {
 					return fmt.Errorf("%s and %s share %s; install a separate %s for each project (avoid hoisting this package)", prior, c.Name, slot, nodePackage)
 				}
-				owners[slot] = c.Name
-				slots[c.Name] = slot
-			case TargetPy:
-				if err := ensurePythonRuntime(c.Dir); err != nil {
-					return fmt.Errorf("%s: %w", c.Name, err)
-				}
-			}
-		}
-	}
-	prepared, err := Prepare(ctx, consumers, o)
-	if err != nil {
-		return err
-	}
-	defer prepared.Close()
-	for _, c := range prepared.consumers {
-		for _, target := range c.Targets {
-			var err error
-			switch target {
-			case TargetTS:
-				err = validateNodeSlot(slots[c.Name], c.slot)
+				owners[slot], slots[c.Name] = c.Name, slot
+				err = validateNodeSlot(slot, c.slot)
 			case TargetPy:
 				err = validatePythonSlot(c.Dir)
 			case TargetGo:
 				err = validateGoSlot(c.Dir)
 			}
 			if err != nil {
-				return err
+				return fmt.Errorf("%s: %w", c.Name, err)
 			}
 		}
 	}
-	if err := prepared.currentSources(); err != nil {
-		return err
-	}
-	for _, c := range prepared.consumers {
+	for _, c := range p.consumers {
 		for _, target := range c.Targets {
 			var err error
 			switch target {
 			case TargetTS:
-				err = prepared.WriteNodeSlot(c.Name, slots[c.Name])
+				err = p.WriteNodeSlot(c.Name, slots[c.Name])
 			case TargetPy:
-				err = prepared.WritePythonSlot(c.Name, c.Dir)
+				err = p.WritePythonSlot(c.Name, c.Dir)
 			case TargetGo:
-				err = prepared.WriteGoSlot(c.Name, c.Dir)
+				err = p.WriteGoSlot(c.Name, c.Dir)
 			}
 			if err != nil {
-				return err
+				return fmt.Errorf("%s: %w", c.Name, err)
 			}
-			fmt.Fprintf(o.Stdout, "%s: generated %s types\n", c.Name, target)
+			fmt.Fprintf(p.options.Stdout, "%s: generated %s types\n", c.Name, target)
 		}
 	}
 	return nil
