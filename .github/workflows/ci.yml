@@ -60,6 +60,10 @@ jobs:
         with:
           python-version: '3.12'
           enable-cache: false
+      - name: Install Python extraction dependencies
+        run: |
+          uv sync --project tooling/python
+          echo "$PWD/tooling/python/.venv/bin" >> "$GITHUB_PATH"
       - run: go vet ./...
       - run: go test ./...
       - run: uv run --with-requirements packaging/requirements.txt python -m unittest discover -s scripts
@@ -103,6 +107,7 @@ jobs:
         run: |
           uv venv .venv
           uv pip install --python .venv dist/holon_types-*.whl
+          .venv/bin/python -c "from mcp.server.mcpserver.tools import Tool; from pydantic import TypeAdapter"
           .venv/bin/python -m mypy --version
           .venv/bin/holon --version | grep -F "$VERSION"
           npm install --prefix smoke "$PWD"/dist/*.tgz "$PWD"/launcher/*.tgz
