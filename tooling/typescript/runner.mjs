@@ -22,9 +22,11 @@ if (mode === "extract") {
   const require = createRequire(join(root, "package.json"));
   let compilerPackage;
   try { compilerPackage = require.resolve("typescript/package.json"); } catch {}
-  const tsconfig = existsSync(join(root, "tsconfig.json")) ? join(root, "tsconfig.json") : undefined;
-  const sources = config.entry ? [join(root, config.entry)] : ts.sys.readDirectory(root, [".ts", ".mts", ".js", ".mjs"], ["node_modules", ".holon", ".holon-types"]);
-  const flags = tsconfig ? ["--noEmit", "--project", tsconfig] : ["--noEmit", "--strict", "--skipLibCheck", "--allowJs", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--allowImportingTsExtensions", ...sources];
+  const tsconfig = join(root, "tsconfig.json");
+  const flags = existsSync(tsconfig)
+    ? ["--noEmit", "--project", tsconfig]
+    : ["--noEmit", "--strict", "--skipLibCheck", "--allowJs", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--allowImportingTsExtensions",
+      ...(config.entry ? [join(root, config.entry)] : ts.sys.readDirectory(root, [".ts", ".mts", ".js", ".mjs"], ["node_modules", ".holon", ".holon-types"]))];
   if (compilerPackage) {
     const compiler = join(dirname(compilerPackage), JSON.parse(readFileSync(compilerPackage, "utf8")).bin.tsc);
     const result = spawnSync(process.execPath, [compiler, ...flags], { cwd: root, stdio: "inherit" });

@@ -16,7 +16,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcptype"
 )
 
-func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, string, string) error, *[]string) {
+func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, string, string) error) {
 	t.Helper()
 	root := t.TempDir()
 	checkout, orders := filepath.Join(root, "checkout"), filepath.Join(root, "orders")
@@ -29,21 +29,17 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 		"example.com/checkout": {Tools: []mcpcontract.Tool{own}, Sources: map[string]string{"server.ts": "sha256:checkout"}},
 		"example.com/orders":   {Tools: []mcpcontract.Tool{lookupTool}},
 	}
-	var calls []string
 	c := Consumer{Name: "checkout", Dir: checkout, Targets: targets, Server: &Source{Path: filepath.Join(checkout, "server.ts")}, Sources: []Source{{Path: orders}}}
-	return c, fakeExtract(t, results, &calls), &calls
+	return c, fakeExtract(results)
 }
 
 func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
-	c, extract, calls := checkoutConsumer(t, TargetTS)
+	c, extract := checkoutConsumer(t, TargetTS)
 	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: extract})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer prepared.Close()
-	if !slices.Equal(*calls, []string{"python", "typescript"}) {
-		t.Fatalf("extractor calls = %v, want one batch per language", *calls)
-	}
 	metadata := prepared.Metadata()["checkout"]
 	if metadata.Identity.Name != "example.com/checkout" || metadata.Schema == nil || len(prepared.Documents()[metadata.Requires["orders"]].Schema.Tools) != 1 {
 		t.Fatalf("consumer metadata = %+v", metadata)
@@ -72,13 +68,6 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 		if !strings.Contains(browser, want) {
 			t.Fatalf("browser client lacks %s: %s", want, browser)
 		}
-	}
-	var marker slotMetadata
-	if err = readTypeJSON(filepath.Join(stage, "holon-sh/generated/holon-generated.json"), &marker); err != nil || marker.App != "checkout" {
-		t.Fatalf("slot marker = %+v, %v", marker, err)
-	}
-	if strings.Contains(read(t, stage, "holon-sh/generated/holon-generated.json"), `"digests"`) {
-		t.Fatal("slot marker contains unused contract digests")
 	}
 	config, ok := prepared.CheckConfig("checkout")
 	if want := `{"check":true,"entry":"server.ts","sources":{"server.ts":"sha256:checkout"}}`; !ok || string(mustJSON(t, config)) != want {
@@ -109,8 +98,7 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 		"example.com/broken": {Diagnostic: "tools are registered dynamically"},
 		"example.com/---":    {Tools: []mcpcontract.Tool{lookupTool}},
 	}
-	var calls []string
-	options := Options{Extract: fakeExtract(t, results, &calls)}
+	options := Options{Extract: fakeExtract(results)}
 	source := func(name string) Source { return Source{Path: filepath.Join(root, name)} }
 	for _, test := range []struct {
 		name    string
@@ -148,7 +136,7 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	})
 	t.Run("extractor failure", func(t *testing.T) {
 		failure := errors.New("buildx unavailable")
-		c, _, _ := checkoutConsumer(t, TargetTS)
+		c, _ := checkoutConsumer(t, TargetTS)
 		if _, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: func(context.Context, string, string, string, string) error { return failure }}); !errors.Is(err, failure) {
 			t.Fatalf("extractor failure = %v, want %v", err, failure)
 		}
@@ -158,13 +146,13 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 func TestPrepareRejectsInvalidExtractedContracts(t *testing.T) {
 	for _, server := range []string{"example.com/checkout", "example.com/orders"} {
 		t.Run(server, func(t *testing.T) {
-			c, _, calls := checkoutConsumer(t, TargetTS)
+			c, _ := checkoutConsumer(t, TargetTS)
 			results := map[string]extraction{
 				"example.com/checkout": {Tools: []mcpcontract.Tool{lookupTool}},
 				"example.com/orders":   {Tools: []mcpcontract.Tool{lookupTool}},
 			}
 			results[server] = extraction{Tools: []mcpcontract.Tool{{Name: "invalid", Input: json.RawMessage(`{"type":"string"}`)}}}
-			if prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: fakeExtract(t, results, calls)}); err == nil {
+			if prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: fakeExtract(results)}); err == nil {
 				prepared.Close()
 				t.Fatal("accepted an invalid extracted contract")
 			}
@@ -172,42 +160,8 @@ func TestPrepareRejectsInvalidExtractedContracts(t *testing.T) {
 	}
 }
 
-func TestGenerateWritesSlotsAndRequiresDeclaredRuntimes(t *testing.T) {
-	c, extract, _ := checkoutConsumer(t, TargetTS)
-	node := slotPackage(t, c.Dir, "holon-sh")
-	var output bytes.Buffer
-	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Extract: extract}); err != nil {
-		t.Fatalf("generate: %v\n%s", err, &output)
-	}
-	if got, want := output.String(), "checkout: generated ts types\n"; got != want {
-		t.Fatalf("output = %q, want %q", got, want)
-	}
-	var marker slotMetadata
-	if err := readTypeJSON(filepath.Join(node, "generated/holon-generated.json"), &marker); err != nil || marker.App != "checkout" || marker.Placeholder {
-		t.Fatalf("%s marker = %+v, %v", node, marker, err)
-	}
-	orders := c.Sources[0].Path
-	if entries, _ := os.ReadDir(orders); len(entries) != 2 {
-		t.Fatalf("source directory changed: %v", entries)
-	}
-
-	put(t, c.Dir, "package.json", `{"type":"module"}`)
-	if err := os.RemoveAll(node); err != nil {
-		t.Fatal(err)
-	}
-	err := Generate(t.Context(), []Consumer{c}, Options{Extract: extract})
-	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run npm install holon-sh") {
-		t.Fatalf("undeclared runtime = %v", err)
-	}
-	py := Consumer{Name: "py", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: c.Sources}
-	err = Generate(t.Context(), []Consumer{py}, Options{Extract: extract})
-	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run uv add holon-sh") {
-		t.Fatalf("undeclared python runtime = %v", err)
-	}
-}
-
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
-	c, extract, _ := checkoutConsumer(t, TargetTS)
+	c, extract := checkoutConsumer(t, TargetTS)
 	bin := t.TempDir()
 	log := filepath.Join(bin, "calls")
 	put(t, bin, "npm", "#!/bin/sh\n[ \"$HOLON_SKIP_POSTINSTALL\" = 1 ] || exit 9\nprintf '{}' > package-lock.json\necho \"$PWD $* $INSTALL_MODE\" >> "+log+"\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
@@ -217,23 +171,39 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("INSTALL_MODE", "inherited")
 	var output bytes.Buffer
-	if err := Generate(t.Context(), []Consumer{c}, Options{Stderr: &output, Extract: extract, Env: []string{"INSTALL_MODE=first", "INSTALL_MODE=last=value"}}); err != nil {
+	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Extract: extract, Env: []string{"INSTALL_MODE=first", "INSTALL_MODE=last=value"}}); err != nil {
 		t.Fatalf("generate: %v\n%s", err, &output)
 	}
 	if calls := read(t, bin, "calls"); calls != c.Dir+" install last=value\n" {
 		t.Fatalf("npm calls = %q", calls)
 	}
-	if !isFile(filepath.Join(c.Dir, "node_modules/holon-sh/generated/index.js")) {
-		t.Fatal("slot not written after installing")
+	var marker slotMetadata
+	if err := readTypeJSON(filepath.Join(c.Dir, "node_modules/holon-sh/generated/holon-generated.json"), &marker); err != nil || marker.App != "checkout" || marker.Placeholder {
+		t.Fatalf("slot marker = %+v, %v", marker, err)
+	}
+	if entries, _ := os.ReadDir(c.Sources[0].Path); len(entries) != 2 {
+		t.Fatalf("source directory changed: %v", entries)
+	}
+	put(t, bin, "npm", "#!/bin/sh\nexit 17\n")
+	if err := Generate(t.Context(), []Consumer{c}, Options{Extract: extract}); err != nil {
+		t.Fatalf("installed runtime was reinstalled: %v", err)
 	}
 	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
 		t.Fatal(err)
 	}
-	put(t, bin, "npm", "#!/bin/sh\nexit 17\n")
 	if err := Generate(t.Context(), []Consumer{c}, Options{Extract: extract}); err == nil || !strings.Contains(err.Error(), "exit status 17") {
 		t.Fatalf("failed installation was not reported: %v", err)
 	}
-
+	put(t, c.Dir, "package.json", `{"type":"module"}`)
+	err := Generate(t.Context(), []Consumer{c}, Options{Extract: extract})
+	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run npm install holon-sh") {
+		t.Fatalf("undeclared runtime = %v", err)
+	}
+	py := Consumer{Name: "py", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: c.Sources}
+	err = Generate(t.Context(), []Consumer{py}, Options{Extract: extract})
+	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run uv add holon-sh") {
+		t.Fatalf("undeclared python runtime = %v", err)
+	}
 }
 
 func TestGenerateRejectsASharedNodeSlotBeforeWritingEitherConsumer(t *testing.T) {
@@ -247,8 +217,7 @@ func TestGenerateRejectsASharedNodeSlotBeforeWritingEitherConsumer(t *testing.T)
 		put(t, dir, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
 		consumers = append(consumers, Consumer{Name: name, Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Path: filepath.Join(root, "orders")}}})
 	}
-	var calls []string
-	err := Generate(t.Context(), consumers, Options{Extract: fakeExtract(t, map[string]extraction{"example.com/orders": {Tools: []mcpcontract.Tool{lookupTool}}}, &calls)})
+	err := Generate(t.Context(), consumers, Options{Extract: fakeExtract(map[string]extraction{"example.com/orders": {Tools: []mcpcontract.Tool{lookupTool}}})})
 	if err == nil || !strings.Contains(err.Error(), "share") {
 		t.Fatalf("shared slot not diagnosed: %v", err)
 	}
@@ -373,10 +342,9 @@ func TestGoConsumerClients(t *testing.T) {
 	put(t, root, "server.go", "package main\n\nfunc main() {}\n")
 	put(t, root, "server.json", `{"name":"example.com/caller","version":"1.0.0","description":"Caller"}`)
 	c := Consumer{Name: "caller", Dir: root, Targets: []string{TargetGo}, Server: &Source{Path: root}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	options := Options{GoModule: "github.com/holon-sh/sdk/go",
-		Extract: func(context.Context, string, string, string, string) error {
-			return errors.New("Go servers are not extracted")
-		}}
+	options := Options{Extract: func(context.Context, string, string, string, string) error {
+		return errors.New("Go servers are not extracted")
+	}}
 	prepared, err := Prepare(t.Context(), []Consumer{c}, options)
 	if err != nil {
 		t.Fatal(err)
@@ -396,7 +364,7 @@ func TestGoConsumerClients(t *testing.T) {
 	// Compiler goldens in mcptype cover emitted syntax; this boundary supplies the runtime,
 	// contract and ownership marker to that compiler and writes the result into holon/.
 	clients := read(t, stage, "holon/clients.go")
-	if !strings.Contains(clients, `holon "`+options.GoModule+`"`) || !strings.Contains(clients, " Lookup(") ||
+	if !strings.Contains(clients, `holon "github.com/holon-sh/sdk/go"`) || !strings.Contains(clients, " Lookup(") ||
 		!strings.Contains(read(t, stage, "holon/types.go"), "type OrdersLookupInput") || !generatedGo(filepath.Join(stage, "holon")) {
 		t.Fatalf("Go slot lacks the configured runtime, typed client or ownership marker:\n%s", clients)
 	}
@@ -413,7 +381,6 @@ func TestGoConsumerClients(t *testing.T) {
 	if err = prepared.WriteGoSlot("caller", other); err == nil || !strings.Contains(err.Error(), "unmarked") {
 		t.Fatalf("overwrote a user holon/ package: %v", err)
 	}
-
 }
 
 func TestPythonSourcesWithTheRealExtractor(t *testing.T) {

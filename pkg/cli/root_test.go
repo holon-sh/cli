@@ -101,29 +101,15 @@ func TestExplicitOwnServer(t *testing.T) {
 	writeCLIFile(t, root, "server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"}`)
 	installCLISlot(t, root)
 	run(t, "", "types", "generate", "-s", "./server.py")
+	orders := t.TempDir()
+	writeCLIFile(t, orders, "server.py", pythonServer)
+	writeCLIFile(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
+	run(t, "", "types", "generate", "-s", "./server.py", "-s", orders)
 	browser, err := os.ReadFile(filepath.Join(root, "node_modules/holon-sh/generated/browser.d.ts"))
-	if err != nil || !strings.Contains(string(browser), `"view"`) || !strings.Contains(string(browser), `"read"`) {
-		t.Fatalf("own browser client = %s, %v", browser, err)
+	if err != nil || !strings.Contains(string(browser), `"view"`) || !strings.Contains(string(browser), `"orders"`) || !strings.Contains(string(browser), `"read"`) {
+		t.Fatalf("own and dependency browser clients = %s, %v", browser, err)
 	}
 	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")
-}
-
-func TestOwnServerSuppliesConsumerMetadata(t *testing.T) {
-	// clientDir hands consumer a symlink-free directory; do the same here.
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(root)
-	writeCLIFile(t, root, "server.ts", "export default {};\n")
-	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
-	c, err := consumer(root, []string{"./server.ts", "../orders"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Server == nil || c.Server.Path != filepath.Join(root, "server.ts") || len(c.Sources) != 1 || c.Sources[0].Path != filepath.Join(root, "../orders") {
-		t.Fatalf("consumer = %+v", c)
-	}
 }
 
 func TestCheckGrammar(t *testing.T) {

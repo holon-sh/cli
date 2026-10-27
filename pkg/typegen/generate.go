@@ -373,9 +373,6 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 		return err
 	}
 	defer prepared.Close()
-	if err := prepared.currentSources(); err != nil {
-		return err
-	}
 	return prepared.Write()
 }
 

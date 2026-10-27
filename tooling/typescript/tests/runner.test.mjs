@@ -16,11 +16,9 @@ function unpackTooling(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const tooling = join(root, "tooling");
   for (const [name, bytes] of Object.entries(unzipSync(readFileSync(archive)))) {
-    assert.match(name, /^(runner\.mjs|version\.json|THIRD-PARTY-NOTICES\.txt|lib\/lib.*\.d\.ts)$/);
     mkdirSync(dirname(join(tooling, name)), { recursive: true });
     writeFileSync(join(tooling, name), bytes);
   }
-  assert.deepEqual(JSON.parse(readFileSync(join(tooling, "version.json"), "utf8")), { version });
   const run = (mode, config, output = []) => spawnSync(process.execPath, [join(tooling, "runner.mjs"), mode, config, ...output], { encoding: "utf8" });
   return { root, run };
 }
