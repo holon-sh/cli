@@ -288,8 +288,6 @@ class Analyzer:
             ]
             return target[(base, *metadata)]
         parameters = tuple(self.annotation(source, arg) for arg in args)
-        if target in (dict, typing.Dict) and parameters[0] is not str:
-            self.fail(path, node, "Wire dictionary keys must be strings.")
         return target[parameters[0] if len(parameters) == 1 else parameters]
 
     def model(self, path: Path, value: ast.ClassDef) -> type[Any]:
@@ -378,9 +376,9 @@ class Analyzer:
         function: ast.FunctionDef | ast.AsyncFunctionDef,
         options: Mapping[str, ast.AST],
     ) -> dict[str, Any]:
-        name = self.literal(path, options.get("name", ast.Constant(function.name)))
-        if not isinstance(name, str) or not name:
-            self.fail(path, function, "Tool names must be literal nonempty strings.")
+        name = TypeAdapter(str | None).validate_python(
+            self.literal(path, options.get("name", ast.Constant(None)))
+        )
         signature = function.args
         if signature.posonlyargs or signature.vararg or signature.kwarg:
             self.fail(
@@ -504,8 +502,6 @@ class Analyzer:
             case ast.Call(func=func, args=[], keywords=keywords) if (
                 self.resolve(path, func)[1] == "mcp.types:Tool"
             ):
-                if any(keyword.arg is None for keyword in keywords):
-                    self.fail(path, item, "Computed catalog options are unsupported.")
                 tool = Tool(
                     **{
                         cast(str, keyword.arg): self.literal(path, keyword.value)

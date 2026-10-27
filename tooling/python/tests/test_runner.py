@@ -5,6 +5,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
@@ -24,13 +25,14 @@ def test_bundle_extracts_without_running_sources_and_detects_changes(tmp_path, n
     app.mkdir()
     source = app / "server.py"
     source.write_text(
-        """from holon.apps import apps
-from mcp.server import MCPServer
-server = MCPServer("orders")
-@server.tool()
-def read(id: str) -> str:
-    raise RuntimeError("must not execute")
-""",
+        dedent("""
+            from holon.apps import apps
+            from mcp.server import MCPServer
+            server = MCPServer("orders")
+            @server.tool()
+            def read(id: str) -> str:
+                raise RuntimeError("must not execute")
+        """),
         newline=newline,
     )
     generated = app / "holon/apps/__init__.py"
