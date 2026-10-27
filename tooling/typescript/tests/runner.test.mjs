@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -60,10 +60,13 @@ test("check type-checks with bundled declarations or the application's compiler,
   writeFileSync(config, JSON.stringify({ root: app, entry: "check.ts", sources: {} }));
   const typeError = run("check", config);
   assert.notEqual(typeError.status, 0);
-  assert.match(typeError.stderr, /TS2322/);
+  assert.match(typeError.stdout + typeError.stderr, /TS2322/);
   writeFileSync(join(app, "check.ts"), source);
-  mkdirSync(join(app, "node_modules"));
-  symlinkSync(resolve("node_modules/typescript"), join(app, "node_modules/typescript"));
+  // TypeScript 7 exposes its compiler through bin.tsc, without the old JavaScript API.
+  const compiler = join(app, "node_modules/typescript");
+  mkdirSync(compiler, { recursive: true });
+  writeFileSync(join(compiler, "package.json"), JSON.stringify({ bin: { tsc: "compiler.cjs" }, exports: { "./package.json": "./package.json" } }));
+  writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(resolve("node_modules/typescript/bin/tsc"))});`);
   writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));
   const configured = run("check", config);
   assert.equal(configured.status, 0, configured.stderr + configured.stdout);
