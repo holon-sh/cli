@@ -21,24 +21,20 @@ class Schema {
 }
 const resourceSchemaKey = "sh.holon/outputSchema";
 const schemaObject = z.record(z.string(), z.unknown());
-class Server {
-  tools = new Map();
+const identity = { name: "holon-contract", version: "1" };
+class Server extends McpServer {
   resources = new Map();
-  list = undefined;
 
   async catalog() {
-    // Only analyzed schemas cross into the SDK. Application callbacks are never installed.
-    const handler = createMcpHandler(() => {
-      const server = new McpServer({ name: "holon-contract", version: "1" }, { capabilities: { tools: {} } });
-      for (const [name, config] of this.tools) server.registerTool(name, config, () => { throw new Error("Contract extraction cannot call tools."); });
-      if (this.list !== undefined) server.server.setRequestHandler("tools/list", () => ({ tools: this.list }));
-      return server;
-    }, { legacy: "reject" });
-    const client = new Client({ name: "holon-contract", version: "1" }, { versionNegotiation: { mode: "auto" } });
+    const server = this.server.getCapabilities().tools ? this : new McpServer(identity, { capabilities: { tools: {} } });
+    // createMcpHandler serves 2026-07-28. Supplying that revision skips discovery, so
+    // this fresh server handles exactly one request and needs no registration replay.
+    const handler = createMcpHandler(() => server, { legacy: "reject" });
+    const client = new Client(identity);
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL("http://holon-contract/mcp"), {
         fetch: (url, init) => handler.fetch(new Request(url, init)),
-      }));
+      }), { prior: { kind: "modern", discover: { supportedVersions: ["2026-07-28"], capabilities: server.server.getCapabilities() } } });
       // Request the complete fixed catalog without listTools' client-specific filtering.
       const { tools } = await client.request({ method: "tools/list" });
       return tools;
@@ -239,12 +235,12 @@ class Analyzer {
       if (object instanceof Builtin) return new Builtin(object.module, ["*", "z", "default"].includes(object.name) ? key : `${object.name}.${key}`);
       if (object instanceof Server && key === "server") return object;
       if (object instanceof Module) return this.value(this.reference(this.checker.getExportsOfModule(object.symbol).find(s => s.name === key), node));
-      if (object && Object.hasOwn(object, key)) return this.value(object[key]);
+      if (object && !(object instanceof Server) && Object.hasOwn(object, key)) return this.value(object[key]);
       this.fail(node, `Cannot statically resolve property ${key}.`);
     }
     if (ts.isNewExpression(node)) {
       const target = this.expression(node.expression, scope);
-      if (target instanceof Builtin && target.module === sdk && target.name === "McpServer") return new Server();
+      if (target instanceof Builtin && target.module === sdk && target.name === "McpServer") return new Server(identity);
       this.fail(node, "Only an official McpServer constructor is supported in a contract expression.");
     }
     if (node.kind === ts.SyntaxKind.RegularExpressionLiteral) {
@@ -451,28 +447,33 @@ class Analyzer {
         }
         if (methodName === "registerTool") {
           const name = this.expression(expression.arguments[0], scope);
-          if (typeof name !== "string" || receiver.tools.has(name) || receiver.list !== undefined) this.fail(expression, "Tool registration must have one unique constant name and catalog source.");
+          if (typeof name !== "string") this.fail(expression, "Tool registration must have a constant string name.");
           const config = this.fields(expression.arguments[1], scope);
           if (this.containsRegistration(expression.arguments[2], scope)) this.fail(expression.arguments[2], "Tool handlers must not change the tool catalog.");
-          receiver.tools.set(name, { inputSchema: this.materialize(config.inputSchema), outputSchema: this.materialize(config.outputSchema) });
+          // Only analyzed schemas cross into the SDK. Application callbacks are never installed.
+          try {
+            receiver.registerTool(name, { inputSchema: this.materialize(config.inputSchema), outputSchema: this.materialize(config.outputSchema) }, () => { throw new Error("Contract extraction cannot call tools."); });
+          } catch (error) { this.fail(expression, error.message); }
         } else if (methodName === "setRequestHandler") {
           const name = this.expression(expression.arguments[0], scope);
           if (name !== "tools/list") {
             if (expression.arguments.slice(1).some(arg => this.containsRegistration(arg, scope))) this.fail(expression, "Request handlers must not change the tool catalog.");
             return;
           }
-          if (receiver.tools.size || receiver.list !== undefined) this.fail(expression, "Multiple tool catalog definitions are unsupported.");
+          try { receiver.server.assertCanSetRequestHandler("tools/list"); } catch (error) { this.fail(expression, error.message); }
           const fn = this.expression(expression.arguments.at(-1), scope);
           const result = this.functionBody(fn, [], expression, true);
           if (result.nextCursor) this.fail(expression, "A paginated tool catalog is not a fixed complete catalog.");
           const tools = this.value(result.tools);
           if (!Array.isArray(tools)) this.fail(expression, "tools/list must return a fixed tools array.");
-          receiver.list = tools.map(t => {
+          const catalog = tools.map(t => {
             const object = this.value(t);
             const tool = { name: this.value(object.name), inputSchema: this.materialize(object.inputSchema) };
             if (object.outputSchema) tool.outputSchema = this.materialize(object.outputSchema);
             return tool;
           });
+          receiver.server.registerCapabilities({ tools: {} });
+          receiver.server.setRequestHandler("tools/list", () => ({ tools: catalog }));
         } else {
           if (!["registerResource", "registerPrompt", "registerResourceTemplate"].includes(methodName)) this.fail(expression, `Server mutation ${methodName} is unsupported during static extraction.`);
           if (expression.arguments.some(arg => this.containsRegistration(arg, scope))) this.fail(expression, "Resource and prompt handlers must not change the tool catalog.");

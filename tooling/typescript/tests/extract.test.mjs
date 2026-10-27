@@ -59,6 +59,7 @@ for (const [name, registration, diagnostic] of [
   ["non-JSON typed resource", `server.registerResource("r", "chat://r", {mimeType:"text/plain", _meta:{"sh.holon/outputSchema":{type:"object"}}}, () => ({contents:[]}));`, /must declare the application\/json mimeType/],
   ["malformed fixed schema", `server.server.setRequestHandler("tools/list", () => ({tools:[{name:"x",inputSchema:{type:"object",required:"id"}}]}));`, /Unsupported JSON Schema in x/],
   ["duplicate fixed names", `server.server.setRequestHandler("tools/list", () => ({tools:[{name:"x",inputSchema:{type:"object"}},{name:"x",inputSchema:{type:"object"}}]}));`, /Tool names must be unique/],
+  ["catalog replacement", `server.registerTool("x", {}, () => {}); server.server.setRequestHandler("tools/list", () => ({tools:[]}));`, /tools\/list.*already exists/],
 ]) {
   test(`rejects ${name} without returning a partial catalog`, async t => {
     const root = fixture(t, `import { McpServer,createMcpHandler } from "@modelcontextprotocol/server"; import {z} from "zod"; import {env} from "runtime-library"; const input=z.object({}); export default createMcpHandler(() => { const server=new McpServer({name:"x",version:"1"}); ${registration} return server; });`);
