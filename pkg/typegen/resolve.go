@@ -33,7 +33,7 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 		if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
 			return nil, err
 		}
-		prepared, err := prepareSource(ctx, root, "source", source.Path, o)
+		prepared, err := prepareSource(ctx, root, "source", source.Path)
 		if err != nil {
 			return nil, err
 		}

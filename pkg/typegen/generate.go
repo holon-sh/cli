@@ -108,7 +108,7 @@ func (p *Prepared) consumer(name string) *preparedConsumer {
 	return nil
 }
 
-func prepareSource(ctx context.Context, root, name, path string, o Options) (*preparedSource, error) {
+func prepareSource(ctx context.Context, root, name, path string) (*preparedSource, error) {
 	origin, entry, language, err := serverEntry(path)
 	if err != nil {
 		return nil, err
@@ -171,7 +171,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 				continue
 			}
 			name := strconv.Itoa(len(p.paths))
-			s, err := prepareSource(ctx, root, name, absolute, o)
+			s, err := prepareSource(ctx, root, name, absolute)
 			if err != nil {
 				return nil, err
 			}

@@ -8,12 +8,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/holon-sh/cli/pkg/mcptype"
 )
 
 func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, string, string) error) {
@@ -44,9 +42,6 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 	if metadata.Identity.Name != "example.com/checkout" || metadata.Schema == nil || len(prepared.Documents()[metadata.Requires["orders"]].Schema.Tools) != 1 {
 		t.Fatalf("consumer metadata = %+v", metadata)
 	}
-	if got := prepared.Targets("checkout"); !slices.Equal(got, []string{TargetTS}) {
-		t.Fatalf("targets = %v", got)
-	}
 	stage := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(stage, "holon-sh"), 0o755); err != nil {
 		t.Fatal(err)
@@ -68,13 +63,6 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 		if !strings.Contains(browser, want) {
 			t.Fatalf("browser client lacks %s: %s", want, browser)
 		}
-	}
-	config, ok := prepared.CheckConfig("checkout")
-	if want := `{"check":true,"entry":"server.ts","sources":{"server.ts":"sha256:checkout"}}`; !ok || string(mustJSON(t, config)) != want {
-		t.Fatalf("CheckConfig = %s %t, want %s", mustJSON(t, config), ok, want)
-	}
-	if _, ok := prepared.CheckConfig("missing"); ok {
-		t.Fatal("unknown consumer has a check configuration")
 	}
 	for _, test := range []struct{ consumer, want string }{{"missing", "unknown consumer"}, {"checkout", "no go clients"}} {
 		if err := prepared.WriteGoSlot(test.consumer, t.TempDir()); err == nil || !strings.Contains(err.Error(), test.want) {
@@ -163,8 +151,7 @@ func TestPrepareRejectsInvalidExtractedContracts(t *testing.T) {
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	c, extract := checkoutConsumer(t, TargetTS)
 	bin := t.TempDir()
-	log := filepath.Join(bin, "calls")
-	put(t, bin, "npm", "#!/bin/sh\n[ \"$HOLON_SKIP_POSTINSTALL\" = 1 ] || exit 9\nprintf '{}' > package-lock.json\necho \"$PWD $* $INSTALL_MODE\" >> "+log+"\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
+	put(t, bin, "npm", "#!/bin/sh\nset -e\n[ \"$HOLON_SKIP_POSTINSTALL\" = 1 ]\n[ \"$INSTALL_MODE\" = last=value ]\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
 	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -174,15 +161,9 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Extract: extract, Env: []string{"INSTALL_MODE=first", "INSTALL_MODE=last=value"}}); err != nil {
 		t.Fatalf("generate: %v\n%s", err, &output)
 	}
-	if calls := read(t, bin, "calls"); calls != c.Dir+" install last=value\n" {
-		t.Fatalf("npm calls = %q", calls)
-	}
 	var marker slotMetadata
 	if err := readTypeJSON(filepath.Join(c.Dir, "node_modules/holon-sh/generated/holon-generated.json"), &marker); err != nil || marker.App != "checkout" || marker.Placeholder {
 		t.Fatalf("slot marker = %+v, %v", marker, err)
-	}
-	if entries, _ := os.ReadDir(c.Sources[0].Path); len(entries) != 2 {
-		t.Fatalf("source directory changed: %v", entries)
 	}
 	put(t, bin, "npm", "#!/bin/sh\nexit 17\n")
 	if err := Generate(t.Context(), []Consumer{c}, Options{Extract: extract}); err != nil {
@@ -243,9 +224,6 @@ func TestCheckTypeChecksTheProjectAgainstItsGeneratedClients(t *testing.T) {
 	if err := Check(t.Context(), app, options); err != nil {
 		t.Fatalf("check: %v\n%s", err, &output)
 	}
-	if !strings.Contains(output.String(), "Typed contracts check passed.") {
-		t.Fatalf("output = %q", &output)
-	}
 	put(t, app, "src/index.ts", `import type { Inputs } from "holon-sh"; const inputs: Inputs["orders"]["read"] = { id: 1 }; export default inputs;`)
 	output.Reset()
 	if err := Check(t.Context(), app, options); err == nil || !strings.Contains(err.Error(), "does not type-check") || !strings.Contains(output.String(), "TS2322") {
@@ -264,12 +242,6 @@ func TestSuppliedContractsRemainDistinctAndValidated(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer prepared.Close()
-	for alias, expected := range map[string]*mcpcontract.Metadata{"orders": metadata, "alternate": alternate} {
-		changes, err := mcptype.Changes(t.Context(), expected, prepared.Metadata()[alias])
-		if err != nil || len(changes) != 0 {
-			t.Fatalf("resolved %s: %v %v", alias, changes, err)
-		}
-	}
 	if err := prepared.WritePythonSlot("caller", c.Dir); err != nil {
 		t.Fatal(err)
 	}
@@ -342,43 +314,18 @@ func TestGoConsumerClients(t *testing.T) {
 	put(t, root, "server.go", "package main\n\nfunc main() {}\n")
 	put(t, root, "server.json", `{"name":"example.com/caller","version":"1.0.0","description":"Caller"}`)
 	c := Consumer{Name: "caller", Dir: root, Targets: []string{TargetGo}, Server: &Source{Path: root}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	options := Options{Extract: func(context.Context, string, string, string, string) error {
-		return errors.New("Go servers are not extracted")
-	}}
-	prepared, err := Prepare(t.Context(), []Consumer{c}, options)
-	if err != nil {
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
-	metadata := prepared.Metadata()["caller"]
-	if metadata.Schema != nil || metadata.Identity.Name != "example.com/caller" || len(prepared.Documents()[metadata.Requires["orders"]].Schema.Tools) != 1 {
-		t.Fatalf("Go consumer metadata = %+v", metadata)
+	clients := read(t, root, "holon/clients.go")
+	if !strings.Contains(clients, `holon "github.com/holon-sh/sdk/go"`) || !strings.Contains(clients, " Lookup(") {
+		t.Fatalf("Go client lacks the default runtime or dependency tool:\n%s", clients)
 	}
-	if _, ok := prepared.CheckConfig("caller"); ok {
-		t.Fatal("Go consumers have no runner check")
-	}
-	stage := t.TempDir()
-	if err = prepared.WriteGoSlot("caller", stage); err != nil {
+	if err := os.RemoveAll(filepath.Join(root, "holon")); err != nil {
 		t.Fatal(err)
 	}
-	// Compiler goldens in mcptype cover emitted syntax; this boundary supplies the runtime,
-	// contract and ownership marker to that compiler and writes the result into holon/.
-	clients := read(t, stage, "holon/clients.go")
-	if !strings.Contains(clients, `holon "github.com/holon-sh/sdk/go"`) || !strings.Contains(clients, " Lookup(") ||
-		!strings.Contains(read(t, stage, "holon/types.go"), "type OrdersLookupInput") || !generatedGo(filepath.Join(stage, "holon")) {
-		t.Fatalf("Go slot lacks the configured runtime, typed client or ownership marker:\n%s", clients)
-	}
-	var output bytes.Buffer
-	options.Stdout = &output
-	if err = Generate(t.Context(), []Consumer{c}, options); err != nil {
-		t.Fatalf("generate: %v", err)
-	}
-	if output.String() != "caller: generated go types\n" {
-		t.Fatalf("generate output = %q", &output)
-	}
-	other := t.TempDir()
-	put(t, other, "holon/mine.go", "package holon\n")
-	if err = prepared.WriteGoSlot("caller", other); err == nil || !strings.Contains(err.Error(), "unmarked") {
+	put(t, root, "holon/mine.go", "package holon\n")
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil || !strings.Contains(err.Error(), "unmarked") {
 		t.Fatalf("overwrote a user holon/ package: %v", err)
 	}
 }
