@@ -7,6 +7,8 @@ from pathlib import Path
 
 def main() -> None:
     binary = os.environ.get("HOLON_BINARY") or str(Path(__file__).with_name("bin") / "holon")
+    # Keep extraction in the environment that installed our SDK dependencies.
+    os.environ["PATH"] = str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", os.defpath)
     try:
         os.execv(binary, [binary, *sys.argv[1:]])
     except OSError as error:

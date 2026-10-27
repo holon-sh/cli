@@ -20,7 +20,7 @@ class LauncherTests(unittest.TestCase):
         self.binary.chmod(0o755)
         node = Path(shutil.which("node")).resolve()
         self.launchers = [
-            ([sys.executable, "-c", "import holon_types; holon_types.main()"], "/usr/bin:/bin"),
+            ([sys.executable, "-c", "import holon_types; holon_types.main()"], f"{Path(sys.executable).parent}:/usr/bin:/bin"),
             ([str(node), str(ROOT / "packaging/npm/launcher/bin/holon.js")], f"{node.parent}:/usr/bin:/bin"),
         ]
 

@@ -30,7 +30,7 @@ type typeLanguage struct {
 
 var typeLanguages = map[string]typeLanguage{
 	"typescript": {[]string{"runner.mjs", "extract"}, []string{"runner.mjs", "check"}, []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
-	"python":     {[]string{"extract.py"}, []string{"runner.py", "check"}, []string{"python3.15", "python3.14", "python3.13", "python3.12", "python3.11", "python3"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
+	"python":     {[]string{"extract.py"}, []string{"runner.py", "check"}, []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
 }
 
 // command runs step, one of the language's tooling commands, unpacked under tooling, with args.
