@@ -46,8 +46,21 @@ func GeneratedSource(root, path string) bool {
 }
 
 // SnapshotSource copies dir into destination (or only fingerprints it when destination is empty),
-// honouring .dockerignore and skipping generated and dependency directories.
-func SnapshotSource(name, dir, destination string) (string, error) {
+// honouring .dockerignore and skipping generated and dependency directories. A symlink to an
+// explicitly shared directory is materialized at the link's location, with the app's exclusions.
+// Other symlinks must remain within their source directory.
+func SnapshotSource(name, dir, destination string, shared ...string) (string, error) {
+	roots := make([]string, len(shared))
+	for i, path := range shared {
+		var err error
+		if roots[i], err = filepath.EvalSymlinks(path); err != nil {
+			return "", err
+		}
+	}
+	return snapshotSource(name, dir, destination, roots, nil, dir, "")
+}
+
+func snapshotSource(name, dir, destination string, shared, ancestors []string, appRoot, prefix string) (string, error) {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return "", fmt.Errorf("build context for %s: %w", name, err)
@@ -59,7 +72,11 @@ func SnapshotSource(name, dir, destination string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	matcher, err := SourceMatcher(root)
+	if slices.Contains(ancestors, root) {
+		return "", fmt.Errorf("cyclic shared source: %s", dir)
+	}
+	ancestors = append(ancestors, root)
+	matcher, err := SourceMatcher(appRoot)
 	if err != nil {
 		return "", err
 	}
@@ -68,17 +85,18 @@ func SnapshotSource(name, dir, destination string) (string, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		ignored, err := IgnoredSource(root, path, matcher)
+		relative, _ := filepath.Rel(root, path)
+		logical := filepath.Join(appRoot, prefix, relative)
+		ignored, err := IgnoredSource(appRoot, logical, matcher)
 		if err != nil {
 			return err
 		}
 		if ignored {
-			if item.IsDir() && (GeneratedSource(root, path) || !matcher.Exclusions()) {
+			if item.IsDir() && (GeneratedSource(appRoot, logical) || !matcher.Exclusions()) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		relative, _ := filepath.Rel(root, path)
 		target := filepath.Join(destination, relative)
 		info, err := item.Info()
 		if err != nil {
@@ -102,9 +120,19 @@ func SnapshotSource(name, dir, destination string) (string, error) {
 				return err
 			}
 			if !pathInsideContext(resolved, root) {
-				return fmt.Errorf("source symlink escapes application: %s", relative)
+				if !slices.Contains(shared, resolved) {
+					return fmt.Errorf("source symlink escapes application: %s (declare its directory as a shared source)", relative)
+				}
+				output := ""
+				if destination != "" {
+					output = target
+				}
+				fingerprint, err := snapshotSource(name, resolved, output, shared, ancestors, appRoot, filepath.Join(prefix, relative))
+				_, _ = io.WriteString(hash, fingerprint)
+				return err
 			}
-			excluded, err := IgnoredSource(root, resolved, matcher)
+			resolvedRelative, _ := filepath.Rel(root, resolved)
+			excluded, err := IgnoredSource(appRoot, filepath.Join(appRoot, prefix, resolvedRelative), matcher)
 			if err != nil {
 				return err
 			}

@@ -51,6 +51,7 @@ func (o Options) defaults() Options {
 
 type preparedSource struct {
 	origin, root, entry, language, fingerprint string
+	shared                                     []string
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
 }
@@ -108,12 +109,12 @@ func (p *Prepared) consumer(name string) *preparedConsumer {
 	return nil
 }
 
-func prepareSource(ctx context.Context, root, name, path string) (*preparedSource, error) {
+func prepareSource(ctx context.Context, root, name, path string, shared []string) (*preparedSource, error) {
 	origin, entry, language, err := serverEntry(path)
 	if err != nil {
 		return nil, err
 	}
-	s := &preparedSource{origin: origin, root: filepath.Join(root, "sources", name), entry: entry, language: language}
+	s := &preparedSource{origin: origin, root: filepath.Join(root, "sources", name), entry: entry, language: language, shared: slices.Clone(shared)}
 	data, err := os.ReadFile(filepath.Join(origin, "server.json"))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w (a server source needs a server.json beside its entry)", origin, err)
@@ -123,7 +124,7 @@ func prepareSource(ctx context.Context, root, name, path string) (*preparedSourc
 		return nil, fmt.Errorf("%s/server.json: %w", origin, err)
 	}
 	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
-	if s.fingerprint, err = SnapshotSource(name, origin, s.root); err != nil {
+	if s.fingerprint, err = SnapshotSource(name, origin, s.root, s.shared...); err != nil {
 		return nil, err
 	}
 	return s, ctx.Err()
@@ -167,11 +168,14 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			if err != nil {
 				return nil, err
 			}
-			if _, done := p.paths[absolute]; done {
+			if previous, done := p.paths[absolute]; done {
+				if !slices.Equal(previous.shared, source.Shared) {
+					return nil, fmt.Errorf("%s has conflicting shared source declarations", absolute)
+				}
 				continue
 			}
 			name := strconv.Itoa(len(p.paths))
-			s, err := prepareSource(ctx, root, name, absolute)
+			s, err := prepareSource(ctx, root, name, absolute, source.Shared)
 			if err != nil {
 				return nil, err
 			}
@@ -347,7 +351,7 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 // currentSources fails when any snapshotted directory changed since preparation.
 func (p *Prepared) currentSources() error {
 	for _, s := range p.paths {
-		fingerprint, err := SnapshotSource(filepath.Base(s.root), s.origin, "")
+		fingerprint, err := SnapshotSource(filepath.Base(s.root), s.origin, "", s.shared...)
 		if err != nil {
 			return err
 		}

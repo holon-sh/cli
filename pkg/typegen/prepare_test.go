@@ -71,6 +71,26 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 	}
 }
 
+func TestPrepareRejectsChangedSharedSource(t *testing.T) {
+	c, extract := checkoutConsumer(t, TargetTS)
+	shared := t.TempDir()
+	put(t, shared, "index.ts", "export const value = 1\n")
+	c.Server.Shared = []string{shared}
+	if err := os.Symlink(shared, filepath.Join(c.Dir, "shared")); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: func(ctx context.Context, language, tooling, config, output string) error {
+		put(t, shared, "index.ts", "export const value = 2\n")
+		return extract(ctx, language, tooling, config, output)
+	}})
+	if prepared != nil {
+		defer prepared.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "changed during preparation") {
+		t.Fatalf("accepted a stale shared source snapshot: %v", err)
+	}
+}
+
 func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	root := t.TempDir()
 	app := filepath.Join(root, "app")

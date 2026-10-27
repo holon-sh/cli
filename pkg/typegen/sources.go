@@ -43,6 +43,9 @@ type Source struct {
 	// directory containing exactly one. Its contract is extracted from source; server.json beside
 	// the entry supplies the identity.
 	Path string
+	// Shared lists absolute directories that this source may link into its snapshot. Only
+	// symlinks to these exact directories are included; unrelated siblings remain inaccessible.
+	Shared []string
 	// Registry is an MCP registry server version. Resolve its OCI package's document,
 	// falling back to its streamable-http remote when the image has no contract.
 	Registry *Reference
@@ -84,6 +87,14 @@ func (s Source) validate() error {
 	}
 	if set != 1 {
 		return errors.New("a source is exactly one of a path, a registry version, an endpoint or a document")
+	}
+	if len(s.Shared) != 0 && s.Path == "" {
+		return errors.New("shared directories require a path source")
+	}
+	for _, path := range s.Shared {
+		if !filepath.IsAbs(path) {
+			return errors.New("shared directories must be absolute")
+		}
 	}
 	if s.Alias != "" && (len(s.Alias) > 49 || !appName.MatchString(s.Alias)) {
 		return fmt.Errorf("alias %q must be a DNS label of at most 49 characters", s.Alias)
