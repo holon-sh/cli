@@ -47,6 +47,7 @@ class Lazy {
 }
 
 const sdk = "@modelcontextprotocol/server";
+const appRegistrations = new Map([["registerAppTool", "registerTool"], ["registerAppResource", "registerResource"]]);
 const zodModules = new Set(["zod", "zod/v4"]);
 const constructors = new Set([
   "string", "number", "boolean", "null", "unknown", "never", "any",
@@ -249,6 +250,15 @@ class Analyzer {
         const receiver = this.expression(node.expression.expression, scope);
         const method = node.expression.name.text;
         if (receiver instanceof Schema) {
+          // Zod refinements constrain runtime validation but add no JSON Schema.
+          // Keep the underlying wire schema without evaluating application callbacks.
+          if (["refine", "superRefine"].includes(method)) {
+            for (const argument of node.arguments) {
+              if (this.containsRegistration(argument, scope)) this.fail(argument, "Schema callbacks must not change the tool catalog.");
+              this.auditCallback(argument, scope);
+            }
+            return receiver;
+          }
           if (!modifiers.has(method)) this.fail(node, `Schema method ${method} has no supported static wire contract.`);
           return new Schema(receiver.value[method](...node.arguments.map(a => this.materialize(new Lazy(a, scope)))));
         }
@@ -315,6 +325,18 @@ class Analyzer {
   containsRegistration(node, scope, visited = new Set()) {
     const visit = n => {
       if (ts.isTypeNode(n)) return;
+      // Untyped resources do not contribute to the generated wire contract. Their
+      // callbacks still cannot mutate the catalog, including inside resource loops.
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "registerResource") {
+        try {
+          const server = this.expression(n.expression.expression, scope);
+          const config = this.fields(n.arguments[2], scope);
+          const meta = this.value(config._meta);
+          if (server instanceof Server && (!meta || !Object.hasOwn(meta, resourceSchemaKey))) {
+            return n.arguments.some(arg => this.containsRegistration(arg, scope, visited));
+          }
+        } catch {}
+      }
       if (visited.has(n)) return;
       visited.add(n);
       if (ts.isPropertyAccessExpression(n) && ["registerTool", "setRequestHandler", "update", "remove", "disable", "enable"].includes(n.name.text)) return true;
@@ -401,15 +423,51 @@ class Analyzer {
     };
     if (fn.node.body) visit(fn.node.body);
   }
-  resource(server, expression, scope) {
+  resource(server, args, expression, scope) {
     let config;
-    try { config = this.fields(expression.arguments[2], scope); } catch { return; }
+    try { config = this.fields(args[2], scope); } catch { return; }
     const meta = config._meta === undefined ? undefined : this.value(config._meta);
     if (!meta || typeof meta !== "object" || !Object.hasOwn(meta, resourceSchemaKey)) return;
-    const uri = this.expression(expression.arguments[1], scope);
+    const uri = this.expression(args[1], scope);
     if (typeof uri !== "string") this.fail(expression, "Typed resource registration must have a constant URI.");
     if (this.value(config.mimeType) !== "application/json") this.fail(expression, `Typed resource ${uri} must declare the application/json mimeType.`);
     server.resources.push({ uri, outputSchema: this.materialize(meta[resourceSchemaKey]) });
+  }
+  register(server, methodName, args, expression, scope) {
+    if (methodName === "registerTool") {
+      const name = this.expression(args[0], scope);
+      if (typeof name !== "string") this.fail(expression, "Tool registration must have a constant string name.");
+      const config = this.fields(args[1], scope);
+      if (this.containsRegistration(args[2], scope)) this.fail(args[2], "Tool handlers must not change the tool catalog.");
+      // Only analyzed schemas cross into the SDK. Application callbacks are never installed.
+      try {
+        server.registerTool(name, { inputSchema: this.materialize(config.inputSchema), outputSchema: this.materialize(config.outputSchema) }, () => { throw new Error("Contract extraction cannot call tools."); });
+      } catch (error) { this.fail(expression, error.message); }
+    } else if (methodName === "setRequestHandler") {
+      const name = this.expression(args[0], scope);
+      if (name !== "tools/list") {
+        if (args.slice(1).some(arg => this.containsRegistration(arg, scope))) this.fail(expression, "Request handlers must not change the tool catalog.");
+        return;
+      }
+      try { server.server.assertCanSetRequestHandler("tools/list"); } catch (error) { this.fail(expression, error.message); }
+      const fn = this.expression(args.at(-1), scope);
+      const result = this.functionBody(fn, [], expression, true);
+      if (result.nextCursor) this.fail(expression, "A paginated tool catalog is not a fixed complete catalog.");
+      const tools = this.value(result.tools);
+      if (!Array.isArray(tools)) this.fail(expression, "tools/list must return a fixed tools array.");
+      const catalog = tools.map(t => {
+        const object = this.value(t);
+        const tool = { name: this.value(object.name), inputSchema: this.materialize(object.inputSchema) };
+        if (object.outputSchema) tool.outputSchema = this.materialize(object.outputSchema);
+        return tool;
+      });
+      server.server.registerCapabilities({ tools: {} });
+      server.server.setRequestHandler("tools/list", () => ({ tools: catalog }));
+    } else {
+      if (!["registerResource", "registerPrompt", "registerResourceTemplate"].includes(methodName)) this.fail(expression, `Server mutation ${methodName} is unsupported during static extraction.`);
+      if (args.some(arg => this.containsRegistration(arg, scope))) this.fail(expression, "Resource and prompt handlers must not change the tool catalog.");
+      if (methodName === "registerResource") this.resource(server, args, expression, scope);
+    }
   }
   statementExpression(expression, scope) {
       if (ts.isAwaitExpression(expression)) expression = expression.expression;
@@ -427,6 +485,13 @@ class Analyzer {
         return;
       }
       const method = expression.expression;
+      let helper;
+      try { helper = this.expression(method, scope); } catch {}
+      if (helper instanceof Builtin && helper.module === "@modelcontextprotocol/ext-apps/server" && appRegistrations.has(helper.name)) {
+        const server = this.expression(expression.arguments[0], scope);
+        if (!(server instanceof Server)) this.fail(expression, "Expected an official McpServer for the MCP App registration.");
+        return this.register(server, appRegistrations.get(helper.name), expression.arguments.slice(1), expression, scope);
+      }
       if (ts.isPropertyAccessExpression(method) || ts.isElementAccessExpression(method)) {
         const methodName = ts.isPropertyAccessExpression(method) ? method.name.text : this.expression(method.argumentExpression, scope);
         let receiver;
@@ -441,40 +506,7 @@ class Analyzer {
           if (this.containsContractData(expression, scope)) this.fail(expression, "Schema data escapes static analysis.");
           return;
         }
-        if (methodName === "registerTool") {
-          const name = this.expression(expression.arguments[0], scope);
-          if (typeof name !== "string") this.fail(expression, "Tool registration must have a constant string name.");
-          const config = this.fields(expression.arguments[1], scope);
-          if (this.containsRegistration(expression.arguments[2], scope)) this.fail(expression.arguments[2], "Tool handlers must not change the tool catalog.");
-          // Only analyzed schemas cross into the SDK. Application callbacks are never installed.
-          try {
-            receiver.registerTool(name, { inputSchema: this.materialize(config.inputSchema), outputSchema: this.materialize(config.outputSchema) }, () => { throw new Error("Contract extraction cannot call tools."); });
-          } catch (error) { this.fail(expression, error.message); }
-        } else if (methodName === "setRequestHandler") {
-          const name = this.expression(expression.arguments[0], scope);
-          if (name !== "tools/list") {
-            if (expression.arguments.slice(1).some(arg => this.containsRegistration(arg, scope))) this.fail(expression, "Request handlers must not change the tool catalog.");
-            return;
-          }
-          try { receiver.server.assertCanSetRequestHandler("tools/list"); } catch (error) { this.fail(expression, error.message); }
-          const fn = this.expression(expression.arguments.at(-1), scope);
-          const result = this.functionBody(fn, [], expression, true);
-          if (result.nextCursor) this.fail(expression, "A paginated tool catalog is not a fixed complete catalog.");
-          const tools = this.value(result.tools);
-          if (!Array.isArray(tools)) this.fail(expression, "tools/list must return a fixed tools array.");
-          const catalog = tools.map(t => {
-            const object = this.value(t);
-            const tool = { name: this.value(object.name), inputSchema: this.materialize(object.inputSchema) };
-            if (object.outputSchema) tool.outputSchema = this.materialize(object.outputSchema);
-            return tool;
-          });
-          receiver.server.registerCapabilities({ tools: {} });
-          receiver.server.setRequestHandler("tools/list", () => ({ tools: catalog }));
-        } else {
-          if (!["registerResource", "registerPrompt", "registerResourceTemplate"].includes(methodName)) this.fail(expression, `Server mutation ${methodName} is unsupported during static extraction.`);
-          if (expression.arguments.some(arg => this.containsRegistration(arg, scope))) this.fail(expression, "Resource and prompt handlers must not change the tool catalog.");
-          if (methodName === "registerResource") this.resource(receiver, expression, scope);
-        }
+        this.register(receiver, methodName, expression.arguments, expression, scope);
       } else {
         let fn;
         try { fn = this.expression(method, scope); } catch {
