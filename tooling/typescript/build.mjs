@@ -1,8 +1,7 @@
-// Bundle the standalone TypeScript runner and the compiler's standard declarations
-// into the archive that pkg/tooling embeds. The output is byte-for-byte reproducible
-// from package-lock.json.
+// Bundle the standalone extractor and check runner into the archive pkg/tooling embeds.
+// Type checking uses the consumer's installed compiler and standard declarations.
+// The output is byte-for-byte reproducible from package-lock.json.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -33,9 +32,6 @@ for (const directory of [...packages].sort()) {
 }
 
 const files = { "runner.mjs": outputFiles[0].contents, "THIRD-PARTY-NOTICES.txt": Buffer.from(notices.join("\n\n")), "version.json": Buffer.from(JSON.stringify({ version }) + "\n") };
-const lib = join(dirname(createRequire(import.meta.url).resolve("typescript/package.json")), "lib");
-// TypeScript locates its declarations beside the compiler bundle.
-for (const name of readdirSync(lib)) if (/^lib.*\.d\.ts$/.test(name)) files[name] = readFileSync(join(lib, name));
 const bytes = zipSync(Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)).map(([name, data]) => [name, [new Uint8Array(data), { mtime: new Date(1980, 0, 1) }]])), { level: 9 });
 mkdirSync(destination, { recursive: true });
 for (const name of readdirSync(destination)) if (/^cli-tooling-ts-.*\.zip$/.test(name)) rmSync(join(destination, name));

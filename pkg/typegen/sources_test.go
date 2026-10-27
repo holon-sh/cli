@@ -1,59 +1,52 @@
 package typegen
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-func TestServerEntryResolvesFilesAndDirectories(t *testing.T) {
+func TestResolveDocumentFindsServerSources(t *testing.T) {
+	needPython(t)
 	root := t.TempDir()
-	put(t, root, "nested/src/server.ts", "export default {};\n")
-	put(t, root, "flat/server.py", pythonProvider)
+	writeProvider(t, filepath.Join(root, "nested"), "orders", pythonProvider)
+	if err := os.Mkdir(filepath.Join(root, "nested/src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "nested/server.py"), filepath.Join(root, "nested/src/server.py")); err != nil {
+		t.Fatal(err)
+	}
 	put(t, root, "both/server.py", pythonProvider)
 	put(t, root, "both/server.ts", "export default {};\n")
 	put(t, root, "none/package.json", "{}")
 	put(t, root, "odd/index.ts", "export default {};\n")
-	for _, test := range []struct{ path, root, entry, language, want string }{
-		{"nested/src/server.ts", "nested", "src/server.ts", "typescript", ""},
-		{"nested", "nested", "src/server.ts", "typescript", ""},
-		{"flat/server.py", "flat", "server.py", "python", ""},
-		{"flat", "flat", "server.py", "python", ""},
-		{"both", "", "", "", "keep exactly one server entry"},
-		{"none", "", "", "", "has no server entry"},
-		{"odd/index.ts", "", "", "", "is not a server entry"},
-		{"missing", "", "", "", "no such file"},
+	for _, test := range []struct{ path, want string }{
+		{"nested/src/server.py", ""},
+		{"nested", ""},
+		{"both", "keep exactly one server entry"},
+		{"none", "has no server entry"},
+		{"odd/index.ts", "is not a server entry"},
+		{"missing", "no such file"},
 	} {
-		dir, entry, language, err := serverEntry(filepath.Join(root, test.path))
+		document, err := ResolveDocument(t.Context(), Source{Path: filepath.Join(root, test.path)}, Options{})
 		if test.want != "" {
 			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Errorf("serverEntry(%s) = %v, want %q", test.path, err, test.want)
+				t.Errorf("%s: %v, want %q", test.path, err, test.want)
 			}
 			continue
 		}
-		if err != nil || dir != filepath.Join(root, test.root) || entry != test.entry || language != test.language {
-			t.Errorf("serverEntry(%s) = %s %s %s %v", test.path, dir, entry, language, err)
+		if err != nil || document.Schema == nil || len(document.Schema.Tools) != 1 || document.Schema.Tools[0].Name != "read" {
+			t.Errorf("%s: contract = %+v, %v", test.path, document, err)
 		}
 	}
 }
 
-func TestServerKey(t *testing.T) {
-	for name, want := range map[string]string{
-		"example.com/checkout":         "checkout",
-		"io.github.Some_User/My.Svc":   "my-svc",
-		"example.com/---":              "",
-		"x/" + strings.Repeat("a", 60): strings.Repeat("a", 49),
-	} {
-		if got := serverKey(name); got != want {
-			t.Errorf("serverKey(%q) = %q, want %q", name, got, want)
-		}
-	}
-}
-
-func TestConsumerValidation(t *testing.T) {
+func TestPrepareRejectsInvalidConsumers(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "file")
 	put(t, dir, "file", "")
@@ -63,7 +56,6 @@ func TestConsumerValidation(t *testing.T) {
 		c    Consumer
 		want string
 	}{
-		{"ok", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Registry: ref}}}, ""},
 		{"no name", Consumer{Dir: dir, Targets: []string{TargetTS}}, "name is required"},
 		{"relative dir", Consumer{Name: "app", Dir: "relative", Targets: []string{TargetTS}}, "must be absolute"},
 		{"not a dir", Consumer{Name: "app", Dir: file, Targets: []string{TargetTS}}, "is not a directory"},
@@ -76,11 +68,11 @@ func TestConsumerValidation(t *testing.T) {
 		{"bad alias", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Alias: "Bad_Alias", Registry: ref}}}, "must be a DNS label"},
 		{"bad version", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Registry: &Reference{Name: "example.com/orders", Version: "latest"}}}}, "exact"},
 	} {
-		err := test.c.validate()
-		if test.want == "" && err != nil {
-			t.Errorf("%s: %v", test.name, err)
+		prepared, err := Prepare(t.Context(), []Consumer{test.c}, Options{})
+		if prepared != nil {
+			prepared.Close()
 		}
-		if test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+		if err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%s: %v, want %q", test.name, err, test.want)
 		}
 	}
@@ -162,6 +154,33 @@ func TestPythonSlotProtectsUserFiles(t *testing.T) {
 			}
 			if got := read(t, root, name); got != "user content" {
 				t.Fatal("user file changed")
+			}
+		})
+	}
+}
+
+func TestDeclaredTargetsFollowSDKDependencies(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		files map[string]string
+		want  []string
+		err   error
+	}{
+		{"unrelated frontend", map[string]string{"package.json": `{"devDependencies":{"vite":"*"}}`, "server.py": ""}, nil, ErrNoRuntime},
+		{"optional node", map[string]string{"package.json": `{"optionalDependencies":{"holon-sh":"*"}}`}, []string{TargetTS}, nil},
+		{"python with frontend", map[string]string{"package.json": `{}`, "pyproject.toml": `[project]
+dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetPy}, nil},
+		{"both", map[string]string{"package.json": `{"devDependencies":{"holon-sh":"*"}}`, "requirements.txt": "holon-sh==1.0.0"}, []string{TargetTS, TargetPy}, nil},
+		{"go", map[string]string{"go.mod": "module app\nrequire (\n github.com/holon-sh/sdk/go v0.0.1\n)\n"}, []string{TargetGo}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, data := range test.files {
+				put(t, dir, name, data)
+			}
+			got, err := DeclaredTargets(dir)
+			if !slices.Equal(got, test.want) || !errors.Is(err, test.err) {
+				t.Fatalf("targets = %v, %v; want %v", got, err, test.want)
 			}
 		})
 	}

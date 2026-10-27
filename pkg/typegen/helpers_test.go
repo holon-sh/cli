@@ -98,14 +98,9 @@ func needNode(t *testing.T) {
 }
 
 // fakeExtract stands in for the language runners: it answers each snapshot from results, keyed by
-// the server.json name beside the snapshot's entry, and records the languages it was asked for.
-func fakeExtract(t *testing.T, results map[string]extraction, calls *[]string) func(context.Context, string, string, string, string) error {
-	t.Helper()
-	return func(_ context.Context, language, tooling, config, output string) error {
-		*calls = append(*calls, language)
-		if !isFile(filepath.Join(tooling, language, typeLanguages[language].extractor[0])) {
-			return fmt.Errorf("tooling for %s is not unpacked under %s", language, tooling)
-		}
+// the server.json name beside the snapshot's entry.
+func fakeExtract(results map[string]extraction) func(context.Context, string, string, string, string) error {
+	return func(_ context.Context, _, _, config, output string) error {
 		var request struct {
 			Apps []struct{ Name, Path, Entry string }
 		}

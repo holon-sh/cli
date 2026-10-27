@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { unzipSync } from "fflate";
 
@@ -42,22 +43,27 @@ test("the standalone runner extracts a batch without installed dependencies and 
   run("verify", config);
   writeFileSync(join(app, "input.json"), JSON.stringify({type: "object"}));
   for (const mode of ["check", "verify"]) {
-    assert.throws(() => run(mode, config), { status: 1, stderr: /input\.json:.*stale/ });
+    assert.throws(() => run(mode, config), { stderr: /input\.json:.*stale/ });
   }
 });
 
-test("the standalone checker reports type errors and honors project file selection", t => {
+test("check uses the application's compiler CLI and honors project file selection", t => {
   const { root, run } = unpackTooling(t);
   const app = join(root, "application");
   mkdirSync(app);
   writeFileSync(join(app, "package.json"), '{"type":"module"}');
+  // A compiler package can expose bin.tsc without a JavaScript API, as TypeScript 7 does.
+  const compiler = join(app, "node_modules/typescript");
+  mkdirSync(compiler, { recursive: true });
+  writeFileSync(join(compiler, "package.json"), JSON.stringify({ bin: { tsc: "compiler.cjs" }, exports: { "./package.json": "./package.json" } }));
+  writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url)))});`);
   const source = "export const total: number = [1, 2].length;\nexport const label = total.toFixed();\n";
   writeFileSync(join(app, "check.ts"), source);
   const config = join(root, "check.json");
   writeFileSync(config, JSON.stringify({ root: app, entry: "check.ts" }));
   run("check", config);
   writeFileSync(join(app, "check.ts"), source + "export const wrong: string = total;\n");
-  assert.throws(() => run("check", config), { status: 1, stderr: /check\.ts.*error/ });
+  assert.throws(() => run("check", config), { stdout: /check\.ts.*error/ });
 
   writeFileSync(join(app, "check.ts"), source);
   writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));

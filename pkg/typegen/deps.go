@@ -12,12 +12,12 @@ import (
 )
 
 type packageJSON struct {
-	PackageManager                                  string `json:"packageManager"`
-	Dependencies, DevDependencies, PeerDependencies map[string]string
+	PackageManager                                                        string `json:"packageManager"`
+	Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
 }
 
 func (p packageJSON) declares(pkg string) bool {
-	return p.Dependencies[pkg] != "" || p.DevDependencies[pkg] != "" || p.PeerDependencies[pkg] != ""
+	return p.Dependencies[pkg] != "" || p.DevDependencies[pkg] != "" || p.PeerDependencies[pkg] != "" || p.OptionalDependencies[pkg] != ""
 }
 
 // packageManager is the project's declared package manager, else the one its nearest lockfile
@@ -38,17 +38,41 @@ func packageManager(dir string, pkg packageJSON) string {
 	}
 }
 
-func ensureNodeRuntime(ctx context.Context, dir string, o Options) (string, error) {
+// Install installs missing declared SDK runtimes with the project's package manager.
+// Call it before snapshotting sources: package installation can create or update lockfiles.
+func Install(ctx context.Context, consumers []Consumer, options Options) error {
+	o := options.defaults()
+	for _, c := range consumers {
+		if err := c.validate(); err != nil {
+			return err
+		}
+		for _, target := range c.Targets {
+			var err error
+			switch target {
+			case TargetTS:
+				err = ensureNodeRuntime(ctx, c.Dir, o)
+			case TargetPy:
+				err = ensurePythonRuntime(c.Dir)
+			}
+			if err != nil {
+				return fmt.Errorf("%s: %w", c.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func ensureNodeRuntime(ctx context.Context, dir string, o Options) error {
 	const installCommand = "install"
-	if slot, err := InstalledRuntime(dir); err == nil {
-		return slot, nil
+	if _, err := InstalledRuntime(dir); err == nil {
+		return nil
 	}
 	var manifest packageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("%s has no package.json; create one and run npm install %s", dir, nodePackage)
+			return fmt.Errorf("%s has no package.json; create one and run npm install %s", dir, nodePackage)
 		}
-		return "", err
+		return err
 	}
 	manager := packageManager(dir, manifest)
 	if !manifest.declares(nodePackage) {
@@ -56,27 +80,28 @@ func ensureNodeRuntime(ctx context.Context, dir string, o Options) (string, erro
 		if manager == "npm" {
 			verb = installCommand
 		}
-		return "", fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, nodePackage, manager, verb, nodePackage)
+		return fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, nodePackage, manager, verb, nodePackage)
 	}
 	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(dir), manager, installCommand)
 	if err := validateEnv(o.Env); err != nil {
-		return "", err
+		return err
 	}
 	command := exec.CommandContext(ctx, manager, installCommand)
 	command.Dir = dir
-	command.Env = append(command.Environ(), o.Env...)
+	command.Env = append(append(command.Environ(), o.Env...), "HOLON_SKIP_POSTINSTALL=1")
 	command.Stdout, command.Stderr = o.Stderr, o.Stderr
 	if err := command.Run(); err != nil {
-		return "", fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
+		return fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
 	}
-	return InstalledRuntime(dir)
+	_, err := InstalledRuntime(dir)
+	return err
 }
 
 // ErrNoRuntime identifies a project without a declared Holon SDK runtime.
-var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh in package.json, or on holon-sh in pyproject.toml")
+var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh in package.json, on holon-sh in pyproject.toml, or on github.com/holon-sh/sdk/go in go.mod")
 
 // DeclaredTargets are the slots a project declares: ts when package.json depends on holon-sh,
-// py when pyproject.toml or requirements declare holon-sh. None is an error.
+// py when pyproject.toml or requirements declare holon-sh, and go when go.mod requires the Go SDK. None is an error.
 func DeclaredTargets(dir string) ([]string, error) {
 	var targets []string
 	var manifest packageJSON
@@ -89,11 +114,16 @@ func DeclaredTargets(dir string) ([]string, error) {
 	if ensurePythonRuntime(dir) == nil {
 		targets = append(targets, TargetPy)
 	}
+	if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil && goRuntime.Match(data) {
+		targets = append(targets, TargetGo)
+	}
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("%s %w", dir, ErrNoRuntime)
 	}
 	return targets, nil
 }
+
+var goRuntime = regexp.MustCompile(`(?m)^\s*(?:require\s+)?github\.com/holon-sh/sdk/go\s+v[^\s]+`)
 
 var pythonRuntime = regexp.MustCompile(`(?im)(?:^|["'\s])holon[-_]sh(?:\[|[\s"'<=>!~;]|$)`)
 

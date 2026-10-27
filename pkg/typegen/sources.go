@@ -104,6 +104,7 @@ type Consumer struct {
 	// consumer's identity, contract (Metadata) and check configuration.
 	Server *Source
 	// Targets are the slots to write, from TargetTS, TargetPy and TargetGo.
+	// A server can have no targets when only its contract is needed.
 	Targets []string
 	// Sources are the servers that become apps.<alias> clients.
 	Sources []Source
@@ -119,7 +120,7 @@ func (c Consumer) validate() error {
 	if info, err := os.Stat(c.Dir); err != nil || !info.IsDir() {
 		return fmt.Errorf("%s: %s is not a directory", c.Name, c.Dir)
 	}
-	if len(c.Targets) == 0 {
+	if len(c.Targets) == 0 && c.Server == nil {
 		return fmt.Errorf("%s: at least one target is required", c.Name)
 	}
 	for i, target := range c.Targets {
