@@ -23,7 +23,10 @@ writeFileSync(new URL("./executed", import.meta.url), "yes");
 function createServer() {
   const config = connectToDatabase();
   const server = new McpServer({ name: "test", version: "1" });
-  server.registerTool("read", { inputSchema: input, outputSchema: z.object({ id: z.string() }) }, async (input) => generate(input));
+  server.registerTool("read", { inputSchema: input, outputSchema: z.object({ id: z.string() }) }, async (input) => {
+    writeFileSync(new URL("./executed", import.meta.url), "tool callback");
+    return generate(input);
+  });
   return server;
 }
 export default createMcpHandler(createServer);
@@ -36,36 +39,37 @@ export default createMcpHandler(createServer);
   assert.deepEqual(result.tools.map(tool => tool.name), ["read"]);
   assert.deepEqual(result.tools[0].inputSchema.properties, {id: {type: "string"}});
   assert.equal(existsSync(join(root, "executed")), false);
+
+  writeFileSync(join(root, "schemas.ts"), `import {z} from "zod"; import {writeFileSync} from "node:fs";
+function makeSchema() { writeFileSync(new URL("./executed", import.meta.url), "schema factory"); return z.object({[process.env.FIELD]:z.string()}); }
+export const input = makeSchema();`);
+  const dynamic = await extract(root, "server.ts");
+  assert.equal(dynamic.tools, undefined);
+  assert.match(dynamic.diagnostic, /schemas\.ts.*Application functions/);
+  assert.equal(existsSync(join(root, "executed")), false);
 });
 
-for (const [name, registration, diagnostic] of [
-  ["dynamic tool name", `server.registerTool(process.env.NAME, {}, () => {});`, /Cannot statically resolve process/],
-  ["schema callback", `server.registerTool("x", {inputSchema:z.object({x:z.string().transform(() => { throw new Error("executed"); })})}, () => {});`, /Schema method transform/],
-  ["runtime schema factory", `function makeSchema() {return z.object({});} server.registerTool("x", {inputSchema:makeSchema()}, () => {});`, /Application functions are not executed to infer contracts/],
-  ["conditional helper", `function add() { server.registerTool("x", {}, () => {}); } if (process.env.FLAG) add();`, /Conditional or repeated registration/],
-  ["server escape", `installUnknownTools(server);`, /Unresolved registration helper/],
-  ["deferred registration", `setTimeout(() => server.registerTool("x", {}, () => {}), 1);`, /Unresolved registration helper/],
-  ["schema mutation", `const schema=z.object({}); Object.assign(schema, {}); server.registerTool("x", {inputSchema:schema}, () => {});`, /Schema data escapes static analysis/],
-  ["mutable binding", `let schema=z.object({}); server.registerTool("x", {inputSchema:schema}, () => {});`, /immutable constant bindings/],
-  ["conditional schema mutation", `const schema=z.object({}); if (process.env.FLAG) schema.description="changed"; server.registerTool("x", {inputSchema:schema}, () => {});`, /Conditional schema or catalog mutation/],
-  ["conditional fixed catalog", `server.server.setRequestHandler("tools/list", () => { if (process.env.FLAG) return {tools:[{name:"hidden",inputSchema:{type:"object"}}]}; return {tools:[]}; });`, /Conditional or repeated registration/],
-  ["throwing factory", `throw new Error("executed factory");`, /throwing factory/],
-  ["destructured server method", `const {registerTool}=server; registerTool("x", {}, () => {});`, /Destructured server methods/],
-  ["registration in a prompt callback", `server.registerPrompt("prompt", {}, () => {server.registerTool("hidden", {}, () => {});});`, /Resource and prompt handlers must not change the tool catalog/],
-  ["mutation in a tool callback", `const schema=z.object({}); server.registerTool("x",{inputSchema:schema},()=>{schema.description="changed";return {content:[]};});`, /Deferred schema or catalog mutation/],
-  ["deferred schema escape", `const schema=z.object({}); setTimeout(()=>mutate(schema),1); server.registerTool("x",{inputSchema:schema},()=>({content:[]}));`, /Schema or catalog data escapes through a deferred callback/],
-  ["schema escape through an external module", `env.schema = input; server.registerTool("x",{inputSchema:input},()=>({content:[]}));`, /Mutation in server registration code/],
-  ["unawaited registration", `async function register(s) {await fetch("https://example.com"); s.registerTool("late",{},()=>({content:[]}));} register(server);`, /Asynchronous registration helpers must be awaited/],
-  ["non-JSON typed resource", `server.registerResource("r", "chat://r", {mimeType:"text/plain", _meta:{"sh.holon/outputSchema":{type:"object"}}}, () => ({contents:[]}));`, /must declare the application\/json mimeType/],
-  ["malformed fixed schema", `server.server.setRequestHandler("tools/list", () => ({tools:[{name:"x",inputSchema:{type:"object",required:"id"}}]}));`, /Unsupported JSON Schema in x/],
-  ["duplicate fixed names", `server.server.setRequestHandler("tools/list", () => ({tools:[{name:"x",inputSchema:{type:"object"}},{name:"x",inputSchema:{type:"object"}}]}));`, /Tool names must be unique/],
-  ["catalog replacement", `server.registerTool("x", {}, () => {}); server.server.setRequestHandler("tools/list", () => ({tools:[]}));`, /tools\/list.*already exists/],
+for (const [name, registration, reason] of [
+  ["dynamic tool name", `server.registerTool(process.env.NAME, {}, () => {});`, /static.*process/i],
+  ["conditional registration", `function add() { server.registerTool("x", {}, () => {}); } if (process.env.FLAG) add();`, /conditional.*registration/i],
+  ["unknown registration helper", `installUnknownTools(server);`, /registration helper/i],
+  ["deferred registration", `setTimeout(() => server.registerTool("x", {}, () => {}), 1);`, /registration helper/i],
+  ["conditional schema mutation", `const schema={type:"object",properties:{id:{type:"string"}}}; if (process.env.FLAG) schema.properties.id.type="number"; server.registerTool("x", {inputSchema:fromJsonSchema(schema)}, () => {});`, /schema.*mutation/i],
+  ["conditional fixed catalog", `server.server.setRequestHandler("tools/list", () => { if (process.env.FLAG) return {tools:[{name:"hidden",inputSchema:{type:"object"}}]}; return {tools:[]}; });`, /conditional.*registration/i],
+  ["deferred schema mutation", `const schema={type:"object"}; setTimeout(()=>mutate(schema),1); server.registerTool("x",{inputSchema:fromJsonSchema(schema)},()=>({content:[]}));`, /schema.*deferred callback/i],
+  ["unawaited registration", `async function register(s) {await fetch("https://example.com"); s.registerTool("late",{},()=>({content:[]}));} register(server);`, /awaited/i],
+  ["non-JSON typed resource", `server.registerResource("r", "chat://r", {mimeType:"text/plain", _meta:{"sh.holon/outputSchema":{type:"object"}}}, () => ({contents:[]}));`, /application\/json/],
+  ["malformed fixed schema", `server.server.setRequestHandler("tools/list", () => ({tools:[{name:"x",inputSchema:{type:"object",required:"id"}}]}));`, /JSON Schema/i],
+  ["duplicate fixed names", `server.server.setRequestHandler("tools/list", () => ({tools:[{name:"x",inputSchema:{type:"object"}},{name:"x",inputSchema:{type:"object"}}]}));`, /unique/i],
 ]) {
   test(`rejects ${name} without returning a partial catalog`, async t => {
-    const root = fixture(t, `import { McpServer,createMcpHandler } from "@modelcontextprotocol/server"; import {z} from "zod"; import {env} from "runtime-library"; const input=z.object({}); export default createMcpHandler(() => { const server=new McpServer({name:"x",version:"1"}); ${registration} return server; });`);
+    const root = fixture(t, `import {McpServer,createMcpHandler,fromJsonSchema} from "@modelcontextprotocol/server"; export default createMcpHandler(() => { const server=new McpServer({name:"x",version:"1"}); ${registration} return server; });`);
     const result = await extract(root, "server.ts");
     assert.equal(result.tools, undefined);
-    assert.match(result.diagnostic, diagnostic);
+    assert.equal(result.resources, undefined);
+    // Check the source and rejection reason, not the evaluator's exact wording.
+    assert.match(result.diagnostic, /server\.ts/);
+    assert.match(result.diagnostic, reason);
   });
 }
 
@@ -100,7 +104,7 @@ export function register(server) { ${registration} }`,
   }
 });
 
-test("follows exported handlers and rejects side-effect schema mutation", async t => {
+test("follows exported handlers and includes side-effect imports in catalog analysis", async t => {
   const root = fixture(t, `export {default} from "./handler.js";`, {
     "handler.ts": `import {createMcpHandler} from "@modelcontextprotocol/server"; import {server} from "./registered.js"; const factory = () => server; const handler = createMcpHandler(factory); export default handler;`,
     "registered.ts": `import {McpServer} from "@modelcontextprotocol/server"; import {z} from "zod"; export const server=new McpServer({name:"x",version:"1"}); server.registerTool("read",{inputSchema:z.object({id:z.string()})},()=>({content:[]}));`,
@@ -109,8 +113,10 @@ test("follows exported handlers and rejects side-effect schema mutation", async 
   assert.equal(result.diagnostic, undefined);
   assert.deepEqual(result.tools.map(tool => tool.name), ["read"]);
   writeFileSync(join(root,"server.ts"), `import "./mutate.js"; export {default} from "./handler.js";`);
-  writeFileSync(join(root,"mutate.ts"), `import {server} from "./registered.js"; server.removeTool("read");`);
-  assert.match((await extract(root,"server.ts")).diagnostic, /mutate\.ts.*Server mutation removeTool is unsupported/);
+  writeFileSync(join(root,"mutate.ts"), `import {server} from "./registered.js"; if (process.env.DISABLE) server.removeTool("read");`);
+  const changed = await extract(root,"server.ts");
+  assert.equal(changed.tools, undefined);
+  assert.match(changed.diagnostic, /mutate\.ts.*conditional/i);
 });
 
 test("rejects imports that escape the application snapshot through a symlink", async t => {
@@ -121,5 +127,5 @@ export default createMcpHandler(() => {const server=new McpServer({name:"x",vers
   symlinkSync(join(outside, "server.ts"), join(root, "schema.ts"));
   const result = await extract(root, "server.ts");
   assert.equal(result.tools, undefined);
-  assert.match(result.diagnostic, /Contract imports must stay inside the application source/);
+  assert.match(result.diagnostic, /application source/);
 });

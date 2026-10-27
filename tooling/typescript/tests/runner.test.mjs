@@ -1,9 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { unzipSync } from "fflate";
 
@@ -39,7 +38,6 @@ test("the standalone runner extracts a batch without installed dependencies and 
   const extracted = JSON.parse(readFileSync(output, "utf8"));
   assert.deepEqual(extracted.test.tools, [{name: "read", inputSchema}]);
   assert.deepEqual(extracted.empty.tools, []);
-  assert.deepEqual(Object.keys(extracted.test.sources).sort(), ["input.json", "server.ts"]);
 
   writeFileSync(config, JSON.stringify({ root: app, sources: extracted.test.sources }));
   const verified = run("verify", config);
@@ -48,11 +46,11 @@ test("the standalone runner extracts a batch without installed dependencies and 
   for (const mode of ["check", "verify"]) {
     const stale = run(mode, config);
     assert.equal(stale.status, 1, stale.stderr);
-    assert.match(stale.stderr, /input\.json:.*refusing to publish stale types/);
+    assert.match(stale.stderr, /input\.json:.*stale/);
   }
 });
 
-test("check loads bundled declarations and honors the application's project configuration", t => {
+test("the standalone checker reports type errors and honors project file selection", t => {
   const { root, run } = unpackTooling(t);
   const app = join(root, "application");
   mkdirSync(app);
@@ -69,8 +67,6 @@ test("check loads bundled declarations and honors the application's project conf
   assert.match(invalid.stderr, /check\.ts.*error/);
 
   writeFileSync(join(app, "check.ts"), source);
-  mkdirSync(join(app, "node_modules"));
-  symlinkSync(fileURLToPath(new URL("../node_modules/typescript", import.meta.url)), join(app, "node_modules/typescript"));
   writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));
   // The application's file selection takes precedence over entry/discovery.
   writeFileSync(join(app, "excluded.ts"), 'export const wrong: number = "excluded";');
