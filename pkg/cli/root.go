@@ -131,6 +131,9 @@ func printContract(cmd *cobra.Command, arg string) error {
 	if err != nil {
 		return err
 	}
+	if err := sourceRoot(cmd, &source); err != nil {
+		return err
+	}
 	document, err := typegen.ResolveDocument(cmd.Context(), source, typegen.Options{Stderr: cmd.ErrOrStderr()})
 	if err != nil {
 		return err
@@ -152,7 +155,28 @@ func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (
 	if err != nil {
 		return "", err
 	}
+	if c.Server != nil {
+		if err := sourceRoot(cmd, c.Server); err != nil {
+			return "", err
+		}
+	}
+	for i := range c.Sources {
+		if err := sourceRoot(cmd, &c.Sources[i]); err != nil {
+			return "", err
+		}
+	}
 	return dir, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
+}
+
+// sourceRoot applies the common source root only to local server sources.
+func sourceRoot(cmd *cobra.Command, source *typegen.Source) error {
+	root, _ := cmd.Flags().GetString("source-root")
+	if root == "" || source.Path == "" {
+		return nil
+	}
+	var err error
+	source.SourceRoot, err = clientDir(root)
+	return err
 }
 
 // newCheck builds the check command; it is registered as "holon types check" and as the
@@ -168,8 +192,8 @@ func newCheck(short string) *cobra.Command {
 
   # Explicit dependencies, as for generate
   holon types check -s orders=../orders`, Args: oneDir, RunE: func(cmd *cobra.Command, _ []string) error {
-		if noGenerate && len(servers) > 0 {
-			return errors.New("--no-generate type-checks the existing clients; -s has no effect")
+		if noGenerate && (len(servers) > 0 || cmd.Flags().Changed("source-root")) {
+			return errors.New("--no-generate type-checks the existing clients; -s and --source-root have no effect")
 		}
 		var dir string
 		var err error
@@ -184,6 +208,7 @@ func newCheck(short string) *cobra.Command {
 		return typegen.Check(cmd.Context(), dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
 	}}
 	cmd.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
+	cmd.Flags().String("source-root", "", "Common source tree containing the local servers, relative to the working directory")
 	cmd.Flags().BoolVar(&noGenerate, "no-generate", false, "Type-check the existing clients only: no network, no install, no writes")
 	return cmd
 }
@@ -220,6 +245,7 @@ func NewTypesCommand() *cobra.Command {
 		_, err := generateProject(cmd, servers, progress)
 		return err
 	}}
+	generate.Flags().String("source-root", "", "Common source tree containing the local servers, relative to the working directory")
 	generate.Flags().StringVar(&contract, "contract", "", "Print one server's MCP contract instead of generating")
 	generate.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
 	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")

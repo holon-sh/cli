@@ -356,3 +356,40 @@ func TestPythonSourcesWithTheRealExtractor(t *testing.T) {
 		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
 	}
 }
+
+func TestCommonSourceRoot(t *testing.T) {
+	needPython(t)
+	root := t.TempDir()
+	directory := filepath.Join(root, "app", "orders")
+	writeProvider(t, directory, "orders", `from mcp.server import MCPServer
+from handlers import read
+server = MCPServer("orders")
+server.add_tool(read)
+`)
+	put(t, directory, "handlers.py", "from app.models import Order\ndef read() -> Order:\n    raise RuntimeError('must not execute')\n")
+	put(t, root, "app/models.py", "from pydantic import BaseModel\nclass Order(BaseModel):\n    id: str\n")
+	consumer := Consumer{Name: "orders", Dir: directory, Server: &Source{Path: directory, SourceRoot: root}}
+	prepared, err := Prepare(t.Context(), []Consumer{consumer}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	tools := prepared.Metadata()["orders"].Schema.Tools
+	if len(tools) != 1 || !bytes.Contains(tools[0].Output, []byte(`"id"`)) {
+		t.Fatalf("shared model missing from contract: %+v", tools)
+	}
+	config, ok := prepared.CheckConfig("orders")
+	if !ok || config["entry"] != "server.py" {
+		t.Fatalf("check config = %#v", config)
+	}
+	if _, ok := config["sources"].(map[string]string)["../models.py"]; !ok {
+		t.Fatalf("shared model not verified: %#v", config)
+	}
+	consumer.Server.SourceRoot = filepath.Join(root, "app", "elsewhere")
+	if err := os.MkdirAll(consumer.Server.SourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Prepare(t.Context(), []Consumer{consumer}, Options{}); err == nil || !strings.Contains(err.Error(), "outside source root") {
+		t.Fatalf("escaping entry accepted: %v", err)
+	}
+}

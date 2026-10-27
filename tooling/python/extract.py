@@ -82,8 +82,9 @@ DUPLICATE = "duplicate"
 
 
 class Analyzer:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, entry: str = "server.py"):
         self.root = root.resolve()
+        self.directory = (self.root / entry).parent
         self.trees: dict[Path, ast.Module] = {}
         self.modules: dict[Path, dict[str, ast.AST | str]] = {}
         self.active: set[tuple[Path, str]] = set()
@@ -197,10 +198,18 @@ class Analyzer:
     def imported(self, path: Path, symbol: str) -> tuple[Path, ast.AST | str]:
         module, _, name = symbol.rpartition(":")
         level = len(module) - len(module.lstrip("."))
-        base = path.parent.joinpath(*[".."] * (level - 1)) if level else self.root
+        base = path.parent.joinpath(*[".."] * (level - 1)) if level else self.directory
         parts = module.lstrip(".").split(".")
         if not level and parts[0] in IGNORED:
             return path, f"{module}:{name}"
+        if not level and not any(
+            candidate.exists()
+            for candidate in (
+                base.joinpath(*parts),
+                base.joinpath(*parts).with_suffix(".py"),
+            )
+        ):
+            base = self.root
         local = base.joinpath(*parts).with_suffix(".py")
         if not local.is_file():
             local = base.joinpath(*parts, "__init__.py")
@@ -612,7 +621,7 @@ class Analyzer:
 
 
 def extract(root: str | Path, entry: str) -> dict[str, Any]:
-    analyzer = Analyzer(Path(root))
+    analyzer = Analyzer(Path(root), entry)
     sources: dict[str, str] = {}
     try:
         for directory, folders, filenames in os.walk(analyzer.root):

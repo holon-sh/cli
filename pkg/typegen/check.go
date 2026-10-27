@@ -3,7 +3,6 @@ package typegen
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -85,9 +84,13 @@ func (p *Prepared) CheckConfig(consumer string) (map[string]any, bool) {
 	if c == nil || c.server == nil || c.server.metadata.Schema == nil {
 		return nil, false
 	}
+	directory, _ := filepath.EvalSymlinks(c.Dir)
 	sources := map[string]string{}
-	maps.Copy(sources, c.server.sources)
-	entry, _ := filepath.Rel(c.Dir, filepath.Join(c.server.origin, c.server.entry))
+	for path, digest := range c.server.sources {
+		relative, _ := filepath.Rel(directory, filepath.Join(c.server.sourceRoot, path))
+		sources[filepath.ToSlash(relative)] = digest
+	}
+	entry, _ := filepath.Rel(directory, filepath.Join(c.server.sourceRoot, c.server.entry))
 	return map[string]any{"entry": filepath.ToSlash(entry), "sources": sources, "check": true}, true
 }
 

@@ -122,7 +122,7 @@ func TestCheckGrammar(t *testing.T) {
 		{[]string{"check", "a", "b"}, "one DIR at most; dependencies are -s values"},
 		{[]string{"types", "check", "a", "b"}, "one DIR at most; dependencies are -s values"},
 		{[]string{"types", "generate", "a", "b"}, "one DIR at most; dependencies are -s values"},
-		{[]string{"check", "--no-generate", "-s", "x"}, "-s has no effect"},
+		{[]string{"check", "--no-generate", "-s", "x"}, "-s and --source-root have no effect"},
 		{[]string{"check", "missing-dir"}, "is not a directory"},
 	} {
 		run(t, test.want, test.args...)
@@ -142,10 +142,10 @@ func TestCheckGrammar(t *testing.T) {
 const pythonServer = "from mcp.server import MCPServer\nserver = MCPServer('provider')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n"
 
 func TestContractOfAPathSource(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "service")
 	writeCLIFile(t, dir, "server.json", `{"name":"example.com/provider","version":"1.0.0","description":"Provider"}`)
 	writeCLIFile(t, dir, "server.py", pythonServer)
-	output := run(t, "", "types", "generate", "--contract", filepath.Join(dir, "server.py"))
+	output := run(t, "", "types", "generate", "--contract", filepath.Join(dir, "server.py"), "--source-root", filepath.Dir(dir))
 	var metadata mcpcontract.Metadata
 	if err := json.Unmarshal([]byte(output), &metadata); err != nil {
 		t.Fatal(err)

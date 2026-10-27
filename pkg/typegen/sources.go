@@ -43,6 +43,8 @@ type Source struct {
 	// directory containing exactly one. Its contract is extracted from source; server.json beside
 	// the entry supplies the identity.
 	Path string
+	// SourceRoot is the absolute source tree containing Path. Defaults to the server directory.
+	SourceRoot string
 	// Registry is an MCP registry server version. Resolve its OCI package's document,
 	// falling back to its streamable-http remote when the image has no contract.
 	Registry *Reference
@@ -87,6 +89,9 @@ func (s Source) validate() error {
 	}
 	if s.Alias != "" && (len(s.Alias) > 49 || !appName.MatchString(s.Alias)) {
 		return fmt.Errorf("alias %q must be a DNS label of at most 49 characters", s.Alias)
+	}
+	if s.SourceRoot != "" && (s.Path == "" || !filepath.IsAbs(s.SourceRoot)) {
+		return errors.New("source root requires a path source and must be absolute")
 	}
 	if s.Registry != nil {
 		return s.Registry.Validate()

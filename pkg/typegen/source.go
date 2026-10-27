@@ -37,12 +37,19 @@ func SourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
 func GeneratedSource(root, path string) bool {
 	relative, _ := filepath.Rel(root, path)
 	if slices.ContainsFunc(strings.Split(filepath.ToSlash(relative), "/"), func(part string) bool {
-		return slices.Contains([]string{".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}, part)
+		return slices.Contains([]string{".git", ".holon-types", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}, part)
 	}) {
 		return true
 	}
-	managed := filepath.Join(root, "holon")
-	return pathInsideContext(path, managed) && generatedGo(managed) || pathInsideContext(path, filepath.Join(managed, "apps")) && generatedPython(managed)
+	for directory := path; pathInsideContext(directory, root); directory = filepath.Dir(directory) {
+		if filepath.Base(directory) == "holon" && (generatedGo(directory) || generatedPython(directory)) {
+			return true
+		}
+		if directory == root {
+			break
+		}
+	}
+	return false
 }
 
 // SnapshotSource copies dir into destination (or only fingerprints it when destination is empty),

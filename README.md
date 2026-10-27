@@ -283,3 +283,17 @@ Flags:
 ```
 
 </details>
+
+### Common source roots
+
+For separate services that import sibling modules, keep their source tree intact:
+
+```sh
+holon check app/accounts -s app/accounts -s users=app/users --source-root .
+holon types generate --contract app/users --source-root .
+```
+
+`--source-root` is relative to the working directory and applies to local sources.
+It defaults to each server's directory. The selected root must contain each server;
+its `.dockerignore` controls the snapshot. Library callers set `Source.SourceRoot`.
+Python extraction resolves service-local imports and imports from that common root.
