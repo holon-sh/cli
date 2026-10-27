@@ -8,18 +8,21 @@ from pathlib import Path
 
 
 def build(root: Path) -> Path:
-    version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
+    project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
+    version = project["version"]
     destination = root.parents[1] / "pkg/tooling"
     destination.mkdir(parents=True, exist_ok=True)
     for old in destination.glob("cli-tooling-py-*.zip"):
         old.unlink()
     archive = destination / f"cli-tooling-py-{version}.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-        for name in ("extract.py", "runner.py"):
+        files = {name: (root / name).read_bytes() for name in ("extract.py", "runner.py")}
+        files["requirements.txt"] = ("\n".join(project["dependencies"]) + "\n").encode()
+        for name, content in files.items():
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
-            bundle.writestr(info, (root / name).read_bytes())
+            bundle.writestr(info, content)
     return archive
 
 
