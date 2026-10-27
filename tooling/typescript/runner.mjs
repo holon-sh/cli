@@ -1,9 +1,8 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { createRequire } from "node:module";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import ts from "typescript";
+import bundledTs from "typescript";
 import { extract } from "./extract.mjs";
 
 const [mode, configPath, output] = process.argv.slice(2);
@@ -21,32 +20,23 @@ if (mode === "extract") {
   if (mode === "verify") process.exit(0);
   const require = createRequire(join(root, "package.json"));
   let compiler;
-  try { compiler = require.resolve("typescript/bin/tsc"); } catch {}
+  try { compiler = require.resolve("typescript"); } catch {}
+  const ts = compiler ? require(compiler) : bundledTs;
+  process.chdir(root);
   const tsconfig = existsSync(join(root, "tsconfig.json")) ? join(root, "tsconfig.json") : undefined;
-  const sources = config.entry ? [join(root, config.entry)] : ts.sys.readDirectory(root, [".ts", ".mts", ".js", ".mjs"], ["node_modules", ".holon", ".holon-types"]);
-  if (compiler) {
-    const flags = tsconfig ? ["--noEmit", "--project", tsconfig] : ["--noEmit", "--strict", "--skipLibCheck", "--allowJs", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--allowImportingTsExtensions", ...sources];
-    const result = spawnSync(process.execPath, [compiler, ...flags], { cwd: root, stdio: "inherit" });
-    if (result.error) throw result.error;
-    process.exitCode = result.status ?? 1;
-  } else {
-    let options = { noEmit: true, strict: true, skipLibCheck: true, allowJs: true, target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, allowImportingTsExtensions: true };
-    let files = sources;
-    let configurationErrors = [];
-    if (tsconfig) {
-      const parsed = ts.getParsedCommandLineOfConfigFile(tsconfig, { noEmit: true }, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: d => { throw new Error(ts.flattenDiagnosticMessageText(d.messageText, "\n")); } });
-      options = parsed.options;
-      files = parsed.fileNames;
-      configurationErrors = parsed.errors;
-    }
-    const host = ts.createCompilerHost(options);
-    host.getDefaultLibFileName = () => join(assets, "lib", ts.getDefaultLibFileName(options));
+  const parsed = tsconfig ? ts.getParsedCommandLineOfConfigFile(tsconfig, { noEmit: true }, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: d => { throw new Error(ts.flattenDiagnosticMessageText(d.messageText, "\n")); } }) : {
+    options: { noEmit: true, strict: true, skipLibCheck: true, allowJs: true, target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, allowImportingTsExtensions: true },
+    fileNames: config.entry ? [join(root, config.entry)] : ts.sys.readDirectory(root, [".ts", ".mts", ".js", ".mjs"], ["node_modules", ".holon", ".holon-types"]),
+  };
+  const host = ts.createCompilerHost(parsed.options);
+  if (!compiler) {
+    host.getDefaultLibFileName = () => join(assets, "lib", ts.getDefaultLibFileName(parsed.options));
     host.getDefaultLibLocation = () => join(assets, "lib");
-    const program = ts.createProgram(files, options, host);
-    const diagnostics = [...configurationErrors, ...ts.getPreEmitDiagnostics(program)];
-    if (diagnostics.length) {
-      process.stderr.write(ts.formatDiagnostics(diagnostics, { getCurrentDirectory: () => root, getCanonicalFileName: p => p, getNewLine: () => "\n" }));
-      process.exitCode = 1;
-    }
+  }
+  const program = ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options, projectReferences: parsed.projectReferences, configFileParsingDiagnostics: parsed.errors, host });
+  const diagnostics = ts.getPreEmitDiagnostics(program);
+  if (diagnostics.length) {
+    process.stderr.write(ts.formatDiagnostics(diagnostics, host));
+    process.exitCode = 1;
   }
 } else throw new Error(`Unknown internal type preparation operation: ${mode}`);

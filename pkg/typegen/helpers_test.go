@@ -103,7 +103,7 @@ func fakeExtract(t *testing.T, results map[string]extraction, calls *[]string) f
 	t.Helper()
 	return func(_ context.Context, language, tooling, config, output string) error {
 		*calls = append(*calls, language)
-		if !isFile(filepath.Join(tooling, language, typeLanguages[language].runner)) {
+		if !isFile(filepath.Join(tooling, language, typeLanguages[language].extractor[0])) {
 			return fmt.Errorf("tooling for %s is not unpacked under %s", language, tooling)
 		}
 		var request struct {
