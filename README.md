@@ -170,6 +170,19 @@ const text: string = greeting.text;
 
 ## Dependencies
 
+Local servers can link to shared source packages outside their app directory.
+Allow those directories explicitly when generating or checking contracts:
+
+```sh
+# apps/accounts/mysql -> ../mysql
+holon check apps/accounts -s apps/accounts -s users=apps/users --shared apps/mysql
+```
+
+`--shared` paths are relative to the working directory and may be repeated. Each
+linked directory is included at the symlink's location in the source snapshot;
+the consuming app's `.dockerignore` still applies. Unlisted external symlinks are
+rejected. Library callers can supply the same directories in `typegen.Source.Shared`.
+
 A dependency is an MCP server your project calls. For each one `holon` obtains a contract—the JSON Schemas of the server's tools and resources—and writes a typed client `apps.<alias>` into the SDK package your project declares. `holon types check` then runs the language's type checker over your code against those clients.
 
 A dependency is written in one of three ways.

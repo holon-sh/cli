@@ -38,7 +38,7 @@ var alias = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?=`)
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
 
 // parseSource reads one SERVER argument. Paths are resolved against the working directory.
-func parseSource(arg string) (typegen.Source, error) {
+func parseSource(arg string, shared ...string) (typegen.Source, error) {
 	var source typegen.Source
 	if match := alias.FindString(arg); match != "" {
 		source.Alias, arg = strings.TrimSuffix(match, "="), arg[len(match):]
@@ -59,6 +59,13 @@ func parseSource(arg string) (typegen.Source, error) {
 	}
 	var err error
 	source.Path, err = filepath.Abs(arg)
+	for _, path := range shared {
+		root, err := clientDir(path)
+		if err != nil {
+			return source, err
+		}
+		source.Shared = append(source.Shared, root)
+	}
 	return source, err
 }
 
@@ -85,14 +92,14 @@ func clientDir(path string) (string, error) {
 
 // consumer selects dependencies from -s or server.json. A -s path inside dir is the project's own
 // server, which supplies its identity and contract.
-func consumer(dir string, servers []string) (typegen.Consumer, error) {
+func consumer(dir string, servers []string, shared ...string) (typegen.Consumer, error) {
 	targets, err := typegen.DeclaredTargets(dir)
 	if err != nil {
 		return typegen.Consumer{}, err
 	}
 	c := typegen.Consumer{Name: filepath.Base(dir), Dir: dir, Targets: targets}
 	for _, arg := range servers {
-		source, err := parseSource(arg)
+		source, err := parseSource(arg, shared...)
 		if err != nil {
 			return c, fmt.Errorf("%s: %w", arg, err)
 		}
@@ -126,8 +133,8 @@ func insideDir(path, dir string) bool {
 }
 
 // printContract prints one server's contract document and writes no files.
-func printContract(cmd *cobra.Command, arg string) error {
-	source, err := parseSource(arg)
+func printContract(cmd *cobra.Command, arg string, shared []string) error {
+	source, err := parseSource(arg, shared...)
 	if err != nil {
 		return err
 	}
@@ -142,13 +149,13 @@ func printContract(cmd *cobra.Command, arg string) error {
 
 // generateProject resolves the client directory and generates its declared slots from -s
 // or server.json requires. It returns the directory for type-checking.
-func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (string, error) {
+func generateProject(cmd *cobra.Command, servers, shared []string, progress io.Writer) (string, error) {
 	typed := cmd.Flags().Arg(0)
 	dir, err := clientDir(typed)
 	if err != nil {
 		return "", err
 	}
-	c, err := consumer(dir, servers)
+	c, err := consumer(dir, servers, shared...)
 	if err != nil {
 		return "", err
 	}
@@ -158,7 +165,7 @@ func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
-	var servers []string
+	var servers, shared []string
 	var noGenerate bool
 	cmd := &cobra.Command{Use: "check [DIR]", Short: short, Long: "Generate typed clients for MCP servers, then type-check the project's calls to them.\n\n" + dependencyHelp, Example: `  # Generate from server.json requires, then type-check
   holon types check
@@ -168,15 +175,15 @@ func newCheck(short string) *cobra.Command {
 
   # Explicit dependencies, as for generate
   holon types check -s orders=../orders`, Args: oneDir, RunE: func(cmd *cobra.Command, _ []string) error {
-		if noGenerate && len(servers) > 0 {
-			return errors.New("--no-generate type-checks the existing clients; -s has no effect")
+		if noGenerate && len(servers)+len(shared) > 0 {
+			return errors.New("--no-generate type-checks the existing clients; -s and --shared have no effect")
 		}
 		var dir string
 		var err error
 		if noGenerate {
 			dir, err = clientDir(cmd.Flags().Arg(0))
 		} else {
-			dir, err = generateProject(cmd, servers, io.Discard)
+			dir, err = generateProject(cmd, servers, shared, io.Discard)
 		}
 		if err != nil {
 			return err
@@ -184,11 +191,13 @@ func newCheck(short string) *cobra.Command {
 		return typegen.Check(cmd.Context(), dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
 	}}
 	cmd.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
+	cmd.Flags().StringArrayVar(&shared, "shared", nil, sharedHelp)
 	cmd.Flags().BoolVar(&noGenerate, "no-generate", false, "Type-check the existing clients only: no network, no install, no writes")
 	return cmd
 }
 
 const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, server.json requires is used"
+const sharedHelp = "Directory that local servers may symlink into their source; relative to the working directory, repeatable"
 
 // NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string) *cobra.Command {
@@ -205,23 +214,24 @@ func NewTypesCommand() *cobra.Command {
 	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	var verbose bool
 	var contract string
-	var servers []string
+	var servers, shared []string
 	generate := &cobra.Command{Use: "generate [DIR]", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for MCP servers.\n\n" + dependencyHelp, Example: generateExamples, Args: oneDir, RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("contract") {
 			if len(args) > 0 || len(servers) > 0 {
 				return errors.New("--contract takes one SERVER and nothing else")
 			}
-			return printContract(cmd, contract)
+			return printContract(cmd, contract, shared)
 		}
 		progress := io.Discard
 		if verbose {
 			progress = cmd.ErrOrStderr()
 		}
-		_, err := generateProject(cmd, servers, progress)
+		_, err := generateProject(cmd, servers, shared, progress)
 		return err
 	}}
 	generate.Flags().StringVar(&contract, "contract", "", "Print one server's MCP contract instead of generating")
 	generate.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
+	generate.Flags().StringArrayVar(&shared, "shared", nil, sharedHelp)
 	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")
 	types.AddCommand(generate, newCheck("Type-check the project's calls to MCP servers"))
 

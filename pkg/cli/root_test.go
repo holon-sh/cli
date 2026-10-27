@@ -122,7 +122,8 @@ func TestCheckGrammar(t *testing.T) {
 		{[]string{"check", "a", "b"}, "one DIR at most; dependencies are -s values"},
 		{[]string{"types", "check", "a", "b"}, "one DIR at most; dependencies are -s values"},
 		{[]string{"types", "generate", "a", "b"}, "one DIR at most; dependencies are -s values"},
-		{[]string{"check", "--no-generate", "-s", "x"}, "-s has no effect"},
+		{[]string{"check", "--no-generate", "-s", "x"}, "have no effect"},
+		{[]string{"check", "--no-generate", "--shared", "x"}, "have no effect"},
 		{[]string{"check", "missing-dir"}, "is not a directory"},
 	} {
 		run(t, test.want, test.args...)
@@ -145,7 +146,12 @@ func TestContractOfAPathSource(t *testing.T) {
 	dir := t.TempDir()
 	writeCLIFile(t, dir, "server.json", `{"name":"example.com/provider","version":"1.0.0","description":"Provider"}`)
 	writeCLIFile(t, dir, "server.py", pythonServer)
-	output := run(t, "", "types", "generate", "--contract", filepath.Join(dir, "server.py"))
+	shared := t.TempDir()
+	writeCLIFile(t, shared, "__init__.py", "value = 1\n")
+	if err := os.Symlink(shared, filepath.Join(dir, "shared")); err != nil {
+		t.Fatal(err)
+	}
+	output := run(t, "", "types", "generate", "--contract", filepath.Join(dir, "server.py"), "--shared", shared)
 	var metadata mcpcontract.Metadata
 	if err := json.Unmarshal([]byte(output), &metadata); err != nil {
 		t.Fatal(err)
@@ -198,7 +204,12 @@ func TestGenerateReadsRequires(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	output := run(t, "", "types", "check", "-s=orders", "client-link", "-sdocs=docs,archive")
+	shared := filepath.Join(root, "shared")
+	writeCLIFile(t, shared, "__init__.py", "value = 1\n")
+	if err := os.Symlink("../shared", filepath.Join(root, "orders/shared")); err != nil {
+		t.Fatal(err)
+	}
+	output := run(t, "", "types", "check", "-s=orders", "client-link", "-sdocs=docs,archive", "--shared", "shared")
 	if output != "Typed contracts check passed.\n" {
 		t.Fatalf("check with explicit dependencies = %q", output)
 	}
