@@ -28,20 +28,20 @@ function createServer() {
 }
 export default createMcpHandler(createServer);
 `, {
-    "schemas.ts": `import { z } from "zod/v4"; export const input = z.object({ id: z.string() });`,
+    "schemas.ts": `import { z } from "zod/v4"; export const input = { id: z.string() };`,
     "model.ts": `import { env } from "runtime-library"; env.localModelPath = ""; export async function generate(input) { return (await import("./runtime.js")).generate(input); }`,
   });
   const result = await extract(root, "server.ts");
   assert.equal(result.diagnostic, undefined);
   assert.deepEqual(result.tools.map(tool => tool.name), ["read"]);
+  assert.deepEqual(result.tools[0].inputSchema.properties, {id: {type: "string"}});
   assert.equal(existsSync(join(root, "executed")), false);
 });
 
 for (const [name, registration, diagnostic] of [
-  ["conditional registration", `if (process.env.FLAG) server.registerTool("x", {}, () => {});`, /Conditional or repeated registration/],
   ["dynamic tool name", `server.registerTool(process.env.NAME, {}, () => {});`, /Cannot statically resolve process/],
   ["schema callback", `server.registerTool("x", {inputSchema:z.object({x:z.string().transform(() => { throw new Error("executed"); })})}, () => {});`, /Schema method transform/],
-  ["runtime schema factory", `server.registerTool("x", {inputSchema:makeSchema()}, () => {});`, /Cannot statically resolve makeSchema/],
+  ["runtime schema factory", `function makeSchema() {return z.object({});} server.registerTool("x", {inputSchema:makeSchema()}, () => {});`, /Application functions are not executed to infer contracts/],
   ["conditional helper", `function add() { server.registerTool("x", {}, () => {}); } if (process.env.FLAG) add();`, /Conditional or repeated registration/],
   ["server escape", `installUnknownTools(server);`, /Unresolved registration helper/],
   ["deferred registration", `setTimeout(() => server.registerTool("x", {}, () => {}), 1);`, /Unresolved registration helper/],

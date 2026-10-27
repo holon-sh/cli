@@ -41,7 +41,7 @@ class Server {
       }));
       // Request the complete fixed catalog without listTools' client-specific filtering.
       const { tools } = await client.request({ method: "tools/list" });
-      return tools.map(({ name, inputSchema, outputSchema }) => ({ name, inputSchema, ...(outputSchema === undefined ? {} : { outputSchema }) }));
+      return tools;
     } finally {
       await Promise.all([client.close(), handler.close()]);
     }
@@ -294,12 +294,6 @@ class Analyzer {
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, this.materialize(v)]));
     return value;
   }
-  schema(value, node) {
-    value = this.value(value);
-    if (value === undefined) return undefined;
-    if (!(value instanceof Schema)) this.fail(node, "Expected a supported schema object or fromJsonSchema declaration.");
-    return value.value;
-  }
   functionBody(fn, args, node, fixedCatalog = false) {
     if (!(fn instanceof FunctionValue)) this.fail(node, "Expected a statically declared server factory or registration helper.");
     if (!fixedCatalog && fn.node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword) && !ts.isAwaitExpression(node.parent)) {
@@ -460,7 +454,7 @@ class Analyzer {
           if (typeof name !== "string" || receiver.tools.has(name) || receiver.list !== undefined) this.fail(expression, "Tool registration must have one unique constant name and catalog source.");
           const config = this.fields(expression.arguments[1], scope);
           if (this.containsRegistration(expression.arguments[2], scope)) this.fail(expression.arguments[2], "Tool handlers must not change the tool catalog.");
-          receiver.tools.set(name, { inputSchema: this.schema(config.inputSchema, expression), outputSchema: this.schema(config.outputSchema, expression) });
+          receiver.tools.set(name, { inputSchema: this.materialize(config.inputSchema), outputSchema: this.materialize(config.outputSchema) });
         } else if (methodName === "setRequestHandler") {
           const name = this.expression(expression.arguments[0], scope);
           if (name !== "tools/list") {

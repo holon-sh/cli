@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { dirname, resolve, join } from "node:path";
+import { resolve, join } from "node:path";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import bundledTs from "typescript";
@@ -7,7 +7,6 @@ import { extract } from "./extract.mjs";
 
 const [mode, configPath, output] = process.argv.slice(2);
 const config = JSON.parse(readFileSync(configPath, "utf8"));
-const assets = dirname(process.argv[1]);
 if (mode === "extract") {
   const results = Object.fromEntries(await Promise.all(config.apps.map(async app => [app.name, await extract(app.path, app.entry)])));
   writeFileSync(output, JSON.stringify(results));
@@ -29,10 +28,6 @@ if (mode === "extract") {
     fileNames: config.entry ? [join(root, config.entry)] : ts.sys.readDirectory(root, [".ts", ".mts", ".js", ".mjs"], ["node_modules", ".holon", ".holon-types"]),
   };
   const host = ts.createCompilerHost(parsed.options);
-  if (!compiler) {
-    host.getDefaultLibFileName = () => join(assets, "lib", ts.getDefaultLibFileName(parsed.options));
-    host.getDefaultLibLocation = () => join(assets, "lib");
-  }
   const program = ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options, projectReferences: parsed.projectReferences, configFileParsingDiagnostics: parsed.errors, host });
   const diagnostics = ts.getPreEmitDiagnostics(program);
   if (diagnostics.length) {
