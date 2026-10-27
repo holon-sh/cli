@@ -17,9 +17,11 @@ func Check(ctx context.Context, dir string, options Options) error {
 	if err != nil {
 		return err
 	}
-	languages := map[string]bool{}
+	var languages []string
 	for _, target := range targets {
 		switch target {
+		case TargetGo:
+			return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
 		case TargetTS:
 			slot, err := InstalledRuntime(dir)
 			if err != nil {
@@ -29,12 +31,12 @@ func Check(ctx context.Context, dir string, options Options) error {
 			if err := readTypeJSON(filepath.Join(slot, "generated", "holon-generated.json"), &meta); err != nil || meta.Placeholder {
 				return fmt.Errorf("%s has no generated clients; run holon types generate", slot)
 			}
-			languages["typescript"] = true
+			languages = append(languages, "typescript")
 		case TargetPy:
 			if !generatedPython(filepath.Join(dir, "holon")) {
 				return fmt.Errorf("%s has no generated clients; run holon types generate", dir)
 			}
-			languages["python"] = true
+			languages = append(languages, "python")
 		}
 	}
 	root, err := os.MkdirTemp("", "holon-types-")
@@ -48,7 +50,8 @@ func Check(ctx context.Context, dir string, options Options) error {
 	if err := validateEnv(o.Env); err != nil {
 		return err
 	}
-	for _, language := range slices.Sorted(maps.Keys(languages)) {
+	slices.Sort(languages)
+	for _, language := range languages {
 		l := typeLanguages[language]
 		program, err := l.localProgram(ctx)
 		if err != nil {

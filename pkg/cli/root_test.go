@@ -91,43 +91,25 @@ func installCLISlot(t *testing.T, root string) {
 }
 
 func TestExplicitOwnServer(t *testing.T) {
-	for _, test := range []struct {
-		name          string
-		entries, args []string
-		want          string
-	}{
-		{"own server only", []string{"server.ts"}, []string{"-s", "./server.ts"}, "has no requires"},
-		{"two own servers", []string{"server.ts", "src/server.ts"}, []string{"-s", "./server.ts", "-s", "./src/server.ts"}, "one own server"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			t.Chdir(root)
-			writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
-			for _, entry := range test.entries {
-				writeCLIFile(t, root, entry, "export default {};\n")
-			}
-			args := append([]string{"types", "generate"}, test.args...)
-			run(t, test.want, args...)
-		})
-	}
-}
-
-func TestOwnServerSuppliesConsumerMetadata(t *testing.T) {
-	// clientDir hands consumer a symlink-free directory; do the same here.
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	writeCLIFile(t, root, "server.ts", "export default {};\n")
 	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
-	c, err := consumer(root, []string{"./server.ts", "../orders"})
-	if err != nil {
-		t.Fatal(err)
+	writeCLIFile(t, root, "server.py", pythonServer)
+	writeCLIFile(t, root, "server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"}`)
+	installCLISlot(t, root)
+	run(t, "", "types", "generate", "-s", "./server.py")
+	orders := t.TempDir()
+	writeCLIFile(t, orders, "server.py", pythonServer)
+	writeCLIFile(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
+	run(t, "", "types", "generate", "-s", "./server.py", "-s", orders)
+	browser, err := os.ReadFile(filepath.Join(root, "node_modules/holon-sh/generated/browser.d.ts"))
+	if err != nil || !strings.Contains(string(browser), `"view"`) || !strings.Contains(string(browser), `"orders"`) || !strings.Contains(string(browser), `"read"`) {
+		t.Fatalf("own and dependency browser clients = %s, %v", browser, err)
 	}
-	if c.Server == nil || c.Server.Path != filepath.Join(root, "server.ts") || len(c.Sources) != 1 || c.Sources[0].Path != filepath.Join(root, "../orders") {
-		t.Fatalf("consumer = %+v", c)
-	}
+	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")
 }
 
 func TestCheckGrammar(t *testing.T) {
@@ -174,6 +156,10 @@ func TestContractOfAPathSource(t *testing.T) {
 }
 
 func TestGenerateReadsRequires(t *testing.T) {
+	compiler, err := filepath.Abs("../../tooling/typescript/node_modules/typescript")
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	client := filepath.Join(root, "checkout")
 	writeCLIFile(t, client, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
@@ -181,6 +167,9 @@ func TestGenerateReadsRequires(t *testing.T) {
 	// A ts-only client can have an entry without treating it as its own server.
 	writeCLIFile(t, client, "server.ts", "export const answer: string = 'ready';\n")
 	installCLISlot(t, client)
+	if err := os.Symlink(compiler, filepath.Join(client, "node_modules/typescript")); err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range []string{"orders", "docs,archive"} {
 		writeCLIFile(t, root, name+"/server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
 		writeCLIFile(t, root, name+"/server.py", pythonServer)

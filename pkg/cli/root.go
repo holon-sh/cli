@@ -111,7 +111,7 @@ func consumer(dir string, servers []string) (typegen.Consumer, error) {
 			return c, err
 		}
 	}
-	if len(c.Sources) == 0 {
+	if len(c.Sources) == 0 && c.Server == nil {
 		return c, fmt.Errorf("%s has no requires in server.json; pass -s", dir)
 	}
 	return c, nil
