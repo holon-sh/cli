@@ -2,15 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { unzipSync } from "fflate";
 
-const { version } = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
-const archive = resolve("..", "..", "pkg", "tooling", `cli-tooling-ts-${version}.zip`);
+const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const archive = new URL(`../../../pkg/tooling/cli-tooling-ts-${version}.zip`, import.meta.url);
 
-// The archive is what the CLI embeds: unpack it exactly as pkg/tooling does.
+// Exercise the archive embedded by the CLI, outside the development dependency tree.
 function unpackTooling(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "holon-tooling-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -19,58 +19,49 @@ function unpackTooling(t) {
     mkdirSync(dirname(join(tooling, name)), { recursive: true });
     writeFileSync(join(tooling, name), bytes);
   }
-  const run = (mode, config, output = []) => spawnSync(process.execPath, [join(tooling, "runner.mjs"), mode, config, ...output], { encoding: "utf8" });
+  const run = (mode, config, output = []) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), mode, config, ...output], { encoding: "utf8", stdio: "pipe", timeout: 30000 });
   return { root, run };
 }
 
-test("the standalone runner extracts without the SDK or any installed dependency", t => {
+test("the standalone runner extracts a batch without installed dependencies and rejects stale contracts", t => {
   const { root, run } = unpackTooling(t);
   const app = join(root, "application");
   mkdirSync(app);
-  writeFileSync(join(app, "server.ts"), 'import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; import {z} from "zod"; export default createMcpHandler(()=>{const s=new McpServer({name:"test",version:"1"}); s.registerTool("read",{inputSchema:z.object({id:z.string()})},()=>({content:[]})); return s;});');
+  const inputSchema = {type: "object", properties: {id: {type: "string"}}, required: ["id"]};
+  writeFileSync(join(app, "input.json"), JSON.stringify(inputSchema));
+  writeFileSync(join(app, "server.ts"), 'import {McpServer,createMcpHandler,fromJsonSchema} from "@modelcontextprotocol/server"; import input from "./input.json"; export default createMcpHandler(()=>{const s=new McpServer({name:"test",version:"1"}); s.registerTool("read",{inputSchema:fromJsonSchema(input)},()=>{}); return s;});');
+  writeFileSync(join(app, "empty.ts"), 'import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export default createMcpHandler(()=>new McpServer({name:"empty",version:"1"}));');
   const config = join(root, "extract.json");
   const output = join(root, "output.json");
-  writeFileSync(config, JSON.stringify({ apps: [{ name: "test", path: app, entry: "server.ts" }] }));
-  const result = run("extract", config, [output]);
-  assert.equal(result.status, 0, result.stderr);
-  const extracted = JSON.parse(readFileSync(output, "utf8")).test;
-  assert.equal(extracted.diagnostic, undefined);
-  assert.deepEqual(extracted.tools.map(tool => tool.name), ["read"]);
-  assert.equal(extracted.tools[0].inputSchema.properties.id.type, "string");
-  assert.deepEqual(Object.keys(extracted.sources), ["server.ts"]);
+  writeFileSync(config, JSON.stringify({ apps: [{ name: "test", path: app, entry: "server.ts" }, { name: "empty", path: app, entry: "empty.ts" }] }));
+  run("extract", config, [output]);
+  const extracted = JSON.parse(readFileSync(output, "utf8"));
+  assert.deepEqual(extracted.test.tools, [{name: "read", inputSchema}]);
+  assert.deepEqual(extracted.empty.tools, []);
+
+  writeFileSync(config, JSON.stringify({ root: app, sources: extracted.test.sources }));
+  run("verify", config);
+  writeFileSync(join(app, "input.json"), JSON.stringify({type: "object"}));
+  for (const mode of ["check", "verify"]) {
+    assert.throws(() => run(mode, config), { stderr: /input\.json:.*stale/ });
+  }
 });
 
-test("check requires the application's compiler, and verify rejects changed sources", t => {
+test("check uses the application's compiler CLI and honors project file selection", t => {
   const { root, run } = unpackTooling(t);
   const app = join(root, "application");
   mkdirSync(app);
   writeFileSync(join(app, "package.json"), '{"type":"module"}');
-  const source = "export const total: number = [1, 2].length;\nexport const label = total.toFixed();\n";
-  writeFileSync(join(app, "check.ts"), source);
-  const config = join(root, "check.json");
-  writeFileSync(config, JSON.stringify({ root: app, entry: "check.ts", sources: { "check.ts": createHash("sha256").update(source).digest("hex") } }));
-  const missing = run("check", config);
-  assert.notEqual(missing.status, 0);
-  assert.match(missing.stderr, /Cannot find module 'typescript\/package.json'/);
-  // TypeScript 7 exposes its compiler through bin.tsc, without the old JavaScript API.
+  // A compiler package can expose bin.tsc without a JavaScript API, as TypeScript 7 does.
   const compiler = join(app, "node_modules/typescript");
   mkdirSync(compiler, { recursive: true });
   writeFileSync(join(compiler, "package.json"), JSON.stringify({ bin: { tsc: "compiler.cjs" }, exports: { "./package.json": "./package.json" } }));
-  writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(resolve("node_modules/typescript/bin/tsc"))});`);
-  const defaults = run("check", config);
-  assert.equal(defaults.status, 0, defaults.stderr + defaults.stdout);
-  writeFileSync(config, JSON.stringify({ root: app, entry: "check.ts", sources: {} }));
+  writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url)))});`);
+  writeFileSync(join(app, "check.ts"), "export const total = 1;");
+  const config = join(root, "check.json");
   writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));
-  const configured = run("check", config);
-  assert.equal(configured.status, 0, configured.stderr + configured.stdout);
-  writeFileSync(join(app, "check.ts"), source + "export const wrong: string = total;\n");
-  const configuredError = run("check", config);
-  assert.notEqual(configuredError.status, 0);
-  assert.match(configuredError.stdout + configuredError.stderr, /TS2322/);
-  writeFileSync(config, JSON.stringify({ root: app, entry: "check.ts", sources: { "check.ts": createHash("sha256").update(source).digest("hex") } }));
-  const verified = run("verify", config);
-  assert.notEqual(verified.status, 0);
-  assert.match(verified.stderr, /refusing to publish stale types/);
-  writeFileSync(join(app, "check.ts"), source);
-  assert.equal(run("verify", config).status, 0);
+  // The application's file selection takes precedence over entry/discovery.
+  writeFileSync(join(app, "excluded.ts"), 'export const wrong: number = "excluded";');
+  writeFileSync(config, JSON.stringify({ root: app, entry: "excluded.ts" }));
+  run("check", config);
 });

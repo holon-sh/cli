@@ -1,5 +1,7 @@
 import ts from "typescript";
 import { z } from "zod";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { McpServer, createMcpHandler, fromJsonSchema } from "@modelcontextprotocol/server";
 import { readFileSync, realpathSync } from "node:fs";
 import { resolve, relative, extname, sep } from "node:path";
 import { validator } from "./validate.mjs";
@@ -11,14 +13,34 @@ class Builtin {
 class FunctionValue {
   constructor(node, scope) { this.node = node; this.scope = scope; }
 }
+class Module {
+  constructor(symbol) { this.symbol = symbol; }
+}
 class Schema {
   constructor(value) { this.value = value; }
 }
 const resourceSchemaKey = "sh.holon/outputSchema";
-class Server {
-  tools = new Map();
-  resources = new Map();
-  list = undefined;
+const identity = { name: "holon-contract", version: "1" };
+class Server extends McpServer {
+  resources = [];
+
+  async catalog() {
+    const server = this.server.getCapabilities().tools ? this : new McpServer(identity, { capabilities: { tools: {} } });
+    // createMcpHandler serves 2026-07-28. Supplying that revision skips discovery, so
+    // this fresh server handles exactly one request and needs no registration replay.
+    const handler = createMcpHandler(() => server, { legacy: "reject" });
+    const client = new Client(identity);
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL("http://holon-contract/mcp"), {
+        fetch: (url, init) => handler.fetch(new Request(url, init)),
+      }), { prior: { kind: "modern", discover: { supportedVersions: ["2026-07-28"], capabilities: server.server.getCapabilities() } } });
+      // Request the complete fixed catalog without listTools' client-specific filtering.
+      const { tools } = await client.request({ method: "tools/list" });
+      return tools;
+    } finally {
+      await Promise.all([client.close(), handler.close()]);
+    }
+  }
 }
 class Lazy {
   constructor(node, scope, mutable = false) { this.node = node; this.scope = scope; this.mutable = mutable; }
@@ -40,39 +62,30 @@ const modifiers = new Set([
   "strip", "extend", "pick", "omit", "partial", "required",
 ]);
 
-function identifierReference(node) {
-  const parent = node.parent;
-  return !((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === node);
-}
-
-export function extract(root, entry) {
+export async function extract(root, entry) {
   const analyzer = new Analyzer(root);
   try {
     if (!entry) throw new Error("Cannot identify a static MCP handler entrypoint; use the existing server.ts/server.js convention or a direct package main/start entry.");
-    const module = analyzer.module(resolve(analyzer.root, entry));
-    for (const loaded of [...analyzer.modules.values()].reverse()) analyzer.statements(loaded.file.statements, loaded.scope);
-    const exported = module.exports.get("default");
-    if (!exported) analyzer.fail(module.file, "Expected the existing default MCP handler export.");
-    const result = analyzer.value(exported);
-    if (!(result instanceof Server)) analyzer.fail(module.file, "Cannot establish the default MCP handler's tool catalog.");
-    for (const module of analyzer.modules.values()) analyzer.auditStatements(module.file.statements, module.scope);
+    const file = analyzer.load(resolve(analyzer.root, entry));
+    for (const [file, scope] of analyzer.scopes) analyzer.statements(file.statements, scope);
+    const symbol = analyzer.checker.getSymbolAtLocation(file);
+    const exported = symbol && analyzer.checker.getExportsOfModule(symbol).find(s => s.name === "default");
+    if (!exported) analyzer.fail(file, "Expected the existing default MCP handler export.");
+    const result = analyzer.value(analyzer.reference(exported, file));
+    if (!(result instanceof Server)) analyzer.fail(file, "Cannot establish the default MCP handler's tool catalog.");
+    for (const [file, scope] of analyzer.scopes) analyzer.auditStatements(file.statements, scope);
     for (const block of analyzer.blocks) analyzer.auditStatements(block.statements, block.scope);
-    const tools = result.list ?? [...result.tools.values()];
-    const names = new Set();
+    let tools;
+    try { tools = await result.catalog(); } catch (error) { analyzer.fail(file, error.message); }
     for (const tool of tools) {
-      if (typeof tool.name !== "string" || !tool.name || names.has(tool.name)) analyzer.fail(module.file, "Tool names must be unique constant strings.");
-      names.add(tool.name);
-      if (!tool.inputSchema || typeof tool.inputSchema !== "object" || Array.isArray(tool.inputSchema) || tool.inputSchema.type !== "object") analyzer.fail(module.file, `Invalid object input schema for ${tool.name}.`);
-      if (Object.hasOwn(tool, "outputSchema") && (!tool.outputSchema || typeof tool.outputSchema !== "object" || Array.isArray(tool.outputSchema))) analyzer.fail(module.file, `Invalid output schema for ${tool.name}.`);
       try {
         validator(tool.inputSchema);
         if (tool.outputSchema) validator(tool.outputSchema);
-      } catch (error) { analyzer.fail(module.file, `Unsupported JSON Schema in ${tool.name}: ${error.message}`); }
+      } catch (error) { analyzer.fail(file, `Unsupported JSON Schema in ${tool.name}: ${error.message}`); }
     }
-    const resources = [...result.resources.values()].sort((a, b) => a.uri.localeCompare(b.uri));
+    const resources = result.resources.sort((a, b) => a.uri.localeCompare(b.uri));
     for (const resource of resources) {
-      if (!resource.outputSchema || typeof resource.outputSchema !== "object" || Array.isArray(resource.outputSchema)) analyzer.fail(module.file, `Invalid contents schema for ${resource.uri}.`);
-      try { validator(resource.outputSchema); } catch (error) { analyzer.fail(module.file, `Unsupported JSON Schema in ${resource.uri}: ${error.message}`); }
+      try { validator(resource.outputSchema); } catch (error) { analyzer.fail(file, `Unsupported JSON Schema in ${resource.uri}: ${error.message}`); }
     }
     return { tools: tools.sort((a, b) => a.name.localeCompare(b.name)), resources, sources: analyzer.sources };
   } catch (error) {
@@ -83,7 +96,7 @@ export function extract(root, entry) {
 class Analyzer {
   constructor(root) {
     this.root = realpathSync(root);
-    this.modules = new Map();
+    this.scopes = new Map();
     this.sources = {};
     this.evaluating = new Set();
     this.calls = new Set();
@@ -96,73 +109,72 @@ class Analyzer {
     const { line, character } = file.getLineAndCharacterOfPosition(node.getStart(file));
     throw new Error(`${relative(this.root, file.fileName)}:${line + 1}:${character + 1}: ${message}`);
   }
-  module(path) {
-    if (this.modules.has(path)) return this.modules.get(path);
-    const real = realpathSync(path);
-    if (real !== this.root && !real.startsWith(this.root + sep)) throw new Error("Contract imports must stay inside the application source.");
-    const text = readFileSync(path, "utf8");
-    this.sources[relative(this.root, real)] = createHash("sha256").update(text).digest("hex");
-    const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
-    if (file.parseDiagnostics.length) this.fail(file, ts.flattenDiagnosticMessageText(file.parseDiagnostics[0].messageText, "\n"));
-    const scope = new Map();
-    const result = { file, scope, exports: new Map() };
-    this.modules.set(path, result);
-    for (const statement of file.statements) {
-      if (ts.isImportDeclaration(statement)) {
-        const specifier = statement.moduleSpecifier.text;
-        const clause = statement.importClause;
-        if (!clause) {
-          if (specifier.startsWith(".")) this.module(this.resolveImport(specifier, statement));
-          continue;
-        }
-        const imported = name => {
-          if (!specifier.startsWith(".")) return new Builtin(specifier, name);
-          const target = this.resolveImport(specifier, statement);
-          if (extname(target) === ".json") {
-            const text = readFileSync(target, "utf8");
-            this.sources[relative(this.root, target)] = createHash("sha256").update(text).digest("hex");
-            return JSON.parse(text);
-          }
-          const other = this.module(target);
-          if (name === "*") return other.exports;
-          return { imported: other, name, node: statement };
-        };
-        if (clause.name) scope.set(clause.name.text, imported("default"));
-        if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) scope.set(clause.namedBindings.name.text, imported("*"));
-        if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
-          for (const item of clause.namedBindings.elements) scope.set(item.name.text, imported((item.propertyName ?? item.name).text));
-        }
-      }
-      this.bind(statement, scope);
-      const exported = statement.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword);
-      if (exported && ts.isVariableStatement(statement)) {
-        for (const d of statement.declarationList.declarations) if (ts.isIdentifier(d.name)) result.exports.set(d.name.text, scope.get(d.name.text));
-      }
-      if (exported && ts.isFunctionDeclaration(statement) && statement.name) result.exports.set(statement.name.text, scope.get(statement.name.text));
-      if (ts.isExportAssignment(statement)) result.exports.set("default", new Lazy(statement.expression, scope));
-      if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
-        for (const item of statement.exportClause.elements) {
-          if (statement.moduleSpecifier) {
-            const target = this.module(this.resolveImport(statement.moduleSpecifier.text, statement));
-            result.exports.set(item.name.text, { imported: target, name: (item.propertyName ?? item.name).text, node: statement });
-          } else result.exports.set(item.name.text, new Lazy(item.propertyName ?? item.name, scope));
-        }
-      }
+  load(path) {
+    const options = { target: ts.ScriptTarget.Latest, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, moduleDetection: ts.ModuleDetectionKind.Force, allowJs: true, resolveJsonModule: true, noLib: true, types: [] };
+    const host = ts.createCompilerHost(options, true);
+    // Packages are symbolic builtins. Only local source participates in extraction.
+    host.resolveModuleNameLiterals = (names, containingFile) => names.map(node => {
+      if (!node.text.startsWith(".") || !(ts.isImportDeclaration(node.parent) || ts.isExportDeclaration(node.parent))) return { resolvedModule: undefined };
+      const result = ts.resolveModuleName(node.text, containingFile, options, host);
+      if (!result.resolvedModule || result.resolvedModule.isExternalLibraryImport) this.fail(node, `Cannot resolve contract import ${node.text}.`);
+      result.resolvedModule.resolvedFileName = realpathSync(result.resolvedModule.resolvedFileName);
+      return result;
+    });
+    host.resolveTypeReferenceDirectiveReferences = names => names.map(() => ({ resolvedTypeReferenceDirective: undefined }));
+    host.getSourceFile = (path, languageVersion) => {
+      const real = realpathSync(path);
+      if (!real.startsWith(this.root + sep)) throw new Error("Contract imports must stay inside the application source.");
+      const bytes = readFileSync(real);
+      this.sources[relative(this.root, real)] = createHash("sha256").update(bytes).digest("hex");
+      return ts.createSourceFile(real, bytes.toString("utf8"), languageVersion, true);
+    };
+    const program = ts.createProgram([realpathSync(path)], options, host);
+    this.checker = program.getTypeChecker();
+    for (const file of program.getSourceFiles()) {
+      if (file.parseDiagnostics.length) this.fail(file, ts.flattenDiagnosticMessageText(file.parseDiagnostics[0].messageText, "\n"));
+      const scope = new Map();
+      this.scopes.set(file, scope);
+      for (const statement of file.statements) this.bind(statement, scope);
     }
-    return result;
+    return program.getSourceFile(realpathSync(path));
   }
-  resolveImport(name, node) {
-    const { resolvedModule } = ts.resolveModuleName(name, node.getSourceFile().fileName, { moduleResolution: ts.ModuleResolutionKind.Bundler, allowJs: true, resolveJsonModule: true }, ts.sys);
-    if (!resolvedModule || resolvedModule.isExternalLibraryImport) this.fail(node, `Cannot resolve contract import ${name}.`);
-    const real = realpathSync(resolvedModule.resolvedFileName);
-    if (!real.startsWith(this.root + sep)) this.fail(node, "Contract imports must stay inside the application source.");
-    return real;
+  reference(symbol, node) {
+    const visited = new Set();
+    while (symbol?.flags & ts.SymbolFlags.Alias) {
+      if (visited.has(symbol)) this.fail(node, "Cyclic contract import.");
+      visited.add(symbol);
+      const declaration = symbol.declarations[0];
+      const imported = ts.findAncestor(declaration, ts.isImportDeclaration);
+      if (imported && !imported.moduleSpecifier.text.startsWith(".")) {
+        const name = ts.isImportSpecifier(declaration) ? (declaration.propertyName ?? declaration.name).text : ts.isNamespaceImport(declaration) ? "*" : "default";
+        return new Builtin(imported.moduleSpecifier.text, name);
+      }
+      symbol = this.checker.getImmediateAliasedSymbol(symbol);
+    }
+    const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+    if (!declaration || ts.findAncestor(declaration.parent, ts.isFunctionLike)) this.fail(node, `Cannot statically resolve ${node.getText()}.`);
+    const file = declaration.getSourceFile();
+    const scope = this.scopes.get(file);
+    if (scope.has(symbol)) return scope.get(symbol);
+    if (ts.isSourceFile(declaration)) return extname(file.fileName) === ".json" ? JSON.parse(file.text) : new Module(symbol);
+    if (ts.isExportAssignment(declaration)) {
+      const value = new Lazy(declaration.expression, scope);
+      scope.set(symbol, value);
+      return value;
+    }
+    if (ts.isFunctionDeclaration(declaration)) return new FunctionValue(declaration, scope);
+    this.fail(node, `Cannot statically resolve ${node.getText()}.`);
+  }
+  lookup(node, scope) {
+    const symbol = ts.isShorthandPropertyAssignment(node.parent) ? this.checker.getShorthandAssignmentValueSymbol(node.parent) : this.checker.getSymbolAtLocation(node);
+    return scope.has(symbol) ? scope.get(symbol) : this.reference(symbol, node);
   }
   bind(statement, scope) {
     if (ts.isVariableStatement(statement)) for (const d of statement.declarationList.declarations) {
-      if (ts.isIdentifier(d.name) && d.initializer && scope.get(d.name.text)?.node !== d.initializer) scope.set(d.name.text, new Lazy(d.initializer, scope, !(statement.declarationList.flags & ts.NodeFlags.Const)));
+      const symbol = this.checker.getSymbolAtLocation(d.name);
+      if (ts.isIdentifier(d.name) && d.initializer && scope.get(symbol)?.node !== d.initializer) scope.set(symbol, new Lazy(d.initializer, scope, !(statement.declarationList.flags & ts.NodeFlags.Const)));
     }
-    if (ts.isFunctionDeclaration(statement) && statement.name) scope.set(statement.name.text, new FunctionValue(statement, scope));
+    if (ts.isFunctionDeclaration(statement) && statement.name) scope.set(this.checker.getSymbolAtLocation(statement.name), new FunctionValue(statement, scope));
   }
   value(value) {
     if (value instanceof Lazy) {
@@ -174,28 +186,23 @@ class Analyzer {
         return value.result;
       } finally { this.evaluating.delete(value); }
     }
-    if (value?.imported) {
-      if (!value.imported.exports.has(value.name)) this.fail(value.node, `Cannot resolve exported constant ${value.name}.`);
-      return this.value(value.imported.exports.get(value.name));
-    }
     return value;
   }
   fields(node, scope) {
     const object = this.expression(node, scope);
-    if (object === null || typeof object !== "object" || object instanceof Schema || object instanceof Builtin) this.fail(node, "Expected a statically declared object.");
+    if (object === null || typeof object !== "object" || object instanceof Schema || object instanceof Builtin || object instanceof Module) this.fail(node, "Expected a statically declared object.");
     return object;
   }
   expression(node, scope) {
     if (++this.steps > 50000) this.fail(node, "Contract analysis exceeded its complexity limit.");
-    if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isTypeAssertionExpression(node) || ts.isNonNullExpression(node) || ts.isAwaitExpression(node)) return this.expression(node.expression, scope);
+    if (ts.isParenthesizedExpression(node) || ts.isAssertionExpression(node) || ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node) || ts.isAwaitExpression(node)) return this.expression(node.expression, scope);
     if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return ts.isNumericLiteral(node) ? Number(node.text) : node.text;
     if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
     if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
     if (node.kind === ts.SyntaxKind.NullKeyword) return null;
     if (ts.isIdentifier(node)) {
       if (node.text === "undefined") return undefined;
-      if (!scope.has(node.text)) this.fail(node, `Cannot statically resolve ${node.text}.`);
-      return this.value(scope.get(node.text));
+      return this.value(this.lookup(node, scope));
     }
     if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) return new FunctionValue(node, scope);
     if (ts.isObjectLiteralExpression(node)) {
@@ -223,13 +230,13 @@ class Analyzer {
       const key = ts.isPropertyAccessExpression(node) ? node.name.text : this.expression(node.argumentExpression, scope);
       if (object instanceof Builtin) return new Builtin(object.module, ["*", "z", "default"].includes(object.name) ? key : `${object.name}.${key}`);
       if (object instanceof Server && key === "server") return object;
-      if (object instanceof Map) return this.value(object.get(key));
-      if (object && Object.hasOwn(object, key)) return this.value(object[key]);
+      if (object instanceof Module) return this.value(this.reference(this.checker.getExportsOfModule(object.symbol).find(s => s.name === key), node));
+      if (object && !(object instanceof Server) && Object.hasOwn(object, key)) return this.value(object[key]);
       this.fail(node, `Cannot statically resolve property ${key}.`);
     }
     if (ts.isNewExpression(node)) {
       const target = this.expression(node.expression, scope);
-      if (target instanceof Builtin && target.module === sdk && target.name === "McpServer") return new Server();
+      if (target instanceof Builtin && target.module === sdk && target.name === "McpServer") return new Server(identity);
       this.fail(node, "Only an official McpServer constructor is supported in a contract expression.");
     }
     if (node.kind === ts.SyntaxKind.RegularExpressionLiteral) {
@@ -252,7 +259,8 @@ class Analyzer {
         return this.functionBody(factory, [], node);
       }
       if (target instanceof Builtin && target.module === sdk && target.name === "fromJsonSchema") {
-        return { jsonSchema: this.materialize(new Lazy(node.arguments[0], scope)) };
+        const schema = this.materialize(new Lazy(node.arguments[0], scope));
+        try { return new Schema(fromJsonSchema(schema)); } catch (error) { this.fail(node, `Unsupported JSON Schema: ${error.message}`); }
       }
       if (target instanceof Builtin && zodModules.has(target.module)) {
         if (target.name === "toJSONSchema") {
@@ -272,32 +280,11 @@ class Analyzer {
   materialize(value) {
     value = this.value(value);
     if (value instanceof Schema) return value.value;
-    if (value instanceof FunctionValue || value instanceof Builtin || value instanceof Server) throw new Error("Application callbacks and runtime values are not valid static schema data.");
+    if (value instanceof FunctionValue || value instanceof Builtin || value instanceof Server || value instanceof Module) throw new Error("Application callbacks and runtime values are not valid static schema data.");
     if (value instanceof RegExp) return value;
     if (Array.isArray(value)) return value.map(v => this.materialize(v));
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, this.materialize(v)]));
     return value;
-  }
-  schema(value, io, node) {
-    value = this.value(value);
-    if (value === undefined && io === "input") return { type: "object", properties: {} };
-    let schema;
-    if (value instanceof Schema) schema = z.toJSONSchema(value.value, { io });
-    else if (value && Object.hasOwn(value, "jsonSchema")) schema = value.jsonSchema;
-    else this.fail(node, "Expected a supported schema object or fromJsonSchema declaration.");
-    if (!schema || typeof schema !== "object" || Array.isArray(schema)) this.fail(node, "An MCP tool schema must be a JSON Schema object.");
-    if (io === "input") {
-      if (schema.type !== undefined && schema.type !== "object") this.fail(node, "MCP tool inputs must describe objects.");
-      return {type: "object", ...schema};
-    }
-    const objectShaped = schema => {
-      if (["properties", "patternProperties", "additionalProperties", "required"].some(key => Object.hasOwn(schema, key))) return true;
-      for (const key of ["oneOf", "anyOf", "allOf"]) {
-        if (Array.isArray(schema[key]) && schema[key].length) return schema[key].every(child => child && typeof child === "object" && (child.type === "object" || objectShaped(child)));
-      }
-      return false;
-    };
-    return schema.type === undefined && objectShaped(schema) ? {type:"object", ...schema} : schema;
   }
   functionBody(fn, args, node, fixedCatalog = false) {
     if (!(fn instanceof FunctionValue)) this.fail(node, "Expected a statically declared server factory or registration helper.");
@@ -311,7 +298,7 @@ class Analyzer {
     this.analyzedFunctions.add(fn.node);
     try {
       const scope = new Map(fn.scope);
-      fn.node.parameters.forEach((p, i) => { if (ts.isIdentifier(p.name)) scope.set(p.name.text, args[i]); });
+      fn.node.parameters.forEach((p, i) => { if (ts.isIdentifier(p.name)) scope.set(this.checker.getSymbolAtLocation(p.name), args[i]); });
       if (!fn.node.body) this.fail(node, "Missing factory body.");
       if (!ts.isBlock(fn.node.body)) {
         const body = fn.node.body;
@@ -326,22 +313,20 @@ class Analyzer {
     } finally { this.calls.delete(fn.node); }
   }
   containsRegistration(node, scope, visited = new Set()) {
-    let found = false;
     const visit = n => {
       if (ts.isTypeNode(n)) return;
       if (visited.has(n)) return;
       visited.add(n);
-      if (ts.isPropertyAccessExpression(n) && ["registerTool", "setRequestHandler", "update", "remove", "disable", "enable"].includes(n.name.text)) found = true;
-      if (ts.isIdentifier(n) && identifierReference(n) && scope?.has(n.text)) {
+      if (ts.isPropertyAccessExpression(n) && ["registerTool", "setRequestHandler", "update", "remove", "disable", "enable"].includes(n.name.text)) return true;
+      if (ts.isIdentifier(n)) {
         let value;
-        try { value = this.value(scope.get(n.text)); } catch {}
-        if (value instanceof Server) found = true;
-        if (value instanceof FunctionValue && value.node.body && this.containsRegistration(value.node.body, value.scope, visited)) found = true;
+        try { value = this.value(this.lookup(n, scope)); } catch {}
+        if (value instanceof Server) return true;
+        if (value instanceof FunctionValue && value.node.body && this.containsRegistration(value.node.body, value.scope, visited)) return true;
       }
-      ts.forEachChild(n, visit);
+      return ts.forEachChild(n, visit);
     };
-    visit(node);
-    return found;
+    return !!visit(node);
   }
   statements(statements, scope, fixedCatalog = false) {
     for (const statement of statements) {
@@ -361,7 +346,7 @@ class Analyzer {
             if (ts.isCallExpression(declaration.initializer)) {
               try { target = this.expression(declaration.initializer.expression, scope); } catch {}
             }
-            if (target instanceof Builtin && target.module === sdk && target.name === "createMcpHandler") this.value(scope.get(declaration.name.text));
+            if (target instanceof Builtin && target.module === sdk && target.name === "createMcpHandler") this.value(this.lookup(declaration.name, scope));
             else this.statementExpression(declaration.initializer, scope);
           }
         }
@@ -374,19 +359,17 @@ class Analyzer {
     return undefined;
   }
   containsContractData(node, scope) {
-    let found = false;
     const visit = n => {
       if (ts.isFunctionLike(n) || ts.isTypeNode(n)) return;
-      if (ts.isIdentifier(n) && identifierReference(n)) {
-        let value = scope.get(n.text);
-        if (value?.imported) value = value.imported.exports.get(value.name);
+      if (ts.isIdentifier(n)) {
+        let value;
+        try { value = this.lookup(n, scope); } catch {}
         if (value instanceof Lazy) value = value.result;
-        if (value && typeof value === "object" && !(value instanceof Builtin) && !(value instanceof FunctionValue) && !(value instanceof Server)) found = true;
+        if (value && typeof value === "object" && !(value instanceof Builtin) && !(value instanceof FunctionValue) && !(value instanceof Server)) return true;
       }
-      ts.forEachChild(n, visit);
+      return ts.forEachChild(n, visit);
     };
-    visit(node);
-    return found;
+    return !!visit(node);
   }
   auditStatements(statements, scope) {
     for (const statement of statements) {
@@ -403,15 +386,13 @@ class Analyzer {
     let fn;
     try { fn = this.expression(node, scope); } catch { return; }
     if (!(fn instanceof FunctionValue) || this.analyzedFunctions.has(fn.node)) return;
-    const local = new Map(fn.scope);
-    for (const parameter of fn.node.parameters) if (ts.isIdentifier(parameter.name)) local.delete(parameter.name.text);
     const visit = node => {
-      if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment && this.containsContractData(node.left, local)) this.fail(node, "Deferred schema or catalog mutation is unsupported.");
-      if (ts.isDeleteExpression(node) && this.containsContractData(node.expression, local)) this.fail(node, "Deferred schema or catalog mutation is unsupported.");
-      if (ts.isCallExpression(node) && this.containsContractData(node, local)) {
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment && this.containsContractData(node.left, fn.scope)) this.fail(node, "Deferred schema or catalog mutation is unsupported.");
+      if (ts.isDeleteExpression(node) && this.containsContractData(node.expression, fn.scope)) this.fail(node, "Deferred schema or catalog mutation is unsupported.");
+      if (ts.isCallExpression(node) && this.containsContractData(node, fn.scope)) {
         const method = node.expression;
         let receiver;
-        try { if (ts.isPropertyAccessExpression(method)) receiver = this.expression(method.expression, local); } catch {}
+        try { if (ts.isPropertyAccessExpression(method)) receiver = this.expression(method.expression, fn.scope); } catch {}
         const schemaRead = receiver instanceof Schema && (modifiers.has(method.name.text) || ["parse", "safeParse", "parseAsync", "safeParseAsync"].includes(method.name.text));
         const conversion = receiver instanceof Builtin && zodModules.has(receiver.module) && method.name?.text === "toJSONSchema";
         if (!schemaRead && !conversion) this.fail(node, "Schema or catalog data escapes through a deferred callback.");
@@ -426,9 +407,9 @@ class Analyzer {
     const meta = config._meta === undefined ? undefined : this.value(config._meta);
     if (!meta || typeof meta !== "object" || !Object.hasOwn(meta, resourceSchemaKey)) return;
     const uri = this.expression(expression.arguments[1], scope);
-    if (typeof uri !== "string" || server.resources.has(uri)) this.fail(expression, "Typed resource registration must have one unique constant URI.");
+    if (typeof uri !== "string") this.fail(expression, "Typed resource registration must have a constant URI.");
     if (this.value(config.mimeType) !== "application/json") this.fail(expression, `Typed resource ${uri} must declare the application/json mimeType.`);
-    server.resources.set(uri, { uri, outputSchema: this.materialize(meta[resourceSchemaKey]) });
+    server.resources.push({ uri, outputSchema: this.materialize(meta[resourceSchemaKey]) });
   }
   statementExpression(expression, scope) {
       if (ts.isAwaitExpression(expression)) expression = expression.expression;
@@ -462,30 +443,33 @@ class Analyzer {
         }
         if (methodName === "registerTool") {
           const name = this.expression(expression.arguments[0], scope);
-          if (typeof name !== "string" || receiver.tools.has(name) || receiver.list !== undefined) this.fail(expression, "Tool registration must have one unique constant name and catalog source.");
+          if (typeof name !== "string") this.fail(expression, "Tool registration must have a constant string name.");
           const config = this.fields(expression.arguments[1], scope);
           if (this.containsRegistration(expression.arguments[2], scope)) this.fail(expression.arguments[2], "Tool handlers must not change the tool catalog.");
-          const tool = { name, inputSchema: this.schema(config.inputSchema, "input", expression) };
-          if (config.outputSchema) tool.outputSchema = this.schema(config.outputSchema, "output", expression);
-          receiver.tools.set(name, tool);
+          // Only analyzed schemas cross into the SDK. Application callbacks are never installed.
+          try {
+            receiver.registerTool(name, { inputSchema: this.materialize(config.inputSchema), outputSchema: this.materialize(config.outputSchema) }, () => { throw new Error("Contract extraction cannot call tools."); });
+          } catch (error) { this.fail(expression, error.message); }
         } else if (methodName === "setRequestHandler") {
           const name = this.expression(expression.arguments[0], scope);
           if (name !== "tools/list") {
             if (expression.arguments.slice(1).some(arg => this.containsRegistration(arg, scope))) this.fail(expression, "Request handlers must not change the tool catalog.");
             return;
           }
-          if (receiver.tools.size || receiver.list !== undefined) this.fail(expression, "Multiple tool catalog definitions are unsupported.");
+          try { receiver.server.assertCanSetRequestHandler("tools/list"); } catch (error) { this.fail(expression, error.message); }
           const fn = this.expression(expression.arguments.at(-1), scope);
           const result = this.functionBody(fn, [], expression, true);
           if (result.nextCursor) this.fail(expression, "A paginated tool catalog is not a fixed complete catalog.");
           const tools = this.value(result.tools);
           if (!Array.isArray(tools)) this.fail(expression, "tools/list must return a fixed tools array.");
-          receiver.list = tools.map(t => {
+          const catalog = tools.map(t => {
             const object = this.value(t);
             const tool = { name: this.value(object.name), inputSchema: this.materialize(object.inputSchema) };
             if (object.outputSchema) tool.outputSchema = this.materialize(object.outputSchema);
             return tool;
           });
+          receiver.server.registerCapabilities({ tools: {} });
+          receiver.server.setRequestHandler("tools/list", () => ({ tools: catalog }));
         } else {
           if (!["registerResource", "registerPrompt", "registerResourceTemplate"].includes(methodName)) this.fail(expression, `Server mutation ${methodName} is unsupported during static extraction.`);
           if (expression.arguments.some(arg => this.containsRegistration(arg, scope))) this.fail(expression, "Resource and prompt handlers must not change the tool catalog.");
