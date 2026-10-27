@@ -21,11 +21,6 @@ Or with [Go](https://go.dev/doc/install) 1.27+:
 go install github.com/holon-sh/cli/cmd/holon@latest
 ```
 
-For Python source extraction, `uv tool install holon-types` installs the CLI with
-MCP and Pydantic. Standalone and npm installations use `python3` on `PATH`; that
-environment needs `mcp>=2.3,<3`, `pydantic>=2.14,<3`, and `typing-extensions>=4.16,<5`.
-Extraction reads application source statically and never imports or executes it.
-
 ## Example
 
 Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example uses the public [Context7](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4) server.
