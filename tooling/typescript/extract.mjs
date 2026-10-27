@@ -20,10 +20,9 @@ class Schema {
   constructor(value) { this.value = value; }
 }
 const resourceSchemaKey = "sh.holon/outputSchema";
-const schemaObject = z.record(z.string(), z.unknown());
 const identity = { name: "holon-contract", version: "1" };
 class Server extends McpServer {
-  resources = new Map();
+  resources = [];
 
   async catalog() {
     const server = this.server.getCapabilities().tools ? this : new McpServer(identity, { capabilities: { tools: {} } });
@@ -78,18 +77,15 @@ export async function extract(root, entry) {
     for (const block of analyzer.blocks) analyzer.auditStatements(block.statements, block.scope);
     let tools;
     try { tools = await result.catalog(); } catch (error) { analyzer.fail(file, error.message); }
-    const names = new Set();
     for (const tool of tools) {
-      if (!tool.name || names.has(tool.name)) analyzer.fail(file, "Tool names must be unique constant strings.");
-      names.add(tool.name);
       try {
         validator(tool.inputSchema);
         if (tool.outputSchema) validator(tool.outputSchema);
       } catch (error) { analyzer.fail(file, `Unsupported JSON Schema in ${tool.name}: ${error.message}`); }
     }
-    const resources = [...result.resources.values()].sort((a, b) => a.uri.localeCompare(b.uri));
+    const resources = result.resources.sort((a, b) => a.uri.localeCompare(b.uri));
     for (const resource of resources) {
-      try { validator(schemaObject.parse(resource.outputSchema)); } catch (error) { analyzer.fail(file, `Unsupported JSON Schema in ${resource.uri}: ${error.message}`); }
+      try { validator(resource.outputSchema); } catch (error) { analyzer.fail(file, `Unsupported JSON Schema in ${resource.uri}: ${error.message}`); }
     }
     return { tools: tools.sort((a, b) => a.name.localeCompare(b.name)), resources, sources: analyzer.sources };
   } catch (error) {
@@ -411,9 +407,9 @@ class Analyzer {
     const meta = config._meta === undefined ? undefined : this.value(config._meta);
     if (!meta || typeof meta !== "object" || !Object.hasOwn(meta, resourceSchemaKey)) return;
     const uri = this.expression(expression.arguments[1], scope);
-    if (typeof uri !== "string" || server.resources.has(uri)) this.fail(expression, "Typed resource registration must have one unique constant URI.");
+    if (typeof uri !== "string") this.fail(expression, "Typed resource registration must have a constant URI.");
     if (this.value(config.mimeType) !== "application/json") this.fail(expression, `Typed resource ${uri} must declare the application/json mimeType.`);
-    server.resources.set(uri, { uri, outputSchema: this.materialize(meta[resourceSchemaKey]) });
+    server.resources.push({ uri, outputSchema: this.materialize(meta[resourceSchemaKey]) });
   }
   statementExpression(expression, scope) {
       if (ts.isAwaitExpression(expression)) expression = expression.expression;

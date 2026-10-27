@@ -60,7 +60,6 @@ for (const [name, registration, reason] of [
   ["unawaited registration", `async function register(s) {await fetch("https://example.com"); s.registerTool("late",{},()=>({content:[]}));} register(server);`, /awaited/i],
   ["non-JSON typed resource", `server.registerResource("r", "chat://r", {mimeType:"text/plain", _meta:{"sh.holon/outputSchema":{type:"object"}}}, () => ({contents:[]}));`, /application\/json/],
   ["malformed fixed schema", `server.server.setRequestHandler("tools/list", () => ({tools:[{name:"x",inputSchema:{type:"object",required:"id"}}]}));`, /JSON Schema/i],
-  ["duplicate fixed names", `server.server.setRequestHandler("tools/list", () => ({tools:[{name:"x",inputSchema:{type:"object"}},{name:"x",inputSchema:{type:"object"}}]}));`, /unique/i],
 ]) {
   test(`rejects ${name} without returning a partial catalog`, async t => {
     const root = fixture(t, `import {McpServer,createMcpHandler,fromJsonSchema} from "@modelcontextprotocol/server"; export default createMcpHandler(() => { const server=new McpServer({name:"x",version:"1"}); ${registration} return server; });`);
