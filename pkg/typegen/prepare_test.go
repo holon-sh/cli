@@ -211,6 +211,13 @@ func TestCheckTypeChecksTheProjectAgainstItsGeneratedClients(t *testing.T) {
 	needNode(t)
 	app := t.TempDir()
 	pkg := slotPackage(t, app, "holon-sh")
+	compiler, err := filepath.Abs("../../tooling/typescript/node_modules/typescript")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(compiler, filepath.Join(app, "node_modules/typescript")); err != nil {
+		t.Fatal(err)
+	}
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
 	put(t, app, "src/index.ts", `import type { Inputs } from "holon-sh"; const inputs: Inputs["orders"]["read"] = { id: "A-1" }; export default inputs;`)
 	var output bytes.Buffer

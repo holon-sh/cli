@@ -156,6 +156,10 @@ func TestContractOfAPathSource(t *testing.T) {
 }
 
 func TestGenerateReadsRequires(t *testing.T) {
+	compiler, err := filepath.Abs("../../tooling/typescript/node_modules/typescript")
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	client := filepath.Join(root, "checkout")
 	writeCLIFile(t, client, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
@@ -163,6 +167,9 @@ func TestGenerateReadsRequires(t *testing.T) {
 	// A ts-only client can have an entry without treating it as its own server.
 	writeCLIFile(t, client, "server.ts", "export const answer: string = 'ready';\n")
 	installCLISlot(t, client)
+	if err := os.Symlink(compiler, filepath.Join(client, "node_modules/typescript")); err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range []string{"orders", "docs,archive"} {
 		writeCLIFile(t, root, name+"/server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
 		writeCLIFile(t, root, name+"/server.py", pythonServer)

@@ -40,7 +40,7 @@ test("the standalone runner extracts without the SDK or any installed dependency
   assert.deepEqual(Object.keys(extracted.sources), ["server.ts"]);
 });
 
-test("check type-checks with bundled declarations or the application's compiler, and verify rejects changed sources", t => {
+test("check requires the application's compiler, and verify rejects changed sources", t => {
   const { root, run } = unpackTooling(t);
   const app = join(root, "application");
   mkdirSync(app);
@@ -49,22 +49,17 @@ test("check type-checks with bundled declarations or the application's compiler,
   writeFileSync(join(app, "check.ts"), source);
   const config = join(root, "check.json");
   writeFileSync(config, JSON.stringify({ root: app, entry: "check.ts", sources: { "check.ts": createHash("sha256").update(source).digest("hex") } }));
-  const bundled = run("check", config);
-  assert.equal(bundled.status, 0, bundled.stderr + bundled.stdout);
-  writeFileSync(join(app, "check.ts"), source + "export const wrong: string = total;\n");
-  const failing = run("check", config);
-  assert.notEqual(failing.status, 0);
-  assert.match(failing.stderr, /refusing to publish stale types/);
-  writeFileSync(config, JSON.stringify({ root: app, entry: "check.ts", sources: {} }));
-  const typeError = run("check", config);
-  assert.notEqual(typeError.status, 0);
-  assert.match(typeError.stdout + typeError.stderr, /TS2322/);
-  writeFileSync(join(app, "check.ts"), source);
+  const missing = run("check", config);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /Cannot find module 'typescript\/package.json'/);
   // TypeScript 7 exposes its compiler through bin.tsc, without the old JavaScript API.
   const compiler = join(app, "node_modules/typescript");
   mkdirSync(compiler, { recursive: true });
   writeFileSync(join(compiler, "package.json"), JSON.stringify({ bin: { tsc: "compiler.cjs" }, exports: { "./package.json": "./package.json" } }));
   writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(resolve("node_modules/typescript/bin/tsc"))});`);
+  const defaults = run("check", config);
+  assert.equal(defaults.status, 0, defaults.stderr + defaults.stdout);
+  writeFileSync(config, JSON.stringify({ root: app, entry: "check.ts", sources: {} }));
   writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));
   const configured = run("check", config);
   assert.equal(configured.status, 0, configured.stderr + configured.stdout);
