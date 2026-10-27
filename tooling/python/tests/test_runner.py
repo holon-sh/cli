@@ -33,6 +33,7 @@ def test_bundle_extracts_without_running_sources_and_detects_changes(tmp_path, n
             def read(id: str) -> str:
                 raise RuntimeError("must not execute")
         """),
+        encoding="utf-8-sig",
         newline=newline,
     )
     generated = app / "holon/apps/__init__.py"

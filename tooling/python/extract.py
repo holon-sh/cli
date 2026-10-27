@@ -108,7 +108,7 @@ class Analyzer:
         path = path.resolve()
         if path not in self.trees:
             self.trees[path] = ast.parse(
-                path.read_text(), filename=str(path.relative_to(self.root))
+                path.read_bytes(), filename=str(path.relative_to(self.root))
             )
         return self.trees[path]
 
@@ -229,10 +229,8 @@ class Analyzer:
         match node:
             case ast.Constant(value=constant):
                 return constant
-            case ast.UnaryOp(op=ast.USub(), operand=operand) if isinstance(
-                number := self.literal(path, operand), (int, float)
-            ):
-                return -number
+            case ast.UnaryOp(op=ast.USub(), operand=operand):
+                return -self.literal(path, operand)
             case ast.List(elts=items) | ast.Tuple(elts=items):
                 return [self.literal(path, item) for item in items]
             case ast.Dict(keys=keys, values=values):
@@ -278,16 +276,12 @@ class Analyzer:
             return target
         if target is typing.Literal:
             return target[tuple(self.literal(source, arg) for arg in args)]
-        if target is typing.Annotated:
-            base = self.annotation(source, args[0])
-            metadata = [
-                self.annotation(source, arg)
-                if base is CallToolResult
-                else self.field(source, arg)
-                for arg in args[1:]
-            ]
-            return target[(base, *metadata)]
-        parameters = tuple(self.annotation(source, arg) for arg in args)
+        parameters = tuple(
+            self.field(source, arg)
+            if isinstance(arg, ast.Call)
+            else self.annotation(source, arg)
+            for arg in args
+        )
         return target[parameters[0] if len(parameters) == 1 else parameters]
 
     def model(self, path: Path, value: ast.ClassDef) -> type[Any]:
@@ -449,7 +443,6 @@ class Analyzer:
             *call.args,
             **{cast(str, item.arg): item.value for item in call.keywords},
         ).arguments
-        del options["self"]
         return [self.tool(path, function, options)]
 
     def resource(

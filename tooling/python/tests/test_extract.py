@@ -105,7 +105,7 @@ from extract import extract
         (
             """
             @server.tool()
-            def read(value: "__import__('os').getcwd()") -> str:
+            def read(value: "__import__('builtins').print('application code executed')") -> str:
                 return value
             """,
             "Schema cannot be established statically",
@@ -132,12 +132,15 @@ from extract import extract
         ),
     ],
 )
-def test_unprovable_contracts_fail_visibly(tmp_path, definition, diagnostic):
+def test_unprovable_contracts_fail_visibly(tmp_path, capsys, definition, diagnostic):
     (tmp_path / "server.py").write_text(
         dedent("""
             from mcp.server import MCPServer
             from pydantic import BaseModel, Field, field_validator
             server = MCPServer("test")
+            def factory(*args, **kwargs):
+                print("application code executed")
+                return 1
         """)
         + dedent(definition)
     )
@@ -145,6 +148,7 @@ def test_unprovable_contracts_fail_visibly(tmp_path, definition, diagnostic):
     assert result["tools"] == []
     assert result["diagnostic"].startswith("server.py:")
     assert diagnostic in result["diagnostic"]
+    assert "application code executed" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -199,6 +203,7 @@ def test_static_contract_preserves_imported_types_without_running_sources(tmp_pa
     (tmp_path / "models.py").write_text(
         dedent("""
             from pydantic import BaseModel
+            raise RuntimeError("models must not execute")
             class Line(BaseModel):
                 name: str
             class Order(Line):
@@ -220,6 +225,7 @@ def test_static_contract_preserves_imported_types_without_running_sources(tmp_pa
             from typing import Annotated
             from pathlib import Path
             from mcp.server import MCPServer
+            from mcp.types import CallToolResult
             from pydantic import Field
             from models import Order
             from tools import lines
@@ -227,7 +233,7 @@ def test_static_contract_preserves_imported_types_without_running_sources(tmp_pa
             server = MCPServer("orders")
             server.add_tool(lines.add_line)
             @server.tool("lookup")
-            async def read(id: Annotated[str, Field(pattern="^ord_")], limit: int = 5) -> Order:
+            async def read(id: Annotated[str, Field(pattern="^ord_")], limit: int = 5) -> Annotated[CallToolResult, Order]:
                 raise RuntimeError("handler not called")
             @server.tool()
             async def unknown(id: str):
@@ -243,12 +249,16 @@ def test_static_contract_preserves_imported_types_without_running_sources(tmp_pa
         "tools/lines.py",
     }
     assert not (tmp_path / "executed").exists()
+    assert sorted(tool["name"] for tool in extracted["tools"]) == [
+        "add_line",
+        "lookup",
+        "unknown",
+    ]
     tools = {tool["name"]: tool for tool in extracted["tools"]}
-    assert set(tools) == {"add_line", "lookup", "unknown"}
     assert "outputSchema" not in tools["unknown"]
     inputs = Draft202012Validator(tools["lookup"]["inputSchema"])
     inputs.validate({"id": "ord_1"})
-    for payload in [{}, {"id": "invalid"}]:
+    for payload in [{}, {"id": "invalid"}, {"id": "ord_1", "limit": "many"}]:
         with pytest.raises(ValidationError):
             inputs.validate(payload)
     output = Draft202012Validator(tools["lookup"]["outputSchema"])
