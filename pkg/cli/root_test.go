@@ -133,7 +133,7 @@ func TestCheckGrammar(t *testing.T) {
 	}
 	installCLISlot(t, root)
 	for _, args := range [][]string{{"check"}, {"types", "check"}} {
-		run(t, "has no requires in server.json; pass -s", args...)
+		run(t, "has no declared dependencies; pass -s", args...)
 		run(t, "has no generated clients; run holon types generate", append(args, "--no-generate")...)
 	}
 	run(t, "is not a directory", "check", "package.json")

@@ -229,6 +229,17 @@ class Analyzer:
         match node:
             case ast.Constant(value=constant):
                 return constant
+            case ast.JoinedStr(values=values):
+                return "".join(str(self.literal(path, value)) for value in values)
+            case ast.FormattedValue(value=value, conversion=-1, format_spec=None):
+                formatted = self.literal(path, value)
+                if not isinstance(formatted, (str, int, float)):
+                    self.fail(
+                        path,
+                        node,
+                        "Template values must be constant strings or numbers.",
+                    )
+                return formatted
             case ast.UnaryOp(op=ast.USub(), operand=operand):
                 return -self.literal(path, operand)
             case ast.List(elts=items) | ast.Tuple(elts=items):
@@ -524,7 +535,7 @@ class Analyzer:
             "add_tool requires one statically resolvable undecorated function.",
         )
 
-    def extract(self, path: Path) -> dict[str, list[dict[str, Any]]]:
+    def extract(self, path: Path, descriptor: bool = False) -> dict[str, Any]:
         tree = self.tree(path)
         servers = {
             name for name in self.load(path) if self.is_server(path, ast.Name(id=name))
@@ -538,6 +549,45 @@ class Analyzer:
                 tree,
                 "The entrypoint must expose one official MCP server as server.",
             )
+        if descriptor:
+            source, construction = self.resolve(path, ast.Name(id="server"))
+            assert isinstance(construction, ast.Call)
+            if len(construction.args) > 1 or any(
+                item.arg is None for item in construction.keywords
+            ):
+                self.fail(
+                    source,
+                    construction,
+                    "Declare metadata with explicit MCP constructor arguments.",
+                )
+            fields = {"name", "version", "description", "title", "website_url", "icons"}
+            info = {
+                item.arg: self.literal(source, item.value)
+                for item in construction.keywords
+                if item.arg in fields
+            }
+            if construction.args:
+                info["name"] = self.literal(source, construction.args[0])
+            if "website_url" in info:
+                info["websiteUrl"] = info.pop("website_url")
+            publishing = (
+                self.literal(path, ast.Name(id="publishing"))
+                if "publishing" in self.load(path)
+                else {}
+            )
+            if not isinstance(publishing, dict):
+                self.fail(
+                    path,
+                    construction,
+                    "Declare publishing as a dictionary literal.",
+                )
+            if fields.intersection(publishing) or "websiteUrl" in publishing:
+                self.fail(
+                    path,
+                    construction,
+                    "Declare shared metadata in the MCP constructor, not publishing.",
+                )
+            return {"descriptor": {**publishing, **info}}
         match self.resolve(path, ast.Name(id="server")):
             case (source, ast.Call(keywords=keywords) as construction) if any(
                 item.arg in CONSTRUCTOR_CATALOGS for item in keywords
@@ -611,7 +661,7 @@ class Analyzer:
         return {"tools": tools, "resources": resources}
 
 
-def extract(root: str | Path, entry: str) -> dict[str, Any]:
+def extract(root: str | Path, entry: str, descriptor: bool = False) -> dict[str, Any]:
     analyzer = Analyzer(Path(root))
     sources: dict[str, str] = {}
     try:
@@ -624,7 +674,7 @@ def extract(root: str | Path, entry: str) -> dict[str, Any]:
                         sources[str(path.relative_to(analyzer.root))] = (
                             hashlib.file_digest(source, "sha256").hexdigest()
                         )
-        catalog = analyzer.extract((analyzer.root / entry).resolve())
+        catalog = analyzer.extract((analyzer.root / entry).resolve(), descriptor)
         return {**catalog, "sources": sources}
     except (
         ValueError,
@@ -656,5 +706,12 @@ if __name__ == "__main__":
     config, output = sys.argv[1:]
     apps = json.loads(Path(config).read_text())["apps"]
     Path(output).write_text(
-        json.dumps({app["name"]: extract(app["path"], app["entry"]) for app in apps})
+        json.dumps(
+            {
+                app["name"]: extract(
+                    app["path"], app["entry"], app.get("descriptor", False)
+                )
+                for app in apps
+            }
+        )
     )

@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -33,11 +34,14 @@ func SourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
 	return patternmatcher.New(patterns)
 }
 
+// ignoredDirs are the dependency and cache directories excluded from source snapshots and scans.
+var ignoredDirs = []string{".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+
 // GeneratedSource reports dependency directories and marked client slots excluded from source snapshots.
 func GeneratedSource(root, path string) bool {
 	relative, _ := filepath.Rel(root, path)
 	if slices.ContainsFunc(strings.Split(filepath.ToSlash(relative), "/"), func(part string) bool {
-		return slices.Contains([]string{".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}, part)
+		return slices.Contains(ignoredDirs, part)
 	}) {
 		return true
 	}
@@ -188,4 +192,26 @@ func IgnoredSource(root, path string, matcher *patternmatcher.PatternMatcher) (b
 		return true, nil
 	}
 	return matcher.MatchesOrParentMatches(filepath.ToSlash(relative))
+}
+
+// MentionsMCP reports whether source under root references an MCP SDK or holon-sh.
+func MentionsMCP(root string) bool {
+	found := false
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || found {
+			return filepath.SkipAll
+		}
+		if entry.IsDir() {
+			if slices.Contains(ignoredDirs, entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if slices.Contains([]string{".ts", ".mts", ".cts", ".js", ".mjs", ".cjs", ".tsx", ".jsx", ".py"}, filepath.Ext(path)) {
+			data, err := os.ReadFile(path)
+			found = err == nil && (bytes.Contains(data, []byte("@modelcontextprotocol/")) || bytes.Contains(data, []byte("holon-sh")) || bytes.Contains(data, []byte("from mcp")) || bytes.Contains(data, []byte("import mcp")))
+		}
+		return nil
+	})
+	return found
 }

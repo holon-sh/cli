@@ -108,24 +108,37 @@ func (p *Prepared) consumer(name string) *preparedConsumer {
 	return nil
 }
 
-func prepareSource(ctx context.Context, root, name, path string) (*preparedSource, error) {
+func prepareSource(ctx context.Context, root, name, path string, options Options) (*preparedSource, error) {
 	origin, entry, language, err := serverEntry(path)
 	if err != nil {
 		return nil, err
 	}
 	s := &preparedSource{origin: origin, root: filepath.Join(root, "sources", name), entry: entry, language: language}
-	data, err := os.ReadFile(filepath.Join(origin, "server.json"))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w (a server source needs a server.json beside its entry)", origin, err)
-	}
-	descriptor, err := ParseDescriptor(data)
-	if err != nil {
-		return nil, fmt.Errorf("%s/server.json: %w", origin, err)
-	}
-	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
 	if s.fingerprint, err = SnapshotSource(name, origin, s.root); err != nil {
 		return nil, err
 	}
+	// Resolve the descriptor from the snapshot, so identity and extracted tools always come
+	// from the same revision.
+	data, err := authoredDescriptor(s.root)
+	if err != nil {
+		return nil, fmt.Errorf("%s descriptor: %w", origin, err)
+	}
+	if data == nil {
+		if language == "go" || !MentionsMCP(s.root) {
+			return nil, fmt.Errorf("%s: a server source needs a server.json beside its entry", origin)
+		}
+		if data, err = s.extractDescriptor(ctx, root, options); err != nil {
+			return nil, fmt.Errorf("%s descriptor: %w", origin, err)
+		}
+	}
+	descriptor, err := ParseDescriptor(data)
+	if err != nil {
+		if len(data) == 0 {
+			return nil, fmt.Errorf("%s: a server source needs a server.json beside its entry", origin)
+		}
+		return nil, fmt.Errorf("%s descriptor: %w", origin, err)
+	}
+	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
 	return s, ctx.Err()
 }
 
@@ -171,7 +184,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 				continue
 			}
 			name := strconv.Itoa(len(p.paths))
-			s, err := prepareSource(ctx, root, name, absolute)
+			s, err := prepareSource(ctx, root, name, absolute, o)
 			if err != nil {
 				return nil, err
 			}
@@ -258,11 +271,9 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 			return fmt.Errorf("%s: own server %s is outside %s", c.Name, c.server.origin, c.Dir)
 		}
 		identity = c.server.metadata.Identity
-	} else if data, err := os.ReadFile(filepath.Join(c.Dir, "server.json")); err == nil {
-		descriptor, err := ParseDescriptor(data)
-		if err != nil {
-			return fmt.Errorf("%s/server.json: %w", c.Dir, err)
-		}
+	} else if data, err := ReadDescriptor(ctx, c.Dir, p.options); err != nil {
+		return fmt.Errorf("%s: %w", c.Dir, err)
+	} else if descriptor, err := ParseDescriptor(data); err == nil {
 		identity = descriptor.Identity()
 	}
 	c.metadata = &mcpcontract.Metadata{Identity: identity, Requires: map[string]string{}}

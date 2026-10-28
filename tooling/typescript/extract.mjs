@@ -63,19 +63,33 @@ const modifiers = new Set([
   "strip", "extend", "pick", "omit", "partial", "required",
 ]);
 
-export async function extract(root, entry) {
+export async function extract(root, entry, descriptor = false) {
   const analyzer = new Analyzer(root);
   try {
     if (!entry) throw new Error("Cannot identify a static MCP handler entrypoint; use the existing server.ts/server.js convention or a direct package main/start entry.");
     const file = analyzer.load(resolve(analyzer.root, entry));
     for (const [file, scope] of analyzer.scopes) analyzer.statements(file.statements, scope);
     const symbol = analyzer.checker.getSymbolAtLocation(file);
-    const exported = symbol && analyzer.checker.getExportsOfModule(symbol).find(s => s.name === "default");
+    const exportedSymbols = symbol ? analyzer.checker.getExportsOfModule(symbol) : [];
+    const exported = exportedSymbols.find(s => s.name === "default");
     if (!exported) analyzer.fail(file, "Expected the existing default MCP handler export.");
     const result = analyzer.value(analyzer.reference(exported, file));
     if (!(result instanceof Server)) analyzer.fail(file, "Cannot establish the default MCP handler's tool catalog.");
+    let publishing;
+    if (descriptor) {
+      const declaration = exportedSymbols.find(s => s.name === "publishing");
+      const declared = declaration ? analyzer.materialize(analyzer.reference(declaration, file)) : {};
+      if (declared == null || Object.getPrototypeOf(declared) !== Object.prototype) analyzer.fail(file, "Declare publishing as an object literal.");
+      const shared = ["name", "version", "description", "title", "websiteUrl", "icons"];
+      for (const field of shared) if (Object.hasOwn(declared, field)) analyzer.fail(file, `Declare ${field} in the MCP constructor, not publishing.`);
+      const info = result.info.node ? analyzer.materialize(result.info) : null;
+      if (info == null || Object.getPrototypeOf(info) !== Object.prototype) analyzer.fail(file, "Declare server metadata as a static McpServer constructor object.");
+      publishing = { ...declared };
+      for (const field of shared) if (Object.hasOwn(info, field)) publishing[field] = info[field];
+    }
     for (const [file, scope] of analyzer.scopes) analyzer.auditStatements(file.statements, scope);
     for (const block of analyzer.blocks) analyzer.auditStatements(block.statements, block.scope);
+    if (descriptor) return { descriptor: publishing };
     let tools;
     try { tools = await result.catalog(); } catch (error) { analyzer.fail(file, error.message); }
     for (const tool of tools) {
@@ -199,6 +213,11 @@ class Analyzer {
     if (++this.steps > 50000) this.fail(node, "Contract analysis exceeded its complexity limit.");
     if (ts.isParenthesizedExpression(node) || ts.isAssertionExpression(node) || ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node) || ts.isAwaitExpression(node)) return this.expression(node.expression, scope);
     if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return ts.isNumericLiteral(node) ? Number(node.text) : node.text;
+    if (ts.isTemplateExpression(node)) return node.head.text + node.templateSpans.map(span => {
+      const value = this.expression(span.expression, scope);
+      if (!["string", "number"].includes(typeof value)) this.fail(span.expression, "Template values must be constant strings or numbers.");
+      return String(value) + span.literal.text;
+    }).join("");
     if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
     if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
     if (node.kind === ts.SyntaxKind.NullKeyword) return null;
@@ -238,7 +257,11 @@ class Analyzer {
     }
     if (ts.isNewExpression(node)) {
       const target = this.expression(node.expression, scope);
-      if (target instanceof Builtin && target.module === sdk && target.name === "McpServer") return new Server(identity);
+      if (target instanceof Builtin && target.module === sdk && target.name === "McpServer") {
+        const server = new Server(identity);
+        server.info = new Lazy(node.arguments[0], scope);
+        return server;
+      }
       this.fail(node, "Only an official McpServer constructor is supported in a contract expression.");
     }
     if (node.kind === ts.SyntaxKind.RegularExpressionLiteral) {

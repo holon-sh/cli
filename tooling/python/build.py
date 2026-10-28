@@ -16,7 +16,9 @@ def build(root: Path) -> Path:
         old.unlink()
     archive = destination / f"cli-tooling-py-{version}.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-        files = {name: (root / name).read_bytes() for name in ("extract.py", "runner.py")}
+        files = {
+            name: (root / name).read_bytes() for name in ("extract.py", "runner.py")
+        }
         files["requirements.txt"] = ("\n".join(project["dependencies"]) + "\n").encode()
         for name, content in files.items():
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
