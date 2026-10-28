@@ -49,8 +49,8 @@ func Install(ctx context.Context, consumers []Consumer, options Options) error {
 		for _, target := range c.Targets {
 			var err error
 			switch target {
-			case TargetTS:
-				err = ensureNodeRuntime(ctx, c.Dir, o)
+			case TargetTS, TargetUI:
+				err = ensureNodeRuntime(ctx, c.Dir, nodePackages[target], o)
 			case TargetPy:
 				err = ensurePythonRuntime(c.Dir)
 			}
@@ -62,25 +62,25 @@ func Install(ctx context.Context, consumers []Consumer, options Options) error {
 	return nil
 }
 
-func ensureNodeRuntime(ctx context.Context, dir string, o Options) error {
+func ensureNodeRuntime(ctx context.Context, dir, packageName string, o Options) error {
 	const installCommand = "install"
-	if _, err := InstalledRuntime(dir); err == nil {
+	if _, err := installedRuntime(dir, packageName); err == nil {
 		return nil
 	}
 	var manifest packageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%s has no package.json; create one and run npm install %s", dir, nodePackage)
+			return fmt.Errorf("%s has no package.json; create one and run npm install %s", dir, packageName)
 		}
 		return err
 	}
 	manager := packageManager(dir, manifest)
-	if !manifest.declares(nodePackage) {
+	if !manifest.declares(packageName) {
 		verb := "add"
 		if manager == "npm" {
 			verb = installCommand
 		}
-		return fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, nodePackage, manager, verb, nodePackage)
+		return fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, packageName, manager, verb, packageName)
 	}
 	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(dir), manager, installCommand)
 	if err := validateEnv(o.Env); err != nil {
@@ -88,19 +88,19 @@ func ensureNodeRuntime(ctx context.Context, dir string, o Options) error {
 	}
 	command := exec.CommandContext(ctx, manager, installCommand)
 	command.Dir = dir
-	command.Env = append(append(command.Environ(), o.Env...), "HOLON_SKIP_POSTINSTALL=1")
+	command.Env = append(command.Environ(), o.Env...)
 	command.Stdout, command.Stderr = o.Stderr, o.Stderr
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
 	}
-	_, err := InstalledRuntime(dir)
+	_, err := installedRuntime(dir, packageName)
 	return err
 }
 
 // ErrNoRuntime identifies a project without a declared Holon SDK runtime.
-var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh in package.json, on holon-sh in pyproject.toml, or on github.com/holon-sh/sdk/go in go.mod")
+var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh or holon-ui in package.json, on holon-sh in pyproject.toml, or on github.com/holon-sh/sdk/go in go.mod")
 
-// DeclaredTargets are the slots a project declares: ts when package.json depends on holon-sh,
+// DeclaredTargets are the slots a project declares: ts or ui when package.json depends on holon-sh or holon-ui,
 // py when pyproject.toml or requirements declare holon-sh, and go when go.mod requires the Go SDK. None is an error.
 func DeclaredTargets(dir string) ([]string, error) {
 	var targets []string
@@ -110,6 +110,9 @@ func DeclaredTargets(dir string) ([]string, error) {
 	}
 	if manifest.declares(nodePackage) {
 		targets = append(targets, TargetTS)
+	}
+	if manifest.declares(nodePackages[TargetUI]) {
+		targets = append(targets, TargetUI)
 	}
 	if ensurePythonRuntime(dir) == nil {
 		targets = append(targets, TargetPy)

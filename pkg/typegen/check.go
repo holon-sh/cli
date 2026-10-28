@@ -22,8 +22,8 @@ func Check(ctx context.Context, dir string, options Options) error {
 		switch target {
 		case TargetGo:
 			return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
-		case TargetTS:
-			slot, err := InstalledRuntime(dir)
+		case TargetTS, TargetUI:
+			slot, err := installedRuntime(dir, nodePackages[target])
 			if err != nil {
 				return err
 			}
@@ -51,7 +51,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 		return err
 	}
 	slices.Sort(languages)
-	for _, language := range languages {
+	for _, language := range slices.Compact(languages) {
 		l := typeLanguages[language]
 		program, err := l.localProgram(ctx)
 		if err != nil {
