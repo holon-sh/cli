@@ -70,18 +70,22 @@ export async function extract(root, entry, descriptor = false) {
     const file = analyzer.load(resolve(analyzer.root, entry));
     for (const [file, scope] of analyzer.scopes) analyzer.statements(file.statements, scope);
     const symbol = analyzer.checker.getSymbolAtLocation(file);
-    const exported = symbol && analyzer.checker.getExportsOfModule(symbol).find(s => s.name === "default");
+    const exportedSymbols = symbol ? analyzer.checker.getExportsOfModule(symbol) : [];
+    const exported = exportedSymbols.find(s => s.name === "default");
     if (!exported) analyzer.fail(file, "Expected the existing default MCP handler export.");
     const result = analyzer.value(analyzer.reference(exported, file));
     if (!(result instanceof Server)) analyzer.fail(file, "Cannot establish the default MCP handler's tool catalog.");
     let publishing;
     if (descriptor) {
-      const declaration = analyzer.checker.getExportsOfModule(symbol).find(s => s.name === "publishing");
-      publishing = declaration ? analyzer.materialize(analyzer.reference(declaration, file)) : {};
-      for (const field of ["name", "version", "description", "title", "websiteUrl", "icons"]) {
-        if (Object.hasOwn(publishing, field)) analyzer.fail(file, `Declare ${field} in the MCP constructor, not publishing.`);
-      }
-      publishing = { ...publishing, ...analyzer.materialize(result.info) };
+      const declaration = exportedSymbols.find(s => s.name === "publishing");
+      const declared = declaration ? analyzer.materialize(analyzer.reference(declaration, file)) : {};
+      if (declared == null || Object.getPrototypeOf(declared) !== Object.prototype) analyzer.fail(file, "Declare publishing as an object literal.");
+      const shared = ["name", "version", "description", "title", "websiteUrl", "icons"];
+      for (const field of shared) if (Object.hasOwn(declared, field)) analyzer.fail(file, `Declare ${field} in the MCP constructor, not publishing.`);
+      const info = result.info.node ? analyzer.materialize(result.info) : null;
+      if (info == null || Object.getPrototypeOf(info) !== Object.prototype) analyzer.fail(file, "Declare server metadata as a static McpServer constructor object.");
+      publishing = { ...declared };
+      for (const field of shared) if (Object.hasOwn(info, field)) publishing[field] = info[field];
     }
     for (const [file, scope] of analyzer.scopes) analyzer.auditStatements(file.statements, scope);
     for (const block of analyzer.blocks) analyzer.auditStatements(block.statements, block.scope);

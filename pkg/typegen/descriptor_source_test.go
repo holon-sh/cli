@@ -11,24 +11,42 @@ import (
 )
 
 func TestCodeDescriptor(t *testing.T) {
-	for _, test := range []struct{ entry, source, versionFile, version, dynamic string }{
+	for _, test := range []struct {
+		entry, source, versionFile, version string
+		rejects                             map[string]string
+	}{
 		{"server.ts", `import {McpServer, createMcpHandler} from "@modelcontextprotocol/server";
 import {version} from "./version.ts";
 import {writeFileSync} from "node:fs";
 writeFileSync(new URL("./executed",import.meta.url), "unexpected");
 const info = {name:"example.com/orders",version,description:"Order tools"};
 export const publishing = {packages:[{registryType:"oci",identifier:` + "`images.example/orders:${info.version}`" + `,transport:{type:"stdio"}}]};
-export default createMcpHandler(()=>new McpServer(info));`, "version.ts", `export const version = "1.2.3";`, `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export default createMcpHandler(()=>new McpServer(getInfo()));`},
+export default createMcpHandler(()=>new McpServer(info));`, "version.ts", `export const version = "1.2.3";`, map[string]string{
+			"Cannot statically resolve": `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export default createMcpHandler(()=>new McpServer(getInfo()));`,
+			"not publishing": `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export const publishing={name:"example.com/orders"}; export default createMcpHandler(()=>new McpServer({name:"example.com/orders",version:"1",description:"Order tools"}));`,
+			"object literal": `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export const publishing=[{registryType:"oci"}]; export default createMcpHandler(()=>new McpServer({name:"example.com/orders",version:"1",description:"Order tools"}));`,
+		}},
 		{"server.py", `from mcp.server import MCPServer
 from version import version
 from pathlib import Path
 Path(__file__).with_name("executed").write_text("unexpected")
 server = MCPServer("example.com/orders", version=version, description="Order tools")
 publishing = {"packages": [{"registryType":"oci", "identifier": f"images.example/orders:{version}", "transport":{"type":"stdio"}}]}
-`, "version.py", `version = "1.2.3"`, `from mcp.server import MCPServer
-server = MCPServer("example.com/orders", version="1", description="Orders", **getInfo())`},
+`, "version.py", `version = "1.2.3"`, map[string]string{
+			"explicit MCP constructor": `from mcp.server import MCPServer
+server = MCPServer("example.com/orders", version="1", description="Orders", **getInfo())`,
+			"not publishing": `from mcp.server import MCPServer
+server = MCPServer("example.com/orders", version="1", description="Orders")
+publishing = {"version": "9"}`,
+		}},
 	} {
 		t.Run(test.entry, func(t *testing.T) {
+			switch filepath.Ext(test.entry) {
+			case ".ts":
+				needNode(t)
+			case ".py":
+				needPython(t)
+			}
 			root := t.TempDir()
 			put(t, root, test.entry, test.source)
 			put(t, root, test.versionFile, test.version)
@@ -58,9 +76,11 @@ server = MCPServer("example.com/orders", version="1", description="Orders", **ge
 					t.Fatalf("source modified: %s (%v)", file, err)
 				}
 			}
-			put(t, root, test.entry, test.dynamic)
-			if _, err := ReadDescriptor(t.Context(), root, Options{}); err == nil {
-				t.Fatal("dynamic constructor metadata was accepted")
+			for want, source := range test.rejects {
+				put(t, root, test.entry, source)
+				if _, err := ReadDescriptor(t.Context(), root, Options{}); err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("rejection %q = %v", want, err)
+				}
 			}
 			// Authored JSON remains authoritative, even when implementation metadata cannot be extracted.
 			put(t, root, test.entry, "invalid source")
