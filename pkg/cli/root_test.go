@@ -111,6 +111,12 @@ func TestExplicitOwnServer(t *testing.T) {
 	if err != nil || !strings.Contains(string(browser), `class App extends HostApp`) || !strings.Contains(string(browser), `"view"`) || !strings.Contains(string(browser), `"orders"`) || !strings.Contains(string(browser), `"read"`) {
 		t.Fatalf("own and dependency browser clients = %s, %v", browser, err)
 	}
+	writeCLIFile(t, root, "server.json", `{"name":"example.com/---","version":"1.0.0","description":"View"}`)
+	run(t, "", "types", "generate", "-s", "./server.py")
+	browser, err = os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts"))
+	if err != nil || !strings.Contains(string(browser), `class App extends HostApp`) || !strings.Contains(string(browser), `Apps["app"]["tools"]`) {
+		t.Fatalf("punctuation-only server name lost its App class: %s, %v", browser, err)
+	}
 	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")
 }
 

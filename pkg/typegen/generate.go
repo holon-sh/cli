@@ -331,7 +331,7 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "browser", "../runtime.mjs", "holon-sh/protocol"
 		request.Requires, request.Contracts = maps.Clone(request.Requires), maps.Clone(request.Contracts)
 		if own.Schema != nil {
-			alias := serverKey(own.Identity.Name)
+			alias := cmp.Or(serverKey(own.Identity.Name), "app")
 			if _, exists := request.Contracts[alias]; exists {
 				return nil, fmt.Errorf("own browser client %s conflicts with a dependency alias", alias)
 			}
