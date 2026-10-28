@@ -215,16 +215,14 @@ holon types check -s https://mcp.context7.com/mcp
 ```text
 Generate typed clients for MCP servers.
 
-Leverages sh.holon.requires in the publisher-provided metadata field
-(https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) from
-server.json (https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) to
-resolve dependencies, or the -s list for explicit dependencies.
+Resolves sh.holon.requires from server.json, or from the source publishing declaration when
+no descriptor exists. Use -s for explicit dependencies.
 
 Usage:
   holon types generate [DIR] [flags]
 
 Examples:
-  # Generate for the current project, from server.json requires
+  # Generate for the current project, from declared dependencies
   holon types generate
 
   # Another project
@@ -244,7 +242,7 @@ Flags:
       --contract string      Print one server's MCP contract instead of generating
   -h, --help                 help for generate
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
-                             directory; repeatable. Without it, server.json requires is used
+                             directory; repeatable. Without it, declared dependencies are used
   -v, --verbose              Show generation details
 ```
 
@@ -256,16 +254,14 @@ Flags:
 ```text
 Generate typed clients for MCP servers, then type-check the project's calls to them.
 
-Leverages sh.holon.requires in the publisher-provided metadata field
-(https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) from
-server.json (https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) to
-resolve dependencies, or the -s list for explicit dependencies.
+Resolves sh.holon.requires from server.json, or from the source publishing declaration when
+no descriptor exists. Use -s for explicit dependencies.
 
 Usage:
   holon types check [DIR] [flags]
 
 Examples:
-  # Generate from server.json requires, then type-check
+  # Generate from declared dependencies, then type-check
   holon types check
 
   # Type-check the existing clients only (no network, no writes)
@@ -279,7 +275,7 @@ Flags:
       --no-generate          Type-check the existing clients only: no network, no install, no
                              writes
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
-                             directory; repeatable. Without it, server.json requires is used
+                             directory; repeatable. Without it, declared dependencies are used
 ```
 
 </details>
