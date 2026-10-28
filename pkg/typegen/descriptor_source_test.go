@@ -11,21 +11,22 @@ import (
 )
 
 func TestCodeDescriptor(t *testing.T) {
-	for _, test := range []struct{ entry, source, versionFile, version string }{
+	for _, test := range []struct{ entry, source, versionFile, version, dynamic string }{
 		{"server.ts", `import {McpServer, createMcpHandler} from "@modelcontextprotocol/server";
 import {version} from "./version.ts";
 import {writeFileSync} from "node:fs";
 writeFileSync(new URL("./executed",import.meta.url), "unexpected");
 const info = {name:"example.com/orders",version,description:"Order tools"};
 export const publishing = {packages:[{registryType:"oci",identifier:` + "`images.example/orders:${info.version}`" + `,transport:{type:"stdio"}}]};
-export default createMcpHandler(()=>new McpServer(info));`, "version.ts", `export const version = "1.2.3";`},
+export default createMcpHandler(()=>new McpServer(info));`, "version.ts", `export const version = "1.2.3";`, `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export default createMcpHandler(()=>new McpServer(getInfo()));`},
 		{"server.py", `from mcp.server import MCPServer
 from version import version
 from pathlib import Path
 Path(__file__).with_name("executed").write_text("unexpected")
 server = MCPServer("example.com/orders", version=version, description="Order tools")
 publishing = {"packages": [{"registryType":"oci", "identifier": f"images.example/orders:{version}", "transport":{"type":"stdio"}}]}
-`, "version.py", `version = "1.2.3"`},
+`, "version.py", `version = "1.2.3"`, `from mcp.server import MCPServer
+server = MCPServer("example.com/orders", version="1", description="Orders", **getInfo())`},
 	} {
 		t.Run(test.entry, func(t *testing.T) {
 			root := t.TempDir()
@@ -56,6 +57,10 @@ publishing = {"packages": [{"registryType":"oci", "identifier": f"images.example
 				if _, err := os.Stat(filepath.Join(root, file)); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("source modified: %s (%v)", file, err)
 				}
+			}
+			put(t, root, test.entry, test.dynamic)
+			if _, err := ReadDescriptor(t.Context(), root, Options{}); err == nil {
+				t.Fatal("dynamic constructor metadata was accepted")
 			}
 			// Authored JSON remains authoritative, even when implementation metadata cannot be extracted.
 			put(t, root, test.entry, "invalid source")

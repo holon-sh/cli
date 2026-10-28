@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const dependencyHelp = "Leverages sh.holon.requires in the publisher-provided metadata field (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) from server.json (https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) to resolve dependencies, or the -s list for explicit dependencies."
+const dependencyHelp = "Resolves sh.holon.requires from server.json, or from the source publishing declaration when no descriptor exists. Use -s for explicit dependencies."
 
-const generateExamples = `  # Generate for the current project, from server.json requires
+const generateExamples = `  # Generate for the current project, from declared dependencies
   holon types generate
 
   # Another project
@@ -84,7 +84,7 @@ func clientDir(path string) (string, error) {
 	return filepath.EvalSymlinks(dir)
 }
 
-// consumer selects dependencies from -s or server.json. A -s path inside dir is the project's own
+// consumer selects dependencies from -s or descriptor metadata. A -s path inside dir is the project's own
 // server, which supplies its identity and contract.
 func consumer(ctx context.Context, dir string, servers []string) (typegen.Consumer, error) {
 	targets, err := typegen.DeclaredTargets(dir)
@@ -142,7 +142,7 @@ func printContract(cmd *cobra.Command, arg string) error {
 }
 
 // generateProject resolves the client directory and generates its declared slots from -s
-// or server.json requires. It returns the directory for type-checking.
+// or declared dependencies. It returns the directory for type-checking.
 func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (string, error) {
 	typed := cmd.Flags().Arg(0)
 	dir, err := clientDir(typed)
@@ -161,7 +161,7 @@ func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (
 func newCheck(short string) *cobra.Command {
 	var servers []string
 	var noGenerate bool
-	cmd := &cobra.Command{Use: "check [DIR]", Short: short, Long: "Generate typed clients for MCP servers, then type-check the project's calls to them.\n\n" + dependencyHelp, Example: `  # Generate from server.json requires, then type-check
+	cmd := &cobra.Command{Use: "check [DIR]", Short: short, Long: "Generate typed clients for MCP servers, then type-check the project's calls to them.\n\n" + dependencyHelp, Example: `  # Generate from declared dependencies, then type-check
   holon types check
 
   # Type-check the existing clients only (no network, no writes)
@@ -189,7 +189,7 @@ func newCheck(short string) *cobra.Command {
 	return cmd
 }
 
-const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, server.json requires is used"
+const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, declared dependencies are used"
 
 // NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string) *cobra.Command {

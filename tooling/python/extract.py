@@ -552,6 +552,14 @@ class Analyzer:
         if descriptor:
             source, construction = self.resolve(path, ast.Name(id="server"))
             assert isinstance(construction, ast.Call)
+            if len(construction.args) > 1 or any(
+                item.arg is None for item in construction.keywords
+            ):
+                self.fail(
+                    source,
+                    construction,
+                    "Declare metadata with explicit MCP constructor arguments.",
+                )
             fields = {"name", "version", "description", "title", "website_url", "icons"}
             info = {
                 item.arg: self.literal(source, item.value)

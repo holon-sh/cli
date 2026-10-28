@@ -258,10 +258,12 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 			return fmt.Errorf("%s: own server %s is outside %s", c.Name, c.server.origin, c.Dir)
 		}
 		identity = c.server.metadata.Identity
-	} else if data, err := os.ReadFile(filepath.Join(c.Dir, "server.json")); err == nil {
+	} else if data, err := ReadDescriptor(ctx, c.Dir, p.options); err != nil {
+		return err
+	} else if len(data) != 0 {
 		descriptor, err := ParseDescriptor(data)
 		if err != nil {
-			return fmt.Errorf("%s/server.json: %w", c.Dir, err)
+			return fmt.Errorf("%s descriptor: %w", c.Dir, err)
 		}
 		identity = descriptor.Identity()
 	}
