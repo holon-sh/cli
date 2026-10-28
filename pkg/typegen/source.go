@@ -34,11 +34,14 @@ func SourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
 	return patternmatcher.New(patterns)
 }
 
+// ignoredDirs are the dependency and cache directories excluded from source snapshots and scans.
+var ignoredDirs = []string{".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+
 // GeneratedSource reports dependency directories and marked client slots excluded from source snapshots.
 func GeneratedSource(root, path string) bool {
 	relative, _ := filepath.Rel(root, path)
 	if slices.ContainsFunc(strings.Split(filepath.ToSlash(relative), "/"), func(part string) bool {
-		return slices.Contains([]string{".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}, part)
+		return slices.Contains(ignoredDirs, part)
 	}) {
 		return true
 	}
@@ -199,7 +202,7 @@ func MentionsMCP(root string) bool {
 			return filepath.SkipAll
 		}
 		if entry.IsDir() {
-			if entry.Name() == "node_modules" {
+			if slices.Contains(ignoredDirs, entry.Name()) {
 				return filepath.SkipDir
 			}
 			return nil

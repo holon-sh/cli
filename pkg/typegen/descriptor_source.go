@@ -56,9 +56,12 @@ func ReadDescriptor(ctx context.Context, dir string, options Options) (data json
 	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
 		return nil, err
 	}
-	_, _, language, err := serverEntry(filepath.Join(snapshot, entry))
-	if err != nil {
-		return nil, err
+	if !isFile(filepath.Join(snapshot, entry)) {
+		return nil, fmt.Errorf("%s is excluded from its own source snapshot", filepath.Join(dir, entry))
+	}
+	language := "typescript"
+	if filepath.Ext(entry) == ".py" {
+		language = "python"
 	}
 	results, err := extractTypes(ctx, root, map[string][]extractionEntry{
 		language: {{Name: "server", Path: snapshot, Entry: entry, Descriptor: true}},
