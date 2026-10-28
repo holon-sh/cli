@@ -23,8 +23,8 @@ const info = {name:"example.com/orders",version,description:"Order tools"};
 export const publishing = {packages:[{registryType:"oci",identifier:` + "`images.example/orders:${info.version}`" + `,transport:{type:"stdio"}}]};
 export default createMcpHandler(()=>new McpServer(info));`, "version.ts", `export const version = "1.2.3";`, map[string]string{
 			"Cannot statically resolve": `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export default createMcpHandler(()=>new McpServer(getInfo()));`,
-			"not publishing": `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export const publishing={name:"example.com/orders"}; export default createMcpHandler(()=>new McpServer({name:"example.com/orders",version:"1",description:"Order tools"}));`,
-			"object literal": `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export const publishing=[{registryType:"oci"}]; export default createMcpHandler(()=>new McpServer({name:"example.com/orders",version:"1",description:"Order tools"}));`,
+			"not publishing":            `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export const publishing={name:"example.com/orders"}; export default createMcpHandler(()=>new McpServer({name:"example.com/orders",version:"1",description:"Order tools"}));`,
+			"object literal":            `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export const publishing=[{registryType:"oci"}]; export default createMcpHandler(()=>new McpServer({name:"example.com/orders",version:"1",description:"Order tools"}));`,
 		}},
 		{"server.py", `from mcp.server import MCPServer
 from version import version

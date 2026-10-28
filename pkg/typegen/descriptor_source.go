@@ -21,7 +21,7 @@ func ReadDescriptor(ctx context.Context, dir string, options Options) (data json
 			_, err = ParseDescriptor(data)
 		}
 		if err != nil {
-			err = fmt.Errorf("%s descriptor: %w", dir, err)
+			err = fmt.Errorf("descriptor: %w", err)
 		}
 	}()
 	if err = ctx.Err(); err != nil {
@@ -57,7 +57,7 @@ func ReadDescriptor(ctx context.Context, dir string, options Options) (data json
 		return nil, err
 	}
 	if !isFile(filepath.Join(snapshot, entry)) {
-		return nil, fmt.Errorf("%s is excluded from its own source snapshot", filepath.Join(dir, entry))
+		return nil, fmt.Errorf("%s is excluded from its own source snapshot", entry)
 	}
 	language := "typescript"
 	if filepath.Ext(entry) == ".py" {
@@ -71,7 +71,7 @@ func ReadDescriptor(ctx context.Context, dir string, options Options) (data json
 	}
 	result := results["server"]
 	if result.Diagnostic != "" {
-		return nil, fmt.Errorf("%s: %s; provide server.json for dynamic metadata", dir, result.Diagnostic)
+		return nil, fmt.Errorf("%s; provide server.json for dynamic metadata", result.Diagnostic)
 	}
 	var descriptor map[string]any
 	if err = json.Unmarshal(result.Descriptor, &descriptor); err != nil {

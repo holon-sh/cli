@@ -114,18 +114,18 @@ func prepareSource(ctx context.Context, root, name, path string, options Options
 		return nil, err
 	}
 	s := &preparedSource{origin: origin, root: filepath.Join(root, "sources", name), entry: entry, language: language}
-	data, err := ReadDescriptor(ctx, origin, options)
-	if err != nil {
+	if s.fingerprint, err = SnapshotSource(name, origin, s.root); err != nil {
 		return nil, err
+	}
+	data, err := ReadDescriptor(ctx, s.root, options)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", origin, err)
 	}
 	descriptor, err := ParseDescriptor(data)
 	if err != nil {
 		return nil, fmt.Errorf("%s: a server source needs a server.json beside its entry", origin)
 	}
 	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
-	if s.fingerprint, err = SnapshotSource(name, origin, s.root); err != nil {
-		return nil, err
-	}
 	return s, ctx.Err()
 }
 
@@ -259,7 +259,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		}
 		identity = c.server.metadata.Identity
 	} else if data, err := ReadDescriptor(ctx, c.Dir, p.options); err != nil {
-		return err
+		return fmt.Errorf("%s: %w", c.Dir, err)
 	} else if descriptor, err := ParseDescriptor(data); err == nil {
 		identity = descriptor.Identity()
 	}
