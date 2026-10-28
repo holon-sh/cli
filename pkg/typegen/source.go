@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -188,4 +189,26 @@ func IgnoredSource(root, path string, matcher *patternmatcher.PatternMatcher) (b
 		return true, nil
 	}
 	return matcher.MatchesOrParentMatches(filepath.ToSlash(relative))
+}
+
+// MentionsMCP reports whether source under root references an MCP SDK or holon-sh.
+func MentionsMCP(root string) bool {
+	found := false
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || found {
+			return filepath.SkipAll
+		}
+		if entry.IsDir() {
+			if entry.Name() == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if slices.Contains([]string{".ts", ".mts", ".cts", ".js", ".mjs", ".cjs", ".tsx", ".jsx", ".py"}, filepath.Ext(path)) {
+			data, err := os.ReadFile(path)
+			found = err == nil && (bytes.Contains(data, []byte("@modelcontextprotocol/")) || bytes.Contains(data, []byte("holon-sh")) || bytes.Contains(data, []byte("from mcp")) || bytes.Contains(data, []byte("import mcp")))
+		}
+		return nil
+	})
+	return found
 }

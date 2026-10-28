@@ -1,7 +1,6 @@
 package typegen
 
 import (
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -34,9 +33,9 @@ func TestDeclaredSources(t *testing.T) {
 			if test.data != "" {
 				put(t, root, "server.json", test.data)
 			}
-			got, err := DeclaredSources(root)
+			got, err := DeclaredSources(t.Context(), root, Options{})
 			if test.err != "" {
-				if err == nil || !strings.Contains(err.Error(), filepath.Join(root, "server.json")) || !strings.Contains(err.Error(), test.err) {
+				if err == nil || !strings.Contains(err.Error(), test.err) {
 					t.Fatalf("DeclaredSources error = %v, want server.json and %q", err, test.err)
 				}
 				return

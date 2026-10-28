@@ -3,6 +3,7 @@ package cli
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,7 +86,7 @@ func clientDir(path string) (string, error) {
 
 // consumer selects dependencies from -s or server.json. A -s path inside dir is the project's own
 // server, which supplies its identity and contract.
-func consumer(dir string, servers []string) (typegen.Consumer, error) {
+func consumer(ctx context.Context, dir string, servers []string) (typegen.Consumer, error) {
 	targets, err := typegen.DeclaredTargets(dir)
 	if err != nil {
 		return typegen.Consumer{}, err
@@ -106,13 +107,13 @@ func consumer(dir string, servers []string) (typegen.Consumer, error) {
 		c.Sources = append(c.Sources, source)
 	}
 	if len(servers) == 0 {
-		c.Sources, err = typegen.DeclaredSources(dir)
+		c.Sources, err = typegen.DeclaredSources(ctx, dir, typegen.Options{})
 		if err != nil {
 			return c, err
 		}
 	}
 	if len(c.Sources) == 0 && c.Server == nil {
-		return c, fmt.Errorf("%s has no requires in server.json; pass -s", dir)
+		return c, fmt.Errorf("%s has no declared dependencies; pass -s", dir)
 	}
 	return c, nil
 }
@@ -148,7 +149,7 @@ func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (
 	if err != nil {
 		return "", err
 	}
-	c, err := consumer(dir, servers)
+	c, err := consumer(cmd.Context(), dir, servers)
 	if err != nil {
 		return "", err
 	}

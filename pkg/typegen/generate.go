@@ -108,15 +108,15 @@ func (p *Prepared) consumer(name string) *preparedConsumer {
 	return nil
 }
 
-func prepareSource(ctx context.Context, root, name, path string) (*preparedSource, error) {
+func prepareSource(ctx context.Context, root, name, path string, options Options) (*preparedSource, error) {
 	origin, entry, language, err := serverEntry(path)
 	if err != nil {
 		return nil, err
 	}
 	s := &preparedSource{origin: origin, root: filepath.Join(root, "sources", name), entry: entry, language: language}
-	data, err := os.ReadFile(filepath.Join(origin, "server.json"))
+	data, err := ReadDescriptor(ctx, origin, options)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w (a server source needs a server.json beside its entry)", origin, err)
+		return nil, fmt.Errorf("%s: %w", origin, err)
 	}
 	descriptor, err := ParseDescriptor(data)
 	if err != nil {
@@ -171,7 +171,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 				continue
 			}
 			name := strconv.Itoa(len(p.paths))
-			s, err := prepareSource(ctx, root, name, absolute)
+			s, err := prepareSource(ctx, root, name, absolute, o)
 			if err != nil {
 				return nil, err
 			}

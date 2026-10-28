@@ -102,7 +102,7 @@ Let's say you have a server that you're still developing, and it's not in any [M
 # bar/server.py
 from mcp.server import MCPServer
 
-server = MCPServer("bar")
+server = MCPServer("com.example/bar", version="0.1.0", description="Example Bar")
 
 
 @server.tool()
@@ -110,15 +110,15 @@ def greet(name: str) -> str:
     return f"hello {name}"
 ```
 
-Give it a `server.json` beside the entry file.
+An authored `server.json` takes precedence. Without one, Holon extracts the shared
+metadata from a static JavaScript/TypeScript or Python MCP constructor, following
+local constants and imports without executing application code. Go and dynamic
+metadata still use `server.json`.
 
-```json
-{
-  "name": "com.example/bar",
-  "version": "0.1.0",
-  "description": "Example Bar"
-}
-```
+Publishing-only fields (`packages`, `remotes`, `repository`, `_meta`) can be declared
+in an exported `publishing` object in the server entry, or a Python `publishing`
+dictionary. Shared metadata stays in the constructor. The descriptor is generated
+in preparation directories; the source tree is unchanged.
 
 Pass its entry file with `-s`.
 
@@ -177,7 +177,7 @@ A dependency is written in one of three ways.
 <details open>
 <summary><h3>Source code</h3></summary>
 
-An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry.
+An implementation of an MCP server, or its parent directory. An authored `server.json` takes precedence over static constructor metadata.
 
 ```sh
 holon types check -s bar/server.py

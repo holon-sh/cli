@@ -15,6 +15,7 @@ import (
 )
 
 type extraction struct {
+	Descriptor json.RawMessage        `json:"descriptor"`
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`
 	Diagnostic string                 `json:"diagnostic"`
@@ -53,9 +54,10 @@ func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
 
 // extractionEntry is one snapshot to extract: the runner reads entry under path.
 type extractionEntry struct {
-	Name  string `json:"name"`
-	Path  string `json:"path"`
-	Entry string `json:"entry"`
+	Descriptor bool   `json:"descriptor,omitempty"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Entry      string `json:"entry"`
 }
 
 func extractTypes(ctx context.Context, root string, batches map[string][]extractionEntry, o Options) (map[string]extraction, error) {

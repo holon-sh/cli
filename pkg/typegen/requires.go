@@ -1,21 +1,18 @@
 package typegen
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 )
 
-// DeclaredSources returns one registry source per sh.holon.requires entry of dir/server.json,
-// keyed by its alias and sorted by it. A directory without server.json, or whose server.json
-// declares no requires, has no declared sources and returns nil, nil.
-func DeclaredSources(dir string) ([]Source, error) {
+// DeclaredSources resolves the descriptor and returns its dependencies, sorted by alias.
+func DeclaredSources(ctx context.Context, dir string, options Options) ([]Source, error) {
 	path := filepath.Join(dir, "server.json")
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
+	data, err := ReadDescriptor(ctx, dir, options)
+	if err == nil && len(data) == 0 {
 		return nil, nil
 	}
 	if err != nil {

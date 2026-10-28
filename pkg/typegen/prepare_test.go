@@ -80,7 +80,6 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	writeProvider(t, filepath.Join(root, "broken"), "broken", pythonProvider)
 	writeProvider(t, filepath.Join(root, "odd"), "odd", pythonProvider)
 	put(t, filepath.Join(root, "odd"), "server.json", `{"name":"example.com/---","version":"1.0.0","description":"Odd"}`)
-	put(t, filepath.Join(root, "nameless"), "server.py", pythonProvider)
 	results := map[string]extraction{
 		"example.com/orders": {Tools: []mcpcontract.Tool{lookupTool}},
 		"example.com/broken": {Diagnostic: "tools are registered dynamically"},
@@ -93,7 +92,6 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 		sources []Source
 		want    string
 	}{
-		{"missing server.json", []Source{source("nameless")}, "needs a server.json"},
 		{"extraction diagnostic", []Source{source("broken")}, "tools are registered dynamically"},
 		{"invalid derived alias", []Source{source("odd")}, `cannot derive a client name from "example.com/---"; write ALIAS=`},
 		{"duplicate alias", []Source{source("orders"), source("orders-copy")}, "both become apps.orders"},

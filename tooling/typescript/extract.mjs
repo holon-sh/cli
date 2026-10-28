@@ -63,7 +63,7 @@ const modifiers = new Set([
   "strip", "extend", "pick", "omit", "partial", "required",
 ]);
 
-export async function extract(root, entry) {
+export async function extract(root, entry, descriptor = false) {
   const analyzer = new Analyzer(root);
   try {
     if (!entry) throw new Error("Cannot identify a static MCP handler entrypoint; use the existing server.ts/server.js convention or a direct package main/start entry.");
@@ -74,8 +74,18 @@ export async function extract(root, entry) {
     if (!exported) analyzer.fail(file, "Expected the existing default MCP handler export.");
     const result = analyzer.value(analyzer.reference(exported, file));
     if (!(result instanceof Server)) analyzer.fail(file, "Cannot establish the default MCP handler's tool catalog.");
+    let publishing;
+    if (descriptor) {
+      const declaration = analyzer.checker.getExportsOfModule(symbol).find(s => s.name === "publishing");
+      publishing = declaration ? analyzer.materialize(analyzer.reference(declaration, file)) : {};
+      for (const field of ["name", "version", "description", "title", "websiteUrl", "icons"]) {
+        if (Object.hasOwn(publishing, field)) analyzer.fail(file, `Declare ${field} in the MCP constructor, not publishing.`);
+      }
+      publishing = { ...publishing, ...analyzer.materialize(result.info) };
+    }
     for (const [file, scope] of analyzer.scopes) analyzer.auditStatements(file.statements, scope);
     for (const block of analyzer.blocks) analyzer.auditStatements(block.statements, block.scope);
+    if (descriptor) return { descriptor: publishing };
     let tools;
     try { tools = await result.catalog(); } catch (error) { analyzer.fail(file, error.message); }
     for (const tool of tools) {
@@ -199,6 +209,11 @@ class Analyzer {
     if (++this.steps > 50000) this.fail(node, "Contract analysis exceeded its complexity limit.");
     if (ts.isParenthesizedExpression(node) || ts.isAssertionExpression(node) || ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node) || ts.isAwaitExpression(node)) return this.expression(node.expression, scope);
     if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return ts.isNumericLiteral(node) ? Number(node.text) : node.text;
+    if (ts.isTemplateExpression(node)) return node.head.text + node.templateSpans.map(span => {
+      const value = this.expression(span.expression, scope);
+      if (!["string", "number"].includes(typeof value)) this.fail(span.expression, "Template values must be constant strings or numbers.");
+      return String(value) + span.literal.text;
+    }).join("");
     if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
     if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
     if (node.kind === ts.SyntaxKind.NullKeyword) return null;
@@ -238,7 +253,11 @@ class Analyzer {
     }
     if (ts.isNewExpression(node)) {
       const target = this.expression(node.expression, scope);
-      if (target instanceof Builtin && target.module === sdk && target.name === "McpServer") return new Server(identity);
+      if (target instanceof Builtin && target.module === sdk && target.name === "McpServer") {
+        const server = new Server(identity);
+        server.info = new Lazy(node.arguments[0], scope);
+        return server;
+      }
       this.fail(node, "Only an official McpServer constructor is supported in a contract expression.");
     }
     if (node.kind === ts.SyntaxKind.RegularExpressionLiteral) {
