@@ -17,20 +17,25 @@ test("extracts without executing application initialization or callbacks", async
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { writeFileSync } from "node:fs";
+import { pages } from "./pages.js";
 writeFileSync(new URL("./executed", import.meta.url), "yes");
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "test", version: "1" });
-  server.registerTool("read", { inputSchema: { id: z.string().refine(() => { writeFileSync(new URL("./executed", import.meta.url), "refinement"); return true; }) } }, () => {
+  server.registerTool("read", { inputSchema: { page: z.enum(Object.keys(pages)).default("home"), id: z.string().refine(() => { writeFileSync(new URL("./executed", import.meta.url), "refinement"); return true; }) } }, () => {
     writeFileSync(new URL("./executed", import.meta.url), "tool callback");
   });
   for (const name of process.env.RESOURCES) {
     server.registerResource(name, name, {mimeType:"text/plain"}, () => ({contents:[]}));
   }
   return server;
-});`);
+});`, {
+    "pages.ts": `import { writeFileSync } from "node:fs"; const home="home"; export const pages={ [home]: writeFileSync(new URL("./executed", import.meta.url), "page value"), ...{research: () => {}}, careers: null } as const satisfies Record<string, unknown>;`,
+  });
   const result = await extract(root, "server.ts");
+  assert.equal(result.diagnostic, undefined);
   assert.deepEqual(result.tools.map(tool => tool.name), ["read"]);
   assert.deepEqual(result.tools[0].inputSchema.properties.id, {type:"string"});
+  assert.deepEqual(result.tools[0].inputSchema.properties.page, {type:"string", enum:["home","research","careers"], default:"home"});
   assert.equal(existsSync(join(root, "executed")), false);
 });
 
@@ -40,9 +45,13 @@ for (const [name, registration, reason] of [
   ["deferred app tool", `setTimeout(() => registerAppTool(server,"late",{},()=>{}),1);`, /registration helper/i],
   ["refinement registration", `server.registerTool("x",{inputSchema:z.object({id:z.string()}).refine(()=>{server.registerTool("hidden",{},()=>{});return true;})},()=>{});`, /callbacks.*catalog/i],
   ["dynamic tool name", `server.registerTool(process.env.NAME, {}, () => {});`, /static.*process/i],
+  ["shadowed Object", `const Object={keys:()=>["home"]}; server.registerTool("x",{inputSchema:z.object({page:z.enum(Object.keys({home:null}))})},()=>{});`, /functions are not executed/i],
+  ["runtime object keys", `server.registerTool("x",{inputSchema:z.object({page:z.enum(Object.keys(()=>{}))})},()=>{});`, /statically declared object/i],
+  ["extra Object.keys arguments", `server.registerTool("x",{inputSchema:z.object({page:z.enum(Object.keys({home:null},sideEffect()))})},()=>{});`, /one.*argument/i],
+  ["overridden Object.keys", `Object.keys=()=>["other"]; server.registerTool("x",{inputSchema:z.object({page:z.enum(Object.keys({home:null}))})},()=>{});`, /mutation/i],
   ["conditional registration", `function add() { server.registerTool("x", {}, () => {}); } if (process.env.FLAG) add();`, /conditional.*registration/i],
   ["deferred registration", `setTimeout(() => server.registerTool("x", {}, () => {}), 1);`, /registration helper/i],
-  ["conditional schema mutation", `const schema={type:"object",properties:{id:{type:"string"}}}; if (process.env.FLAG) schema.properties.id.type="number"; server.registerTool("x", {inputSchema:fromJsonSchema(schema)}, () => {});`, /schema.*mutation/i],
+  ["conditional schema mutation", `const pages={home:null}; if (process.env.FLAG) pages.other=null; server.registerTool("x", {inputSchema:z.object({page:z.enum(Object.keys(pages))})}, () => {});`, /schema.*mutation/i],
   ["conditional fixed catalog", `server.server.setRequestHandler("tools/list", () => { if (process.env.FLAG) return {tools:[{name:"hidden",inputSchema:{type:"object"}}]}; return {tools:[]}; });`, /conditional.*registration/i],
   ["deferred schema mutation", `const schema={type:"object"}; setTimeout(()=>mutate(schema),1); server.registerTool("x",{inputSchema:fromJsonSchema(schema)},()=>({content:[]}));`, /schema.*deferred callback/i],
   ["unawaited registration", `async function register(s) {await fetch("https://example.com"); s.registerTool("late",{},()=>({content:[]}));} register(server);`, /awaited/i],

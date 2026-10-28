@@ -168,6 +168,7 @@ class Analyzer {
   }
   lookup(node, scope) {
     const symbol = ts.isShorthandPropertyAssignment(node.parent) ? this.checker.getShorthandAssignmentValueSymbol(node.parent) : this.checker.getSymbolAtLocation(node);
+    if (!symbol && node.text === "Object") return new Builtin(null, "Object");
     return scope.has(symbol) ? scope.get(symbol) : this.reference(symbol, node);
   }
   bind(statement, scope) {
@@ -191,7 +192,7 @@ class Analyzer {
   }
   fields(node, scope) {
     const object = this.expression(node, scope);
-    if (object === null || typeof object !== "object" || object instanceof Schema || object instanceof Builtin || object instanceof Module) this.fail(node, "Expected a statically declared object.");
+    if (object == null || ![null, Object.prototype, Array.prototype, RegExp.prototype].includes(Object.getPrototypeOf(object))) this.fail(node, "Expected a statically declared object.");
     return object;
   }
   expression(node, scope) {
@@ -264,6 +265,10 @@ class Analyzer {
         }
       }
       const target = this.expression(node.expression, scope);
+      if (target instanceof Builtin && target.module === null && target.name === "Object.keys") {
+        if (node.arguments.length !== 1) this.fail(node, "Object.keys requires one static object argument.");
+        return Object.keys(this.fields(node.arguments[0], scope));
+      }
       if (target instanceof Builtin && target.module === sdk && target.name === "createMcpHandler") {
         const factory = this.expression(node.arguments[0], scope);
         return this.functionBody(factory, [], node);
@@ -477,7 +482,7 @@ class Analyzer {
         try {
           if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) receiver = this.expression(target.expression, scope);
         } catch {}
-        if (receiver instanceof Builtin && receiver.module !== sdk && !zodModules.has(receiver.module) && !this.containsRegistration(expression, scope) && !this.containsContractData(expression, scope)) return;
+        if (receiver instanceof Builtin && receiver.module !== null && receiver.module !== sdk && !zodModules.has(receiver.module) && !this.containsRegistration(expression, scope) && !this.containsContractData(expression, scope)) return;
         this.fail(expression, "Mutation in server registration code cannot establish a static catalog.");
       }
       if (!ts.isCallExpression(expression)) {
