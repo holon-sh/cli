@@ -575,6 +575,12 @@ class Analyzer:
                 if "publishing" in self.load(path)
                 else {}
             )
+            if not isinstance(publishing, dict):
+                self.fail(
+                    path,
+                    construction,
+                    "Declare publishing as a dictionary literal.",
+                )
             if fields.intersection(publishing) or "websiteUrl" in publishing:
                 self.fail(
                     path,

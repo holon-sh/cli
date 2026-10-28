@@ -117,13 +117,26 @@ func prepareSource(ctx context.Context, root, name, path string, options Options
 	if s.fingerprint, err = SnapshotSource(name, origin, s.root); err != nil {
 		return nil, err
 	}
-	data, err := ReadDescriptor(ctx, s.root, options)
+	// Resolve the descriptor from the snapshot, so identity and extracted tools always come
+	// from the same revision.
+	data, err := authoredDescriptor(s.root)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", origin, err)
+		return nil, fmt.Errorf("%s descriptor: %w", origin, err)
+	}
+	if data == nil {
+		if language == "go" || !MentionsMCP(s.root) {
+			return nil, fmt.Errorf("%s: a server source needs a server.json beside its entry", origin)
+		}
+		if data, err = s.extractDescriptor(ctx, root, options); err != nil {
+			return nil, fmt.Errorf("%s descriptor: %w", origin, err)
+		}
 	}
 	descriptor, err := ParseDescriptor(data)
 	if err != nil {
-		return nil, fmt.Errorf("%s: a server source needs a server.json beside its entry", origin)
+		if len(data) == 0 {
+			return nil, fmt.Errorf("%s: a server source needs a server.json beside its entry", origin)
+		}
+		return nil, fmt.Errorf("%s descriptor: %w", origin, err)
 	}
 	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
 	return s, ctx.Err()

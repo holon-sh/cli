@@ -38,6 +38,9 @@ server = MCPServer("example.com/orders", version="1", description="Orders", **ge
 			"not publishing": `from mcp.server import MCPServer
 server = MCPServer("example.com/orders", version="1", description="Orders")
 publishing = {"version": "9"}`,
+			"dictionary literal": `from mcp.server import MCPServer
+server = MCPServer("example.com/orders", version="1", description="Orders")
+publishing = ["oci"]`,
 		}},
 	} {
 		t.Run(test.entry, func(t *testing.T) {

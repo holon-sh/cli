@@ -181,15 +181,20 @@ func serverEntry(path string) (root, entry, language string, err error) {
 			return "", "", "", fmt.Errorf("%s is not a server entry: expected one of %s", path, strings.Join(entryFiles, ", "))
 		}
 	}
+	return root, filepath.ToSlash(entry), sourceLanguage(entry), nil
+}
+
+// sourceLanguage names a server entry's extractor language, or "" for an unsupported entry.
+func sourceLanguage(entry string) string {
 	switch filepath.Ext(entry) {
 	case ".py":
-		language = "python"
+		return "python"
 	case ".ts", ".js":
-		language = "typescript"
+		return "typescript"
 	case ".go":
-		language = "go"
+		return "go"
 	}
-	return root, filepath.ToSlash(entry), language, nil
+	return ""
 }
 
 // serverKey is the client name derived from a server name: its last segment, lower-cased, with
