@@ -96,18 +96,26 @@ func TestExplicitOwnServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
+	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1-dev.2","holon-ui":"^0.0.1-dev.0"}}`)
 	writeCLIFile(t, root, "server.py", pythonServer)
 	writeCLIFile(t, root, "server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"}`)
 	installCLISlot(t, root)
+	writeCLIFile(t, root, "node_modules/holon-ui/package.json", `{"name":"holon-ui","holon":{"slot":"generated","contractVersion":1}}`)
+	writeCLIFile(t, root, "node_modules/holon-ui/generated/holon-generated.json", `{"marker":"`+mcpcontract.Marker+`","placeholder":true}`)
 	run(t, "", "types", "generate", "-s", "./server.py")
 	orders := t.TempDir()
 	writeCLIFile(t, orders, "server.py", pythonServer)
 	writeCLIFile(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
 	run(t, "", "types", "generate", "-s", "./server.py", "-s", orders)
-	browser, err := os.ReadFile(filepath.Join(root, "node_modules/holon-sh/generated/browser.d.ts"))
-	if err != nil || !strings.Contains(string(browser), `"view"`) || !strings.Contains(string(browser), `"orders"`) || !strings.Contains(string(browser), `"read"`) {
+	browser, err := os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts"))
+	if err != nil || !strings.Contains(string(browser), `class App extends HostApp`) || !strings.Contains(string(browser), `"view"`) || !strings.Contains(string(browser), `"orders"`) || !strings.Contains(string(browser), `"read"`) {
 		t.Fatalf("own and dependency browser clients = %s, %v", browser, err)
+	}
+	writeCLIFile(t, root, "server.json", `{"name":"example.com/---","version":"1.0.0","description":"View"}`)
+	run(t, "", "types", "generate", "-s", "./server.py")
+	browser, err = os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts"))
+	if err != nil || !strings.Contains(string(browser), `class App extends HostApp`) || !strings.Contains(string(browser), `Apps["app"]["tools"]`) {
+		t.Fatalf("punctuation-only server name lost its App class: %s, %v", browser, err)
 	}
 	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")
 }

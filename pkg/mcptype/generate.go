@@ -91,6 +91,11 @@ func (r generateRequest) validate() error {
 	if r.Protocol != "" && r.ProtocolSpecifier != "" {
 		return errors.New("protocol and protocol_specifier are mutually exclusive")
 	}
+	if r.Own != "" {
+		if _, ok := r.contracts[r.Own]; r.Target != "browser" || !ok {
+			return errors.New("own must name a contract of a browser client")
+		}
+	}
 	for _, option := range []struct {
 		name  string
 		value string

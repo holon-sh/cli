@@ -132,6 +132,8 @@ func generationCases(t *testing.T) []generationCase {
 		{"runtime-null", `"runtime": {"file": null}`},
 		{"protocol-exclusive", `"protocol": "type X = 1;", "protocol_specifier": "../protocol.js"`},
 		{"protocol-specifier-blank", `"protocol_specifier": " "`},
+		{"own-on-node", `"own": "orders", "contracts": {"orders": {"tools": []}}`},
+		{"own-missing", `"target": "browser", "own": "missing"`},
 		{"python-module-escape", `"python_module": "../escape.py"`},
 		{"python-module-absolute", `"python_module": "/absolute.py"`},
 		{"python-module-dot", `"python_module": "holon/./apps.py"`},

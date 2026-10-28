@@ -7,7 +7,12 @@
 
 `holon` provides type-safety for MCP servers, e.g. invoking an MCP server as a function call your type checker understands.
 
-This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk-py) and [TypeScript SDK](https://github.com/holon-sh/sdk-ts).
+This is supported via the [Python SDK](https://github.com/holon-sh/sdk-py), [TypeScript SDK](https://github.com/holon-sh/sdk-ts), and [browser UI SDK](https://github.com/holon-sh/sdk-ui).
+
+Install `holon-sh@dev` for Node clients or `holon-ui@dev` for browser clients from npm.
+`holon types generate` detects the declared packages and fills each package's `generated/` slot.
+Browser apps import `createApps` from `holon-ui`; MCP Apps views import the generated `App`
+class, whose `tools` and `resources` are typed from the app's own server contract.
 
 ## Install
 

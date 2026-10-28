@@ -104,6 +104,8 @@ type GenerateRequest struct {
 	Protocol          string `json:"protocol,omitempty"`
 	RuntimeSpecifier  string `json:"runtime_specifier,omitempty"`
 	ProtocolSpecifier string `json:"protocol_specifier,omitempty"`
+	// Own names the browser client's own contract, exposed through a typed MCP Apps App class.
+	Own string `json:"own,omitempty"`
 	// PythonModule defaults to holon/apps/__init__.py; PythonRuntimeModule to holon.client.
 	PythonModule        string `json:"python_module,omitempty"`
 	PythonRuntimeModule string `json:"python_runtime_module,omitempty"`

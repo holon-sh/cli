@@ -21,8 +21,12 @@ type slotMetadata struct {
 
 // InstalledRuntime resolves the holon-sh runtime package from root and verifies its generated-slot contract.
 func InstalledRuntime(root string) (string, error) {
+	return installedRuntime(root, nodePackage)
+}
+
+func installedRuntime(root, packageName string) (string, error) {
 	for dir := root; ; dir = filepath.Dir(dir) {
-		candidate := filepath.Join(dir, "node_modules", nodePackage)
+		candidate := filepath.Join(dir, "node_modules", packageName)
 		real, err := filepath.EvalSymlinks(candidate)
 		if err == nil {
 			var manifest struct {
@@ -46,7 +50,7 @@ func InstalledRuntime(root string) (string, error) {
 			break
 		}
 	}
-	return "", fmt.Errorf("%s is not installed for %s; install it before generating types", nodePackage, root)
+	return "", fmt.Errorf("%s is not installed for %s; install it before generating types", packageName, root)
 }
 func validateNodeSlot(pkgDir string, meta slotMetadata) error {
 	directory := filepath.Join(pkgDir, "generated")
@@ -72,7 +76,7 @@ func validateNodeSlot(pkgDir string, meta slotMetadata) error {
 		return fmt.Errorf("refusing foreign generated slot %s", directory)
 	}
 	if !old.Placeholder && (old.App != meta.App) {
-		return fmt.Errorf("%s is owned by app %s; install a separate %s for each app", directory, old.App, nodePackage)
+		return fmt.Errorf("%s is owned by app %s; install a separate SDK package for each app", directory, old.App)
 	}
 	for _, entry := range entries {
 		if entry.Type()&os.ModeSymlink != 0 {

@@ -126,7 +126,7 @@ func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
 	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("other")}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
+	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("other")}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate SDK package") {
 		t.Fatalf("shared package was reassigned to another consumer: %v", err)
 	}
 }
@@ -168,6 +168,8 @@ func TestDeclaredTargetsFollowSDKDependencies(t *testing.T) {
 	}{
 		{"unrelated frontend", map[string]string{"package.json": `{"devDependencies":{"vite":"*"}}`, "server.py": ""}, nil, ErrNoRuntime},
 		{"optional node", map[string]string{"package.json": `{"optionalDependencies":{"holon-sh":"*"}}`}, []string{TargetTS}, nil},
+		{"browser", map[string]string{"package.json": `{"dependencies":{"holon-ui":"^0.0.1-dev.0"}}`}, []string{TargetUI}, nil},
+		{"node and browser", map[string]string{"package.json": `{"dependencies":{"holon-sh":"*","holon-ui":"*"}}`}, []string{TargetTS, TargetUI}, nil},
 		{"python with frontend", map[string]string{"package.json": `{}`, "pyproject.toml": `[project]
 dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetPy}, nil},
 		{"both", map[string]string{"package.json": `{"devDependencies":{"holon-sh":"*"}}`, "requirements.txt": "holon-sh==1.0.0"}, []string{TargetTS, TargetPy}, nil},

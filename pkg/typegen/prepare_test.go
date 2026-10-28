@@ -32,7 +32,7 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 }
 
 func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
-	c, extract := checkoutConsumer(t, TargetTS)
+	c, extract := checkoutConsumer(t, TargetTS, TargetUI)
 	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: extract})
 	if err != nil {
 		t.Fatal(err)
@@ -58,11 +58,20 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 	if strings.Contains(node, `"status"`) {
 		t.Fatal("the ts slot received the consumer's own contract")
 	}
-	browser := read(t, stage, "holon-sh/generated/browser.js")
-	for _, want := range []string{`from "../browser-runtime.mjs"`, `"status"`, `"lookup"`} {
+	if err := os.MkdirAll(filepath.Join(stage, "holon-ui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepared.WriteBrowserSlot("checkout", filepath.Join(stage, "holon-ui")); err != nil {
+		t.Fatal(err)
+	}
+	browser := read(t, stage, "holon-ui/generated/index.js")
+	for _, want := range []string{`from "../runtime.mjs"`, `"status"`, `"lookup"`, `export const App = appClass(identity, contracts, "checkout")`} {
 		if !strings.Contains(browser, want) {
 			t.Fatalf("browser client lacks %s: %s", want, browser)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(stage, "holon-sh/generated/browser.js")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("browser clients were written into the Node package")
 	}
 	for _, test := range []struct{ consumer, want string }{{"missing", "unknown consumer"}, {"checkout", "no go clients"}} {
 		if err := prepared.WriteGoSlot(test.consumer, t.TempDir()); err == nil || !strings.Contains(err.Error(), test.want) {
@@ -153,7 +162,7 @@ func TestPrepareRejectsInvalidExtractedContracts(t *testing.T) {
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	c, extract := checkoutConsumer(t, TargetTS)
 	bin := t.TempDir()
-	put(t, bin, "npm", "#!/bin/sh\nset -e\n[ \"$HOLON_SKIP_POSTINSTALL\" = 1 ]\n[ \"$INSTALL_MODE\" = last=value ]\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
+	put(t, bin, "npm", "#!/bin/sh\nset -e\n[ \"$INSTALL_MODE\" = last=value ]\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
 	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
