@@ -1,6 +1,7 @@
 name: CI
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_call:
     inputs:
@@ -45,7 +46,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, macos-15]
+        # Pull requests run Linux only; main pushes and releases add macOS.
+        runner: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04","macos-15"]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -74,16 +76,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: linux_amd64
-          - runner: ubuntu-24.04-arm
-            target: linux_arm64
-          - runner: macos-15
-            target: darwin_arm64
-          - runner: macos-15-intel
-            target: darwin_amd64
-    runs-on: ${{ matrix.runner }}
+        # Pull requests run Linux only; main pushes and releases add macOS.
+        target: ${{ fromJSON(github.event_name == 'pull_request' && '["linux_amd64","linux_arm64"]' || '["linux_amd64","linux_arm64","darwin_arm64","darwin_amd64"]') }}
+    runs-on: ${{ fromJSON('{"linux_amd64":"ubuntu-24.04","linux_arm64":"ubuntu-24.04-arm","darwin_arm64":"macos-15","darwin_amd64":"macos-15-intel"}')[matrix.target] }}
     timeout-minutes: 30
     env:
       VERSION: ${{ inputs.version || '0.0.1' }}
