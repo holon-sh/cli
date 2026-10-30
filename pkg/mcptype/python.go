@@ -168,7 +168,6 @@ func generatePython(contracts map[string]catalog) string {
 			prefix := typeIdentifier(binding) + typeIdentifier(name)
 			input, arguments := emitter.input(shapes[0].value, prefix+"Input")
 			output := emitter.render(shapes[1].value, prefix+"Output")
-			// Without an outputSchema the convenience method returns the complete result.
 			returned := output
 			if !tool.structured {
 				returned = "_CompleteResult[_builtins.object]"

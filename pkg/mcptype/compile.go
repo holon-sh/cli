@@ -8,8 +8,6 @@ import (
 // catalog is one binding's compiled tools.
 type catalog map[string]compiledTool
 
-// compiledTool is one tool's shapes. structured reports whether the tool declares an
-// outputSchema; without one, the convenience call returns the complete result.
 type compiledTool struct {
 	input, output shape
 	structured    bool
