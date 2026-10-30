@@ -10,6 +10,7 @@ type catalog map[string]compiledTool
 
 type compiledTool struct {
 	input, output shape
+	structured    bool
 }
 
 func parseCatalog(ctx context.Context, contract contract) (catalog, error) {
@@ -26,7 +27,7 @@ func parseCatalog(ctx context.Context, contract contract) (catalog, error) {
 				return catalog{}, err
 			}
 		}
-		result[name] = compiledTool{input: input, output: output}
+		result[name] = compiledTool{input: input, output: output, structured: tool.Output != nil}
 	}
 	return result, nil
 }

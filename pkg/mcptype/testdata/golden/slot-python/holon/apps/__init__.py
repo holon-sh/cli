@@ -8,6 +8,7 @@ import json as _json
 from holon.client import Apps as _Apps
 from holon.client import Binding as _Binding
 from holon.client import CallOptions as _CallOptions
+from holon.client import CompleteResult as _CompleteResult
 from holon.client import ToolResult as _ToolResult
 
 import builtins as _builtins
@@ -107,11 +108,8 @@ class Outputs:
         select: _typing.TypeAlias = MysqlSelectOutput
     class orders:
         get_order: _typing.TypeAlias = OrdersGetOrderOutput
-        then: _typing.TypeAlias = _builtins.object
     class schemas:
-        CallTool: _typing.TypeAlias = _builtins.object
         call_tool: _typing.TypeAlias = SchemasCallToolOutput
-        get_order: _typing.TypeAlias = _builtins.object
 
 class InputTypes:
     class empty:
@@ -143,14 +141,8 @@ class OutputTypes:
     class orders:
         class get_order:
             pass
-        class then:
-            pass
     class schemas:
-        class CallTool:
-            pass
         class call_tool:
-            pass
-        class get_order:
             pass
 
 class EmptyTools(_typing.Protocol):
@@ -168,7 +160,7 @@ class MysqlApp(_typing.Protocol):
 
 class OrdersTools(_typing.Protocol):
     async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[OrdersGetOrderInput]) -> OrdersGetOrderOutput: ...
-    async def then(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[OrdersThenInput]) -> _builtins.object: ...
+    async def then(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[OrdersThenInput]) -> _CompleteResult[_builtins.object]: ...
 
 class OrdersApp(_typing.Protocol):
     tools: OrdersTools
@@ -178,9 +170,9 @@ class OrdersApp(_typing.Protocol):
     async def call_tool(self, name: _typing.Literal["then"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[OrdersThenInput]) -> _ToolResult[_builtins.object]: ...
 
 class SchemasTools(_typing.Protocol):
-    async def CallTool(self, options: _CallOptions | None = ..., /, **arguments: _builtins.object) -> _builtins.object: ...
+    async def CallTool(self, options: _CallOptions | None = ..., /, **arguments: _builtins.object) -> _CompleteResult[_builtins.object]: ...
     async def call_tool(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasCallToolInput]) -> SchemasCallToolOutput: ...
-    async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasGetOrderInput2]) -> _builtins.object: ...
+    async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasGetOrderInput2]) -> _CompleteResult[_builtins.object]: ...
 
 class SchemasApp(_typing.Protocol):
     tools: SchemasTools
@@ -207,7 +199,7 @@ class SchemasApp(_typing.Protocol):
 
 class WithHyphenTools(_typing.Protocol):
     async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[WithHyphenGetOrderInput]) -> WithHyphenGetOrderOutput: ...
-    async def then(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[WithHyphenThenInput]) -> _builtins.object: ...
+    async def then(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[WithHyphenThenInput]) -> _CompleteResult[_builtins.object]: ...
 
 class WithHyphenApp(_typing.Protocol):
     tools: WithHyphenTools

@@ -79,7 +79,8 @@ await apps.context7.call_tool("resolve-library", libraryName="Next.js", query="a
 ```ts
 import { apps } from "holon-sh";
 
-await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js", query: "app router" });
+const libraries = await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js", query: "app router" });
+libraries.content; // Context7 declares no output schema, so the complete result is returned
 
 await apps.context7.tools["resolve-library-id"]({ libraryName: 1, query: "app router" });
 // error TS2322: Type 'number' is not assignable to type 'string'.
@@ -89,7 +90,7 @@ await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js" });
 //   Property '"query"' is missing in type '{ libraryName: string; }' but required in type '{ [key: string]: unknown; libraryName: string; query: string; }'.
 
 await apps.context7.tools["resolve-library"]({ libraryName: "Next.js", query: "app router" });
-// error TS2551: Property 'resolve-library' does not exist on type '{ readonly "query-docs": (input: { [key: string]: unknown; language?: string | undefined; libraryId: string; query: string; }, options?: CallOptions | undefined) => Promise<unknown>; readonly "resolve-library-id": (input: { ...; }, options?: CallOptions | undefined) => Promise<...>; }'. Did you mean 'resolve-library-id'?
+// error TS2551: Property 'resolve-library' does not exist on type '{ readonly "query-docs": (input: { [key: string]: unknown; language?: string | undefined; libraryId: string; query: string; }, options?: CallOptions | undefined) => Promise<CompleteResult<unknown>>; readonly "resolve-library-id": (input: { ...; }, options?: CallOptions | undefined) => Promise<...>; }'. Did you mean 'resolve-library-id'?
 ```
 
 </details>
