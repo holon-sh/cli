@@ -39,17 +39,10 @@ export interface Outputs {
   "_private": {
   };
   "for": {
-    "x": unknown;
   };
   "orders": {
-    "-": unknown;
-    "123": unknown;
-    "CallTool": unknown;
     "call_tool": { "x": boolean; };
     "class": Array<unknown>;
-    "get-order": unknown;
-    "get_order": unknown;
-    "kitchen-sink": unknown;
     "weird-keys": { "a.b"?: string; "nl\nname"?: string; "tab\tname": string; };
     "émoji🎉": string;
   };
@@ -57,10 +50,8 @@ export interface Outputs {
     "kitchen-sink": boolean;
   };
   "with-hyphen": {
-    "y": unknown;
   };
   "ünï": {
-    "z": unknown;
   };
 }
 export interface InputTypes {
@@ -99,17 +90,10 @@ export interface OutputTypes {
   "_private": {
   };
   "for": {
-    "x": {  };
   };
   "orders": {
-    "-": {  };
-    "123": {  };
-    "CallTool": {  };
     "call_tool": {  };
     "class": {  };
-    "get-order": {  };
-    "get_order": {  };
-    "kitchen-sink": {  };
     "weird-keys": {  };
     "émoji🎉": {  };
   };
@@ -117,10 +101,8 @@ export interface OutputTypes {
     "kitchen-sink": {  };
   };
   "with-hyphen": {
-    "y": {  };
   };
   "ünï": {
-    "z": {  };
   };
 }
 

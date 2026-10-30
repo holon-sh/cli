@@ -7,6 +7,7 @@ import json as _json
 from holon.client import Apps as _Apps
 from holon.client import Binding as _Binding
 from holon.client import CallOptions as _CallOptions
+from holon.client import CompleteResult as _CompleteResult
 from holon.client import ToolResult as _ToolResult
 
 import builtins as _builtins

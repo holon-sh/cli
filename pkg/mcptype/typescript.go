@@ -85,6 +85,8 @@ func joinTypeScript(items []typ, separator string) string {
 }
 
 // generateTypeScript writes the Inputs, Outputs, InputTypes and OutputTypes interfaces.
+// A tool without an outputSchema has no Outputs or OutputTypes entry; ToolClient then
+// types its convenience call as the complete result.
 func generateTypeScript(contracts map[string]catalog) string {
 	exports := make([]strings.Builder, 4)
 	for i, name := range []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"} {
@@ -98,6 +100,9 @@ func generateTypeScript(contracts map[string]catalog) string {
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
 			for index, shape := range []shape{tool.input, tool.output} {
+				if index == 1 && !tool.structured {
+					continue
+				}
 				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value))
 				named := make([]string, 0, len(shape.named))
 				for _, definition := range sortedKeys(shape.named) {

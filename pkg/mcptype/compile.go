@@ -8,8 +8,11 @@ import (
 // catalog is one binding's compiled tools.
 type catalog map[string]compiledTool
 
+// compiledTool is one tool's shapes. structured reports whether the tool declares an
+// outputSchema; without one, the convenience call returns the complete result.
 type compiledTool struct {
 	input, output shape
+	structured    bool
 }
 
 func parseCatalog(ctx context.Context, contract contract) (catalog, error) {
@@ -26,7 +29,7 @@ func parseCatalog(ctx context.Context, contract contract) (catalog, error) {
 				return catalog{}, err
 			}
 		}
-		result[name] = compiledTool{input: input, output: output}
+		result[name] = compiledTool{input: input, output: output, structured: tool.Output != nil}
 	}
 	return result, nil
 }

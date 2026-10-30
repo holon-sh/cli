@@ -168,16 +168,24 @@ func generatePython(contracts map[string]catalog) string {
 			prefix := typeIdentifier(binding) + typeIdentifier(name)
 			input, arguments := emitter.input(shapes[0].value, prefix+"Input")
 			output := emitter.render(shapes[1].value, prefix+"Output")
+			// Without an outputSchema the convenience method returns the complete result.
+			returned := output
+			if !tool.structured {
+				returned = "_CompleteResult[_builtins.object]"
+			}
 			var toolMethods []string
 			for _, argument := range arguments {
 				calls = append(calls, fmt.Sprintf("    async def call_tool(self, name: _typing.Literal[%s], options: _CallOptions | None = ..., /, **arguments: %s) -> _ToolResult[%s]: ...", quoted(name), argument, output))
-				toolMethods = append(toolMethods, fmt.Sprintf("    async def %s(self, options: _CallOptions | None = ..., /, **arguments: %s) -> %s: ...", name, argument, output))
+				toolMethods = append(toolMethods, fmt.Sprintf("    async def %s(self, options: _CallOptions | None = ..., /, **arguments: %s) -> %s: ...", name, argument, returned))
 			}
 			if !pythonIdentifier(name) {
 				continue
 			}
 			methods = append(methods, pythonOverloaded(toolMethods)...)
 			for i, rendered := range []string{input, output} {
+				if i == 1 && !tool.structured {
+					continue
+				}
 				appExports[i] = append(appExports[i], fmt.Sprintf("        %s: _typing.TypeAlias = %s", name, rendered))
 				var types []string
 				for _, definition := range sortedKeys(shapes[i].named) {
