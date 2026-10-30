@@ -278,7 +278,16 @@ export function functionApp(root, entry, descriptor) {
       "_meta",
     ])
       if (metadata[key]) item[key] = literal(metadata[key]);
-    const symbol = checker.getSymbolAtLocation(node);
+    let symbol = checker.getSymbolAtLocation(node);
+    if (
+      symbol?.valueDeclaration &&
+      ts.isShorthandPropertyAssignment(symbol.valueDeclaration)
+    )
+      symbol = checker.getShorthandAssignmentValueSymbol(
+        symbol.valueDeclaration,
+      );
+    if (symbol?.flags & ts.SymbolFlags.Alias)
+      symbol = checker.getAliasedSymbol(symbol);
     if (!item.description && symbol)
       item.description = ts.displayPartsToString(
         symbol.getDocumentationComment(checker),
