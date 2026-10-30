@@ -177,7 +177,7 @@ A dependency is written in one of three ways.
 <details open>
 <summary><h3>Source code</h3></summary>
 
-An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry.
+An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry. The entry is imported in-process and its server is asked for `tools/list` and `resources/list`, so its dependencies must be installed (a Python server runs in the nearest `.venv`). `HOLON_CONTRACT=1` is set during the import so the server can skip start-up side effects.
 
 ```sh
 holon types check -s bar/server.py
