@@ -11,6 +11,8 @@ const config = JSON.parse(readFileSync(configPath, "utf8"));
 if (mode === "extract") {
   const results = Object.fromEntries(await Promise.all(config.apps.map(async app => [app.name, await extract(app.path, app.entry)])));
   writeFileSync(output, JSON.stringify(results));
+  // Imported applications may hold timers or sockets open; the catalog is complete.
+  process.exit(0);
 } else if (mode === "check" || mode === "verify") {
   const root = resolve(config.root ?? ".");
   for (const [path, expected] of Object.entries(config.sources ?? {})) {
