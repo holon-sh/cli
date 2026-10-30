@@ -3,6 +3,7 @@ package typegen
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -344,7 +345,19 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 		request.Target = "go"
 		request.GoModule = goModule
 	}
-	return mcptype.Generate(ctx, request)
+	files, err := mcptype.Generate(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if target == TargetTS {
+		// holon-sh/app's register reads the own server's schemas from the slot.
+		data, err := json.Marshal(own)
+		if err != nil {
+			return nil, err
+		}
+		files["app.json"] = append(data, '\n')
+	}
+	return files, nil
 }
 
 // currentSources fails when any snapshotted directory changed since preparation.

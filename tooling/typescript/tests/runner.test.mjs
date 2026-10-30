@@ -31,13 +31,16 @@ test("the standalone runner extracts a batch without installed dependencies and 
   writeFileSync(join(app, "input.json"), JSON.stringify(inputSchema));
   writeFileSync(join(app, "server.ts"), 'import {McpServer,createMcpHandler,fromJsonSchema} from "@modelcontextprotocol/server"; import input from "./input.json"; export default createMcpHandler(()=>{const s=new McpServer({name:"test",version:"1"}); s.registerTool("read",{inputSchema:fromJsonSchema(input)},()=>{}); return s;});');
   writeFileSync(join(app, "empty.ts"), 'import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; export default createMcpHandler(()=>new McpServer({name:"empty",version:"1"}));');
+  // Awaiting a function's result needs the standard library embedded beside the bundled compiler.
+  writeFileSync(join(app, "function.ts"), 'import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; import {register,tool} from "holon-sh/app"; const ping=tool({},async()=>({ok:true})); export default createMcpHandler(()=>{const s=new McpServer({name:"function",version:"1"}); register(s,{tools:{ping}}); return s;});');
   const config = join(root, "extract.json");
   const output = join(root, "output.json");
-  writeFileSync(config, JSON.stringify({ apps: [{ name: "test", path: app, entry: "server.ts" }, { name: "empty", path: app, entry: "empty.ts" }] }));
+  writeFileSync(config, JSON.stringify({ apps: [{ name: "test", path: app, entry: "server.ts" }, { name: "empty", path: app, entry: "empty.ts" }, { name: "function", path: app, entry: "function.ts" }] }));
   run("extract", config, [output]);
   const extracted = JSON.parse(readFileSync(output, "utf8"));
   assert.deepEqual(extracted.test.tools, [{name: "read", inputSchema}]);
   assert.deepEqual(extracted.empty.tools, []);
+  assert.deepEqual(extracted.function.tools[0].outputSchema, {type: "object", properties: {ok: {type: "boolean"}}, required: ["ok"], additionalProperties: false});
 
   writeFileSync(config, JSON.stringify({ root: app, sources: extracted.test.sources }));
   run("verify", config);

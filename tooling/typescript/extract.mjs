@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { McpServer, createMcpHandler, fromJsonSchema } from "@modelcontextprotocol/server";
 import { readFileSync, realpathSync } from "node:fs";
-import { resolve, relative, extname, sep } from "node:path";
+import { resolve, relative, extname, sep, dirname } from "node:path";
 import { validator } from "./validate.mjs";
 import { createHash } from "node:crypto";
 
@@ -18,6 +18,10 @@ class Module {
 }
 class Schema {
   constructor(value) { this.value = value; }
+}
+// A holon-sh/app tool(...) or resource(...) call. Its function signature is its contract.
+class AppDeclaration {
+  constructor(kind, node, scope) { this.kind = kind; this.node = node; this.scope = scope; }
 }
 const resourceSchemaKey = "sh.holon/outputSchema";
 const identity = { name: "holon-contract", version: "1" };
@@ -47,6 +51,10 @@ class Lazy {
 }
 
 const sdk = "@modelcontextprotocol/server";
+const app = "holon-sh/app";
+const toolMetadata = ["title", "description", "annotations", "_meta", "icons", "execution"];
+// Only analyzed schemas cross into the SDK. Application callbacks are never installed.
+const uncallable = () => { throw new Error("Contract extraction cannot call tools."); };
 const appRegistrations = new Map([["registerAppTool", "registerTool"], ["registerAppResource", "registerResource"]]);
 const zodModules = new Set(["zod", "zod/v4"]);
 const constructors = new Set([
@@ -125,8 +133,11 @@ class Analyzer {
     throw new Error(`${relative(this.root, file.fileName)}:${line + 1}:${character + 1}: ${message}`);
   }
   load(path) {
-    const options = { target: ts.ScriptTarget.Latest, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, moduleDetection: ts.ModuleDetectionKind.Force, allowJs: true, resolveJsonModule: true, noLib: true, types: [] };
+    // Function signatures need the standard library (Promise, Array) and strict null checks.
+    const options = { target: ts.ScriptTarget.Latest, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, moduleDetection: ts.ModuleDetectionKind.Force, allowJs: true, resolveJsonModule: true, lib: ["lib.esnext.d.ts"], strictNullChecks: true, types: [] };
     const host = ts.createCompilerHost(options, true);
+    const library = host.getDefaultLibLocation();
+    const readLibrary = host.getSourceFile;
     // Packages are symbolic builtins. Only local source participates in extraction.
     host.resolveModuleNameLiterals = (names, containingFile) => names.map(node => {
       if (!node.text.startsWith(".") || !(ts.isImportDeclaration(node.parent) || ts.isExportDeclaration(node.parent))) return { resolvedModule: undefined };
@@ -137,6 +148,8 @@ class Analyzer {
     });
     host.resolveTypeReferenceDirectiveReferences = names => names.map(() => ({ resolvedTypeReferenceDirective: undefined }));
     host.getSourceFile = (path, languageVersion) => {
+      // The bundled compiler's own declarations are not application source.
+      if (dirname(path) === library) return readLibrary(path, languageVersion);
       const real = realpathSync(path);
       if (!real.startsWith(this.root + sep)) throw new Error("Contract imports must stay inside the application source.");
       const bytes = readFileSync(real);
@@ -145,7 +158,9 @@ class Analyzer {
     };
     const program = ts.createProgram([realpathSync(path)], options, host);
     this.checker = program.getTypeChecker();
+    this.object = this.checker.resolveName("Object", undefined, ts.SymbolFlags.Value, false);
     for (const file of program.getSourceFiles()) {
+      if (program.isSourceFileDefaultLibrary(file)) continue;
       if (file.parseDiagnostics.length) this.fail(file, ts.flattenDiagnosticMessageText(file.parseDiagnostics[0].messageText, "\n"));
       const scope = new Map();
       this.scopes.set(file, scope);
@@ -167,9 +182,10 @@ class Analyzer {
       symbol = this.checker.getImmediateAliasedSymbol(symbol);
     }
     const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
-    if (!declaration || ts.findAncestor(declaration.parent, ts.isFunctionLike)) this.fail(node, `Cannot statically resolve ${node.getText()}.`);
-    const file = declaration.getSourceFile();
+    const file = declaration?.getSourceFile();
+    // Standard library globals have no application scope.
     const scope = this.scopes.get(file);
+    if (!scope || ts.findAncestor(declaration.parent, ts.isFunctionLike)) this.fail(node, `Cannot statically resolve ${node.getText()}.`);
     if (scope.has(symbol)) return scope.get(symbol);
     if (ts.isSourceFile(declaration)) return extname(file.fileName) === ".json" ? JSON.parse(file.text) : new Module(symbol);
     if (ts.isExportAssignment(declaration)) {
@@ -182,7 +198,7 @@ class Analyzer {
   }
   lookup(node, scope) {
     const symbol = ts.isShorthandPropertyAssignment(node.parent) ? this.checker.getShorthandAssignmentValueSymbol(node.parent) : this.checker.getSymbolAtLocation(node);
-    if (!symbol && node.text === "Object") return new Builtin(null, "Object");
+    if (symbol === this.object) return new Builtin(null, "Object");
     return scope.has(symbol) ? scope.get(symbol) : this.reference(symbol, node);
   }
   bind(statement, scope) {
@@ -296,6 +312,7 @@ class Analyzer {
         const factory = this.expression(node.arguments[0], scope);
         return this.functionBody(factory, [], node);
       }
+      if (target instanceof Builtin && target.module === app && ["tool", "resource"].includes(target.name)) return new AppDeclaration(target.name, node, scope);
       if (target instanceof Builtin && target.module === sdk && target.name === "fromJsonSchema") {
         const schema = this.materialize(new Lazy(node.arguments[0], scope));
         try { return new Schema(fromJsonSchema(schema)); } catch (error) { this.fail(node, `Unsupported JSON Schema: ${error.message}`); }
@@ -318,7 +335,7 @@ class Analyzer {
   materialize(value) {
     value = this.value(value);
     if (value instanceof Schema) return value.value;
-    if (value instanceof FunctionValue || value instanceof Builtin || value instanceof Server || value instanceof Module) throw new Error("Application callbacks and runtime values are not valid static schema data.");
+    if (value instanceof FunctionValue || value instanceof Builtin || value instanceof Server || value instanceof Module || value instanceof AppDeclaration) throw new Error("Application callbacks and runtime values are not valid static schema data.");
     if (value instanceof RegExp) return value;
     if (Array.isArray(value)) return value.map(v => this.materialize(v));
     if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, this.materialize(v)]));
@@ -467,9 +484,8 @@ class Analyzer {
       if (typeof name !== "string") this.fail(expression, "Tool registration must have a constant string name.");
       const config = this.fields(args[1], scope);
       if (this.containsRegistration(args[2], scope)) this.fail(args[2], "Tool handlers must not change the tool catalog.");
-      // Only analyzed schemas cross into the SDK. Application callbacks are never installed.
       try {
-        server.registerTool(name, { inputSchema: this.materialize(config.inputSchema), outputSchema: this.materialize(config.outputSchema) }, () => { throw new Error("Contract extraction cannot call tools."); });
+        server.registerTool(name, { ...this.metadata(config), inputSchema: this.materialize(config.inputSchema), outputSchema: this.materialize(config.outputSchema) }, uncallable);
       } catch (error) { this.fail(expression, error.message); }
     } else if (methodName === "setRequestHandler") {
       const name = this.expression(args[0], scope);
@@ -497,6 +513,77 @@ class Analyzer {
       if (methodName === "registerResource") this.resource(server, args, expression, scope);
     }
   }
+  metadata(config) {
+    return Object.fromEntries(toolMetadata.filter(key => config[key] !== undefined).map(key => [key, this.materialize(config[key])]));
+  }
+  // register(server, { tools, resources }, changed): schemas come from each function's parameter
+  // and awaited return types; metadata and changed resources from static options.
+  declarations(server, args, expression, scope) {
+    if (args.slice(1).some(arg => this.containsRegistration(arg, scope))) this.fail(expression, "Change callbacks must not change the tool catalog.");
+    const declared = this.fields(args[0], scope);
+    const entries = (field, kind) => Object.entries(declared[field] === undefined ? {} : this.fields(declared[field].node, declared[field].scope)).map(([key, entry]) => {
+      const value = this.value(entry);
+      if (!(value instanceof AppDeclaration) || value.kind !== kind) this.fail(entry.node, `${field}.${key} must be a holon-sh/app ${kind}(...) declaration.`);
+      return [key, value];
+    });
+    const uris = new Map();
+    for (const [, declaration] of entries("resources", "resource")) {
+      const [uri, read] = declaration.node.arguments;
+      const value = this.expression(uri, declaration.scope);
+      if (typeof value !== "string") this.fail(uri, "Resource URIs must be constant strings.");
+      uris.set(declaration, value);
+      server.resources.push({ uri: value, outputSchema: this.typeSchema(this.types(read, declaration.scope).output, read) });
+    }
+    for (const [name, declaration] of entries("tools", "tool")) {
+      const [options, run] = declaration.node.arguments;
+      const { input, output } = this.types(run, declaration.scope);
+      const inputSchema = input ? this.typeSchema(input, run) : { type: "object", properties: {}, additionalProperties: false };
+      const outputSchema = this.typeSchema(output, run);
+      if (inputSchema.type !== "object" || outputSchema.type !== "object") this.fail(run, "Tool arguments and results must be JSON object types; wrap scalar results in an object.");
+      const config = this.fields(options, declaration.scope);
+      const changes = (this.value(config.changes) ?? []).map(entry => uris.get(this.value(entry)) ?? this.fail(options, "changes must list resources registered with this server."));
+      const documentation = ts.displayPartsToString(this.checker.getSymbolAtLocation(ts.getNameOfDeclaration(declaration.node.parent))?.getDocumentationComment(this.checker));
+      try {
+        const metadata = { ...(documentation ? { description: documentation } : {}), ...this.metadata(config) };
+        if (changes.length) metadata._meta = { ...metadata._meta, "sh.holon/changes": changes };
+        server.registerTool(name, { ...metadata, inputSchema: fromJsonSchema(inputSchema), outputSchema: fromJsonSchema(outputSchema) }, uncallable);
+      } catch (error) { this.fail(declaration.node, error.message); }
+    }
+  }
+  // The first parameter and awaited return types of a statically declared function.
+  types(node, scope) {
+    const fn = this.expression(node, scope);
+    if (!(fn instanceof FunctionValue)) this.fail(node, "Expected a statically declared function.");
+    if (this.containsRegistration(fn.node, fn.scope)) this.fail(node, "Tool and resource functions must not change the tool catalog.");
+    const signature = this.checker.getSignatureFromDeclaration(fn.node);
+    const [input] = signature.parameters;
+    return { input: input && this.checker.getTypeOfSymbol(input), output: this.checker.getAwaitedType(signature.getReturnType()) };
+  }
+  typeSchema(type, at, seen = new Set()) {
+    const flags = ts.TypeFlags;
+    if (type.flags & (flags.StringLiteral | flags.NumberLiteral)) return { type: typeof type.value, const: type.value };
+    if (type.flags & flags.BooleanLiteral) return { type: "boolean", const: this.checker.typeToString(type) === "true" };
+    if (type.flags & flags.String) return { type: "string" };
+    if (type.flags & flags.Number) return { type: "number" };
+    if (type.flags & flags.Null) return { type: "null" };
+    if (type.isUnion()) {
+      // boolean is true | false; optional properties add undefined, which JSON omits.
+      const members = type.types.filter(member => !(member.flags & flags.Undefined));
+      if (members.every(member => member.flags & flags.BooleanLiteral)) return { type: "boolean" };
+      return members.length === 1 ? this.typeSchema(members[0], at, seen) : { anyOf: members.map(member => this.typeSchema(member, at, seen)) };
+    }
+    if (this.checker.isArrayType(type)) return { type: "array", items: this.typeSchema(this.checker.getTypeArguments(type)[0], at, seen) };
+    if (!(type.flags & flags.Object) || type.getCallSignatures().length || this.checker.isTupleType(type) || this.checker.getIndexInfosOfType(type).length || seen.has(type)) {
+      this.fail(at, `Unsupported JSON type ${this.checker.typeToString(type)}; use native MCP schema registration for this type.`);
+    }
+    const properties = {}, required = [];
+    for (const property of type.getProperties()) {
+      const description = ts.displayPartsToString(property.getDocumentationComment(this.checker));
+      properties[property.name] = { ...this.typeSchema(this.checker.getTypeOfSymbol(property), at, new Set(seen).add(type)), ...(description ? { description } : {}) };
+      if (!(property.flags & ts.SymbolFlags.Optional)) required.push(property.name);
+    }
+    return { type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false };
+  }
   statementExpression(expression, scope) {
       if (ts.isAwaitExpression(expression)) expression = expression.expression;
       if (ts.isBinaryExpression(expression) && expression.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && expression.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
@@ -519,6 +606,11 @@ class Analyzer {
         const server = this.expression(expression.arguments[0], scope);
         if (!(server instanceof Server)) this.fail(expression, "Expected an official McpServer for the MCP App registration.");
         return this.register(server, appRegistrations.get(helper.name), expression.arguments.slice(1), expression, scope);
+      }
+      if (helper instanceof Builtin && helper.module === app && helper.name === "register") {
+        const server = this.expression(expression.arguments[0], scope);
+        if (!(server instanceof Server)) this.fail(expression, "Expected an official McpServer for holon-sh/app registration.");
+        return this.declarations(server, expression.arguments.slice(1), expression, scope);
       }
       if (ts.isPropertyAccessExpression(method) || ts.isElementAccessExpression(method)) {
         const methodName = ts.isPropertyAccessExpression(method) ? method.name.text : this.expression(method.argumentExpression, scope);
