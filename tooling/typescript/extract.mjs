@@ -6,6 +6,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { resolve, relative, extname, sep } from "node:path";
 import { validator } from "./validate.mjs";
 import { createHash } from "node:crypto";
+import { functionApp } from "./function-app.mjs";
 
 class Builtin {
   constructor(module, name) { this.module = module; this.name = name; }
@@ -66,6 +67,10 @@ const modifiers = new Set([
 export async function extract(root, entry, descriptor = false) {
   const analyzer = new Analyzer(root);
   try {
+    if (entry) {
+      const app = functionApp(root, entry, descriptor);
+      if (app) return app;
+    }
     if (!entry) throw new Error("Cannot identify a static MCP handler entrypoint; use the existing server.ts/server.js convention or a direct package main/start entry.");
     const file = analyzer.load(resolve(analyzer.root, entry));
     for (const [file, scope] of analyzer.scopes) analyzer.statements(file.statements, scope);
@@ -469,7 +474,8 @@ class Analyzer {
       if (this.containsRegistration(args[2], scope)) this.fail(args[2], "Tool handlers must not change the tool catalog.");
       // Only analyzed schemas cross into the SDK. Application callbacks are never installed.
       try {
-        server.registerTool(name, { inputSchema: this.materialize(config.inputSchema), outputSchema: this.materialize(config.outputSchema) }, () => { throw new Error("Contract extraction cannot call tools."); });
+        const metadata = Object.fromEntries(["title", "description", "annotations", "_meta", "icons", "execution"].filter(key => config[key] !== undefined).map(key => [key, this.materialize(config[key])]));
+        server.registerTool(name, { ...metadata, inputSchema: this.materialize(config.inputSchema), outputSchema: this.materialize(config.outputSchema) }, () => { throw new Error("Contract extraction cannot call tools."); });
       } catch (error) { this.fail(expression, error.message); }
     } else if (methodName === "setRequestHandler") {
       const name = this.expression(args[0], scope);

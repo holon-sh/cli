@@ -17,7 +17,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import InvalidSignature
 from mcp.server.mcpserver.tools import Tool as SDKTool
-from mcp.types import CallToolResult, InputRequiredResult, Tool
+from mcp.types import CallToolResult, InputRequiredResult, Tool, ToolAnnotations
 from pydantic import BaseModel, Field, TypeAdapter
 from pydantic.errors import PydanticUserError
 from pydantic.fields import FieldInfo
@@ -40,7 +40,7 @@ ALIASES = {
     "mcp.server.mcpserver": "mcp.server",
     "mcp.server.lowlevel": "mcp.server",
 }
-SERVERS = {"mcp.server:MCPServer", "mcp.server:Server"}
+SERVERS = {"mcp.server:MCPServer", "mcp.server:Server", "holon.app:App"}
 REGISTRATIONS = {"tool", "add_tool", "list_tools", "remove_tool"}
 CONSTRUCTOR_CATALOGS = {"tools", "on_list_tools", None}
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -428,11 +428,43 @@ class Analyzer:
         # The SDK sees concrete trusted annotations and a signature, not source code.
         stub.__signature__ = inspect.Signature(parameters, return_annotation=returns)  # type: ignore[attr-defined]
         tool = SDKTool.from_function(stub, name=name, structured_output=structured)
-        return Tool(
+        result = Tool(
             name=tool.name,
             input_schema=tool.parameters,
             output_schema=tool.output_schema,
         ).model_dump(by_alias=True, exclude_none=True)
+        result["description"] = ast.get_docstring(function) or ""
+        for key in ("title", "description"):
+            if key in options:
+                result[key] = self.literal(path, options[key])
+        if "meta" in options:
+            result["_meta"] = self.literal(path, options["meta"])
+        if "changes" in options:
+            changes = self.literal(path, options["changes"])
+            if not isinstance(changes, (list, tuple)) or any(
+                not isinstance(uri, str) or not uri for uri in changes
+            ):
+                self.fail(
+                    path,
+                    options["changes"],
+                    "changes must contain resource URI strings",
+                )
+            result["_meta"] = {
+                **(result.get("_meta") or {}),
+                "sh.holon/changes": list(changes),
+            }
+        if "annotations" in options:
+            node = options["annotations"]
+            if (
+                isinstance(node, ast.Call)
+                and self.resolve(path, node.func)[1] == "mcp.types:ToolAnnotations"
+            ):
+                result["annotations"] = ToolAnnotations.model_validate(
+                    {item.arg: self.literal(path, item.value) for item in node.keywords}
+                ).model_dump(by_alias=True, exclude_none=True)
+            else:
+                result["annotations"] = self.literal(path, node)
+        return result
 
     def registration(self, node: ast.AST, servers: set[str]) -> str | None:
         match node:
@@ -449,11 +481,22 @@ class Analyzer:
         call: ast.Call,
     ) -> list[dict[str, Any]]:
         signature = inspect.signature(MCPServer.tool)
+        keywords = {cast(str, item.arg): item.value for item in call.keywords}
+        changes = keywords.pop("changes", None)
+        if changes is not None and isinstance(call.func, ast.Attribute):
+            source, construction = self.resolve(path, call.func.value)
+            if (
+                not isinstance(construction, ast.Call)
+                or self.resolve(source, construction.func)[1] != "holon.app:App"
+            ):
+                self.fail(path, changes, "changes is supported only by holon.app.App")
         options = signature.bind(
             None,
             *call.args,
-            **{cast(str, item.arg): item.value for item in call.keywords},
+            **keywords,
         ).arguments
+        if changes is not None:
+            options["changes"] = changes
         return [self.tool(path, function, options)]
 
     def resource(

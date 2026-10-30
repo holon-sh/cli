@@ -35,9 +35,13 @@ func WriteStable(path string, data []byte, mode os.FileMode) error {
 }
 
 type Tool struct {
-	Name   string          `json:"name"`
-	Input  json.RawMessage `json:"inputSchema"`
-	Output json.RawMessage `json:"outputSchema,omitempty"`
+	Name        string          `json:"name"`
+	Input       json.RawMessage `json:"inputSchema"`
+	Output      json.RawMessage `json:"outputSchema,omitempty"`
+	Title       string          `json:"title,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Annotations json.RawMessage `json:"annotations,omitempty"`
+	Meta        json.RawMessage `json:"_meta,omitempty"`
 }
 
 type Resource struct {

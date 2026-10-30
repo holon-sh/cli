@@ -12,6 +12,26 @@ function fixture(t, source, files = {}) {
   return root;
 }
 
+test("function app types compile to MCP without running server code", async t => {
+  const root=fixture(t, `
+import {createApp,resource,tool} from 'holon-sh/app';
+import {writeFileSync} from 'node:fs';
+writeFileSync(new URL('./executed',import.meta.url),'bad');
+const state=resource('counter://state',():{value:number}=>({value:0}));
+const add=tool({changes:[state],annotations:{destructiveHint:false}},(input:{value:number}):{value:number}=>{throw new Error('Must not run');});
+const info={name:'counter',version:'1'};
+export const publishing={packages:[{identifier:\`example:\${info.version}\`}]};
+export default createApp(info,{resources:{state},tools:{add}});
+`);
+  const result=await extract(root,'server.ts');
+  assert.equal(result.diagnostic,undefined);
+  assert.deepEqual(result.tools[0].inputSchema.required,['value']);
+  assert.deepEqual(result.tools[0]._meta['sh.holon/changes'],['counter://state']);
+  assert.equal(result.resources[0].outputSchema.properties.value.type,'number');
+  assert.equal(existsSync(join(root,'executed')),false);
+  assert.deepEqual((await extract(root,'server.ts',true)).descriptor,{name:'counter',version:'1',packages:[{identifier:'example:1'}]});
+});
+
 test("extracts without executing application initialization or callbacks", async t => {
   const root = fixture(t, `
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";

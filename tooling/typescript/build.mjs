@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { build } from "esbuild";
 import { zipSync } from "fflate";
 
@@ -32,6 +33,9 @@ for (const directory of [...packages].sort()) {
 }
 
 const files = { "runner.mjs": outputFiles[0].contents, "THIRD-PARTY-NOTICES.txt": Buffer.from(notices.join("\n\n")), "version.json": Buffer.from(JSON.stringify({ version }) + "\n") };
+// Function inference needs the standard library in source snapshots without node_modules.
+const typescriptLib=dirname(createRequire(import.meta.url).resolve("typescript"));
+for (const name of readdirSync(typescriptLib).filter(name=>/^lib\..*\.d\.ts$/.test(name))) files[name]=readFileSync(join(typescriptLib,name));
 const bytes = zipSync(Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)).map(([name, data]) => [name, [new Uint8Array(data), { mtime: new Date(1980, 0, 1) }]])), { level: 9 });
 mkdirSync(destination, { recursive: true });
 for (const name of readdirSync(destination)) if (/^cli-tooling-ts-.*\.zip$/.test(name)) rmSync(join(destination, name));

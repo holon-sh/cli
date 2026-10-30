@@ -3,6 +3,7 @@ package typegen
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -344,7 +345,30 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 		request.Target = "go"
 		request.GoModule = goModule
 	}
-	return mcptype.Generate(ctx, request)
+	files, err := mcptype.Generate(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if target == TargetTS || target == TargetUI {
+		data, err := json.Marshal(own)
+		if err != nil {
+			return nil, err
+		}
+		files["app.json"] = append(data, '\n')
+	}
+	if target == TargetUI {
+		files["refs.js"] = []byte("export const tools = {}, resources = {};\n")
+		files["refs.d.ts"] = []byte("export declare const tools: Record<never, never>, resources: Record<never, never>;\n")
+	}
+	if target == TargetUI && own.Schema != nil {
+		data, err := json.Marshal(own.Schema)
+		if err != nil {
+			return nil, err
+		}
+		files["refs.js"] = []byte(fmt.Sprintf("const ownContract = %s;\nexport const tools = Object.fromEntries(ownContract.tools.map(tool => [tool.name, {kind: 'tool', ...tool, changes: tool._meta?.['sh.holon/changes'] ?? []}]));\nexport const resources = Object.fromEntries((ownContract.resources ?? []).map(resource => [resource.uri, {kind: 'resource', uri: resource.uri, schema: resource.outputSchema}]));\n", data))
+		files["refs.d.ts"] = []byte(fmt.Sprintf("import type { Inputs, Outputs, Resources } from './index.js';\nimport type { Tool, Resource } from '../app.js';\nexport declare const tools: {readonly [K in keyof Inputs[%q]]: Tool<Inputs[%q][K], K extends keyof Outputs[%q] ? Outputs[%q][K] : never>};\nexport declare const resources: {readonly [K in keyof Resources[%q]]: Resource<Resources[%q][K]>};\n", request.Own, request.Own, request.Own, request.Own, request.Own, request.Own))
+	}
+	return files, nil
 }
 
 // currentSources fails when any snapshotted directory changed since preparation.
