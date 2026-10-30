@@ -51,7 +51,7 @@ func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("install a supported interpreter (%s)", strings.Join(l.programs, ", "))
 }
 
-// extractionEntry is one snapshot to extract: the runner reads entry under path.
+// extractionEntry is one source to extract: the runner imports entry under path.
 type extractionEntry struct {
 	Name  string `json:"name"`
 	Path  string `json:"path"`
@@ -60,28 +60,47 @@ type extractionEntry struct {
 
 func extractTypes(ctx context.Context, root string, batches map[string][]extractionEntry, o Options) (map[string]extraction, error) {
 	results := map[string]extraction{}
+	tooling := filepath.Join(root, "tooling")
 	for _, language := range slices.Sorted(maps.Keys(batches)) {
-		config := filepath.Join(root, language+"-extract.json")
-		output := filepath.Join(root, language+"-extract-output.json")
-		tooling := filepath.Join(root, "tooling")
-		if err := writeJSON(config, map[string]any{"apps": batches[language]}); err != nil {
-			return nil, err
-		}
 		if o.Extract != nil {
+			config := filepath.Join(root, language+"-extract.json")
+			output := filepath.Join(root, language+"-extract-output.json")
+			if err := writeJSON(config, map[string]any{"apps": batches[language]}); err != nil {
+				return nil, err
+			}
 			if err := o.Extract(ctx, language, tooling, config, output); err != nil {
 				return nil, err
 			}
-		} else {
-			if err := validateEnv(o.Env); err != nil {
+			if err := readTypeJSON(output, &results); err != nil {
 				return nil, err
 			}
-			l := typeLanguages[language]
-			program, err := l.localProgram(ctx)
-			if err != nil {
+			continue
+		}
+		if err := validateEnv(o.Env); err != nil {
+			return nil, err
+		}
+		l := typeLanguages[language]
+		host, err := l.localProgram(ctx)
+		if err != nil {
+			return nil, err
+		}
+		// The runners import each server, so a Python server runs in its own environment.
+		programs := map[string][]extractionEntry{}
+		for _, entry := range batches[language] {
+			program := host
+			if language == "python" {
+				program = pythonEnvironment(entry.Path, host)
+			}
+			programs[program] = append(programs[program], entry)
+		}
+		for i, program := range slices.Sorted(maps.Keys(programs)) {
+			config := filepath.Join(root, fmt.Sprintf("%s-extract-%d.json", language, i))
+			output := filepath.Join(root, fmt.Sprintf("%s-extract-output-%d.json", language, i))
+			if err := writeJSON(config, map[string]any{"apps": programs[program]}); err != nil {
 				return nil, err
 			}
 			command := l.command(ctx, program, tooling, language, l.extractor, config, output)
-			command.Env = append(command.Environ(), o.Env...)
+			command.Env = append(append(command.Environ(), o.Env...), "PYTHONDONTWRITEBYTECODE=1")
 			command.Stdout, command.Stderr = o.Stderr, o.Stderr
 			if err = command.Run(); err != nil {
 				if ctx.Err() != nil {
@@ -89,12 +108,10 @@ func extractTypes(ctx context.Context, root string, batches map[string][]extract
 				}
 				return nil, fmt.Errorf("prepare MCP types with %s: %w", program, err)
 			}
+			if err := readTypeJSON(output, &results); err != nil {
+				return nil, err
+			}
 		}
-		var found map[string]extraction
-		if err := readTypeJSON(output, &found); err != nil {
-			return nil, err
-		}
-		maps.Copy(results, found)
 	}
 	return results, nil
 }

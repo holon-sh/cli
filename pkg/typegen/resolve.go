@@ -16,7 +16,7 @@ import (
 )
 
 // ResolveDocument returns one source's contract document without writing anything: a path source
-// is extracted from its snapshot, a registry or endpoint source is fetched, and a supplied
+// is extracted by running its server, a registry or endpoint source is fetched, and a supplied
 // document is validated and returned with its bytes.
 func ResolveDocument(ctx context.Context, source Source, options Options) (*Document, error) {
 	o := options.defaults()
@@ -33,14 +33,14 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 		if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
 			return nil, err
 		}
-		prepared, err := prepareSource(ctx, root, "source", source.Path)
+		prepared, err := prepareSource(ctx, "source", source.Path)
 		if err != nil {
 			return nil, err
 		}
 		if prepared.language == "go" {
 			return nil, fmt.Errorf("%s: Go server contracts are not statically extracted", source.Path)
 		}
-		results, err := extractTypes(ctx, root, map[string][]extractionEntry{prepared.language: {{Name: "source", Path: prepared.root, Entry: prepared.entry}}}, o)
+		results, err := extractTypes(ctx, root, map[string][]extractionEntry{prepared.language: {{Name: "source", Path: prepared.origin, Entry: prepared.entry}}}, o)
 		if err != nil {
 			return nil, err
 		}

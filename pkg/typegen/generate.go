@@ -50,7 +50,7 @@ func (o Options) defaults() Options {
 }
 
 type preparedSource struct {
-	origin, root, entry, language, fingerprint string
+	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
 }
@@ -73,7 +73,8 @@ type preparedConsumer struct {
 	document *Document
 }
 
-// Prepared owns temporary source snapshots. Close releases them; preparation never modifies consumers.
+// Prepared owns a temporary directory for tooling and documents. Close releases it; preparation
+// never modifies consumers.
 type Prepared struct {
 	consumers []*preparedConsumer
 	paths     map[string]*preparedSource
@@ -108,12 +109,12 @@ func (p *Prepared) consumer(name string) *preparedConsumer {
 	return nil
 }
 
-func prepareSource(ctx context.Context, root, name, path string) (*preparedSource, error) {
+func prepareSource(ctx context.Context, name, path string) (*preparedSource, error) {
 	origin, entry, language, err := serverEntry(path)
 	if err != nil {
 		return nil, err
 	}
-	s := &preparedSource{origin: origin, root: filepath.Join(root, "sources", name), entry: entry, language: language}
+	s := &preparedSource{origin: origin, name: name, entry: entry, language: language}
 	data, err := os.ReadFile(filepath.Join(origin, "server.json"))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w (a server source needs a server.json beside its entry)", origin, err)
@@ -123,13 +124,15 @@ func prepareSource(ctx context.Context, root, name, path string) (*preparedSourc
 		return nil, fmt.Errorf("%s/server.json: %w", origin, err)
 	}
 	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
-	if s.fingerprint, err = SnapshotSource(name, origin, s.root); err != nil {
+	// The runners import the server where it lives, beside its installed dependencies, so the
+	// fingerprint guards against changes until preparation finishes.
+	if s.fingerprint, err = SnapshotSource(name, origin, ""); err != nil {
 		return nil, err
 	}
 	return s, ctx.Err()
 }
 
-// Prepare snapshots and extracts every path source once, resolves every other source once, and
+// Prepare fingerprints and extracts every path source once, resolves every other source once, and
 // generates the client files for each consumer and target. Nothing is written to the consumers.
 func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Prepared, err error) {
 	o := options.defaults()
@@ -171,13 +174,13 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 				continue
 			}
 			name := strconv.Itoa(len(p.paths))
-			s, err := prepareSource(ctx, root, name, absolute)
+			s, err := prepareSource(ctx, name, absolute)
 			if err != nil {
 				return nil, err
 			}
 			p.paths[absolute] = s
 			if s.language != "go" {
-				batches[s.language] = append(batches[s.language], extractionEntry{Name: name, Path: s.root, Entry: s.entry})
+				batches[s.language] = append(batches[s.language], extractionEntry{Name: name, Path: s.origin, Entry: s.entry})
 			}
 		}
 	}
@@ -189,8 +192,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 		if s.language == "go" {
 			continue
 		}
-		name := filepath.Base(s.root)
-		if err = s.extract(results[name]); err != nil {
+		if err = s.extract(results[s.name]); err != nil {
 			return nil, err
 		}
 	}
@@ -344,10 +346,10 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 	return mcptype.Generate(ctx, request)
 }
 
-// currentSources fails when any snapshotted directory changed since preparation.
+// currentSources fails when any source directory changed since preparation.
 func (p *Prepared) currentSources() error {
 	for _, s := range p.paths {
-		fingerprint, err := SnapshotSource(filepath.Base(s.root), s.origin, "")
+		fingerprint, err := SnapshotSource(s.name, s.origin, "")
 		if err != nil {
 			return err
 		}
