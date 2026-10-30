@@ -14,11 +14,15 @@ def state() -> dict[str, int]:
 def add(amount: int) -> dict[str, int]:
     """Add to the counter."""
     raise RuntimeError("Never execute callbacks")
+@server.tool(changes=[])
+def show() -> dict[str, int]:
+    raise RuntimeError("Never execute callbacks")
 ''')
     result = extract(tmp_path, "server.py")
     assert "diagnostic" not in result
-    tool = result["tools"][0]
+    tool, show = result["tools"]
     assert tool["annotations"]["destructiveHint"] is False
     assert tool["_meta"]["sh.holon/changes"] == ["counter://state"]
     assert tool["description"] == "Add to the counter."
+    assert "_meta" not in show
     assert result["resources"][0]["uri"] == "counter://state"

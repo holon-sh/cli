@@ -13,25 +13,56 @@ function fixture(t, source, files = {}) {
 }
 
 test("function app types compile to MCP without running server code", async t => {
-  const root=fixture(t, `
-import {createApp,resource,tool} from 'holon-sh/app';
-import {writeFileSync} from 'node:fs';
-writeFileSync(new URL('./executed',import.meta.url),'bad');
-const state=resource('counter://state',():{value:number}=>({value:0}));
-/** Increase the shared counter. */
-const add=tool({changes:[state],annotations:{destructiveHint:false}},(input:{value:number}):{value:number}=>{throw new Error('Must not run');});
-const info={name:'counter',version:'1'};
-export const publishing={packages:[{identifier:\`example:\${info.version}\`}]};
-export default createApp(info,{resources:{state},tools:{add}});
-`);
-  const result=await extract(root,'server.ts');
-  assert.equal(result.diagnostic,undefined);
-  assert.deepEqual(result.tools[0].inputSchema.required,['value']);
-  assert.deepEqual(result.tools[0]._meta['sh.holon/changes'],['counter://state']);
-  assert.equal(result.tools[0].description,'Increase the shared counter.');
-  assert.equal(result.resources[0].outputSchema.properties.value.type,'number');
-  assert.equal(existsSync(join(root,'executed')),false);
-  assert.deepEqual((await extract(root,'server.ts',true)).descriptor,{name:'counter',version:'1',packages:[{identifier:'example:1'}]});
+  const root = fixture(t, `
+import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { register, resource, tool } from "holon-sh/app";
+import { appView } from "holon-sh/view";
+import { writeFileSync } from "node:fs";
+import type { Count } from "./types.js";
+writeFileSync(new URL("./executed", import.meta.url), "module");
+let count = 0;
+const state = resource("counter://state", (): Count => ({ count }));
+/** Increase the counter. */
+const add = tool({ changes: [state], annotations: { destructiveHint: false } }, async ({ amount }: { amount: number }) => {
+  writeFileSync(new URL("./executed", import.meta.url), "tool");
+  return { count: (count += amount) };
+});
+const show = tool({ annotations: { readOnlyHint: true }, _meta: { ui: { resourceUri: "ui://counter/index.html" } } }, (): Count => ({ count }));
+const info = { name: "example.com/counter", version: "1.0.0" };
+export const publishing = { packages: [{ identifier: \`example:\${info.version}\` }] };
+const handler = createMcpHandler(() => {
+  const server = new McpServer(info, { capabilities: { resources: { subscribe: true } } });
+  register(server, { tools: { show, add }, resources: { state } }, uri => handler.notify.resourceUpdated(uri));
+  server.registerResource(...appView("Counter", "ui://counter/index.html", new URL("./dist/index.html", import.meta.url)));
+  return server;
+}, { legacy: "stateless" });
+export default handler;
+`, { "types.ts": "export interface Count {\n  /** Current total. */\n  count: number;\n}\n" });
+  const result = await extract(root, "server.ts");
+  assert.equal(result.diagnostic, undefined);
+  const counter = { type: "object", properties: { count: { type: "number", description: "Current total." } }, required: ["count"], additionalProperties: false };
+  assert.deepEqual(result.tools, [
+    {
+      name: "add",
+      description: "Increase the counter.",
+      annotations: { destructiveHint: false },
+      _meta: { "sh.holon/changes": ["counter://state"] },
+      inputSchema: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"], additionalProperties: false },
+      outputSchema: { type: "object", properties: { count: { type: "number" } }, required: ["count"], additionalProperties: false },
+    },
+    {
+      name: "show",
+      annotations: { readOnlyHint: true },
+      _meta: { ui: { resourceUri: "ui://counter/index.html" } },
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      outputSchema: counter,
+    },
+  ]);
+  // The appView registration is accepted beside the typed resource; only JSON resources are typed.
+  assert.deepEqual(result.resources, [{ uri: "counter://state", outputSchema: counter }]);
+  assert.deepEqual(Object.keys(result.sources).sort(), ["server.ts", "types.ts"]);
+  assert.equal(existsSync(join(root, "executed")), false);
+  assert.deepEqual((await extract(root, "server.ts", true)).descriptor, { name: "example.com/counter", version: "1.0.0", packages: [{ identifier: "example:1.0.0" }] });
 });
 
 test("extracts without executing application initialization or callbacks", async t => {
@@ -79,9 +110,12 @@ for (const [name, registration, reason] of [
   ["unawaited registration", `async function register(s) {await fetch("https://example.com"); s.registerTool("late",{},()=>({content:[]}));} register(server);`, /awaited/i],
   ["non-JSON typed resource", `server.registerResource("r", "chat://r", {mimeType:"text/plain", _meta:{"sh.holon/outputSchema":{type:"object"}}}, () => ({contents:[]}));`, /application\/json/],
   ["malformed fixed schema", `server.server.setRequestHandler("tools/list", () => ({tools:[{name:"x",inputSchema:{type:"object",required:"id"}}]}));`, /JSON Schema/i],
+  ["deferred function registration", `setTimeout(() => register(server, {tools:{}}), 1);`, /registration helper/i],
+  ["mutable function declaration", `let x = tool({}, () => ({})); register(server, {tools:{x}});`, /immutable/i],
+  ["unsupported function type", `register(server, {tools:{x: tool({}, (input: {when: Date}) => ({}))}});`, /^server\.ts:1:\d+: Unsupported JSON type/],
 ]) {
   test(`rejects ${name} without returning a partial catalog`, async t => {
-    const root = fixture(t, `import {McpServer,createMcpHandler,fromJsonSchema} from "@modelcontextprotocol/server"; import {registerAppTool} from "@modelcontextprotocol/ext-apps/server"; import {z} from "zod"; export default createMcpHandler(() => { const server=new McpServer({name:"x",version:"1"}); ${registration} return server; });`);
+    const root = fixture(t, `import {McpServer,createMcpHandler,fromJsonSchema} from "@modelcontextprotocol/server"; import {registerAppTool} from "@modelcontextprotocol/ext-apps/server"; import {register,tool} from "holon-sh/app"; import {z} from "zod"; export default createMcpHandler(() => { const server=new McpServer({name:"x",version:"1"}); ${registration} return server; });`);
     const result = await extract(root, "server.ts");
     assert.equal(result.tools, undefined);
     assert.equal(result.resources, undefined);

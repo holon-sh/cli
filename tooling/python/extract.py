@@ -449,10 +449,11 @@ class Analyzer:
                     options["changes"],
                     "changes must contain resource URI strings",
                 )
-            result["_meta"] = {
-                **(result.get("_meta") or {}),
-                "sh.holon/changes": list(changes),
-            }
+            if changes:
+                result["_meta"] = {
+                    **(result.get("_meta") or {}),
+                    "sh.holon/changes": list(changes),
+                }
         if "annotations" in options:
             node = options["annotations"]
             if (

@@ -58,6 +58,10 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 	if strings.Contains(node, `"status"`) {
 		t.Fatal("the ts slot received the consumer's own contract")
 	}
+	// holon-sh/app's register reads the own server's schemas from app.json.
+	if app := read(t, stage, "holon-sh/generated/app.json"); !strings.Contains(app, `"name":"status"`) {
+		t.Fatalf("holon-sh app.json lacks the own contract: %s", app)
+	}
 	if err := os.MkdirAll(filepath.Join(stage, "holon-ui"), 0o755); err != nil {
 		t.Fatal(err)
 	}
