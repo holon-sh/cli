@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import builtins
 import datetime
+import functools
 import hashlib
 import importlib.abc
 import importlib.machinery
@@ -71,15 +72,33 @@ def unavailable(name: str, capability: str) -> Callable[..., NoReturn]:
     return fail
 
 
+class Guard:
+    """Decides whether a guarded call comes from application code. Deciding resolves paths,
+    which calls guarded functions such as os.stat on Python 3.11, so those calls go through."""
+
+    def __init__(self, application: Callable[[str | None], bool]) -> None:
+        self.application = application
+        self.deciding = False
+
+    def __call__(self) -> bool:
+        if self.deciding:
+            return False
+        self.deciding = True
+        try:
+            return self.application(caller())
+        finally:
+            self.deciding = False
+
+
 class Environ(Mapping[str, str]):
     """An environment application code cannot read. Libraries, such as Pydantic reading its
     settings while application models are defined, see it empty."""
 
-    def __init__(self, application: Callable[[str | None], bool]) -> None:
-        self.application = application
+    def __init__(self, guard: Guard) -> None:
+        self.guard = guard
 
     def check(self, name: str = "os.environ") -> None:
-        if self.application(caller()):
+        if self.guard():
             unavailable(name, "environment")()
 
     def getenv(self, key: str, default: str | None = None) -> str | None:
@@ -174,24 +193,32 @@ def importer() -> str | None:
     return frame.f_code.co_filename if frame is not None else None
 
 
+# The guards' own functions, as opposed to the runner's work such as the finder resolving paths.
+GUARDS = {"caller", "__call__", "call", "initialize", "check", "getenv", "__getitem__"}
+GUARDS |= {"__iter__", "__len__"}
+
+
 def caller() -> str | None:
-    """The innermost file on the stack outside this runner and the standard library."""
+    """The innermost file on the stack outside the guards and the standard library, or None
+    for the runner's own work."""
     frame: FrameType | None = sys._getframe(1)
     while frame is not None:
-        name = frame.f_code.co_filename
-        if name != __file__ and not name.startswith("<") and not is_stdlib(name):
-            return name
+        code = frame.f_code
+        if code.co_filename == __file__:
+            if code.co_name not in GUARDS:
+                return None
+        elif not code.co_filename.startswith("<") and not is_stdlib(code.co_filename):
+            return code.co_filename
         frame = frame.f_back
     return None
 
 
+@functools.cache
 def is_stdlib(file: str) -> bool:
     return Path(file).resolve().is_relative_to(STDLIB)
 
 
-def strip(
-    application: Callable[[str | None], bool],
-) -> dict[tuple[object, str], object]:
+def strip(guard: Guard) -> dict[tuple[object, str], object]:
     """Guard effectful APIs and return the originals. A call from application code raises; a
     call from an installed library, such as the SDK drawing request-state keys, goes through."""
     replaced: dict[tuple[object, str], object] = {}
@@ -200,7 +227,7 @@ def strip(
         real: Callable[..., Any], name: str, capability: str
     ) -> Callable[..., Any]:
         def call(*args: Any, **kwargs: Any) -> Any:
-            if application(caller()):
+            if guard():
                 unavailable(name, capability)()
             return real(*args, **kwargs)
 
@@ -209,7 +236,7 @@ def strip(
 
         # A class stays a class, so annotations such as subprocess.Popen[bytes] still evaluate.
         def initialize(self: object, *args: Any, **kwargs: Any) -> None:
-            if application(caller()):
+            if guard():
                 unavailable(name, capability)()
             real.__init__(self, *args, **kwargs)  # type: ignore[misc]  # the guarded base
 
@@ -226,7 +253,7 @@ def strip(
             setattr(owner, name, guarded(real, f"{prefix}{name}", capability))
 
     replaced[(os, "environ")] = os.environ
-    environ = Environ(application)
+    environ = Environ(guard)
     replaced[(os, "getenv")] = os.getenv
     os.environ, os.getenv = environ, environ.getenv  # type: ignore[assignment]
     stub(os, "putenv unsetenv", "environment")
@@ -320,7 +347,7 @@ def contract(root: Path, entry: str) -> dict[str, Any]:
     import asyncio
 
     try:
-        replaced = strip(finder.application)
+        replaced = strip(Guard(finder.application))
         try:
             # Import the entry as a script beside its project would, without its __main__ block.
             spec = importlib.util.spec_from_file_location(path.stem, path)
