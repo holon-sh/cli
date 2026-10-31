@@ -363,7 +363,7 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	writeProvider(t, orders, "orders", "from holon.apps import apps\n"+pythonProvider)
 	put(t, orders, "requirements.txt", "holon-sh\n")
 	// Stands in for the installed holon-sh package that generated clients import.
-	put(t, orders, "holon/client.py", "class Apps:\n    def __init__(self, *args):\n        pass\nBinding = CallOptions = ToolResult = object\n")
+	put(t, orders, "holon/client.py", "class Apps:\n    def __init__(self, *args):\n        pass\ndef __getattr__(name):\n    return object\n")
 	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
 	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
 		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
