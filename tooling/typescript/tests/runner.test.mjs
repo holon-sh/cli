@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,98 +23,123 @@ function unpackTooling(t) {
   return { root, run };
 }
 
-// An application whose own node_modules hold the SDK and Zod, linked from the tooling's.
-function application(root, files, packages = []) {
+// An application directory holding files, including any node_modules it has installed.
+function application(root, files) {
   const app = join(root, "application");
-  for (const name of ["@modelcontextprotocol/server", "zod", ...packages]) {
-    mkdirSync(dirname(join(app, "node_modules", name)), { recursive: true });
-    symlinkSync(fileURLToPath(new URL(`../node_modules/${name}`, import.meta.url)), join(app, "node_modules", name));
+  for (const [name, source] of Object.entries(files)) {
+    mkdirSync(dirname(join(app, name)), { recursive: true });
+    writeFileSync(join(app, name), source);
   }
-  for (const [name, source] of Object.entries(files)) writeFileSync(join(app, name), source);
   return app;
 }
 
-function extractApps(root, run, apps, env) {
+function extractApps(root, run, app, entries, env) {
   const config = join(root, "extract.json");
   const output = join(root, "output.json");
-  writeFileSync(config, JSON.stringify({ apps }));
+  writeFileSync(config, JSON.stringify({ apps: Object.entries(entries).map(([name, entry]) => ({ name, path: app, entry })) }));
   run("extract", config, [output], env);
   return JSON.parse(readFileSync(output, "utf8"));
 }
 
-test("the standalone runner asks the application's own server for its catalog and rejects changed inputs", t => {
+const order = { $schema: "https://json-schema.org/draft/2020-12/schema", type: "object", properties: { id: { type: "string" }, status: { type: "string", enum: ["open", "closed"] } }, required: ["id", "status"], additionalProperties: false };
+
+test("a server with only schema imports extracts with nothing installed and records every file served", t => {
   const { root, run } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
-    "schemas.ts": 'import { z } from "zod"; export const status = z.enum(["open", "closed"]); export const order = z.object({ id: z.string(), status });',
-    // Template literals, imported schemas and conditional registration are ordinary code now.
+    "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@schemas/*": ["./schemas/*"] } } }),
+    "schemas/order.ts": 'import { z } from "zod"; export const status = z.enum(["open", "closed"]); export const order = z.object({ id: z.string(), status });',
+    "meta.json": '{"description": "Read an order"}',
+    "tools.ts": `import { z } from "zod";
+import { order, status } from "@schemas/order";
+import meta from "./meta.json" with { type: "json" };
+export const read = { description: meta.description, inputSchema: z.object({ id: z.string() }), outputSchema: order };
+export const list = { inputSchema: z.object({ status }) };`,
     "server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { order, status } from "./schemas.ts";
+import { list, read } from "./tools.js";
+import { order } from "@schemas/order";
 const prefix: string = "orders";
-// Read at import time: HOLON_CONTRACT lets applications skip start-up side effects.
-const contract = process.env.HOLON_CONTRACT === "1";
-process.env.HOLON_LEAK = "1";
-Object.assign(globalThis, { holonLeak: true });
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "orders", version: "1" });
-  server.registerTool(\`\${prefix}_read\`, { inputSchema: z.object({ id: z.string() }), outputSchema: order }, () => { throw new Error("not called"); });
-  if (contract) server.registerTool("contract_only", { inputSchema: z.object({ status }) }, () => ({ content: [] }));
+  server.registerTool(\`\${prefix}_read\`, read, () => { throw new Error("not called"); });
+  server.registerTool(\`\${prefix}_list\`, list, () => ({ content: [] }));
   server.registerResource("Order", "orders://latest", { mimeType: "application/json", _meta: { "sh.holon/outputSchema": z.toJSONSchema(order) } }, () => ({ contents: [] }));
   server.registerResource("Page", "ui://orders/app.html", { mimeType: "text/html" }, () => ({ contents: [] }));
   return server;
 }, { legacy: "reject" });`,
-    // A plain McpServer default export is served through the application's createMcpHandler.
-    // It runs in its own process, so the other app's environment and globals never reach it.
-    "plain.mjs": `import { McpServer } from "@modelcontextprotocol/server";
-import { z } from "zod";
-await new Promise(resolve => setTimeout(resolve, 200));
-const server = new McpServer({ name: "plain", version: "1" });
-if (process.env.HOLON_LEAK || globalThis.holonLeak) server.registerTool("leaked", { inputSchema: z.object({}) }, () => ({ content: [] }));
-export default server;`,
+    // A plain McpServer default export is served through the same SDK copy's createMcpHandler.
+    "plain.mjs": 'import { McpServer } from "@modelcontextprotocol/server"; export default new McpServer({ name: "plain", version: "1" });',
   });
-  const extracted = extractApps(root, run, [{ name: "orders", path: app, entry: "server.ts" }, { name: "plain", path: app, entry: "plain.mjs" }]);
-  const order = { $schema: "https://json-schema.org/draft/2020-12/schema", type: "object", properties: { id: { type: "string" }, status: { type: "string", enum: ["open", "closed"] } }, required: ["id", "status"], additionalProperties: false };
-  assert.deepEqual(extracted.orders.tools.map(tool => tool.name), ["contract_only", "orders_read"]);
+  const extracted = extractApps(root, run, app, { orders: "server.ts", plain: "plain.mjs" });
+  assert.equal(extracted.orders.diagnostic, undefined);
+  assert.deepEqual(extracted.orders.tools.map(tool => tool.name), ["orders_list", "orders_read"]);
   assert.deepEqual(extracted.orders.tools[1].outputSchema, order);
   assert.deepEqual(extracted.orders.resources, [{ uri: "orders://latest", outputSchema: order }, { uri: "ui://orders/app.html", outputSchema: {} }]);
-  // The modules the server loaded from the application are its recorded inputs; plain.mjs is not one.
-  assert.deepEqual(Object.keys(extracted.orders.sources), ["schemas.ts", "server.ts"]);
-  assert.deepEqual(extracted.plain, { tools: [], resources: [], sources: extracted.plain.sources });
+  assert.deepEqual(Object.keys(extracted.orders.sources), ["meta.json", "schemas/order.ts", "server.ts", "tools.ts"]);
+  assert.deepEqual(extracted.plain, { tools: [], resources: [], sources: { "plain.mjs": extracted.plain.sources["plain.mjs"] } });
 
   const config = join(root, "verify.json");
   writeFileSync(config, JSON.stringify({ root: app, sources: extracted.orders.sources }));
   run("verify", config);
   writeFileSync(join(app, "dist.js"), "// a build output is not an input");
   run("verify", config);
-  writeFileSync(join(app, "schemas.ts"), "export const status = null;");
+  writeFileSync(join(app, "schemas/order.ts"), "export const status = null;");
   for (const mode of ["check", "verify"]) {
-    assert.throws(() => run(mode, config), { stderr: /schemas\.ts:.*stale/ });
+    assert.throws(() => run(mode, config), { stderr: /schemas\/order\.ts:.*stale/ });
   }
 });
 
-test("the application's own tsx loads .js specifiers, tsconfig paths and enums", t => {
+test("installed packages resolve from the application: its own Zod, CommonJS packages and its client slot", t => {
   const { root, run } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
-    "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@schemas": ["./schemas.ts"] } } }),
-    "schemas.ts": 'import { z } from "zod"; export enum Region { EU = "eu", US = "us" } export const region = z.enum(Region);',
-    "tools.ts": 'import { region } from "@schemas"; import { z } from "zod"; export const locate = { inputSchema: z.object({ region }) };',
-    "server.ts": 'import { McpServer, createMcpHandler } from "@modelcontextprotocol/server"; import { locate } from "./tools.js"; export default createMcpHandler(() => { const server = new McpServer({ name: "regions", version: "1" }); server.registerTool("locate", locate, () => ({ content: [] })); return server; });',
-  }, ["tsx"]);
-  const { regions } = extractApps(root, run, [{ name: "regions", path: app, entry: "server.ts" }]);
-  assert.equal(regions.diagnostic, undefined);
-  assert.deepEqual(regions.tools[0].inputSchema.properties.region, { type: "string", enum: ["eu", "us"] });
-  assert.deepEqual(Object.keys(regions.sources), ["schemas.ts", "server.ts", "tools.ts"]);
+    // Stands in for an installed Zod other than the bundled one; its JSON Schema names its version.
+    "node_modules/zod/package.json": '{"name":"zod","version":"9.9.9","type":"module","exports":{".":"./index.js"}}',
+    "node_modules/zod/index.js": `const schema = json => ({ "~standard": { version: 1, vendor: "zod", validate: value => ({ value }), jsonSchema: { input: () => json, output: () => json } } });
+export const z = { object: shape => schema({ type: "object", description: "zod 9.9.9", properties: Object.fromEntries(Object.keys(shape).map(key => [key, shape[key]["~standard"].jsonSchema.input()])) }), enum: values => schema({ type: "string", enum: values }) };`,
+    "node_modules/legacy-units/package.json": '{"name":"legacy-units","main":"index.js"}',
+    "node_modules/legacy-units/index.js": 'const { names } = require("./names"); module.exports = { names, metric: true };',
+    "node_modules/legacy-units/names.js": 'exports.names = ["cm", "in"];',
+    "node_modules/holon-sh/package.json": '{"name":"holon-sh","type":"module","exports":{".":{"import":"./generated/index.js"}}}',
+    "node_modules/holon-sh/generated/index.js": 'import { createApps } from "../runtime.mjs"; export const apps = createApps({ name: "unconfigured", version: "0", requires: {} }, {});',
+    "node_modules/holon-sh/runtime.mjs": "export function createApps() { return {}; }",
+    "server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { z } from "zod";
+import units, { names } from "legacy-units";
+import { apps } from "holon-sh";
+export default createMcpHandler(() => {
+  const server = new McpServer({ name: "units", version: "1" });
+  if (units.metric && apps) server.registerTool("convert", { inputSchema: z.object({ unit: z.enum(names) }) }, () => ({ content: [] }));
+  return server;
+});`,
+  });
+  const { units } = extractApps(root, run, app, { units: "server.ts" });
+  assert.equal(units.diagnostic, undefined);
+  assert.deepEqual(units.tools, [{ name: "convert", inputSchema: { type: "object", description: "zod 9.9.9", properties: { unit: { type: "string", enum: ["cm", "in"] } } } }]);
+  assert.deepEqual(Object.keys(units.sources), ["server.ts"]);
 });
 
-test("an entry that throws or hangs while importing becomes a diagnostic", t => {
+test("module-scope effects fail with the capability, file and line; missing packages are named", t => {
   const { root, run } = unpackTooling(t);
-  const app = application(root, { "server.mjs": 'throw new Error("database unavailable");', "hang.mjs": "while (true) {}" });
-  const { broken } = extractApps(root, run, [{ name: "broken", path: app, entry: "server.mjs" }]);
-  assert.match(broken.diagnostic, /^server\.mjs: Error: database unavailable\n\s+at /);
-  const { hung } = extractApps(root, run, [{ name: "hung", path: app, entry: "hang.mjs" }], { HOLON_CONTRACT_TIMEOUT: "1" });
-  assert.equal(hung.diagnostic, "hang.mjs: no catalog within 1s; gate start-up work on HOLON_CONTRACT or raise HOLON_CONTRACT_TIMEOUT");
+  const app = application(root, {
+    "package.json": '{"type":"module"}',
+    "env.ts": 'interface Settings {\n  key: string;\n}\nconst settings: Settings = { key: process.env.API_KEY ?? "" };\nexport default settings;\n',
+    "fetch.ts": 'const response: unknown = null;\nawait fetch("https://example.com/schema.json");\nexport default response;\n',
+    "fs.ts": 'import { readFileSync } from "node:fs";\nexport default readFileSync("schema.json", "utf8");\n',
+    "missing.ts": 'import pad from "left-pad";\nexport default pad;\n',
+    "throw.mjs": 'throw new Error("database unavailable");',
+    "hang.mjs": "while (true) {}",
+  });
+  const extracted = extractApps(root, run, app, { env: "env.ts", fetch: "fetch.ts", fs: "fs.ts", missing: "missing.ts", broken: "throw.mjs" });
+  assert.match(extracted.env.diagnostic, /^env\.ts: ReferenceError: process is not defined: contract evaluation has no process environment\n\s+at \S*\/env\.ts:4:/);
+  assert.match(extracted.fetch.diagnostic, /^fetch\.ts: ReferenceError: fetch is not defined: contract evaluation has no network\n\s+at \S*\/fetch\.ts:2:/);
+  assert.match(extracted.fs.diagnostic, /^fs\.ts: Error: node:fs readFileSync is unavailable: contract evaluation has no filesystem\n[\s\S]*\/fs\.ts:2:/);
+  assert.match(extracted.missing.diagnostic, /^missing\.ts: Error: Cannot find package left-pad imported from \S*\/missing\.ts; install the application's dependencies or commit holon-contract\.json/);
+  assert.equal(extracted.missing.missing, "left-pad");
+  assert.match(extracted.broken.diagnostic, /^throw\.mjs: Error: database unavailable\n\s+at \S*\/throw\.mjs:1:/);
+  const { hung } = extractApps(root, run, app, { hung: "hang.mjs" }, { HOLON_CONTRACT_TIMEOUT: "1" });
+  assert.equal(hung.diagnostic, "hang.mjs: no catalog within 1s; raise HOLON_CONTRACT_TIMEOUT if module-scope work needs longer");
 });
 
 test("check uses the application's compiler CLI and honors project file selection", t => {

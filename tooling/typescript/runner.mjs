@@ -9,7 +9,7 @@ import { contract, extract } from "./extract.mjs";
 const [mode, configPath, output] = process.argv.slice(2);
 const config = mode === "contract" ? null : JSON.parse(readFileSync(configPath, "utf8"));
 if (mode === "contract") {
-  // One application's child process (root, entry). Its timers or sockets must not keep it alive.
+  // One application's child process (root, entry), run with --experimental-vm-modules.
   process.send(await contract(configPath, output), () => process.exit(0));
 } else if (mode === "extract") {
   const results = Object.fromEntries(await Promise.all(config.apps.map(async app => [app.name, await extract(app.path, app.entry)])));

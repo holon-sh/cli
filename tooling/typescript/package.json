@@ -17,7 +17,6 @@
     "@modelcontextprotocol/server": "2.3.1",
     "esbuild": "0.28.2",
     "fflate": "0.8.3",
-    "tsx": "4.23.15",
     "typescript": "~5.9.3",
     "zod": "4.6.5"
   }
