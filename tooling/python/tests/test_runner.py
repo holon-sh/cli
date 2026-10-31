@@ -1,6 +1,7 @@
 """The bundled extractor imports the app and asks its own server for the catalog."""
 
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -80,13 +81,15 @@ LOW_LEVEL = """
 
 
 def write(directory: Path, files: dict[str, str]) -> Path:
-    directory.mkdir()
     for name, source in files.items():
+        (directory / name).parent.mkdir(parents=True, exist_ok=True)
         (directory / name).write_text(dedent(source))
     return directory
 
 
-def extract(tmp_path: Path, apps: dict[str, Path]) -> dict[str, dict]:
+def extract(
+    tmp_path: Path, apps: dict[str, Path], entry: str = "server.py", **env: str
+) -> dict[str, dict]:
     archive = Path(
         subprocess.check_output(
             [sys.executable, "-I", str(ROOT / "build.py")], text=True
@@ -96,12 +99,11 @@ def extract(tmp_path: Path, apps: dict[str, Path]) -> dict[str, dict]:
         bundle.extractall(tmp_path / "tooling")
     config = tmp_path / "config.json"
     output = tmp_path / "output.json"
-    entries = [
-        {"name": n, "path": str(p), "entry": "server.py"} for n, p in apps.items()
-    ]
+    entries = [{"name": n, "path": str(p), "entry": entry} for n, p in apps.items()]
     config.write_text(json.dumps({"apps": entries}))
     extractor = [sys.executable, "-I", str(tmp_path / "tooling/extract.py")]
-    subprocess.run([*extractor, str(config), str(output)], check=True)
+    environment = {**os.environ, **env}
+    subprocess.run([*extractor, str(config), str(output)], check=True, env=environment)
     return json.loads(output.read_text())
 
 
@@ -152,8 +154,25 @@ def test_bundle_extracts_the_servers_own_catalog_and_detects_changes(tmp_path):
     assert "sources changed after extraction" in checked.stderr
 
 
-def test_an_entry_that_raises_while_importing_becomes_a_diagnostic(tmp_path):
-    app = write(tmp_path / "app", {"server.py": "raise RuntimeError('no database')"})
-    diagnostic = extract(tmp_path, {"broken": app})["broken"]["diagnostic"]
+def test_a_src_entry_imports_from_the_application_root(tmp_path):
+    server = SERVER.replace("from models", "from src.models")
+    app = write(tmp_path / "app", {"src/models.py": MODELS, "src/server.py": server})
+    result = extract(tmp_path, {"orders": app}, entry="src/server.py")["orders"]
+    assert [tool["name"] for tool in result["tools"]] == ["read", "summarize"]
+
+
+def test_an_entry_that_raises_or_hangs_while_importing_becomes_a_diagnostic(tmp_path):
+    broken = write(
+        tmp_path / "broken", {"server.py": "raise RuntimeError('no database')"}
+    )
+    hung = write(tmp_path / "hung", {"server.py": "while True:\n    pass\n"})
+    result = extract(
+        tmp_path, {"broken": broken, "hung": hung}, HOLON_CONTRACT_TIMEOUT="1"
+    )
+    diagnostic = result["broken"]["diagnostic"]
     assert diagnostic.startswith("server.py: Traceback")
     assert diagnostic.rstrip().endswith("RuntimeError: no database")
+    assert result["hung"]["diagnostic"] == (
+        "server.py: no catalog within 1s; gate start-up work on HOLON_CONTRACT "
+        "or raise HOLON_CONTRACT_TIMEOUT"
+    )
