@@ -242,7 +242,7 @@ function tsconfigPaths(root) {
     const exact = !pattern.includes("*");
     if (exact ? specifier !== pattern : !(specifier.startsWith(prefix) && specifier.endsWith(suffix))) return [];
     const match = exact ? "" : specifier.slice(prefix.length, specifier.length - suffix.length);
-    return targets.map(target => resolve(base, target.replace("*", match)));
+    return targets.map(target => resolve(base, target.replaceAll("*", match)));
   });
 }
 
