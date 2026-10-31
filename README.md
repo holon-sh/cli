@@ -178,7 +178,7 @@ A dependency is written in one of three ways.
 <details open>
 <summary><h3>Source code</h3></summary>
 
-An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry.
+An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry. The server runs in a sandbox and is asked for `tools/list` and `resources/list`. During contract extraction, module-scope code runs with no filesystem, network or environment, and fails naming the capability it reached for. Its schema libraries (Zod and the MCP SDK, or `mcp` and `pydantic`) come from the application when installed, else from the CLI; any other package it imports must be installed (a Python server runs in the nearest `.venv`), or a committed `holon-contract.json` beside `server.json` stands in. Wherever the server can run, generation fails if that file is stale. A server that has not answered within `HOLON_CONTRACT_TIMEOUT` seconds (default 30) fails.
 
 ```sh
 holon types check -s bar/server.py
@@ -238,12 +238,14 @@ Examples:
   holon types generate -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
   holon types generate -s docs=https://mcp.context7.com/mcp
 
-  # Print one server's contract
+  # Print one server's contract, or commit it beside its server.json
   holon types generate --contract ../orders
+  holon types generate --contract ../orders -o ../orders/holon-contract.json
 
 Flags:
       --contract string      Print one server's MCP contract instead of generating
   -h, --help                 help for generate
+  -o, --output string        Write the --contract document to FILE, such as holon-contract.json
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
                              directory; repeatable. Without it, server.json requires is used
   -v, --verbose              Show generation details

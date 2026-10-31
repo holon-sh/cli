@@ -356,3 +356,127 @@ func TestPythonSourcesWithTheRealExtractor(t *testing.T) {
 		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
 	}
 }
+
+func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
+	needPython(t)
+	orders := t.TempDir()
+	writeProvider(t, orders, "orders", "from holon.apps import apps\n"+pythonProvider)
+	put(t, orders, "requirements.txt", "holon-sh\n")
+	// Stands in for the installed holon-sh package that generated clients import.
+	put(t, orders, "holon/client.py", "class Apps:\n    def __init__(self, *args):\n        pass\ndef __getattr__(name):\n    return object\n")
+	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
+	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
+		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
+	}
+	if module := read(t, orders, "holon/apps/__init__.py"); !generatedPython(filepath.Join(orders, "holon")) || !strings.Contains(module, "class _Clients(_typing.Protocol):\n    pass") {
+		t.Fatalf("placeholder module:\n%s", module)
+	}
+	// Check verifies the application files the server loaded, not the slot an image build replaces.
+	c := Consumer{Name: "orders", Dir: orders, Server: &Source{Path: orders}, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	check, _ := prepared.CheckConfig("orders")
+	if sources := check["sources"].(map[string]string); len(sources) != 2 || sources["server.py"] == "" || sources["holon/client.py"] == "" {
+		t.Fatalf("check sources = %v", sources)
+	}
+	// Writing replaces the placeholder; a later preparation leaves generated clients alone.
+	if err := prepared.Write(); err != nil {
+		t.Fatal(err)
+	}
+	generated := read(t, orders, "holon/apps/__init__.py")
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err != nil || !strings.Contains(generated, "async def lookup(") || read(t, orders, "holon/apps/__init__.py") != generated {
+		t.Fatalf("generated module after preparation (%v):\n%s", err, read(t, orders, "holon/apps/__init__.py"))
+	}
+}
+
+// committedContract writes metadata as holon types generate --contract prints it.
+func committedContract(t *testing.T, dir string, metadata *mcpcontract.Metadata) {
+	t.Helper()
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, dir, ContractFile, string(data)+"\n")
+}
+
+func TestACommittedContractStandsInForMissingDependencies(t *testing.T) {
+	needNode(t)
+	orders := t.TempDir()
+	put(t, orders, "server.ts", `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import Database from "better-sqlite3";
+export const driver = Database;
+export default createMcpHandler(() => new McpServer({ name: "orders", version: "1" }));`)
+	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "better-sqlite3 is not installed; install the application's dependencies, or commit its contract") {
+		t.Fatalf("without the package or a committed contract: %v", err)
+	}
+	committedContract(t, orders, ordersMetadata())
+	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
+	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "lookup" {
+		t.Fatalf("committed contract = %+v, %v", contract, err)
+	}
+	other := ordersMetadata()
+	other.Identity.Version = "2.0.0"
+	committedContract(t, orders, other)
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "describes example.com/orders@2.0.0 but server.json names example.com/orders@1.0.0") {
+		t.Fatalf("committed contract for another version: %v", err)
+	}
+}
+
+func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
+	root := t.TempDir()
+	orders, app := filepath.Join(root, "orders"), filepath.Join(root, "app")
+	writeProvider(t, orders, "orders", pythonProvider)
+	slotPackage(t, app, nodePackage)
+	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Path: orders}}}
+	options := Options{Extract: fakeExtract(map[string]extraction{"example.com/orders": {Tools: ordersMetadata().Schema.Tools}})}
+	committedContract(t, orders, ordersMetadata())
+	prepared, err := Prepare(t.Context(), []Consumer{c}, options)
+	if err != nil {
+		t.Fatalf("matching committed contract: %v", err)
+	}
+	_ = prepared.Close()
+	stale := ordersMetadata()
+	stale.Schema.Tools[0].Name = "find"
+	committedContract(t, orders, stale)
+	if _, err := Prepare(t.Context(), []Consumer{c}, options); err == nil || !strings.Contains(err.Error(), filepath.Join(orders, ContractFile)+" is stale") {
+		t.Fatalf("stale committed contract: %v", err)
+	}
+	// Printing the contract regenerates the file, so it answers what the server does.
+	if contract, err := ResolveDocument(t.Context(), Source{Path: orders}, options); err != nil || contract.Schema.Tools[0].Name != "lookup" {
+		t.Fatalf("printed contract = %+v, %v", contract, err)
+	}
+}
+
+func TestATypeScriptServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
+	needNode(t)
+	orders := t.TempDir()
+	put(t, orders, "package.json", `{"type":"module","dependencies":{"holon-sh":"*"}}`)
+	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
+	put(t, orders, "server.ts", `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { z } from "zod";
+import { apps } from "holon-sh";
+export default createMcpHandler(() => {
+  const server = new McpServer({ name: "orders", version: "1" });
+  if (apps) server.registerTool("read", { inputSchema: z.object({ id: z.string() }) }, () => ({ content: [] }));
+  return server;
+});`)
+	// An installed runtime package whose generated slot is empty, as after a failed generation.
+	runtime := filepath.Join(orders, "node_modules", nodePackage)
+	put(t, runtime, "package.json", `{"name":"holon-sh","type":"module","holon":{"slot":"generated","contractVersion":1},"exports":{".":{"import":"./generated/index.js"}}}`)
+	put(t, runtime, "runtime.mjs", "export const createApps = () => ({}), bindApps = () => ({});\nexport class ToolCallError extends Error {}\n")
+	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var marker slotMetadata
+	if err := readTypeJSON(filepath.Join(runtime, "generated", "holon-generated.json"), &marker); err != nil || !marker.Placeholder {
+		t.Fatalf("placeholder marker = %+v, %v", marker, err)
+	}
+	if len(contract.Schema.Tools) != 1 {
+		t.Fatalf("contract = %+v", contract.Schema)
+	}
+}

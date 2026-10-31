@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"errors"
@@ -31,8 +32,9 @@ const generateExamples = `  # Generate for the current project, from server.json
   holon types generate -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
   holon types generate -s docs=https://mcp.context7.com/mcp
 
-  # Print one server's contract
-  holon types generate --contract ../orders`
+  # Print one server's contract, or commit it beside its server.json
+  holon types generate --contract ../orders
+  holon types generate --contract ../orders -o ../orders/holon-contract.json`
 
 var alias = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?=`)
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
@@ -125,8 +127,8 @@ func insideDir(path, dir string) bool {
 	return err == nil && filepath.IsLocal(relative)
 }
 
-// printContract prints one server's contract document and writes no files.
-func printContract(cmd *cobra.Command, arg string) error {
+// printContract prints one server's contract document, or writes it to output when given.
+func printContract(cmd *cobra.Command, arg, output string) error {
 	source, err := parseSource(arg)
 	if err != nil {
 		return err
@@ -135,9 +137,17 @@ func printContract(cmd *cobra.Command, arg string) error {
 	if err != nil {
 		return err
 	}
-	encoder := json.NewEncoder(cmd.OutOrStdout())
+	var data bytes.Buffer
+	encoder := json.NewEncoder(&data)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(document.Metadata)
+	if err := encoder.Encode(document.Metadata); err != nil {
+		return err
+	}
+	if output != "" {
+		return os.WriteFile(output, data.Bytes(), 0o644)
+	}
+	_, err = cmd.OutOrStdout().Write(data.Bytes())
+	return err
 }
 
 // generateProject resolves the client directory and generates its declared slots from -s
@@ -204,14 +214,17 @@ func NewTypesCommand() *cobra.Command {
 	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
 	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	var verbose bool
-	var contract string
+	var contract, output string
 	var servers []string
 	generate := &cobra.Command{Use: "generate [DIR]", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for MCP servers.\n\n" + dependencyHelp, Example: generateExamples, Args: oneDir, RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("contract") {
 			if len(args) > 0 || len(servers) > 0 {
 				return errors.New("--contract takes one SERVER and nothing else")
 			}
-			return printContract(cmd, contract)
+			return printContract(cmd, contract, output)
+		}
+		if output != "" {
+			return errors.New("--output writes a --contract document")
 		}
 		progress := io.Discard
 		if verbose {
@@ -221,6 +234,7 @@ func NewTypesCommand() *cobra.Command {
 		return err
 	}}
 	generate.Flags().StringVar(&contract, "contract", "", "Print one server's MCP contract instead of generating")
+	generate.Flags().StringVarP(&output, "output", "o", "", "Write the --contract document to FILE, such as holon-contract.json")
 	generate.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
 	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")
 	types.AddCommand(generate, newCheck("Type-check the project's calls to MCP servers"))

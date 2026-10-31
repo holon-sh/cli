@@ -1,16 +1,16 @@
 [project]
 name = "cli-tooling-py"
 version = "0.0.1"
-description = "Python contract extractor and check runner embedded in the Holon CLI."
+description = "Python contract runner and check runner embedded in the Holon CLI."
 license = "MIT"
 requires-python = ">=3.11"
-dependencies = ["mcp>=2.3,<3", "pydantic>=2.14,<3", "typing-extensions>=4.16,<5"]
+dependencies = ["mcp>=2.3,<3"]
 
 [tool.uv]
 package = false
 
 [dependency-groups]
-dev = ["jsonschema>=4.26,<5", "mypy==2.4.0", "pytest==9.1.1", "ruff==0.16.8"]
+dev = ["mypy==2.4.0", "pytest==9.1.1", "ruff==0.16.8"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -3,8 +3,10 @@ package typegen
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -50,7 +52,7 @@ func (o Options) defaults() Options {
 }
 
 type preparedSource struct {
-	origin, root, entry, language, fingerprint string
+	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
 }
@@ -59,7 +61,22 @@ func (s *preparedSource) extract(result extraction) error {
 	if result.Diagnostic != "" {
 		return fmt.Errorf("%s: %s", s.origin, result.Diagnostic)
 	}
-	s.sources = result.Sources
+	// The runners report the application files the server loaded. Those outside the snapshot, such
+	// as generated slots that an image build replaces, are not inputs that check can verify.
+	matcher, err := SourceMatcher(s.origin)
+	if err != nil {
+		return err
+	}
+	s.sources = map[string]string{}
+	for path, digest := range result.Sources {
+		ignored, err := IgnoredSource(s.origin, filepath.Join(s.origin, filepath.FromSlash(path)), matcher)
+		if err != nil {
+			return err
+		}
+		if !ignored {
+			s.sources[path] = digest
+		}
+	}
 	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
 	return nil
 }
@@ -73,7 +90,8 @@ type preparedConsumer struct {
 	document *Document
 }
 
-// Prepared owns temporary source snapshots. Close releases them; preparation never modifies consumers.
+// Prepared owns a temporary directory for tooling and documents. Close releases it; preparation
+// never modifies consumers.
 type Prepared struct {
 	consumers []*preparedConsumer
 	paths     map[string]*preparedSource
@@ -108,12 +126,12 @@ func (p *Prepared) consumer(name string) *preparedConsumer {
 	return nil
 }
 
-func prepareSource(ctx context.Context, root, name, path string) (*preparedSource, error) {
+func prepareSource(ctx context.Context, name, path string) (*preparedSource, error) {
 	origin, entry, language, err := serverEntry(path)
 	if err != nil {
 		return nil, err
 	}
-	s := &preparedSource{origin: origin, root: filepath.Join(root, "sources", name), entry: entry, language: language}
+	s := &preparedSource{origin: origin, name: name, entry: entry, language: language}
 	data, err := os.ReadFile(filepath.Join(origin, "server.json"))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w (a server source needs a server.json beside its entry)", origin, err)
@@ -123,14 +141,67 @@ func prepareSource(ctx context.Context, root, name, path string) (*preparedSourc
 		return nil, fmt.Errorf("%s/server.json: %w", origin, err)
 	}
 	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
-	if s.fingerprint, err = SnapshotSource(name, origin, s.root); err != nil {
+	if language != "go" {
+		if err = writePlaceholders(ctx, origin, s.metadata.Identity); err != nil {
+			return nil, fmt.Errorf("%s: %w", origin, err)
+		}
+	}
+	// The runners import the server where it lives, beside its installed dependencies, so the
+	// fingerprint guards against changes until preparation finishes.
+	if s.fingerprint, err = SnapshotSource(name, origin, ""); err != nil {
 		return nil, err
 	}
 	return s, ctx.Err()
 }
 
-// Prepare snapshots and extracts every path source once, resolves every other source once, and
-// generates the client files for each consumer and target. Nothing is written to the consumers.
+// writePlaceholders gives a path source's declared slots empty clients when they have none, so a
+// server that imports its own generated clients can run before they exist. A slot that has
+// contents, or that its validation refuses, is left alone.
+func writePlaceholders(ctx context.Context, dir string, identity mcpcontract.Identity) error {
+	targets, err := DeclaredTargets(dir)
+	if errors.Is(err, ErrNoRuntime) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	request := mcptype.GenerateRequest{Identity: identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + filepath.Base(dir)}
+	for _, target := range targets {
+		var write func(map[string][]byte) error
+		switch target {
+		case TargetPy:
+			if _, err := os.Lstat(filepath.Join(dir, "holon/apps/__init__.py")); !errors.Is(err, fs.ErrNotExist) || validatePythonSlot(dir) != nil {
+				continue
+			}
+			write = func(files map[string][]byte) error { return writePythonSlot(dir, files) }
+		case TargetTS:
+			slot, err := InstalledRuntime(dir)
+			if err != nil {
+				continue
+			}
+			if entries, err := os.ReadDir(filepath.Join(slot, "generated")); len(entries) > 0 || err != nil && !errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			write = func(files map[string][]byte) error {
+				return writeNodeSlot(slot, files, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})
+			}
+		default:
+			continue
+		}
+		files, err := generateTypes(ctx, target, request, &mcpcontract.Metadata{}, "")
+		if err != nil {
+			return err
+		}
+		if err = write(files); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Prepare fingerprints and extracts every path source once, resolves every other source once, and
+// generates the client files for each consumer and target. Apart from placeholder slots for path
+// sources that have none, nothing is written to the consumers.
 func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Prepared, err error) {
 	o := options.defaults()
 	for _, c := range consumers {
@@ -151,7 +222,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 		return nil, err
 	}
 	p := &Prepared{paths: map[string]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}, documents: map[string]*Document{}}
-	batches := map[string][]extractionEntry{}
+	var paths []*preparedSource
 	for _, c := range consumers {
 		pc := &preparedConsumer{Consumer: c, packages: map[string]map[string][]byte{}}
 		p.consumers = append(p.consumers, pc)
@@ -171,28 +242,16 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 				continue
 			}
 			name := strconv.Itoa(len(p.paths))
-			s, err := prepareSource(ctx, root, name, absolute)
+			s, err := prepareSource(ctx, name, absolute)
 			if err != nil {
 				return nil, err
 			}
 			p.paths[absolute] = s
-			if s.language != "go" {
-				batches[s.language] = append(batches[s.language], extractionEntry{Name: name, Path: s.root, Entry: s.entry})
-			}
+			paths = append(paths, s)
 		}
 	}
-	results, err := extractTypes(ctx, root, batches, o)
-	if err != nil {
+	if err = extractSources(ctx, root, paths, o, true); err != nil {
 		return nil, err
-	}
-	for _, s := range p.paths {
-		if s.language == "go" {
-			continue
-		}
-		name := filepath.Base(s.root)
-		if err = s.extract(results[name]); err != nil {
-			return nil, err
-		}
 	}
 	external := map[string]*Document{}
 	for _, c := range p.consumers {
@@ -344,10 +403,10 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 	return mcptype.Generate(ctx, request)
 }
 
-// currentSources fails when any snapshotted directory changed since preparation.
+// currentSources fails when any source directory changed since preparation.
 func (p *Prepared) currentSources() error {
 	for _, s := range p.paths {
-		fingerprint, err := SnapshotSource(filepath.Base(s.root), s.origin, "")
+		fingerprint, err := SnapshotSource(s.name, s.origin, "")
 		if err != nil {
 			return err
 		}
