@@ -18,6 +18,7 @@ import json as _json
 from .client import Apps as _Apps
 from .client import Binding as _Binding
 from .client import CallOptions as _CallOptions
+from .client import CompleteResult as _CompleteResult
 from .client import ToolResult as _ToolResult`
 
 func generatePythonPackage(request generateRequest, catalogs map[string]catalog) map[string]string {

@@ -38,23 +38,15 @@ export interface Outputs {
   };
   "orders": {
     "get_order": { "total": number; [key: string]: unknown; };
-    "then": unknown;
   };
   "schemas": {
-    "-": unknown;
-    "123": unknown;
-    "CallTool": unknown;
     "call_tool": { "x": boolean; };
     "class": Array<unknown>;
-    "get-order": unknown;
-    "get_order": unknown;
-    "kitchen-sink": unknown;
     "weird-keys": { "a.b"?: string; "nl\nname"?: string; "tab\tname": string; };
     "émoji🎉": string;
   };
   "with-hyphen": {
     "get_order": { "total": number; [key: string]: unknown; };
-    "then": unknown;
   };
 }
 export interface InputTypes {
@@ -92,23 +84,15 @@ export interface OutputTypes {
   };
   "orders": {
     "get_order": {  };
-    "then": {  };
   };
   "schemas": {
-    "-": {  };
-    "123": {  };
-    "CallTool": {  };
     "call_tool": {  };
     "class": {  };
-    "get-order": {  };
-    "get_order": {  };
-    "kitchen-sink": {  };
     "weird-keys": {  };
     "émoji🎉": {  };
   };
   "with-hyphen": {
     "get_order": {  };
-    "then": {  };
   };
 }
 

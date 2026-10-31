@@ -98,6 +98,9 @@ func generateTypeScript(contracts map[string]catalog) string {
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
 			for index, shape := range []shape{tool.input, tool.output} {
+				if index == 1 && !tool.structured {
+					continue
+				}
 				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value))
 				named := make([]string, 0, len(shape.named))
 				for _, definition := range sortedKeys(shape.named) {
