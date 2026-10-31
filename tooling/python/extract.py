@@ -40,82 +40,15 @@ if TYPE_CHECKING:
 RESOURCE_SCHEMA = "sh.holon/outputSchema"
 # Standard-library modules application code may import. The others reach the host or are not
 # needed to declare tools; modules already loaded by the SDK are stubbed instead (see strip).
-PURE = frozenset(
-    [
-        "__future__",
-        "abc",
-        "annotationlib",
-        "argparse",
-        "array",
-        "ast",
-        "asyncio",
-        "base64",
-        "binascii",
-        "bisect",
-        "builtins",
-        "calendar",
-        "cmath",
-        "codecs",
-        "collections",
-        "colorsys",
-        "contextlib",
-        "contextvars",
-        "copy",
-        "dataclasses",
-        "datetime",
-        "decimal",
-        "difflib",
-        "enum",
-        "fnmatch",
-        "fractions",
-        "functools",
-        "gettext",
-        "graphlib",
-        "hashlib",
-        "heapq",
-        "hmac",
-        "html",
-        "importlib",
-        "inspect",
-        "io",
-        "ipaddress",
-        "itertools",
-        "json",
-        "keyword",
-        "linecache",
-        "logging",
-        "math",
-        "numbers",
-        "operator",
-        "os",
-        "pathlib",
-        "pprint",
-        "queue",
-        "random",
-        "re",
-        "reprlib",
-        "secrets",
-        "statistics",
-        "string",
-        "stringprep",
-        "struct",
-        "sys",
-        "textwrap",
-        "threading",
-        "time",
-        "token",
-        "tokenize",
-        "tomllib",
-        "traceback",
-        "types",
-        "typing",
-        "unicodedata",
-        "uuid",
-        "warnings",
-        "weakref",
-        "zlib",
-        "zoneinfo",
-    ]
+PURE = frozenset(  # a word list, not one name per line
+    "__future__ abc annotationlib argparse array ast asyncio base64 binascii bisect "  # noqa: SIM905
+    "builtins calendar cmath codecs collections colorsys contextlib contextvars copy "
+    "dataclasses datetime decimal difflib enum fnmatch fractions functools gettext "
+    "graphlib hashlib heapq hmac html importlib inspect io ipaddress itertools json "
+    "keyword linecache logging math numbers operator os pathlib pprint queue random re "
+    "reprlib secrets statistics string stringprep struct sys textwrap threading time "
+    "token tokenize tomllib traceback types typing unicodedata uuid warnings weakref zlib "
+    "zoneinfo".split()
 )
 INSTALLED = {"site-packages", "dist-packages", ".venv", "venv", "node_modules"}
 STDLIB = Path(sysconfig.get_paths()["stdlib"]).resolve()
