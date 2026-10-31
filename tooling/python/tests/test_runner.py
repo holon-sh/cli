@@ -107,7 +107,7 @@ def extract(
     return json.loads(output.read_text())
 
 
-def test_bundle_extracts_the_servers_own_catalog_and_detects_changes(tmp_path):
+def test_bundle_extracts_the_servers_own_catalog_and_detects_changed_inputs(tmp_path):
     orders = write(tmp_path / "orders", {"server.py": SERVER, "models.py": MODELS})
     # Each app in a batch imports its own models module, although the names repeat.
     low = write(
@@ -134,17 +134,19 @@ def test_bundle_extracts_the_servers_own_catalog_and_detects_changes(tmp_path):
         },
         {"uri": "ui://orders/app.html", "outputSchema": {}},
     ]
-    assert list(contract["sources"]) == ["server.py"]
+    # The modules the server loaded from the application are its recorded inputs.
+    assert list(contract["sources"]) == ["models.py", "server.py"]
     [lookup] = result["low"]["tools"]
     assert list(lookup["outputSchema"]["properties"]) == ["sku", "status"]
     assert result["low"]["resources"] == []
 
     config = tmp_path / "verify.json"
-    source = orders / "server.py"
-    config.write_text(
-        json.dumps({"sources": {str(source): contract["sources"]["server.py"]}})
-    )
+    source = orders / "models.py"
+    recorded = {str(orders / name): d for name, d in contract["sources"].items()}
+    config.write_text(json.dumps({"sources": recorded}))
     runner = [sys.executable, str(tmp_path / "tooling/runner.py")]
+    subprocess.run([*runner, "verify", str(config)], check=True)
+    (orders / "build.py").write_text("# a build output is not an input\n")
     subprocess.run([*runner, "verify", str(config)], check=True)
     source.write_text(source.read_text() + "# changed\n")
     checked = subprocess.run(
@@ -165,13 +167,11 @@ def test_an_entry_that_raises_or_hangs_while_importing_becomes_a_diagnostic(tmp_
     broken = write(
         tmp_path / "broken", {"server.py": "raise RuntimeError('no database')"}
     )
-    hung = write(tmp_path / "hung", {"server.py": "while True:\n    pass\n"})
-    result = extract(
-        tmp_path, {"broken": broken, "hung": hung}, HOLON_CONTRACT_TIMEOUT="1"
-    )
-    diagnostic = result["broken"]["diagnostic"]
+    diagnostic = extract(tmp_path, {"broken": broken})["broken"]["diagnostic"]
     assert diagnostic.startswith("server.py: Traceback")
     assert diagnostic.rstrip().endswith("RuntimeError: no database")
+    hung = write(tmp_path / "hung", {"server.py": "while True:\n    pass\n"})
+    result = extract(tmp_path, {"hung": hung}, HOLON_CONTRACT_TIMEOUT="1")
     assert result["hung"]["diagnostic"] == (
         "server.py: no catalog within 1s; gate start-up work on HOLON_CONTRACT "
         "or raise HOLON_CONTRACT_TIMEOUT"

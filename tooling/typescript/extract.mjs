@@ -6,14 +6,15 @@
 // supply Zod and the MCP SDK that compute the schemas. TypeScript loads through the application's
 // own tsx when it has one (so `./tools.js` imports and tsconfig paths resolve), else through
 // Node's built-in type stripping (Node 22.18+), which needs erasable syntax and `.ts` imports.
-// HOLON_CONTRACT=1 is set so applications can skip start-up side effects.
+// HOLON_CONTRACT=1 is set so applications can skip start-up side effects. The application files the
+// server loads are recorded as `sources`, the inputs check and verify require to be unchanged.
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { fork } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import module from "node:module";
-import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const identity = { name: "holon-contract", version: "1" };
 const resourceSchemaKey = "sh.holon/outputSchema";
@@ -34,6 +35,10 @@ export function extract(root, entry) {
 
 // contract runs in the child: it imports one entry and asks its server for the catalog.
 export async function contract(root, entry) {
+  // Record the application modules the server loads: check and verify refuse a contract whose
+  // inputs changed afterwards. Build outputs and other files are not inputs.
+  const loaded = new Set();
+  module.registerHooks?.({ load(url, context, nextLoad) { loaded.add(url); return nextLoad(url, context); } });
   try {
     const url = pathToFileURL(join(root, entry));
     const tsx = appModule("tsx", "./esm/api", url);
@@ -47,7 +52,12 @@ export async function contract(root, entry) {
       const { createMcpHandler } = await import(appModule("@modelcontextprotocol/server", ".", url));
       handler = createMcpHandler(() => exported);
     }
-    return { ...await catalog(handler), sources: { [entry]: createHash("sha256").update(readFileSync(join(root, entry))).digest("hex") } };
+    const result = await catalog(handler);
+    // Loaded URLs are real paths, so compare them against the real application root.
+    const real = realpathSync(root);
+    const files = [...loaded, url.href].filter(file => file.startsWith("file:")).map(file => relative(real, realpathSync(fileURLToPath(file))));
+    const sources = files.filter(file => !file.startsWith("..") && !file.split(sep).includes("node_modules")).sort();
+    return { ...result, sources: Object.fromEntries(sources.map(file => [file.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, file))).digest("hex")])) };
   } catch (error) {
     return { diagnostic: `${entry}: ${error?.stack ?? error}` };
   }

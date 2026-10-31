@@ -371,9 +371,19 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	if module := read(t, orders, "holon/apps/__init__.py"); !generatedPython(filepath.Join(orders, "holon")) || !strings.Contains(module, "class _Clients(_typing.Protocol):\n    pass") {
 		t.Fatalf("placeholder module:\n%s", module)
 	}
-	// Generation replaces the placeholder; a later preparation leaves generated clients alone.
+	// Check verifies the application files the server loaded, not the slot an image build replaces.
 	c := Consumer{Name: "orders", Dir: orders, Server: &Source{Path: orders}, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	check, _ := prepared.CheckConfig("orders")
+	if sources := check["sources"].(map[string]string); len(sources) != 2 || sources["server.py"] == "" || sources["holon/client.py"] == "" {
+		t.Fatalf("check sources = %v", sources)
+	}
+	// Writing replaces the placeholder; a later preparation leaves generated clients alone.
+	if err := prepared.Write(); err != nil {
 		t.Fatal(err)
 	}
 	generated := read(t, orders, "holon/apps/__init__.py")

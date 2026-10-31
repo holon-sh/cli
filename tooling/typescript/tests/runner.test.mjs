@@ -42,7 +42,7 @@ function extractApps(root, run, apps, env) {
   return JSON.parse(readFileSync(output, "utf8"));
 }
 
-test("the standalone runner asks the application's own server for its catalog and rejects stale entries", t => {
+test("the standalone runner asks the application's own server for its catalog and rejects changed inputs", t => {
   const { root, run } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
@@ -78,15 +78,18 @@ export default server;`,
   assert.deepEqual(extracted.orders.tools.map(tool => tool.name), ["contract_only", "orders_read"]);
   assert.deepEqual(extracted.orders.tools[1].outputSchema, order);
   assert.deepEqual(extracted.orders.resources, [{ uri: "orders://latest", outputSchema: order }, { uri: "ui://orders/app.html", outputSchema: {} }]);
-  assert.deepEqual(Object.keys(extracted.orders.sources), ["server.ts"]);
+  // The modules the server loaded from the application are its recorded inputs; plain.mjs is not one.
+  assert.deepEqual(Object.keys(extracted.orders.sources), ["schemas.ts", "server.ts"]);
   assert.deepEqual(extracted.plain, { tools: [], resources: [], sources: extracted.plain.sources });
 
   const config = join(root, "verify.json");
   writeFileSync(config, JSON.stringify({ root: app, sources: extracted.orders.sources }));
   run("verify", config);
-  writeFileSync(join(app, "server.ts"), "export default null;");
+  writeFileSync(join(app, "dist.js"), "// a build output is not an input");
+  run("verify", config);
+  writeFileSync(join(app, "schemas.ts"), "export const status = null;");
   for (const mode of ["check", "verify"]) {
-    assert.throws(() => run(mode, config), { stderr: /server\.ts:.*stale/ });
+    assert.throws(() => run(mode, config), { stderr: /schemas\.ts:.*stale/ });
   }
 });
 
@@ -102,14 +105,16 @@ test("the application's own tsx loads .js specifiers, tsconfig paths and enums",
   const { regions } = extractApps(root, run, [{ name: "regions", path: app, entry: "server.ts" }]);
   assert.equal(regions.diagnostic, undefined);
   assert.deepEqual(regions.tools[0].inputSchema.properties.region, { type: "string", enum: ["eu", "us"] });
+  assert.deepEqual(Object.keys(regions.sources), ["schemas.ts", "server.ts", "tools.ts"]);
 });
 
 test("an entry that throws or hangs while importing becomes a diagnostic", t => {
   const { root, run } = unpackTooling(t);
   const app = application(root, { "server.mjs": 'throw new Error("database unavailable");', "hang.mjs": "while (true) {}" });
-  const extracted = extractApps(root, run, [{ name: "broken", path: app, entry: "server.mjs" }, { name: "hung", path: app, entry: "hang.mjs" }], { HOLON_CONTRACT_TIMEOUT: "1" });
-  assert.match(extracted.broken.diagnostic, /^server\.mjs: Error: database unavailable\n\s+at /);
-  assert.equal(extracted.hung.diagnostic, "hang.mjs: no catalog within 1s; gate start-up work on HOLON_CONTRACT or raise HOLON_CONTRACT_TIMEOUT");
+  const { broken } = extractApps(root, run, [{ name: "broken", path: app, entry: "server.mjs" }]);
+  assert.match(broken.diagnostic, /^server\.mjs: Error: database unavailable\n\s+at /);
+  const { hung } = extractApps(root, run, [{ name: "hung", path: app, entry: "hang.mjs" }], { HOLON_CONTRACT_TIMEOUT: "1" });
+  assert.equal(hung.diagnostic, "hang.mjs: no catalog within 1s; gate start-up work on HOLON_CONTRACT or raise HOLON_CONTRACT_TIMEOUT");
 });
 
 test("check uses the application's compiler CLI and honors project file selection", t => {

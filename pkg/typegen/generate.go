@@ -61,7 +61,22 @@ func (s *preparedSource) extract(result extraction) error {
 	if result.Diagnostic != "" {
 		return fmt.Errorf("%s: %s", s.origin, result.Diagnostic)
 	}
-	s.sources = result.Sources
+	// The runners report the application files the server loaded. Those outside the snapshot, such
+	// as generated slots that an image build replaces, are not inputs that check can verify.
+	matcher, err := SourceMatcher(s.origin)
+	if err != nil {
+		return err
+	}
+	s.sources = map[string]string{}
+	for path, digest := range result.Sources {
+		ignored, err := IgnoredSource(s.origin, filepath.Join(s.origin, filepath.FromSlash(path)), matcher)
+		if err != nil {
+			return err
+		}
+		if !ignored {
+			s.sources[path] = digest
+		}
+	}
 	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
 	return nil
 }

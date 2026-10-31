@@ -91,10 +91,26 @@ def contract(root: Path, entry: str) -> dict[str, Any]:
         result = asyncio.run(catalog(find_server(module)))
     except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
         return {"diagnostic": f"{entry}: {''.join(traceback.format_exception(error))}"}
-    # The whole snapshot is the input; the entry digest lets check refuse a rebuilt entry.
-    with path.open("rb") as source:
-        digest = hashlib.file_digest(source, "sha256").hexdigest()
-    return {**result, "sources": {entry: digest}}
+    return {**result, "sources": sources(root)}
+
+
+def sources(root: Path) -> dict[str, str]:
+    """Digests of the application modules the server loaded, the inputs check and verify require
+    to be unchanged. Installed packages, build outputs and other files are not inputs."""
+    files: dict[str, str] = {}
+    for module in list(sys.modules.values()):
+        file = getattr(module, "__file__", None)
+        path = Path(file).resolve() if isinstance(file, str) else None
+        if path is None or not path.is_relative_to(root) or not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if {".venv", "venv", "site-packages", "node_modules"} & set(relative.parts):
+            continue
+        with path.open("rb") as source:
+            files[relative.as_posix()] = hashlib.file_digest(
+                source, "sha256"
+            ).hexdigest()
+    return dict(sorted(files.items()))
 
 
 def extract(root: str | Path, entry: str) -> dict[str, Any]:
