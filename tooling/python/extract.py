@@ -271,7 +271,20 @@ def strip(
                 unavailable(name, capability)()
             return real(*args, **kwargs)
 
-        return call
+        if not isinstance(real, type):
+            return call
+
+        # A class stays a class, so annotations such as subprocess.Popen[bytes] still evaluate.
+        def initialize(self: object, *args: Any, **kwargs: Any) -> None:
+            if application(caller()):
+                unavailable(name, capability)()
+            real.__init__(self, *args, **kwargs)  # type: ignore[misc]  # the guarded base
+
+        return type(
+            real.__name__,
+            (real,),
+            {"__init__": initialize, "__module__": real.__module__},
+        )
 
     def stub(owner: ModuleType, names: str, capability: str) -> None:
         for name in names.split():

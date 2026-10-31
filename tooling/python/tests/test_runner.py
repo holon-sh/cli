@@ -207,6 +207,10 @@ def test_module_scope_effects_fail_with_the_capability_file_and_line(tmp_path):
         for name, (source, *_) in EFFECTS.items()
     }
     apps["sqlite"] = write(tmp_path / "sqlite", {"server.py": "import sqlite3\n"})
+    # Naming a guarded class is not using it, as eagerly evaluated annotations do.
+    typed = "import subprocess\nfrom mcp.server import MCPServer\n"
+    typed += "Runner = subprocess.Popen[bytes]\nserver = MCPServer('typed')\n"
+    apps["typed"] = write(tmp_path / "typed", {"server.py": typed})
     apps["missing"] = write(tmp_path / "missing", {"server.py": "import requests\n"})
     result = extract(tmp_path, apps)
     for name, (_, line, api, capability) in EFFECTS.items():
@@ -232,6 +236,7 @@ def test_module_scope_effects_fail_with_the_capability_file_and_line(tmp_path):
         )
     )
     assert result["missing"]["missing"] == "requests"
+    assert result["typed"]["tools"] == []
 
 
 def test_an_entry_that_raises_or_hangs_while_importing_becomes_a_diagnostic(tmp_path):
