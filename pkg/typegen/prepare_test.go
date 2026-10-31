@@ -356,3 +356,28 @@ func TestPythonSourcesWithTheRealExtractor(t *testing.T) {
 		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
 	}
 }
+
+func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
+	needPython(t)
+	orders := t.TempDir()
+	writeProvider(t, orders, "orders", "from holon.apps import apps\n"+pythonProvider)
+	put(t, orders, "requirements.txt", "holon-sh\n")
+	// Stands in for the installed holon-sh package that generated clients import.
+	put(t, orders, "holon/client.py", "class Apps:\n    def __init__(self, *args):\n        pass\nBinding = CallOptions = ToolResult = object\n")
+	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
+	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
+		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
+	}
+	if module := read(t, orders, "holon/apps/__init__.py"); !generatedPython(filepath.Join(orders, "holon")) || !strings.Contains(module, "class _Clients(_typing.Protocol):\n    pass") {
+		t.Fatalf("placeholder module:\n%s", module)
+	}
+	// Generation replaces the placeholder; a later preparation leaves generated clients alone.
+	c := Consumer{Name: "orders", Dir: orders, Server: &Source{Path: orders}, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	generated := read(t, orders, "holon/apps/__init__.py")
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err != nil || !strings.Contains(generated, "async def lookup(") || read(t, orders, "holon/apps/__init__.py") != generated {
+		t.Fatalf("generated module after preparation (%v):\n%s", err, read(t, orders, "holon/apps/__init__.py"))
+	}
+}
