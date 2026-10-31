@@ -178,7 +178,7 @@ A dependency is written in one of three ways.
 <details open>
 <summary><h3>Source code</h3></summary>
 
-An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry. The entry is imported in a child process and its server is asked for `tools/list` and `resources/list`, so its dependencies must be installed (a Python server runs in the nearest `.venv`). `HOLON_CONTRACT=1` is set during the import so the server can skip start-up side effects, and an import that has not answered within `HOLON_CONTRACT_TIMEOUT` seconds (default 30) fails. Where the dependencies are not installed, a committed `holon-contract.json` beside `server.json` stands in; wherever the server can run, generation fails if that file is stale.
+An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry. The server runs in a sandbox and is asked for `tools/list` and `resources/list`. During contract extraction, module-scope code runs with no filesystem, network or environment, and fails naming the capability it reached for. Its schema libraries (Zod and the MCP SDK, or `mcp` and `pydantic`) come from the application when installed, else from the CLI; any other package it imports must be installed (a Python server runs in the nearest `.venv`), or a committed `holon-contract.json` beside `server.json` stands in. Wherever the server can run, generation fails if that file is stale. A server that has not answered within `HOLON_CONTRACT_TIMEOUT` seconds (default 30) fails.
 
 ```sh
 holon types check -s bar/server.py

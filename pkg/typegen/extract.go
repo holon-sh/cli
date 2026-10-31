@@ -21,7 +21,9 @@ type extraction struct {
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`
 	Diagnostic string                 `json:"diagnostic"`
-	Sources    map[string]string      `json:"sources"`
+	// Missing names the uninstalled package that stopped the server, when that is why it failed.
+	Missing string            `json:"missing"`
+	Sources map[string]string `json:"sources"`
 }
 
 // typeLanguage is how one language's tooling runs: the extractor and checker commands, relative to
@@ -55,13 +57,13 @@ func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
 }
 
 // ContractFile is a server's committed contract document, beside its server.json: what
-// holon types generate --contract prints for it. It stands in for running the server when the
-// server's dependencies are not installed.
+// holon types generate --contract prints for it. It stands in for running the server when a
+// package the server imports is not installed.
 const ContractFile = "holon-contract.json"
 
 // extractSources obtains each non-Go path source's contract by running its server, or from its
-// committed ContractFile when the server's dependencies are not installed. With drift, a committed
-// contract that differs from what the server answers is an error.
+// committed ContractFile when a package the server imports is not installed. With drift, a
+// committed contract that differs from what the server answers is an error.
 func extractSources(ctx context.Context, root string, sources []*preparedSource, o Options, drift bool) error {
 	batches := map[string][]extractionEntry{}
 	committed := map[*preparedSource]*Document{}
@@ -74,18 +76,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 		if err != nil {
 			return err
 		}
-		// An extraction hook decides for itself where and how servers run.
-		if o.Extract == nil && !s.runnable(ctx) {
-			if document == nil {
-				return fmt.Errorf("%s: cannot run the server because its dependencies are not installed; install them, or commit its contract (holon types generate --contract %s -o %s)", s.origin, s.origin, filepath.Join(s.origin, ContractFile))
-			}
-			s.metadata.Schema = document.Schema
-			s.sources = map[string]string{ContractFile: digest.FromBytes(document.Data).Encoded()}
-			continue
-		}
-		if drift && document != nil {
-			committed[s] = document
-		}
+		committed[s] = document
 		batches[s.language] = append(batches[s.language], extractionEntry{Name: s.name, Path: s.origin, Entry: s.entry})
 		run = append(run, s)
 	}
@@ -94,10 +85,19 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 		return err
 	}
 	for _, s := range run {
-		if err := s.extract(results[s.name]); err != nil {
+		result, document := results[s.name], committed[s]
+		if result.Missing != "" {
+			if document == nil {
+				return fmt.Errorf("%s: %s is not installed; install the application's dependencies, or commit its contract (holon types generate --contract %s -o %s)\n%s", s.origin, result.Missing, s.origin, filepath.Join(s.origin, ContractFile), result.Diagnostic)
+			}
+			s.metadata.Schema = document.Schema
+			s.sources = map[string]string{ContractFile: digest.FromBytes(document.Data).Encoded()}
+			continue
+		}
+		if err := s.extract(result); err != nil {
 			return err
 		}
-		if document := committed[s]; document != nil {
+		if drift && document != nil {
 			answered, err := NewDocument(ctx, &mcpcontract.Metadata{Identity: s.metadata.Identity, Schema: s.metadata.Schema})
 			if err != nil {
 				return err
@@ -137,21 +137,16 @@ func (s *preparedSource) committedContract(ctx context.Context) (*Document, erro
 	return document, nil
 }
 
-// runnable reports whether the source's server can be imported here: a TypeScript server needs
-// its installed MCP SDK, a Python server an interpreter that imports mcp.
-func (s *preparedSource) runnable(ctx context.Context) bool {
-	if s.language == "typescript" {
-		for dir := s.origin; ; dir = filepath.Dir(dir) {
-			if info, err := os.Stat(filepath.Join(dir, "node_modules", "@modelcontextprotocol", "server")); err == nil && info.IsDir() {
-				return true
-			}
-			if filepath.Dir(dir) == dir {
-				return false
-			}
+// pythonProgram is the interpreter that runs a Python server: its own environment's when that
+// imports mcp and pydantic, else the host's, whose copies serve a server that needs nothing else.
+// It is "" when neither can.
+func pythonProgram(ctx context.Context, dir, host string) string {
+	for _, program := range []string{pythonEnvironment(dir, host), host} {
+		if exec.CommandContext(ctx, program, "-c", "import mcp.server, pydantic").Run() == nil {
+			return program
 		}
 	}
-	host, err := typeLanguages["python"].localProgram(ctx)
-	return err == nil && exec.CommandContext(ctx, pythonEnvironment(s.origin, host), "-c", "import mcp.server").Run() == nil
+	return ""
 }
 
 // extractionEntry is one source to extract: the runner imports entry under path.
@@ -187,12 +182,14 @@ func extractTypes(ctx context.Context, root string, batches map[string][]extract
 		if err != nil {
 			return nil, err
 		}
-		// The runners import each server, so a Python server runs in its own environment.
 		programs := map[string][]extractionEntry{}
 		for _, entry := range batches[language] {
 			program := host
 			if language == "python" {
-				program = pythonEnvironment(entry.Path, host)
+				if program = pythonProgram(ctx, entry.Path, host); program == "" {
+					results[entry.Name] = extraction{Missing: "mcp", Diagnostic: "no Python environment here imports mcp and pydantic"}
+					continue
+				}
 			}
 			programs[program] = append(programs[program], entry)
 		}

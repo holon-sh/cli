@@ -403,11 +403,15 @@ func committedContract(t *testing.T, dir string, metadata *mcpcontract.Metadata)
 }
 
 func TestACommittedContractStandsInForMissingDependencies(t *testing.T) {
+	needNode(t)
 	orders := t.TempDir()
-	put(t, orders, "server.ts", `import { createMcpHandler } from "@modelcontextprotocol/server";`)
+	put(t, orders, "server.ts", `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import Database from "better-sqlite3";
+export const driver = Database;
+export default createMcpHandler(() => new McpServer({ name: "orders", version: "1" }));`)
 	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
-	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "dependencies are not installed; install them, or commit its contract") {
-		t.Fatalf("without dependencies or a committed contract: %v", err)
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "better-sqlite3 is not installed; install the application's dependencies, or commit its contract") {
+		t.Fatalf("without the package or a committed contract: %v", err)
 	}
 	committedContract(t, orders, ordersMetadata())
 	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
@@ -444,5 +448,35 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 	// Printing the contract regenerates the file, so it answers what the server does.
 	if contract, err := ResolveDocument(t.Context(), Source{Path: orders}, options); err != nil || contract.Schema.Tools[0].Name != "lookup" {
 		t.Fatalf("printed contract = %+v, %v", contract, err)
+	}
+}
+
+func TestATypeScriptServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
+	needNode(t)
+	orders := t.TempDir()
+	put(t, orders, "package.json", `{"type":"module","dependencies":{"holon-sh":"*"}}`)
+	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
+	put(t, orders, "server.ts", `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { z } from "zod";
+import { apps } from "holon-sh";
+export default createMcpHandler(() => {
+  const server = new McpServer({ name: "orders", version: "1" });
+  if (apps) server.registerTool("read", { inputSchema: z.object({ id: z.string() }) }, () => ({ content: [] }));
+  return server;
+});`)
+	// An installed runtime package whose generated slot is empty, as after a failed generation.
+	runtime := filepath.Join(orders, "node_modules", nodePackage)
+	put(t, runtime, "package.json", `{"name":"holon-sh","type":"module","holon":{"slot":"generated","contractVersion":1},"exports":{".":{"import":"./generated/index.js"}}}`)
+	put(t, runtime, "runtime.mjs", "export const createApps = () => ({}), bindApps = () => ({});\nexport class ToolCallError extends Error {}\n")
+	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var marker slotMetadata
+	if err := readTypeJSON(filepath.Join(runtime, "generated", "holon-generated.json"), &marker); err != nil || !marker.Placeholder {
+		t.Fatalf("placeholder marker = %+v, %v", marker, err)
+	}
+	if len(contract.Schema.Tools) != 1 {
+		t.Fatalf("contract = %+v", contract.Schema)
 	}
 }
