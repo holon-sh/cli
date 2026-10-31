@@ -391,3 +391,58 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 		t.Fatalf("generated module after preparation (%v):\n%s", err, read(t, orders, "holon/apps/__init__.py"))
 	}
 }
+
+// committedContract writes metadata as holon types generate --contract prints it.
+func committedContract(t *testing.T, dir string, metadata *mcpcontract.Metadata) {
+	t.Helper()
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, dir, ContractFile, string(data)+"\n")
+}
+
+func TestACommittedContractStandsInForMissingDependencies(t *testing.T) {
+	orders := t.TempDir()
+	put(t, orders, "server.ts", `import { createMcpHandler } from "@modelcontextprotocol/server";`)
+	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "dependencies are not installed; install them, or commit its contract") {
+		t.Fatalf("without dependencies or a committed contract: %v", err)
+	}
+	committedContract(t, orders, ordersMetadata())
+	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
+	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "lookup" {
+		t.Fatalf("committed contract = %+v, %v", contract, err)
+	}
+	other := ordersMetadata()
+	other.Identity.Version = "2.0.0"
+	committedContract(t, orders, other)
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "describes example.com/orders@2.0.0 but server.json names example.com/orders@1.0.0") {
+		t.Fatalf("committed contract for another version: %v", err)
+	}
+}
+
+func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
+	root := t.TempDir()
+	orders, app := filepath.Join(root, "orders"), filepath.Join(root, "app")
+	writeProvider(t, orders, "orders", pythonProvider)
+	slotPackage(t, app, nodePackage)
+	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Path: orders}}}
+	options := Options{Extract: fakeExtract(map[string]extraction{"example.com/orders": {Tools: ordersMetadata().Schema.Tools}})}
+	committedContract(t, orders, ordersMetadata())
+	prepared, err := Prepare(t.Context(), []Consumer{c}, options)
+	if err != nil {
+		t.Fatalf("matching committed contract: %v", err)
+	}
+	_ = prepared.Close()
+	stale := ordersMetadata()
+	stale.Schema.Tools[0].Name = "find"
+	committedContract(t, orders, stale)
+	if _, err := Prepare(t.Context(), []Consumer{c}, options); err == nil || !strings.Contains(err.Error(), filepath.Join(orders, ContractFile)+" is stale") {
+		t.Fatalf("stale committed contract: %v", err)
+	}
+	// Printing the contract regenerates the file, so it answers what the server does.
+	if contract, err := ResolveDocument(t.Context(), Source{Path: orders}, options); err != nil || contract.Schema.Tools[0].Name != "lookup" {
+		t.Fatalf("printed contract = %+v, %v", contract, err)
+	}
+}

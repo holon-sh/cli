@@ -40,11 +40,8 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 		if prepared.language == "go" {
 			return nil, fmt.Errorf("%s: Go server contracts are not statically extracted", source.Path)
 		}
-		results, err := extractTypes(ctx, root, map[string][]extractionEntry{prepared.language: {{Name: "source", Path: prepared.origin, Entry: prepared.entry}}}, o)
-		if err != nil {
-			return nil, err
-		}
-		if err := prepared.extract(results["source"]); err != nil {
+		// Printing a contract is how a committed one is regenerated, so a stale file is not an error here.
+		if err := extractSources(ctx, root, []*preparedSource{prepared}, o, false); err != nil {
 			return nil, err
 		}
 		return NewDocument(ctx, prepared.metadata)

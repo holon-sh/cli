@@ -177,7 +177,7 @@ A dependency is written in one of three ways.
 <details open>
 <summary><h3>Source code</h3></summary>
 
-An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry. The entry is imported in-process and its server is asked for `tools/list` and `resources/list`, so its dependencies must be installed (a Python server runs in the nearest `.venv`). `HOLON_CONTRACT=1` is set during the import so the server can skip start-up side effects.
+An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry. The entry is imported in a child process and its server is asked for `tools/list` and `resources/list`, so its dependencies must be installed (a Python server runs in the nearest `.venv`). `HOLON_CONTRACT=1` is set during the import so the server can skip start-up side effects, and an import that has not answered within `HOLON_CONTRACT_TIMEOUT` seconds (default 30) fails. Where the dependencies are not installed, a committed `holon-contract.json` beside `server.json` stands in; wherever the server can run, generation fails if that file is stale.
 
 ```sh
 holon types check -s bar/server.py
@@ -237,12 +237,14 @@ Examples:
   holon types generate -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
   holon types generate -s docs=https://mcp.context7.com/mcp
 
-  # Print one server's contract
+  # Print one server's contract, or commit it beside its server.json
   holon types generate --contract ../orders
+  holon types generate --contract ../orders -o ../orders/holon-contract.json
 
 Flags:
       --contract string      Print one server's MCP contract instead of generating
   -h, --help                 help for generate
+  -o, --output string        Write the --contract document to FILE, such as holon-contract.json
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
                              directory; repeatable. Without it, server.json requires is used
   -v, --verbose              Show generation details

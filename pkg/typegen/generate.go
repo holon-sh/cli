@@ -222,7 +222,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 		return nil, err
 	}
 	p := &Prepared{paths: map[string]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}, documents: map[string]*Document{}}
-	batches := map[string][]extractionEntry{}
+	var paths []*preparedSource
 	for _, c := range consumers {
 		pc := &preparedConsumer{Consumer: c, packages: map[string]map[string][]byte{}}
 		p.consumers = append(p.consumers, pc)
@@ -247,22 +247,11 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 				return nil, err
 			}
 			p.paths[absolute] = s
-			if s.language != "go" {
-				batches[s.language] = append(batches[s.language], extractionEntry{Name: name, Path: s.origin, Entry: s.entry})
-			}
+			paths = append(paths, s)
 		}
 	}
-	results, err := extractTypes(ctx, root, batches, o)
-	if err != nil {
+	if err = extractSources(ctx, root, paths, o, true); err != nil {
 		return nil, err
-	}
-	for _, s := range p.paths {
-		if s.language == "go" {
-			continue
-		}
-		if err = s.extract(results[s.name]); err != nil {
-			return nil, err
-		}
 	}
 	external := map[string]*Document{}
 	for _, c := range p.consumers {

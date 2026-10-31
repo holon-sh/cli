@@ -153,6 +153,15 @@ func TestContractOfAPathSource(t *testing.T) {
 	if metadata.Identity.Name != "example.com/provider" || metadata.Schema == nil || len(metadata.Schema.Tools) != 1 || metadata.Schema.Tools[0].Name != "read" {
 		t.Fatalf("provider contract = %s", output)
 	}
+	// -o commits the same document beside server.json, where it is checked against the server.
+	committed := filepath.Join(dir, typegen.ContractFile)
+	if printed := run(t, "", "types", "generate", "--contract", dir, "-o", committed); printed != "" {
+		t.Fatalf("-o also printed %s", printed)
+	}
+	if data, err := os.ReadFile(committed); err != nil || string(data) != output {
+		t.Fatalf("committed contract = %s, %v", data, err)
+	}
+	run(t, "--output writes a --contract document", "types", "generate", "-o", committed)
 }
 
 func TestGenerateReadsRequires(t *testing.T) {
