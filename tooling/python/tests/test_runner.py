@@ -1,4 +1,4 @@
-"""The bundled extractor imports the app and asks its own server for the catalog."""
+"""The bundled extractor runs the app in a capability-stripped sandbox and asks its server."""
 
 import json
 import os
@@ -22,19 +22,18 @@ MODELS = """
         total: int
 """
 
-SERVER = """
-    import os
+REGION = """
     from enum import Enum
-    from mcp.server import MCPServer
-    from models import Order, Summary
-
-    # Read at import time: HOLON_CONTRACT lets applications skip start-up side effects.
-    if os.environ.get("HOLON_CONTRACT") != "1":
-        raise RuntimeError("started outside contract extraction")
 
     class Region(Enum):
         EU = "eu"
         US = "us"
+"""
+
+SERVER = """
+    from mcp.server import MCPServer
+    from catalog.region import Region
+    from models import Order, Summary
 
     server = MCPServer("orders")
 
@@ -108,7 +107,8 @@ def extract(
 
 
 def test_bundle_extracts_the_servers_own_catalog_and_detects_changed_inputs(tmp_path):
-    orders = write(tmp_path / "orders", {"server.py": SERVER, "models.py": MODELS})
+    files = {"server.py": SERVER, "models.py": MODELS, "catalog/region.py": REGION}
+    orders = write(tmp_path / "orders", {**files, "catalog/__init__.py": ""})
     # Each app in a batch imports its own models module, although the names repeat.
     low = write(
         tmp_path / "low",
@@ -134,8 +134,13 @@ def test_bundle_extracts_the_servers_own_catalog_and_detects_changed_inputs(tmp_
         },
         {"uri": "ui://orders/app.html", "outputSchema": {}},
     ]
-    # The modules the server loaded from the application are its recorded inputs.
-    assert list(contract["sources"]) == ["models.py", "server.py"]
+    # Every application file the loader served is a recorded input.
+    assert list(contract["sources"]) == [
+        "catalog/__init__.py",
+        "catalog/region.py",
+        "models.py",
+        "server.py",
+    ]
     [lookup] = result["low"]["tools"]
     assert list(lookup["outputSchema"]["properties"]) == ["sku", "status"]
     assert result["low"]["resources"] == []
@@ -158,9 +163,75 @@ def test_bundle_extracts_the_servers_own_catalog_and_detects_changed_inputs(tmp_
 
 def test_a_src_entry_imports_from_the_application_root(tmp_path):
     server = SERVER.replace("from models", "from src.models")
-    app = write(tmp_path / "app", {"src/models.py": MODELS, "src/server.py": server})
+    files = {
+        "src/models.py": MODELS,
+        "src/server.py": server,
+        "catalog/region.py": REGION,
+    }
+    app = write(tmp_path / "app", files)
     result = extract(tmp_path, {"orders": app}, entry="src/server.py")["orders"]
     assert [tool["name"] for tool in result["tools"]] == ["read", "summarize"]
+
+
+EFFECTS = {
+    "env": (
+        "import os\n\nKEY = os.environ['API_KEY']\n",
+        3,
+        "os.environ",
+        "environment",
+    ),
+    "open": (
+        "import json\n\nSCHEMA = json.load(open('schema.json'))\n",
+        3,
+        "open",
+        "filesystem",
+    ),
+    "socket": (
+        "import socket\n\nsocket.create_connection(('example.com', 443))\n",
+        3,
+        "socket.create_connection",
+        "network",
+    ),
+    "clock": (
+        "from datetime import datetime\n\nSTARTED = datetime.now()\n",
+        3,
+        "datetime.now",
+        "clock",
+    ),
+}
+
+
+def test_module_scope_effects_fail_with_the_capability_file_and_line(tmp_path):
+    apps = {
+        name: write(tmp_path / name, {"server.py": source})
+        for name, (source, *_) in EFFECTS.items()
+    }
+    apps["sqlite"] = write(tmp_path / "sqlite", {"server.py": "import sqlite3\n"})
+    apps["missing"] = write(tmp_path / "missing", {"server.py": "import requests\n"})
+    result = extract(tmp_path, apps)
+    for name, (_, line, api, capability) in EFFECTS.items():
+        diagnostic = result[name]["diagnostic"]
+        assert f'{name}/server.py", line {line}, in <module>' in diagnostic, diagnostic
+        assert diagnostic.rstrip().endswith(
+            f"Unavailable: {api} is unavailable: contract evaluation has no {capability}"
+        ), diagnostic
+    assert (
+        result["sqlite"]["diagnostic"]
+        .rstrip()
+        .endswith(
+            "ImportError: sqlite3 is unavailable: contract evaluation allows application "
+            "code only pure standard-library modules"
+        )
+    )
+    assert (
+        result["missing"]["diagnostic"]
+        .rstrip()
+        .endswith(
+            "MissingModule: No module named 'requests'; install the application's "
+            "dependencies or commit holon-contract.json"
+        )
+    )
+    assert result["missing"]["missing"] == "requests"
 
 
 def test_an_entry_that_raises_or_hangs_while_importing_becomes_a_diagnostic(tmp_path):
@@ -173,6 +244,6 @@ def test_an_entry_that_raises_or_hangs_while_importing_becomes_a_diagnostic(tmp_
     hung = write(tmp_path / "hung", {"server.py": "while True:\n    pass\n"})
     result = extract(tmp_path, {"hung": hung}, HOLON_CONTRACT_TIMEOUT="1")
     assert result["hung"]["diagnostic"] == (
-        "server.py: no catalog within 1s; gate start-up work on HOLON_CONTRACT "
-        "or raise HOLON_CONTRACT_TIMEOUT"
+        "server.py: no catalog within 1s; raise HOLON_CONTRACT_TIMEOUT if "
+        "module-scope work needs longer"
     )
