@@ -471,10 +471,8 @@ func (p *Prepared) Write() error {
 		for _, target := range c.Targets {
 			var err error
 			switch target {
-			case TargetTS:
-				err = p.WriteNodeSlot(c.Name, slots[[2]string{c.Name, target}])
-			case TargetUI:
-				err = p.WriteBrowserSlot(c.Name, slots[[2]string{c.Name, target}])
+			case TargetTS, TargetUI:
+				err = writeNodeSlot(slots[[2]string{c.Name, target}], c.packages[target], c.slot)
 			case TargetPy:
 				err = p.WritePythonSlot(c.Name, c.Dir)
 			case TargetGo:
