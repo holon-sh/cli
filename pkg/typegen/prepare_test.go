@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +17,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, string, string) error) {
+func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, []string, io.Writer) error) {
 	t.Helper()
 	root := t.TempDir()
 	checkout, orders := filepath.Join(root, "checkout"), filepath.Join(root, "orders")
@@ -25,17 +26,17 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 	put(t, checkout, "server.ts", "export default {};\n")
 	put(t, checkout, "server.json", string(mustJSON(t, map[string]any{"name": "example.com/checkout", "version": "1.0.0", "description": "Checkout"})))
 	own := mcpcontract.Tool{Name: "status", Input: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
-	results := map[string]extraction{
-		"example.com/checkout": {Tools: []mcpcontract.Tool{own}, Sources: map[string]string{"server.ts": "sha256:checkout"}},
-		"example.com/orders":   {Tools: []mcpcontract.Tool{lookupTool}},
+	results := map[string]any{
+		"example.com/checkout": extraction{Tools: []mcpcontract.Tool{own}, Sources: map[string]string{"server.ts": "sha256:checkout"}},
+		"example.com/orders":   extraction{Tools: []mcpcontract.Tool{lookupTool}},
 	}
 	c := Consumer{Name: "checkout", Dir: checkout, Targets: targets, Server: &Source{Path: filepath.Join(checkout, "server.ts")}, Sources: []Source{{Path: orders}}}
-	return c, fakeExtract(results)
+	return c, fakeRun(results)
 }
 
 func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 	c, extract := checkoutConsumer(t, TargetTS)
-	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: extract})
+	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Run: extract})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,12 +84,12 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	writeProvider(t, filepath.Join(root, "odd"), "odd", pythonProvider)
 	put(t, filepath.Join(root, "odd"), "server.json", `{"name":"example.com/---","version":"1.0.0","description":"Odd"}`)
 	put(t, filepath.Join(root, "nameless"), "server.py", pythonProvider)
-	results := map[string]extraction{
-		"example.com/orders": {Tools: []mcpcontract.Tool{lookupTool}},
-		"example.com/broken": {Diagnostic: "tools are registered dynamically"},
-		"example.com/---":    {Tools: []mcpcontract.Tool{lookupTool}},
+	results := map[string]any{
+		"example.com/orders": extraction{Tools: []mcpcontract.Tool{lookupTool}},
+		"example.com/broken": &RunnerError{Status: 2, Stderr: "tools are registered dynamically"},
+		"example.com/---":    extraction{Tools: []mcpcontract.Tool{lookupTool}},
 	}
-	options := Options{Extract: fakeExtract(results)}
+	options := Options{Run: fakeRun(results)}
 	source := func(name string) Source { return Source{Path: filepath.Join(root, name)} }
 	for _, test := range []struct {
 		name    string
@@ -127,7 +128,7 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	t.Run("extractor failure", func(t *testing.T) {
 		failure := errors.New("buildx unavailable")
 		c, _ := checkoutConsumer(t, TargetTS)
-		if _, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: func(context.Context, string, string, string, string) error { return failure }}); !errors.Is(err, failure) {
+		if _, err := Prepare(t.Context(), []Consumer{c}, Options{Run: func(context.Context, string, string, []string, io.Writer) error { return failure }}); !errors.Is(err, failure) {
 			t.Fatalf("extractor failure = %v, want %v", err, failure)
 		}
 	})
@@ -137,12 +138,12 @@ func TestPrepareRejectsInvalidExtractedContracts(t *testing.T) {
 	for _, server := range []string{"example.com/checkout", "example.com/orders"} {
 		t.Run(server, func(t *testing.T) {
 			c, _ := checkoutConsumer(t, TargetTS)
-			results := map[string]extraction{
-				"example.com/checkout": {Tools: []mcpcontract.Tool{lookupTool}},
-				"example.com/orders":   {Tools: []mcpcontract.Tool{lookupTool}},
+			results := map[string]any{
+				"example.com/checkout": extraction{Tools: []mcpcontract.Tool{lookupTool}},
+				"example.com/orders":   extraction{Tools: []mcpcontract.Tool{lookupTool}},
 			}
 			results[server] = extraction{Tools: []mcpcontract.Tool{{Name: "invalid", Input: json.RawMessage(`{"type":"string"}`)}}}
-			if prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Extract: fakeExtract(results)}); err == nil {
+			if prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Run: fakeRun(results)}); err == nil {
 				prepared.Close()
 				t.Fatal("accepted an invalid extracted contract")
 			}
@@ -160,7 +161,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("INSTALL_MODE", "inherited")
 	var output bytes.Buffer
-	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Extract: extract, Env: []string{"INSTALL_MODE=first", "INSTALL_MODE=last=value"}}); err != nil {
+	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Run: extract, Env: []string{"INSTALL_MODE=first", "INSTALL_MODE=last=value"}}); err != nil {
 		t.Fatalf("generate: %v\n%s", err, &output)
 	}
 	var marker slotMetadata
@@ -168,22 +169,22 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		t.Fatalf("slot marker = %+v, %v", marker, err)
 	}
 	put(t, bin, "npm", "#!/bin/sh\nexit 17\n")
-	if err := Generate(t.Context(), []Consumer{c}, Options{Extract: extract}); err != nil {
+	if err := Generate(t.Context(), []Consumer{c}, Options{Run: extract}); err != nil {
 		t.Fatalf("installed runtime was reinstalled: %v", err)
 	}
 	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
 		t.Fatal(err)
 	}
-	if err := Generate(t.Context(), []Consumer{c}, Options{Extract: extract}); err == nil || !strings.Contains(err.Error(), "exit status 17") {
+	if err := Generate(t.Context(), []Consumer{c}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "exit status 17") {
 		t.Fatalf("failed installation was not reported: %v", err)
 	}
 	put(t, c.Dir, "package.json", `{"type":"module"}`)
-	err := Generate(t.Context(), []Consumer{c}, Options{Extract: extract})
+	err := Generate(t.Context(), []Consumer{c}, Options{Run: extract})
 	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run npm install holon-sh") {
 		t.Fatalf("undeclared runtime = %v", err)
 	}
 	py := Consumer{Name: "py", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: c.Sources}
-	err = Generate(t.Context(), []Consumer{py}, Options{Extract: extract})
+	err = Generate(t.Context(), []Consumer{py}, Options{Run: extract})
 	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run uv add holon-sh") {
 		t.Fatalf("undeclared python runtime = %v", err)
 	}
@@ -200,7 +201,7 @@ func TestGenerateRejectsASharedNodeSlotBeforeWritingEitherConsumer(t *testing.T)
 		put(t, dir, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
 		consumers = append(consumers, Consumer{Name: name, Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Path: filepath.Join(root, "orders")}}})
 	}
-	err := Generate(t.Context(), consumers, Options{Extract: fakeExtract(map[string]extraction{"example.com/orders": {Tools: []mcpcontract.Tool{lookupTool}}})})
+	err := Generate(t.Context(), consumers, Options{Run: fakeRun(map[string]any{"example.com/orders": extraction{Tools: []mcpcontract.Tool{lookupTool}}})})
 	if err == nil || !strings.Contains(err.Error(), "share") {
 		t.Fatalf("shared slot not diagnosed: %v", err)
 	}
@@ -411,7 +412,7 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 	writeProvider(t, orders, "orders", pythonProvider)
 	slotPackage(t, app, nodePackage)
 	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Path: orders}}}
-	options := Options{Extract: fakeExtract(map[string]extraction{"example.com/orders": {Tools: ordersMetadata().Schema.Tools}})}
+	options := Options{Run: fakeRun(map[string]any{"example.com/orders": extraction{Tools: ordersMetadata().Schema.Tools}})}
 	committedContract(t, orders, ordersMetadata())
 	prepared, err := Prepare(t.Context(), []Consumer{c}, options)
 	if err != nil {
@@ -452,25 +453,15 @@ export default createMcpHandler(() => {
 	}
 }
 
-// containerExtract runs the real runner as the platform's container does: only the tooling root
-// is mounted, so the source directories are not visible.
-func containerExtract(ctx context.Context, language, tooling, config, output string) error {
-	var request struct {
-		Apps []map[string]string `json:"apps"`
+// containerRun runs the real runner as the platform's container does: only the tooling root is
+// mounted, so the server must be given as a snapshot under it.
+func containerRun(ctx context.Context, language, tooling string, args []string, stdout io.Writer) error {
+	if !pathInsideContext(args[1], filepath.Dir(tooling)) {
+		return fmt.Errorf("%s is not a snapshot under %s", args[1], filepath.Dir(tooling))
 	}
-	if err := readTypeJSON(config, &request); err != nil {
-		return err
-	}
-	for _, app := range request.Apps {
-		if !pathInsideContext(app["path"], filepath.Dir(tooling)) || app["source"] == "" {
-			return fmt.Errorf("entry %v is not a snapshot under %s", app, filepath.Dir(tooling))
-		}
-		app["source"] = filepath.Join(filepath.Dir(tooling), "unmounted")
-	}
-	if err := writeJSON(config, request); err != nil {
-		return err
-	}
-	return exec.CommandContext(ctx, "node", filepath.Join(tooling, language, "runner.mjs"), "extract", config, output).Run()
+	command := exec.CommandContext(ctx, "node", append([]string{filepath.Join(tooling, language, "runner.mjs")}, args...)...)
+	command.Stdout = stdout
+	return command.Run()
 }
 
 func TestAnExtractionHookRunsSnapshotsThatNeedNothingInstalled(t *testing.T) {
@@ -484,7 +475,7 @@ export default createMcpHandler(() => {
   server.registerTool("read", { inputSchema: z.object({ id: z.string() }) }, () => ({ content: [] }));
   return server;
 });`)
-	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{Extract: containerExtract})
+	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{Run: containerRun})
 	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
 		t.Fatalf("schema-only server in a snapshot = %+v, %v", contract, err)
 	}

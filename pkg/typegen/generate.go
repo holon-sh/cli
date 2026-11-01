@@ -27,9 +27,11 @@ type Options struct {
 	Env            []string
 	HTTPClient     *http.Client
 	Stdout, Stderr io.Writer
-	// Extract runs one language's extractor: the runner under toolingDir/<language> reads configPath and
-	// writes outputPath. It defaults to the host's Node.js or Python interpreter.
-	Extract func(ctx context.Context, language, toolingDir, configPath, outputPath string) error
+	// Run runs one server through its language's contract runner, toolingDir/<language>/runner.mjs or
+	// extract.py, with args (contract ROOT ENTRY), copying the runner's stdout to stdout. A failure the
+	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
+	// runs the server in its own directory and stops it after 30 seconds.
+	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
 	// GoModule is the runtime module that generated Go clients import; it defaults to github.com/holon-sh/sdk/go.
 	GoModule string
 }
@@ -57,10 +59,7 @@ type preparedSource struct {
 	sources                                    map[string]string
 }
 
-func (s *preparedSource) extract(result extraction) error {
-	if result.Diagnostic != "" {
-		return fmt.Errorf("%s: %s", s.origin, result.Diagnostic)
-	}
+func (s *preparedSource) extract(result *extraction) error {
 	// The runners report the application files the server loaded. Those outside the snapshot, such
 	// as generated slots that an image build replaces, are not inputs that check can verify.
 	matcher, err := SourceMatcher(s.origin)

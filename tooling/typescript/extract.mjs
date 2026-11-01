@@ -1,33 +1,19 @@
 // Obtain an application's MCP contract by running its server in a capability-stripped sandbox and
 // asking it.
 //
-// Each application runs in its own child process, all at once, killed after `timeout` seconds. There
-// the entry and everything it imports are evaluated in a fresh vm context (see
-// sandbox.mjs): module-scope code has no filesystem, network, environment, timers or clock, and the
+// The entry and everything it imports are evaluated in a fresh vm context (see sandbox.mjs): module-scope code has no filesystem, network, environment, timers or clock, and the
 // application's own Zod and MCP SDK compute the schemas, or the tooling's copies when it has none.
 // The files the loader serves from the application tree are recorded as `sources`, the inputs check
 // and verify require to be unchanged.
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { fork } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { createSandbox, MissingPackage } from "./sandbox.mjs";
 
 const identity = { name: "holon-contract", version: "1" };
 const resourceSchemaKey = "sh.holon/outputSchema";
-const timeout = 30; // seconds a server may take to answer
-
-export function extract(root, entry) {
-  const child = fork(process.argv[1], ["contract", resolve(root), entry], { execArgv: ["--experimental-vm-modules", "--no-warnings"] });
-  return new Promise(done => {
-    const timer = setTimeout(() => { child.kill("SIGKILL"); done({ diagnostic: `${entry}: no catalog within ${timeout}s` }); }, timeout * 1000);
-    child.on("message", result => { clearTimeout(timer); done(result); });
-    child.on("exit", (code, signal) => { clearTimeout(timer); done({ diagnostic: `${entry}: exited (${signal ?? code}) before answering` }); });
-  });
-}
-
-// contract runs in the child: it evaluates one entry in the sandbox and asks its server for the catalog.
+// contract evaluates one entry in the sandbox and asks its server for the catalog.
 export async function contract(root, entry) {
   const vendor = join(dirname(realpathSync(process.argv[1])), "vendor", "node_modules");
   const sandbox = createSandbox(root, vendor);

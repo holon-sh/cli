@@ -73,7 +73,8 @@ def write(directory: Path, files: dict[str, str]) -> Path:
     return directory
 
 
-def extract(tmp_path: Path, apps: list[dict[str, str]]) -> dict[str, dict]:
+def extract(tmp_path: Path, apps: dict[str, tuple[Path, str]]) -> dict[str, dict]:
+    """Each app's contract, or its diagnostic and the package it missed."""
     archive = Path(
         subprocess.check_output(
             [sys.executable, "-I", str(ROOT / "build.py")], text=True
@@ -81,12 +82,19 @@ def extract(tmp_path: Path, apps: list[dict[str, str]]) -> dict[str, dict]:
     )
     with zipfile.ZipFile(archive) as bundle:
         bundle.extractall(tmp_path / "tooling")
-    config = tmp_path / "config.json"
-    output = tmp_path / "output.json"
-    config.write_text(json.dumps({"apps": apps}))
-    extractor = [sys.executable, "-I", str(tmp_path / "tooling/extract.py")]
-    subprocess.run([*extractor, str(config), str(output)], check=True)
-    return json.loads(output.read_text())
+    extractor = [sys.executable, str(tmp_path / "tooling/extract.py"), "contract"]
+    results = {}
+    for name, (root, entry) in apps.items():
+        run = subprocess.run(
+            [*extractor, str(root), entry], capture_output=True, text=True, check=False
+        )
+        assert run.returncode in (0, 2, 3), run.stderr
+        if run.returncode == 0:
+            results[name] = json.loads(run.stdout)
+        else:
+            missing = run.stderr.splitlines()[-1] if run.returncode == 3 else None
+            results[name] = {"diagnostic": run.stderr, "missing": missing}
+    return results
 
 
 def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
@@ -96,21 +104,13 @@ def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
     files |= {"catalog/__init__.py": "", "catalog/region.py": REGION}
     orders = write(tmp_path / "orders", files)
     low = write(tmp_path / "low", {"server.py": LOW_LEVEL})
-    # The app's own directory is used where visible (a host), else its snapshot (a container).
-    absent = str(tmp_path / "absent")
-    entry = "src/server.py"
     result = extract(
         tmp_path,
-        [
-            {"name": "orders", "path": absent, "source": str(orders), "entry": entry},
-            {"name": "snapshot", "path": str(orders), "source": absent, "entry": entry},
-            {"name": "low", "path": str(low), "entry": "server.py"},
-        ],
+        {"orders": (orders, "src/server.py"), "low": (low, "server.py")},
     )
 
     contract = result["orders"]
     assert [tool["name"] for tool in contract["tools"]] == ["read"]
-    assert result["snapshot"]["tools"] == contract["tools"]
     assert contract["resources"] == [
         {
             "uri": "orders://latest",
@@ -167,12 +167,10 @@ def test_module_scope_effects_fail_naming_the_capability_and_line(tmp_path):
         "import subprocess\nfrom mcp.server import MCPServer\n"
         "Runner = subprocess.Popen[bytes]\nserver = MCPServer('typed')\n"
     )
-    apps = [
-        {"name": name, "path": str(tmp_path / name), "entry": "server.py"}
-        for name in sources
-    ]
-    for name, source in sources.items():
-        write(tmp_path / name, {"server.py": source})
+    apps = {
+        name: (write(tmp_path / name, {"server.py": source}), "server.py")
+        for name, source in sources.items()
+    }
     result = extract(tmp_path, apps)
     for name, (_, capability) in EFFECTS.items():
         diagnostic = result[name]["diagnostic"]

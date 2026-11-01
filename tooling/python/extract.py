@@ -1,8 +1,10 @@
 """Obtain an application's MCP contract by running its server in a capability-stripped sandbox.
 
-Usage: extract.py CONFIG OUTPUT. The entries run at once, each in its own `python -I -S` child
-process, killed after TIMEOUT seconds. There an import finder serves the application's files and
-its environment's installed packages (mcp and pydantic among them),
+Usage: extract.py contract ROOT ENTRY. The contract (tools, resources and the application files the
+server loaded) is printed on stdout; a failure is a diagnostic on stderr with status 2, or status 3
+with the uninstalled package's name as the last line. The runner re-runs itself as `python -I -S`,
+where an import finder serves the application's files and its environment's installed packages
+(mcp and pydantic among them),
 allows application code only pure standard-library modules, and names any module it cannot serve.
 Before the entry runs, the environment, files, sockets, subprocesses, the clock and randomness are
 replaced with stubs that raise naming the capability, so module-scope effects fail with the
@@ -27,19 +29,17 @@ import socket
 import subprocess
 import sys
 import sysconfig
-import tempfile
 import time
 import traceback
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from types import FrameType, ModuleType
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn, TextIO
 
 if TYPE_CHECKING:
     from mcp.server import MCPServer, Server
 
 RESOURCE_SCHEMA = "sh.holon/outputSchema"
-TIMEOUT = 30  # seconds a server may take to answer
 # Standard-library modules application code may import. The others reach the host or are not
 # needed to declare tools; modules already loaded by the SDK are stubbed instead (see strip).
 PURE = frozenset(  # a word list, not one name per line
@@ -340,8 +340,8 @@ async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
     }
 
 
-def contract(root: Path, entry: str) -> dict[str, Any]:
-    """Run one entry, in the child process, and ask its server for the catalog."""
+def contract(root: Path, entry: str, stdout: TextIO) -> int:
+    """Run one entry, ask its server for the catalog and print it; return the exit status."""
     path = root / entry
     finder = Finder(root, path)
     sys.meta_path.insert(0, finder)
@@ -371,62 +371,30 @@ def contract(root: Path, entry: str) -> dict[str, Any]:
             trace.append(f"{type(error).__name__}: {error}\n")
         else:
             trace += traceback.format_exception_only(error)
-        failure = {
-            "diagnostic": f"{entry}: Traceback (most recent call last):\n{''.join(trace)}"
-        }
+        sys.stderr.write(
+            f"{entry}: Traceback (most recent call last):\n{''.join(trace)}"
+        )
         if isinstance(error, MissingModule) and error.name:
-            failure["missing"] = error.name.partition(".")[0]
-        return failure
+            sys.stderr.write(error.name.partition(".")[0] + "\n")
+            return 3
+        return 2
     sources = {}
     for file in sorted(finder.served):
         with file.open("rb") as source:
             digest = hashlib.file_digest(source, "sha256").hexdigest()
         sources[file.relative_to(root).as_posix()] = digest
-    return {**result, "sources": sources}
+    json.dump({**result, "sources": sources}, stdout)
+    return 0
 
 
-def extract(apps: list[dict[str, str]]) -> dict[str, dict[str, Any]]:
-    """Run every app's entry in its own child process, at once, and collect their contracts."""
-    with tempfile.TemporaryDirectory() as scratch:
-        children = []
-        for index, app in enumerate(apps):
-            root, output = directory(app), Path(scratch, f"{index}.json")
-            command = [sys.executable, "-I", "-S", __file__, "--contract", root]
-            child = subprocess.Popen([*command, app["entry"], str(output)], cwd=root)
-            children.append((app, child, output))
-        results: dict[str, dict[str, Any]] = {}
-        deadline = time.monotonic() + TIMEOUT
-        for app, child, output in children:
-            try:
-                child.wait(timeout=max(deadline - time.monotonic(), 0))
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.wait()
-                results[app["name"]] = {
-                    "diagnostic": f"{app['entry']}: no catalog within {TIMEOUT}s"
-                }
-            else:
-                if output.exists():
-                    results[app["name"]] = json.loads(output.read_text())
-                else:
-                    exited = f"exited ({child.returncode}) before answering"
-                    results[app["name"]] = {"diagnostic": f"{app['entry']}: {exited}"}
-        return results
-
-
-def directory(app: dict[str, str]) -> str:
-    """The app's own directory when visible here, where its packages are installed, else its
-    snapshot."""
-    source = app.get("source")
-    return source if source and Path(source, app["entry"]).is_file() else app["path"]
-
-
-if __name__ == "__main__" and sys.argv[1] == "--contract":
-    # extract.py --contract ROOT ENTRY OUTPUT: one application, in its own process.
-    root, entry, output = sys.argv[2:]
-    Path(output).write_text(json.dumps(contract(Path(root).resolve(), entry)))
-elif __name__ == "__main__":
-    # extract.py CONFIG OUTPUT: contracts for every app in the config, as JSON.
-    config, output = sys.argv[1:]
-    apps = json.loads(Path(config).read_text())["apps"]
-    Path(output).write_text(json.dumps(extract(apps)))
+if __name__ == "__main__":
+    mode, root, entry = sys.argv[1:]
+    if mode != "contract":
+        sys.exit(f"unknown operation {mode}")
+    if not (sys.flags.isolated and sys.flags.no_site):
+        # Without site packages, the caller's environment or bytecode written beside the sources.
+        os.execv(sys.executable, [sys.executable, "-I", "-S", "-B", *sys.argv])
+    # The contract is all that stdout carries; whatever the application prints goes to stderr.
+    stdout = os.fdopen(os.dup(1), "w")
+    os.dup2(2, 1)
+    sys.exit(contract(Path(root).resolve(), entry, stdout))

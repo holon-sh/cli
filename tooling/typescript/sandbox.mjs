@@ -23,7 +23,8 @@ export class MissingPackage extends Error {}
 
 export function createSandbox(root, vendor) {
   root = realpathSync(root);
-  const context = vm.createContext({ console });
+  // Whatever the application logs goes to stderr: stdout carries only the contract.
+  const context = vm.createContext({ console: new console.Console(process.stderr) });
   for (const name of ["URL", "URLSearchParams", "Headers", "Request", "Response", "ReadableStream", "TextEncoder", "TextDecoder", "AbortController", "AbortSignal"]) context[name] = globalThis[name];
   // A stub fails when called, constructed or read, so the application's stack trace names the line.
   const stub = vm.runInContext(`(name, capability) => {

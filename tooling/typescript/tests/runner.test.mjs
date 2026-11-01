@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSy
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { unzipSync } from "fflate";
 
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -19,8 +19,14 @@ function unpackTooling(t) {
     mkdirSync(dirname(join(tooling, name)), { recursive: true });
     writeFileSync(join(tooling, name), bytes);
   }
-  const run = (mode, config, output = []) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), mode, config, ...output], { encoding: "utf8", stdio: "pipe" });
-  return { root, run };
+  const run = (mode, ...args) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), mode, ...args], { encoding: "utf8", stdio: "pipe" });
+  // extract returns each app's contract, or its diagnostic and the package it missed.
+  const extract = apps => Object.fromEntries(apps.map(({ name, path, entry }) => {
+    const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "contract", path, entry], { encoding: "utf8" });
+    assert.ok([0, 2, 3].includes(status), stderr);
+    return [name, status === 0 ? JSON.parse(stdout) : { diagnostic: stderr, missing: status === 3 ? stderr.trimEnd().split("\n").at(-1) : undefined }];
+  }));
+  return { root, run, extract };
 }
 
 // An application directory holding files, including any node_modules it has installed.
@@ -33,16 +39,8 @@ function application(root, files) {
   return app;
 }
 
-function extractApps(root, run, apps) {
-  const config = join(root, "extract.json");
-  const output = join(root, "output.json");
-  writeFileSync(config, JSON.stringify({ apps }));
-  run("extract", config, [output]);
-  return JSON.parse(readFileSync(output, "utf8"));
-}
-
 test("a server with only schema imports extracts with nothing installed and records every file served", t => {
-  const { root, run } = unpackTooling(t);
+  const { root, run, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
     "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@schemas/*": ["./schemas/*"] } } }),
@@ -66,16 +64,9 @@ export default createMcpHandler(() => {
     // A plain McpServer default export is served through the same SDK copy's createMcpHandler.
     "plain.mjs": 'import { McpServer } from "@modelcontextprotocol/server"; export default new McpServer({ name: "plain", version: "1" });',
   });
-  // The app's own directory is used where it is visible (a host), its snapshot elsewhere (a container).
-  const absent = join(root, "absent");
-  const extracted = extractApps(root, run, [
-    { name: "orders", path: absent, source: app, entry: "server.ts" },
-    { name: "snapshot", path: app, source: absent, entry: "server.ts" },
-    { name: "plain", path: app, entry: "plain.mjs" },
-  ]);
+  const extracted = extract([{ name: "orders", path: app, entry: "server.ts" }, { name: "plain", path: app, entry: "plain.mjs" }]);
   assert.deepEqual(extracted.orders.tools.map(tool => tool.name), ["list", "read"]);
   assert.deepEqual(Object.keys(extracted.orders.tools[1].outputSchema.properties), ["id", "status"]);
-  assert.deepEqual(extracted.snapshot.tools, extracted.orders.tools);
   assert.deepEqual(extracted.orders.resources, [{ uri: "orders://latest", outputSchema: { type: "object" } }, { uri: "ui://orders/app.html", outputSchema: {} }]);
   assert.deepEqual(Object.keys(extracted.orders.sources), ["meta.json", "schemas/order.ts", "server.ts", "tools.ts"]);
   assert.deepEqual(extracted.plain.tools, []);
@@ -90,7 +81,7 @@ export default createMcpHandler(() => {
 });
 
 test("installed packages resolve from the application: its own Zod and CommonJS packages", t => {
-  const { root, run } = unpackTooling(t);
+  const { root, run, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
     // Stands in for an installed Zod other than the bundled one; its JSON Schema names its version.
@@ -112,13 +103,13 @@ export default createMcpHandler(() => {
   return server;
 });`,
   });
-  const { units } = extractApps(root, run, [{ name: "units", path: app, entry: "server.ts" }]);
+  const { units } = extract([{ name: "units", path: app, entry: "server.ts" }]);
   assert.deepEqual(units.tools, [{ name: "convert", inputSchema: { type: "object", description: "zod 9.9.9", properties: { unit: { type: "string", enum: ["cm", "in"] } } } }]);
   assert.deepEqual(Object.keys(units.sources), ["server.ts"]);
 });
 
 test("module-scope effects fail with the capability, file and line; missing packages are named", t => {
-  const { root, run } = unpackTooling(t);
+  const { root, run, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
     "env.ts": 'interface Settings {\n  key: string;\n}\nconst settings: Settings = { key: process.env.API_KEY ?? "" };\nexport default settings;\n',
@@ -127,7 +118,7 @@ test("module-scope effects fail with the capability, file and line; missing pack
     "missing.ts": 'import pad from "left-pad";\nexport default pad;\n',
   });
   const entries = ["env.ts", "fetch.ts", "fs.ts", "missing.ts"].map(entry => ({ name: entry.slice(0, -3), path: app, entry }));
-  const extracted = extractApps(root, run, entries);
+  const extracted = extract(entries);
   assert.match(extracted.env.diagnostic, /no process environment[\s\S]*\/env\.ts:4:/);
   assert.match(extracted.fetch.diagnostic, /no network[\s\S]*\/fetch\.ts:2:/);
   assert.match(extracted.fs.diagnostic, /no filesystem[\s\S]*\/fs\.ts:2:/);
@@ -135,7 +126,7 @@ test("module-scope effects fail with the capability, file and line; missing pack
 });
 
 test("check uses the application's compiler CLI and honors project file selection", t => {
-  const { root, run } = unpackTooling(t);
+  const { root, run, extract } = unpackTooling(t);
   const app = join(root, "application");
   mkdirSync(app);
   writeFileSync(join(app, "package.json"), '{"type":"module"}');
