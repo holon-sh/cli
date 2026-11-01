@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
@@ -450,6 +451,18 @@ export default createMcpHandler(() => {
 	put(t, runtime, "runtime.mjs", "export const createApps = () => ({}), bindApps = () => ({});\nexport class ToolCallError extends Error {}\n")
 	if contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err != nil || len(contract.Schema.Tools) != 1 {
 		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
+	}
+}
+
+func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
+	needPython(t)
+	limit := serverTimeout
+	serverTimeout = time.Second
+	t.Cleanup(func() { serverTimeout = limit })
+	orders := t.TempDir()
+	writeProvider(t, orders, "orders", "while True:\n    pass\n")
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "server.py: no catalog within 1s") {
+		t.Fatalf("server that never answers: %v", err)
 	}
 }
 

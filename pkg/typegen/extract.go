@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/opencontainers/go-digest"
 )
 
@@ -142,11 +143,11 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			return err
 		}
 		if drift && document != nil {
-			answered, err := NewDocument(ctx, &mcpcontract.Metadata{Identity: s.metadata.Identity, Schema: s.metadata.Schema})
+			answered, err := mcptype.Canonical(ctx, map[string]any{"contract": s.metadata.Schema})
 			if err != nil {
 				return err
 			}
-			recorded, err := NewDocument(ctx, &mcpcontract.Metadata{Identity: document.Identity, Schema: document.Schema})
+			recorded, err := mcptype.Canonical(ctx, map[string]any{"contract": document.Schema})
 			if err != nil {
 				return err
 			}
