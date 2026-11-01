@@ -404,6 +404,13 @@ def extract(root: str | Path, entry: str) -> dict[str, Any]:
         return result
 
 
+def directory(app: dict[str, str]) -> str:
+    """The app's own directory when visible here, where its packages are installed, else its
+    snapshot."""
+    source = app.get("source")
+    return source if source and Path(source, app["entry"]).is_file() else app["path"]
+
+
 if __name__ == "__main__" and sys.argv[1] == "--contract":
     # extract.py --contract ROOT ENTRY OUTPUT: one application, in its own process.
     root, entry, output = sys.argv[2:]
@@ -413,5 +420,5 @@ elif __name__ == "__main__":
     config, output = sys.argv[1:]
     apps = json.loads(Path(config).read_text())["apps"]
     Path(output).write_text(
-        json.dumps({app["name"]: extract(app["path"], app["entry"]) for app in apps})
+        json.dumps({app["name"]: extract(directory(app), app["entry"]) for app in apps})
     )

@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -478,5 +480,55 @@ export default createMcpHandler(() => {
 	}
 	if len(contract.Schema.Tools) != 1 {
 		t.Fatalf("contract = %+v", contract.Schema)
+	}
+}
+
+// containerExtract runs the real runner as the platform's container does: only the tooling root
+// is mounted, so the source directories are not visible.
+func containerExtract(ctx context.Context, language, tooling, config, output string) error {
+	var request struct {
+		Apps []map[string]string `json:"apps"`
+	}
+	if err := readTypeJSON(config, &request); err != nil {
+		return err
+	}
+	for _, app := range request.Apps {
+		if !pathInsideContext(app["path"], filepath.Dir(tooling)) || app["source"] == "" {
+			return fmt.Errorf("entry %v is not a snapshot under %s", app, filepath.Dir(tooling))
+		}
+		app["source"] = filepath.Join(filepath.Dir(tooling), "unmounted")
+	}
+	if err := writeJSON(config, request); err != nil {
+		return err
+	}
+	return exec.CommandContext(ctx, "node", filepath.Join(tooling, language, "runner.mjs"), "extract", config, output).Run()
+}
+
+func TestAnExtractionHookRunsSnapshotsThatNeedNothingInstalled(t *testing.T) {
+	needNode(t)
+	root := t.TempDir()
+	orders, ledger := filepath.Join(root, "orders"), filepath.Join(root, "ledger")
+	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
+	put(t, orders, "server.ts", `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { z } from "zod";
+export default createMcpHandler(() => {
+  const server = new McpServer({ name: "orders", version: "1" });
+  server.registerTool("read", { inputSchema: z.object({ id: z.string() }) }, () => ({ content: [] }));
+  return server;
+});`)
+	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{Extract: containerExtract})
+	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
+		t.Fatalf("schema-only server in a snapshot = %+v, %v", contract, err)
+	}
+	// A server that needs another package falls back to its committed contract there.
+	put(t, ledger, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
+	put(t, ledger, "server.ts", `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import Database from "better-sqlite3";
+export const driver = Database;
+export default createMcpHandler(() => new McpServer({ name: "ledger", version: "1" }));`)
+	committedContract(t, ledger, ordersMetadata())
+	contract, err = ResolveDocument(t.Context(), Source{Path: ledger}, Options{Extract: containerExtract})
+	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "lookup" {
+		t.Fatalf("committed contract through a hook = %+v, %v", contract, err)
 	}
 }

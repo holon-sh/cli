@@ -12,7 +12,9 @@ if (mode === "contract") {
   // One application's child process (root, entry), run with --experimental-vm-modules.
   process.send(await contract(configPath, output), () => process.exit(0));
 } else if (mode === "extract") {
-  const results = Object.fromEntries(await Promise.all(config.apps.map(async app => [app.name, await extract(app.path, app.entry)])));
+  // An app's own directory, when visible here, holds its installed dependencies; else its snapshot.
+  const directory = app => app.source && existsSync(join(app.source, app.entry)) ? app.source : app.path;
+  const results = Object.fromEntries(await Promise.all(config.apps.map(async app => [app.name, await extract(directory(app), app.entry)])));
   writeFileSync(output, JSON.stringify(results));
 } else if (mode === "check" || mode === "verify") {
   const root = resolve(config.root ?? ".");

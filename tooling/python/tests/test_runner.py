@@ -87,7 +87,10 @@ def write(directory: Path, files: dict[str, str]) -> Path:
 
 
 def extract(
-    tmp_path: Path, apps: dict[str, Path], entry: str = "server.py", **env: str
+    tmp_path: Path,
+    apps: dict[str, Path] | list[dict[str, str]],
+    entry: str = "server.py",
+    **env: str,
 ) -> dict[str, dict]:
     archive = Path(
         subprocess.check_output(
@@ -98,7 +101,11 @@ def extract(
         bundle.extractall(tmp_path / "tooling")
     config = tmp_path / "config.json"
     output = tmp_path / "output.json"
-    entries = [{"name": n, "path": str(p), "entry": entry} for n, p in apps.items()]
+    entries = (
+        apps
+        if isinstance(apps, list)
+        else [{"name": n, "path": str(p), "entry": entry} for n, p in apps.items()]
+    )
     config.write_text(json.dumps({"apps": entries}))
     extractor = [sys.executable, "-I", str(tmp_path / "tooling/extract.py")]
     environment = {**os.environ, **env}
@@ -159,6 +166,25 @@ def test_bundle_extracts_the_servers_own_catalog_and_detects_changed_inputs(tmp_
     )
     assert checked.returncode != 0
     assert "sources changed after extraction" in checked.stderr
+
+
+def test_the_apps_own_directory_is_used_where_visible_else_its_snapshot(tmp_path):
+    app = write(tmp_path / "app", {"server.py": SERVER, "models.py": MODELS})
+    write(app, {"catalog/__init__.py": "", "catalog/region.py": REGION})
+    absent = str(tmp_path / "absent")
+    result = extract(
+        tmp_path,
+        [
+            {"name": "host", "path": absent, "source": str(app), "entry": "server.py"},
+            {
+                "name": "container",
+                "path": str(app),
+                "source": absent,
+                "entry": "server.py",
+            },
+        ],
+    )
+    assert [len(result[name]["tools"]) for name in ("host", "container")] == [2, 2]
 
 
 def test_a_src_entry_imports_from_the_application_root(tmp_path):

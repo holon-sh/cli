@@ -36,7 +36,8 @@ function application(root, files) {
 function extractApps(root, run, app, entries, env) {
   const config = join(root, "extract.json");
   const output = join(root, "output.json");
-  writeFileSync(config, JSON.stringify({ apps: Object.entries(entries).map(([name, entry]) => ({ name, path: app, entry })) }));
+  const apps = Array.isArray(entries) ? entries : Object.entries(entries).map(([name, entry]) => ({ name, path: app, entry }));
+  writeFileSync(config, JSON.stringify({ apps }));
   run("extract", config, [output], env);
   return JSON.parse(readFileSync(output, "utf8"));
 }
@@ -78,6 +79,10 @@ export default createMcpHandler(() => {
   assert.deepEqual(extracted.orders.resources, [{ uri: "orders://latest", outputSchema: order }, { uri: "ui://orders/app.html", outputSchema: {} }]);
   assert.deepEqual(Object.keys(extracted.orders.sources), ["meta.json", "schemas/order.ts", "server.ts", "tools.ts"]);
   assert.deepEqual(extracted.plain, { tools: [], resources: [], sources: { "plain.mjs": extracted.plain.sources["plain.mjs"] } });
+  // The app's own directory is used where it is visible (a host), its snapshot elsewhere (a container).
+  const absent = join(root, "absent");
+  const chosen = extractApps(root, run, app, [{ name: "host", path: absent, source: app, entry: "plain.mjs" }, { name: "container", path: app, source: absent, entry: "plain.mjs" }]);
+  assert.deepEqual([chosen.host.tools, chosen.container.tools], [[], []]);
 
   const config = join(root, "verify.json");
   writeFileSync(config, JSON.stringify({ root: app, sources: extracted.orders.sources }));

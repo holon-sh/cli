@@ -77,7 +77,21 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			return err
 		}
 		committed[s] = document
-		batches[s.language] = append(batches[s.language], extractionEntry{Name: s.name, Path: s.origin, Entry: s.entry})
+		entry := extractionEntry{Name: s.name, Path: s.origin, Entry: s.entry}
+		if o.Extract != nil {
+			// A hook may run servers where only root is visible, such as a container without network
+			// access, so it also gets a snapshot there: a server that needs only its schema libraries
+			// extracts with the tooling's copies, and others report the package they miss.
+			entry.Path, entry.Source = filepath.Join(root, "sources", s.name), s.origin
+			fingerprint, err := SnapshotSource(s.name, s.origin, entry.Path)
+			if err != nil {
+				return err
+			}
+			if fingerprint != s.fingerprint {
+				return fmt.Errorf("%s changed during preparation; discarding the superseded update", s.origin)
+			}
+		}
+		batches[s.language] = append(batches[s.language], entry)
 		run = append(run, s)
 	}
 	results, err := extractTypes(ctx, root, batches, o)
@@ -154,6 +168,9 @@ type extractionEntry struct {
 	Name  string `json:"name"`
 	Path  string `json:"path"`
 	Entry string `json:"entry"`
+	// Source is the server's own directory when Path is a snapshot of it. A runner that can see
+	// it uses it instead, so the server's installed dependencies resolve.
+	Source string `json:"source,omitempty"`
 }
 
 func extractTypes(ctx context.Context, root string, batches map[string][]extractionEntry, o Options) (map[string]extraction, error) {
