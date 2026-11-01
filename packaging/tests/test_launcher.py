@@ -50,17 +50,11 @@ class LauncherTests(unittest.TestCase):
             with self.subTest(launcher=command[0]):
                 self.assertEqual(self.launch(command, DIE_WITH="TERM").returncode, -signal.SIGTERM)
 
-    def test_missing_override(self):
+    def test_missing_binary(self):
         missing = str(self.directory / "missing")
         for command, _ in self.launchers:
-            with self.subTest(launcher=command[0]):
-                result = self.launch(command, HOLON_BINARY=missing)
-                self.assertEqual(result.returncode, 1)
-                self.assertIn(missing, result.stderr)
-
-    def test_missing_bundled_binary(self):
-        for command, _ in self.launchers:
-            with self.subTest(launcher=command[0]):
-                result = self.launch(command, HOLON_BINARY="")
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("reinstall holon-types", result.stderr)
+            for binary, message in ((missing, missing), ("", "reinstall holon-types")):
+                with self.subTest(launcher=command[0], binary=binary):
+                    result = self.launch(command, HOLON_BINARY=binary)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn(message, result.stderr)

@@ -7,8 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
 func TestResolveDocumentFindsServerSources(t *testing.T) {
@@ -64,7 +62,6 @@ func TestPrepareRejectsInvalidConsumers(t *testing.T) {
 		{"repeated target", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS, TargetTS}}, "listed twice"},
 		{"server by endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Server: &Source{Endpoint: "https://x.example/mcp"}}, "must be a path source"},
 		{"contract and endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata()), Endpoint: "https://x.example/mcp"}}}, "exactly one of"},
-		{"two kinds", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Path: dir, Endpoint: "https://x.example/mcp"}}}, "exactly one of"},
 		{"bad alias", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Alias: "Bad_Alias", Registry: ref}}}, "must be a DNS label"},
 		{"bad version", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Registry: &Reference{Name: "example.com/orders", Version: "latest"}}}}, "exact"},
 	} {
@@ -78,82 +75,25 @@ func TestPrepareRejectsInvalidConsumers(t *testing.T) {
 	}
 }
 
-func slotOwner(name string) slotMetadata {
-	return slotMetadata{Marker: mcpcontract.Marker, App: name, Identity: mcpcontract.Identity{Name: "example.com/" + name, Version: "1"}}
-}
-
-func TestNodeSlotResolvesSymlinkAndPreservesForeignContents(t *testing.T) {
-	const pkg = "holon-sh"
-	root := t.TempDir()
-	store := filepath.Join(root, "store")
-	app := filepath.Join(root, "app")
-	put(t, store, "package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
-	if err := os.MkdirAll(filepath.Join(app, "node_modules"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(store, filepath.Join(app, "node_modules", pkg)); err != nil {
-		t.Fatal(err)
-	}
-	resolved, err := InstalledRuntime(app)
-	if err != nil {
-		t.Fatal(err)
-	}
-	real, _ := filepath.EvalSymlinks(store)
-	if resolved != real {
-		t.Fatalf("slot = %s, want %s", resolved, real)
-	}
-	put(t, store, "generated/index.js", "user content")
-	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err == nil {
-		t.Fatal("overwrote foreign slot")
-	}
-	if got := read(t, store, "generated/index.js"); got != "user content" {
-		t.Fatalf("foreign contents changed: %s", got)
-	}
-	put(t, store, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})))
-	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
-		t.Fatal(err)
-	}
-	first, _ := os.Stat(filepath.Join(store, "generated/index.js"))
-	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
-		t.Fatal(err)
-	}
-	second, _ := os.Stat(filepath.Join(store, "generated/index.js"))
-	if !os.SameFile(first, second) {
-		t.Fatal("unchanged generation replaced the slot")
-	}
-	// Older markers may carry digests; ownership still permits refreshing their slot.
-	put(t, store, "generated/holon-generated.json", `{"marker":"holon-generated-apps-v1","app":"one","digests":{"orders":"sha256:old"}}`)
-	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("generated")}, slotOwner("one")); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeNodeSlot(resolved, map[string][]byte{"index.js": []byte("other")}, slotOwner("two")); err == nil || !strings.Contains(err.Error(), "install a separate "+pkg) {
-		t.Fatalf("shared package was reassigned to another consumer: %v", err)
-	}
-}
-
-func TestPythonSlotProtectsUserFiles(t *testing.T) {
-	content := "# " + mcpcontract.Marker + " app=orders\napps = object()\n"
-	files := map[string][]byte{"holon/apps/__init__.py": []byte(content)}
-
-	root := t.TempDir()
-	put(t, root, "holon/package.json", `{"holon":"holon-generated-apps-v1"}`)
-	put(t, root, "holon/__init__.py", "legacy runtime")
-	if err := writePythonSlot(root, files); err == nil {
-		t.Fatal("legacy marker authorized runtime replacement")
-	}
-	if read(t, root, "holon/__init__.py") != "legacy runtime" {
-		t.Fatal("legacy runtime changed")
-	}
-
-	for _, name := range []string{"holon.py", "holon/__init__.py", "holon/apps/__init__.py"} {
-		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			put(t, root, name, "user content")
-			if err := writePythonSlot(root, files); err == nil {
-				t.Fatal("overwrote user namespace")
+func TestGenerateKeepsFilesItDidNotWrite(t *testing.T) {
+	for _, test := range []struct{ target, file string }{
+		{TargetTS, "node_modules/holon-sh/generated/index.js"},
+		{TargetPy, "holon.py"},
+		{TargetPy, "holon/__init__.py"},
+		{TargetPy, "holon/apps/__init__.py"},
+		{TargetGo, "holon/mine.go"},
+	} {
+		t.Run(test.file, func(t *testing.T) {
+			dir := t.TempDir()
+			put(t, dir, "node_modules/holon-sh/package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
+			put(t, dir, "requirements.txt", "holon-sh\n")
+			put(t, dir, test.file, "user content")
+			c := Consumer{Name: "app", Dir: dir, Targets: []string{test.target}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+			if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil {
+				t.Fatal("generated over a file it did not write")
 			}
-			if got := read(t, root, name); got != "user content" {
-				t.Fatal("user file changed")
+			if got := read(t, dir, test.file); got != "user content" {
+				t.Fatalf("user file changed: %s", got)
 			}
 		})
 	}

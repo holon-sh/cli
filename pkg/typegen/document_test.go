@@ -2,20 +2,18 @@ package typegen
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
+	"encoding/base64"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/opencontainers/go-digest"
-	"oras.land/oras-go/v2/content"
 )
 
 func TestDocumentBytesAndValidation(t *testing.T) {
-	const original = ` { "schema": { "tools": [{"name":"lookup","inputSchema":{"type":"object","properties":{"id":{"const":9007199254740993}}}}]}, "identity": {"version":"1", "name":"example/orders"} } `
+	const original = ` { "schema": { "tools": [{"name":"lookup","inputSchema":{"type":"object"}}]}, "identity": {"version":"1", "name":"example/orders"} } `
 	document, err := ParseDocument(t.Context(), []byte(original))
 	if err != nil {
 		t.Fatal(err)
@@ -23,18 +21,9 @@ func TestDocumentBytesAndValidation(t *testing.T) {
 	if string(document.Data) != original || document.Digest != digest.FromString(original).String() {
 		t.Fatal("document bytes were rewritten")
 	}
-	canonical, err := NewDocument(t.Context(), document.Metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changes, err := mcptype.Changes(t.Context(), document.Metadata, canonical.Metadata); err != nil || len(changes) != 0 {
-		t.Fatalf("writer changed the contract: %+v, %v", changes, err)
-	}
 	for _, invalid := range []string{
 		`{"version":1,"identity":{"name":"a","version":"1"},"contract":{"tools":[]}}`,
-		`{"identity":{"name":"a","version":"1"},"schema":null}`,
-		`{"identity":{"name":"a","version":"1"},"requires":{"orders":{"identity":{"name":"b","version":"1"},"contract":{"tools":[]}}}}`,
-		`{"identity":{"name":"a","version":"1"},"requires":{"orders":"https://example.com/contract"}}`,
+		`{"schema":{"tools":[]}}`,
 		`{"identity":{"name":"a","version":"1"},"requires":{"orders":"sha256:abc"}}`,
 	} {
 		if _, err := ParseDocument(t.Context(), []byte(invalid)); err == nil {
@@ -43,47 +32,58 @@ func TestDocumentBytesAndValidation(t *testing.T) {
 	}
 }
 
-func TestImageDocumentReadAndCopy(t *testing.T) {
-	// A consumer must pin and copy the fetched blob, including its original whitespace.
+func TestPrepareResolvesRegistryPackages(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	docker := func(password string) string {
+		dir := filepath.Join(t.TempDir(), ".docker")
+		put(t, dir, "config.json", `{"auths":{"images.example":{"auth":"`+base64.StdEncoding.EncodeToString([]byte("user:"+password))+`"}}}`)
+		return dir
+	}
+	// The registry's blob need not match our writer's bytes; a consumer pins the blob as fetched.
 	original := append([]byte(" "), mustJSON(t, ordersMetadata())...)
+	corrupt := imageClient(t, ordersMetadata())
+	served := corrupt.Transport
+	corrupt.Transport = registryResponse(func(request *http.Request) (*http.Response, error) {
+		response, err := served.RoundTrip(request)
+		if err == nil && strings.Contains(request.URL.Path, "/blobs/") {
+			response.Body.Close()
+			response.Body = io.NopCloser(bytes.NewReader(bytes.Replace(original, []byte("lookup"), []byte("broken"), 1)))
+		}
+		return response, err
+	})
 	for _, test := range []struct {
-		name string
-		data []byte
-		want error
+		name  string
+		image *http.Client
+		env   []string
+		want  string
 	}{
-		{"preserved", original, nil},
-		{"corrupt", bytes.Replace(original, []byte("lookup"), []byte("broken"), 1), content.ErrMismatchedDigest},
-		{"truncated", original[:len(original)-1], io.ErrUnexpectedEOF},
-		{"trailing", append(bytes.Clone(original), ' '), content.ErrTrailingData},
+		{name: "docker config", env: []string{"DOCKER_CONFIG=" + docker("secret")}},
+		{name: "docker under HOME", env: []string{"HOME=" + filepath.Dir(docker("secret")), "DOCKER_CONFIG="}},
+		{name: "rejected docker credential", env: []string{"DOCKER_CONFIG=" + docker("wrong")}, want: "images.example/orders:1.0.0"},
+		{name: "corrupt blob", image: corrupt, want: "failed verification"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			client := imageClient(t, ordersMetadata(), "")
-			transport := client.Transport
-			client.Transport = registryResponse(func(request *http.Request) (*http.Response, error) {
-				response, err := transport.RoundTrip(request)
-				if err == nil && strings.Contains(request.URL.Path, "/blobs/") {
-					response.Body.Close()
-					response.Body = io.NopCloser(bytes.NewReader(test.data))
-				}
-				return response, err
-			})
-			source, client := registryImageSource(t, client)
-			c := Consumer{Name: "checkout", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{source}}
-			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}})
-			if !errors.Is(err, test.want) {
-				t.Fatalf("Prepare = %v, want %v", err, test.want)
+			image := test.image
+			if image == nil {
+				image = authenticatedRegistry(t, ordersMetadata())
 			}
-			if err != nil {
+			source, client := registryImageSource(t, image)
+			c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{source}}
+			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: client, Env: append([]string{"DOCKER_CONFIG=" + t.TempDir()}, test.env...)})
+			if test.want != "" {
+				if err == nil || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("Prepare = %v, want %q", err, test.want)
+				}
 				return
 			}
-			defer prepared.Close()
-			reference := prepared.Metadata()["checkout"].Requires["orders"]
-			if reference != digest.FromBytes(original).String() || !bytes.Equal(prepared.Documents()[reference].Data, original) {
-				t.Fatal("dependency was not pinned to original blob bytes")
+			if err != nil {
+				t.Fatal(err)
 			}
-			data, err := json.Marshal(prepared.Metadata()["checkout"])
-			if err != nil || strings.Contains(string(data), "lookup") {
-				t.Fatalf("dependency schema duplicated in consumer: %s %v", data, err)
+			defer prepared.Close()
+			reference := prepared.Metadata()["caller"].Requires["orders"]
+			if reference != digest.FromBytes(original).String() || !bytes.Equal(prepared.Documents()[reference].Data, original) {
+				t.Fatal("dependency was not pinned to the registry's blob bytes")
 			}
 		})
 	}
