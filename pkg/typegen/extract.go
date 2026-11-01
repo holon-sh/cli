@@ -121,7 +121,8 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 				return err
 			}
 			if answered.Digest != recorded.Digest {
-				return fmt.Errorf("%s is stale: the server answers a different contract; regenerate it with holon types generate --contract %s -o %[1]s", filepath.Join(s.origin, ContractFile), s.origin)
+				contract := filepath.Join(s.origin, ContractFile)
+				return fmt.Errorf("%s is stale: the server answers a different contract; regenerate it with holon types generate --contract %s -o %s", contract, s.origin, contract)
 			}
 		}
 	}
@@ -155,7 +156,7 @@ func (s *preparedSource) committedContract(ctx context.Context) (*Document, erro
 // imports mcp and pydantic, else the host's, whose copies serve a server that needs nothing else.
 // It is "" when neither can.
 func pythonProgram(ctx context.Context, dir, host string) string {
-	for _, program := range []string{pythonEnvironment(dir, host), host} {
+	for _, program := range slices.Compact([]string{pythonEnvironment(dir, host), host}) {
 		if exec.CommandContext(ctx, program, "-c", "import mcp.server, pydantic").Run() == nil {
 			return program
 		}
