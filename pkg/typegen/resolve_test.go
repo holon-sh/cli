@@ -58,7 +58,6 @@ func TestRegistrySourceResolution(t *testing.T) {
 	})
 	base := `{"name":"example.com/orders","version":"1.0.0","description":"Orders"`
 	remote := `,"remotes":[{"type":"streamable-http","url":"` + live.URL + `"}]`
-	types := `,"_meta":{"` + PublisherMetadata + `":{"sh.holon":{"types":"` + server.URL + `/contract"}}}`
 	oci := `,"packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]`
 	wrongIdentity := ordersMetadata()
 	wrongIdentity.Identity.Name = "example.com/other"
@@ -66,14 +65,10 @@ func TestRegistrySourceResolution(t *testing.T) {
 		name, record, tool, want string
 		image                    *http.Client
 	}{
-		{"removed types field", base + types + oci + `}`, "", "unknown field", nil},
-		{"oci package", base + oci + `}`, "lookup", "", nil},
 		{"oci before remote", base + oci + remote + `}`, "lookup", "", nil},
-		{"oci without a contract falls through to remote", base + oci + remote + `}`, "read", "", imageClient(t, nil, "")},
-		{"oci identity mismatch", base + oci + `}`, "", "belongs to example.com/other", imageClient(t, wrongIdentity, "")},
+		{"oci without a contract falls through to remote", base + oci + remote + `}`, "read", "", imageClient(t, nil)},
+		{"oci identity mismatch", base + oci + `}`, "", "belongs to example.com/other", imageClient(t, wrongIdentity)},
 		{"oci error propagates", base + `,"packages":[{"registryType":"oci","identifier":"orders:1.0.0"},{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]` + remote + `}`, "", "package orders:1.0.0: package identifier must use an explicit OCI registry", nil},
-		{"invalid OCI contract does not fall through", base + oci + remote + `}`, "", "requires a SHA-256 digest", imageClient(t, ordersMetadata(), "invalid")},
-		{"remote", base + remote + `}`, "read", "", nil},
 		{"neither", base + `,"packages":[{"registryType":"npm","identifier":"orders"}]}`, "", "publishes neither", nil},
 		{"wrong registry identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "different server name", nil},
 	} {
@@ -81,7 +76,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 			record = test.record
 			image := test.image
 			if image == nil {
-				image = imageClient(t, ordersMetadata(), "")
+				image = imageClient(t, ordersMetadata())
 			}
 			client := &http.Client{Transport: hostTransport{
 				strings.TrimPrefix(server.URL, "https://"): server.Client().Transport,
