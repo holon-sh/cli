@@ -296,7 +296,7 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
         spec.loader.exec_module(module)
         result = loop.run_until_complete(catalog(find_server(module)))
         result["descriptor"] = {
-            **getattr(module, "publishing", {}),
+            **(getattr(module, "publishing", None) or {}),
             **result.pop("info"),
         }
     except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
