@@ -10,7 +10,7 @@
 import vm from "node:vm";
 import module from "node:module";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, extname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
@@ -195,10 +195,10 @@ function formatOf(file) {
   }
 }
 
-// candidate is the file a module path names, trying TypeScript sources for .js specifiers.
+// candidate is the file a module path names: exact file, .ts stand-ins, extensions.
 function candidate(path) {
   const typed = path.replace(/\.(m|c)?js$/, (_, kind) => `.${kind ?? ""}ts`);
-  for (const option of [...(typed !== path ? [typed] : []), ...extensions.map(extension => path + extension)]) {
+  for (const option of [path, ...(typed !== path ? [typed] : []), ...extensions.slice(1).map(extension => path + extension)]) {
     if (existsSync(option) && statSync(option).isFile()) return realpathSync(option);
   }
 }

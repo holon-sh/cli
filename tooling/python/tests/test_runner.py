@@ -238,6 +238,17 @@ def test_module_scope_effects_fail_with_the_capability_file_and_line(tmp_path):
     typed += "Runner = subprocess.Popen[bytes]\nserver = MCPServer('typed')\n"
     apps["typed"] = write(tmp_path / "typed", {"server.py": typed})
     apps["missing"] = write(tmp_path / "missing", {"server.py": "import requests\n"})
+    # The URL parser is pure standard library: its package root is allowed.
+    apps["urlparse"] = write(
+        tmp_path / "urlparse",
+        {
+            "server.py": "from urllib.parse import urljoin\n"
+            "from mcp.server import MCPServer\n"
+            "server = MCPServer('u')\n"
+            "@server.tool()\ndef join(base: str) -> str:\n"
+            "    return urljoin(base, 'x')\n"
+        },
+    )
     result = extract(tmp_path, apps)
     for name, (_, line, api, capability) in EFFECTS.items():
         diagnostic = result[name]["diagnostic"]
@@ -263,6 +274,7 @@ def test_module_scope_effects_fail_with_the_capability_file_and_line(tmp_path):
     )
     assert result["missing"]["missing"] == "requests"
     assert result["typed"]["tools"] == []
+    assert [tool["name"] for tool in result["urlparse"]["tools"]] == ["join"]
 
 
 def test_an_entry_that_raises_or_hangs_while_importing_becomes_a_diagnostic(tmp_path):

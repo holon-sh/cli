@@ -48,7 +48,7 @@ PURE = frozenset(  # a word list, not one name per line
     "graphlib hashlib heapq hmac html importlib inspect io ipaddress itertools json "
     "keyword linecache logging math numbers operator os pathlib pprint queue random re "
     "reprlib secrets statistics string stringprep struct sys textwrap threading time "
-    "token tokenize tomllib traceback types typing unicodedata uuid warnings weakref zlib "
+    "token tokenize tomllib traceback types typing unicodedata urllib uuid warnings weakref zlib "
     "zoneinfo".split()
 )
 INSTALLED = {"site-packages", "dist-packages", ".venv", "venv", "node_modules"}

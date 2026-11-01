@@ -103,15 +103,18 @@ test("installed packages resolve from the application: its own Zod, CommonJS pac
     "node_modules/zod/package.json": '{"name":"zod","version":"9.9.9","type":"module","exports":{".":"./index.js"}}',
     "node_modules/zod/index.js": `const schema = json => ({ "~standard": { version: 1, vendor: "zod", validate: value => ({ value }), jsonSchema: { input: () => json, output: () => json } } });
 export const z = { object: shape => schema({ type: "object", description: "zod 9.9.9", properties: Object.fromEntries(Object.keys(shape).map(key => [key, shape[key]["~standard"].jsonSchema.input()])) }), enum: values => schema({ type: "string", enum: values }) };`,
-    "node_modules/legacy-units/package.json": '{"name":"legacy-units","main":"index.js"}',
-    "node_modules/legacy-units/index.js": 'const { names } = require("./names"); module.exports = { names, metric: true };',
+    "node_modules/legacy-units/package.json": '{"name":"legacy-units","main":"index.js","exports":{".":"./index.js","./names":"./names.js"}}',
+    "node_modules/legacy-units/index.js": 'const { names } = require("./names.js"); module.exports = { names, metric: true };',
     "node_modules/legacy-units/names.js": 'exports.names = ["cm", "in"];',
+    // A TypeScript decoy beside the published JavaScript: the running server uses names.js.
+    "node_modules/legacy-units/names.ts": 'export const names = ["cm", "in", "ft"];',
     "node_modules/holon-sh/package.json": '{"name":"holon-sh","type":"module","exports":{".":{"import":"./generated/index.js"}}}',
     "node_modules/holon-sh/generated/index.js": 'import { createApps } from "../runtime.mjs"; export const apps = createApps({ name: "unconfigured", version: "0", requires: {} }, {});',
     "node_modules/holon-sh/runtime.mjs": "export function createApps() { return {}; }",
     "server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import units, { names } from "legacy-units";
+import units from "legacy-units";
+import { names } from "legacy-units/names";
 import { apps } from "holon-sh";
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "units", version: "1" });
