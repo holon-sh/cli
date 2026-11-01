@@ -151,6 +151,10 @@ EFFECTS = {
         "import socket\n\nsocket.create_connection(('example.com', 443))\n",
         "network",
     ),
+    "clock": (
+        "from datetime import datetime\n\nSTARTED = datetime.now()\n",
+        "clock",
+    ),
 }
 
 
@@ -158,6 +162,11 @@ def test_module_scope_effects_fail_naming_the_capability_and_line(tmp_path):
     sources = {name: source for name, (source, _) in EFFECTS.items()}
     # Other standard-library modules are unavailable; an uninstalled package is named.
     sources |= {"sqlite": "import sqlite3\n", "missing": "import requests\n"}
+    # Naming a guarded class is not using it, as eagerly evaluated annotations do.
+    sources["typed"] = (
+        "import subprocess\nfrom mcp.server import MCPServer\n"
+        "Runner = subprocess.Popen[bytes]\nserver = MCPServer('typed')\n"
+    )
     apps = [
         {"name": name, "path": str(tmp_path / name), "entry": "server.py"}
         for name in sources
@@ -171,3 +180,4 @@ def test_module_scope_effects_fail_naming_the_capability_and_line(tmp_path):
         assert f"contract evaluation has no {capability}" in diagnostic, diagnostic
     assert "sqlite3 is unavailable" in result["sqlite"]["diagnostic"]
     assert result["missing"]["missing"] == "requests"
+    assert result["typed"]["tools"] == []
