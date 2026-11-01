@@ -136,7 +136,8 @@ export function register(server, { tools, resources = {} }) {
 import { register, resource, tool } from "holon-sh/app";
 import type { Count } from "./types.ts";
 let count = 0;
-const state = resource("counter://state", (): Count => ({ count, tags: [], done: false }));
+const URI = "counter://state";
+const state = resource(URI, (): Count => ({ count, tags: [], done: false }));
 const add = tool({}, async ({ amount }: { amount: number }): Promise<Count> => ({ count: (count += amount), tags: [], done: false }));
 const reset = tool({}, () => ({ ok: true as const }));
 export default createMcpHandler(() => {
@@ -151,8 +152,14 @@ const server = new McpServer({ name: "untyped", version: "1" });
 const score = tool({}, (input: { scores: Record<string, number> }) => input);
 register(server, { tools: { score } });
 export default server;`,
+    "moving.ts": `import { McpServer } from "@modelcontextprotocol/server";
+import { register, resource } from "holon-sh/app";
+const server = new McpServer({ name: "moving", version: "1" });
+const state = resource("counter://" + "state", () => ({}));
+register(server, { resources: { state } });
+export default server;`,
   });
-  const { counter, untyped } = extract([{ name: "counter", path: app, entry: "server.ts" }, { name: "untyped", path: app, entry: "untyped.ts" }]);
+  const { counter, untyped, moving } = extract([{ name: "counter", path: app, entry: "server.ts" }, { name: "untyped", path: app, entry: "untyped.ts" }, { name: "moving", path: app, entry: "moving.ts" }]);
   const total = { type: "object", properties: { count: { type: "number" }, label: { anyOf: [{ type: "null" }, { type: "string" }] }, tags: { type: "array", items: { type: "string" } }, done: { type: "boolean" } }, required: ["count", "tags", "done"], additionalProperties: false };
   const tools = [
     { name: "add", inputSchema: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"], additionalProperties: false }, outputSchema: total },
@@ -164,6 +171,7 @@ export default server;`,
   assert.deepEqual(counter.app, { schema: { tools, resources: [{ uri: "counter://state", outputSchema: total }] } });
   assert.deepEqual(Object.keys(counter.sources), ["server.ts", "types.ts"]);
   assert.match(untyped.diagnostic, /untyped\.ts:5:29: Record<string, number> has no JSON Schema/);
+  assert.match(moving.diagnostic, /moving\.ts:5:33: resource state needs a string constant URI/);
 });
 
 test("module-scope reads of the environment, clock and randomness give one contract", t => {
