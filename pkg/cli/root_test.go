@@ -69,8 +69,10 @@ func writeCLIFile(t *testing.T, root, name, content string) {
 
 func installCLISlot(t *testing.T, root string) {
 	t.Helper()
-	writeCLIFile(t, root, "node_modules/holon-sh/package.json", `{"name":"holon-sh","exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
-	writeCLIFile(t, root, "node_modules/holon-sh/generated/holon-generated.json", `{"marker":"`+mcpcontract.Marker+`","placeholder":true}`)
+	for _, pkg := range []string{"holon-sh", "holon-ui"} {
+		writeCLIFile(t, root, "node_modules/"+pkg+"/package.json", `{"name":"`+pkg+`","exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
+		writeCLIFile(t, root, "node_modules/"+pkg+"/generated/holon-generated.json", `{"marker":"`+mcpcontract.Marker+`","placeholder":true}`)
+	}
 }
 
 func TestExplicitOwnServer(t *testing.T) {
@@ -79,7 +81,7 @@ func TestExplicitOwnServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
+	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1","holon-ui":"^0.0.1"}}`)
 	writeCLIFile(t, root, "server.py", pythonServer)
 	writeCLIFile(t, root, "server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"}`)
 	installCLISlot(t, root)
@@ -87,11 +89,11 @@ func TestExplicitOwnServer(t *testing.T) {
 	writeCLIFile(t, orders, "server.py", pythonServer)
 	writeCLIFile(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
 	run(t, "", "types", "generate", "-s", "./server.py", "-s", orders)
-	// The own server is callable from the browser but is not a dependency of itself.
-	for name, want := range map[string]bool{"index.d.ts": false, "browser.d.ts": true} {
-		data, err := os.ReadFile(filepath.Join(root, "node_modules/holon-sh/generated", name))
-		if err != nil || strings.Contains(string(data), `"view"`) != want || !strings.Contains(string(data), `"orders"`) {
-			t.Fatalf("%s = %s, %v", name, data, err)
+	// The own server is callable from the browser, through holon-ui's App, but is not a dependency of itself.
+	for pkg, want := range map[string]bool{"holon-sh": false, "holon-ui": true} {
+		data, err := os.ReadFile(filepath.Join(root, "node_modules", pkg, "generated/index.d.ts"))
+		if err != nil || strings.Contains(string(data), `"view"`) != want || strings.Contains(string(data), "class App") != want || !strings.Contains(string(data), `"orders"`) {
+			t.Fatalf("%s = %s, %v", pkg, data, err)
 		}
 	}
 	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")

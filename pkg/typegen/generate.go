@@ -185,7 +185,7 @@ func writePlaceholders(ctx context.Context, dir string, identity mcpcontract.Ide
 			}
 			write = func(files map[string][]byte) error { return writePythonSlot(dir, files) }
 		case TargetTS:
-			slot, err := InstalledRuntime(dir)
+			slot, err := InstalledRuntime(dir, nodePackages[TargetTS])
 			if err != nil {
 				continue
 			}
@@ -385,25 +385,17 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 	switch target {
 	case TargetTS:
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
-		files, err := mcptype.Generate(ctx, request)
-		if err != nil {
-			return nil, err
-		}
-		request.Target, request.RuntimeSpecifier = "browser", "../browser-runtime.mjs"
-		request.Requires, request.Contracts = maps.Clone(request.Requires), maps.Clone(request.Contracts)
+	case TargetUI:
+		// Browser code also calls the server itself, through an MCP Apps App typed by its contract.
+		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "browser", "../runtime.mjs", "holon-sh/protocol"
 		if own.Schema != nil {
-			alias := serverKey(own.Identity.Name)
-			if _, exists := request.Contracts[alias]; exists {
-				return nil, fmt.Errorf("own browser client %s conflicts with a dependency alias", alias)
+			request.Own = cmp.Or(serverKey(own.Identity.Name), "app")
+			if _, exists := request.Contracts[request.Own]; exists {
+				return nil, fmt.Errorf("own browser client %s conflicts with a dependency alias", request.Own)
 			}
-			request.Requires[alias], request.Contracts[alias] = own.Identity, own.Schema
+			request.Requires, request.Contracts = maps.Clone(request.Requires), maps.Clone(request.Contracts)
+			request.Requires[request.Own], request.Contracts[request.Own] = own.Identity, own.Schema
 		}
-		browser, err := mcptype.Generate(ctx, request)
-		if err != nil {
-			return nil, err
-		}
-		maps.Copy(files, browser)
-		return files, nil
 	case TargetPy:
 		request.Target = "python"
 	case TargetGo:
@@ -448,22 +440,22 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 // Write validates all consumer slots before writing any of them. Callers hold AcquireLocks
 // and install dependencies before Prepare. Repeating Write repairs slots replaced by an install.
 func (p *Prepared) Write() error {
-	slots := map[string]string{}
+	slots := map[[2]string]string{} // by consumer and target
 	owners := map[string]string{}
 	for _, c := range p.consumers {
 		for _, target := range c.Targets {
 			var err error
 			switch target {
-			case TargetTS:
+			case TargetTS, TargetUI:
 				var slot string
-				slot, err = InstalledRuntime(c.Dir)
+				slot, err = InstalledRuntime(c.Dir, nodePackages[target])
 				if err != nil {
 					return fmt.Errorf("%s: %w", c.Name, err)
 				}
 				if prior, ok := owners[slot]; ok && prior != c.Name {
-					return fmt.Errorf("%s and %s share %s; install a separate %s for each project (avoid hoisting this package)", prior, c.Name, slot, nodePackage)
+					return fmt.Errorf("%s and %s share %s; install a separate %s for each project (avoid hoisting this package)", prior, c.Name, slot, nodePackages[target])
 				}
-				owners[slot], slots[c.Name] = c.Name, slot
+				owners[slot], slots[[2]string{c.Name, target}] = c.Name, slot
 				err = validateNodeSlot(slot, c.slot)
 			case TargetPy:
 				err = validatePythonSlot(c.Dir)
@@ -480,7 +472,9 @@ func (p *Prepared) Write() error {
 			var err error
 			switch target {
 			case TargetTS:
-				err = p.WriteNodeSlot(c.Name, slots[c.Name])
+				err = p.WriteNodeSlot(c.Name, slots[[2]string{c.Name, target}])
+			case TargetUI:
+				err = p.WriteBrowserSlot(c.Name, slots[[2]string{c.Name, target}])
 			case TargetPy:
 				err = p.WritePythonSlot(c.Name, c.Dir)
 			case TargetGo:
@@ -520,6 +514,16 @@ func (p *Prepared) files(consumer, target string) (*preparedConsumer, map[string
 // It refuses slots that are unmarked, symlinked or owned by another consumer, and leaves an identical slot untouched.
 func (p *Prepared) WriteNodeSlot(consumer, pkgDir string) error {
 	c, files, err := p.files(consumer, TargetTS)
+	if err != nil {
+		return err
+	}
+	return writeNodeSlot(pkgDir, files, c.slot)
+}
+
+// WriteBrowserSlot writes the consumer's ui clients and their marker into pkgDir/generated, where
+// pkgDir is an installed holon-ui package or a copy staged for an image, as WriteNodeSlot does.
+func (p *Prepared) WriteBrowserSlot(consumer, pkgDir string) error {
+	c, files, err := p.files(consumer, TargetUI)
 	if err != nil {
 		return err
 	}
@@ -571,8 +575,10 @@ func AcquireLocks(consumers []Consumer) (func(), error) {
 			return release, err
 		}
 		paths[real] = true
-		if slot, err := InstalledRuntime(c.Dir); err == nil {
-			paths[slot] = true
+		for _, pkg := range nodePackages {
+			if slot, err := InstalledRuntime(c.Dir, pkg); err == nil {
+				paths[slot] = true
+			}
 		}
 	}
 	for _, path := range slices.Sorted(maps.Keys(paths)) {

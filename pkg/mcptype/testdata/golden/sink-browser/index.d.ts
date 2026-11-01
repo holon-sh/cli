@@ -1,5 +1,5 @@
 // holon-generated-apps-v1 app=chéck"out
-import type { Outputs as Resources } from "./browser-resources.js";
+import type { Outputs as Resources } from "./resources.js";
 type AuthProvider = { token(): Promise<string> };
 type ToolClient<I, O, R> = { tools: { [K in keyof I]: (input: I[K]) => Promise<K extends keyof O ? O[K] : unknown> }; resources: { [U in keyof R]: { read(): Promise<R[U]> } }; callTool<K extends keyof I & string>(request: { name: K; arguments: I[K] }): Promise<unknown> };
 export type { Resources };
@@ -107,10 +107,9 @@ export interface OutputTypes {
 }
 
 export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };
-export interface HostBinding { host: { callServerTool(params: { name: string; arguments?: Record<string, unknown> }, options?: { signal?: AbortSignal }): Promise<unknown>; readServerResource(params: { uri: string }, options?: { signal?: AbortSignal }): Promise<unknown> } }
 export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
-export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding | HostBinding }, options?: CreateOptions): Pick<Apps,K>;
+export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 export interface ExposeOptions { signal?: AbortSignal; execute?: (name: string, args: Record<string, unknown>) => Promise<unknown> }
 export declare function exposeTools(app: Apps[keyof Apps], options?: ExposeOptions): Promise<boolean>;
 export type PageResult<I> = { readonly value: I; readonly issues?: undefined } | { readonly issues: ReadonlyArray<{ readonly message: string }> };
@@ -120,3 +119,5 @@ export interface PageAnnotations { title?: string; readOnlyHint?: boolean; destr
 export interface PageTool<S extends PageSchema = PageSchema> { description: string; inputSchema: S; annotations?: PageAnnotations; execute: (args: PageInput<S>) => unknown }
 export interface PageHost { registerTool(name: string, config: { description: string; inputSchema: PageSchema; annotations?: PageAnnotations }, callback: (args: any, extra: any) => any): { remove(): void } }
 export declare function registerPageTools<S extends { [name: string]: PageSchema }>(tools: { [K in keyof S]: PageTool<S[K]> }, options?: { view?: PageHost; signal?: AbortSignal }): Promise<boolean>;
+import { App as HostApp } from "@modelcontextprotocol/ext-apps";
+export declare class App extends HostApp { readonly tools: Apps["orders"]["tools"]; readonly resources: Apps["orders"]["resources"]; readonly callTool: Apps["orders"]["callTool"] }
