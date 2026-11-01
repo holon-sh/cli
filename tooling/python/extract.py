@@ -1,8 +1,8 @@
 """Obtain an application's MCP contract by running its server in a capability-stripped sandbox.
 
 Usage: extract.py CONFIG OUTPUT. The entries run at once, each in its own `python -I -S` child
-process. There an import finder serves the application's files and its environment's installed
-packages (mcp and pydantic among them),
+process, killed after TIMEOUT seconds. There an import finder serves the application's files and
+its environment's installed packages (mcp and pydantic among them),
 allows application code only pure standard-library modules, and names any module it cannot serve.
 Before the entry runs, the environment, files, sockets, subprocesses, the clock and randomness are
 replaced with stubs that raise naming the capability, so module-scope effects fail with the
@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from mcp.server import MCPServer, Server
 
 RESOURCE_SCHEMA = "sh.holon/outputSchema"
+TIMEOUT = 30  # seconds a server may take to answer
 # Standard-library modules application code may import. The others reach the host or are not
 # needed to declare tools; modules already loaded by the SDK are stubbed instead (see strip).
 PURE = frozenset(  # a word list, not one name per line
@@ -394,13 +395,22 @@ def extract(apps: list[dict[str, str]]) -> dict[str, dict[str, Any]]:
             child = subprocess.Popen([*command, app["entry"], str(output)], cwd=root)
             children.append((app, child, output))
         results: dict[str, dict[str, Any]] = {}
+        deadline = time.monotonic() + TIMEOUT
         for app, child, output in children:
-            child.wait()
-            if output.exists():
-                results[app["name"]] = json.loads(output.read_text())
+            try:
+                child.wait(timeout=max(deadline - time.monotonic(), 0))
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+                results[app["name"]] = {
+                    "diagnostic": f"{app['entry']}: no catalog within {TIMEOUT}s"
+                }
             else:
-                exited = f"exited ({child.returncode}) before answering"
-                results[app["name"]] = {"diagnostic": f"{app['entry']}: {exited}"}
+                if output.exists():
+                    results[app["name"]] = json.loads(output.read_text())
+                else:
+                    exited = f"exited ({child.returncode}) before answering"
+                    results[app["name"]] = {"diagnostic": f"{app['entry']}: {exited}"}
         return results
 
 
