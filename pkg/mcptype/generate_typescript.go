@@ -56,7 +56,6 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	}
 	identity, contracts := encode(request.caller()), encode(request.contracts)
 	types := fmt.Sprintf("import type { Outputs as Resources } from \"./resources.js\";\n%s\nexport type { Resources };\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", protocol, tools)
-	bound := fmt.Sprintf("export function createApps(bindings,options){return bindApps(%s,%s,bindings,options)}\n", identity, contracts)
 	runtime := quoted(cmp.Or(request.RuntimeSpecifier, "./runtime.mjs"))
 	if request.Target == "browser" {
 		files := map[string]string{
@@ -71,6 +70,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		}
 		return files, nil
 	}
+	bound := fmt.Sprintf("export function createApps(bindings,options){return bindApps(%s,%s,bindings,options)}\n", identity, contracts)
 	return map[string]string{
 		"index.js":       fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\nexport const apps = create(%s, %s);\n%s", runtime, runtime, identity, contracts, bound),
 		"index.d.ts":     types + "export declare const apps: Apps;\n" + bindingTypes + fmt.Sprintf(factoryTypes, "EndpointBinding"),
