@@ -1,22 +1,22 @@
-"""Obtain an application's MCP contract by running its server in a capability-stripped sandbox.
+"""Obtain an application's MCP contract by running its server and asking it.
 
 Usage: extract.py contract ROOT ENTRY. The contract (tools, resources and the application files the
 server loaded) is printed on stdout; a failure is a diagnostic on stderr with status 2, or status 3
-with the uninstalled package's name as the last line. The runner re-runs itself as `python -I -S`,
-where an import finder serves the application's files and its environment's installed packages
-(mcp and pydantic among them),
-allows application code only pure standard-library modules, and names any module it cannot serve.
-Before the entry runs, the environment, files, sockets, subprocesses, the clock and randomness are
-replaced with stubs that raise naming the capability, so module-scope effects fail with the
-application's file and line. The interpreter is the application's environment when that has mcp,
-else the tooling's; the CLI chooses.
+with the uninstalled package's name as the last line. The runner re-runs itself without site
+packages or the caller's environment, where an import finder serves the application's files, the
+standard library and its environment's installed packages (mcp and pydantic among them), and names
+any module it cannot serve. The server sees the same world on every machine: an empty
+environment, a fixed clock and seeded randomness, so its contract is the same everywhere. Reading
+files outside the application, its packages and the standard library, writing files, sockets and
+child processes raise naming the capability. The interpreter is the application's environment when
+that has mcp, else the tooling's; the CLI chooses.
 """
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import datetime
-import functools
 import hashlib
 import importlib.abc
 import importlib.machinery
@@ -31,29 +31,19 @@ import sys
 import sysconfig
 import time
 import traceback
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from types import FrameType, ModuleType
-from typing import TYPE_CHECKING, Any, NoReturn, TextIO
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, NoReturn, Self, TextIO
 
 if TYPE_CHECKING:
     from mcp.server import MCPServer, Server
 
 RESOURCE_SCHEMA = "sh.holon/outputSchema"
-# Standard-library modules application code may import. The others reach the host or are not
-# needed to declare tools; modules already loaded by the SDK are stubbed instead (see strip).
-PURE = frozenset(  # a word list, not one name per line
-    "__future__ abc annotationlib argparse array ast asyncio base64 binascii bisect "  # noqa: SIM905
-    "builtins calendar cmath codecs collections colorsys contextlib contextvars copy "
-    "dataclasses datetime decimal difflib enum fnmatch fractions functools gettext "
-    "graphlib hashlib heapq hmac html importlib inspect io ipaddress itertools json "
-    "keyword linecache logging math numbers operator os pathlib pprint queue random re "
-    "reprlib secrets statistics string stringprep struct sys textwrap threading time "
-    "token tokenize tomllib traceback types typing unicodedata urllib uuid warnings weakref zlib "
-    "zoneinfo".split()
-)
 INSTALLED = {"site-packages", "dist-packages", ".venv", "venv", "node_modules"}
 STDLIB = Path(sysconfig.get_paths()["stdlib"]).resolve()
+EPOCH = 315532800  # 1980-01-01T00:00:00Z, the instant the frozen clock shows
+MONOTONIC = time.monotonic
 
 
 class Unavailable(RuntimeError):
@@ -73,69 +63,22 @@ def unavailable(name: str, capability: str) -> Callable[..., NoReturn]:
     return fail
 
 
-class Guard:
-    """Decides whether a guarded call comes from application code. Deciding resolves paths,
-    which calls guarded functions such as os.stat on Python 3.11, so those calls go through."""
-
-    def __init__(self, application: Callable[[str | None], bool]) -> None:
-        self.application = application
-        self.deciding = False
-
-    def __call__(self) -> bool:
-        if self.deciding:
-            return False
-        self.deciding = True
-        try:
-            return self.application(caller())
-        finally:
-            self.deciding = False
-
-
-class Environ(Mapping[str, str]):
-    """An environment application code cannot read. Libraries, such as Pydantic reading its
-    settings while application models are defined, see it empty."""
-
-    def __init__(self, guard: Guard) -> None:
-        self.guard = guard
-
-    def check(self, name: str = "os.environ") -> None:
-        if self.guard():
-            unavailable(name, "environment")()
-
-    def getenv(self, key: str, default: str | None = None) -> str | None:
-        self.check("os.getenv")
-        return default
-
-    def __getitem__(self, key: str) -> str:
-        self.check()
-        raise KeyError(key)
-
-    def __iter__(self) -> Iterator[str]:
-        self.check()
-        return iter(())
-
-    def __len__(self) -> int:
-        self.check()
-        return 0
-
-
 class Finder(importlib.abc.MetaPathFinder):
     """Serves the application's files and installed packages, recording application files."""
 
     def __init__(self, root: Path, entry: Path) -> None:
         self.root = root
-        packages = installed()
-        self.search = list(dict.fromkeys([str(root), str(entry.parent), *packages]))
+        self.packages = installed()
+        self.search = list(
+            dict.fromkeys([str(root), str(entry.parent), *self.packages])
+        )
         self.served: set[Path] = set()
         # importlib.metadata finds distributions on sys.path; imports still go through find_spec.
         sys.path.extend(
-            directory for directory in packages if directory not in sys.path
+            directory for directory in self.packages if directory not in sys.path
         )
 
-    def application(self, file: str | None) -> bool:
-        if not file:
-            return False
-        path = Path(file).resolve()
+    def application(self, path: Path) -> bool:
         if not path.is_relative_to(self.root):
             return False
         return not INSTALLED & set(path.relative_to(self.root).parts)
@@ -144,12 +87,6 @@ class Finder(importlib.abc.MetaPathFinder):
         self, name: str, path: Sequence[str] | None, target: ModuleType | None = None
     ) -> importlib.machinery.ModuleSpec | None:
         if path is None and name in sys.stdlib_module_names:
-            if name not in PURE and self.application(importer()):
-                raise ImportError(
-                    f"{name} is unavailable: contract evaluation allows application code "
-                    "only pure standard-library modules",
-                    name=name,
-                )
             return None
         search = self.search if path is None else path
         spec = importlib.machinery.PathFinder.find_spec(name, search, target)
@@ -159,8 +96,12 @@ class Finder(importlib.abc.MetaPathFinder):
                 "or commit holon-contract.json",
                 name=name,
             )
-        if spec is not None and self.application(spec.origin):
-            self.served.add(Path(str(spec.origin)).resolve())
+        if (
+            spec is not None
+            and spec.origin
+            and self.application(Path(spec.origin).resolve())
+        ):
+            self.served.add(Path(spec.origin).resolve())
         return spec
 
 
@@ -186,105 +127,99 @@ def installed() -> list[str]:
     return found
 
 
-def importer() -> str | None:
-    """The file whose import statement is being resolved."""
-    frame: FrameType | None = sys._getframe(2)
-    while frame is not None and frame.f_code.co_filename.startswith("<frozen"):
-        frame = frame.f_back
-    return frame.f_code.co_filename if frame is not None else None
+class FrozenDatetime(datetime.datetime):
+    @classmethod
+    def now(cls, tz: datetime.tzinfo | None = None) -> Self:
+        instant = cls.fromtimestamp(EPOCH, tz or datetime.UTC)
+        return instant if tz else instant.replace(tzinfo=None)
+
+    @classmethod
+    def utcnow(cls) -> Self:
+        return cls.now()
+
+    @classmethod
+    def today(cls) -> Self:
+        return cls.now()
 
 
-# The guards' own functions, as opposed to the runner's work such as the finder resolving paths.
-GUARDS = {"caller", "__call__", "call", "initialize", "check", "getenv", "__getitem__"}
-GUARDS |= {"__iter__", "__len__"}
+class FrozenDate(datetime.date):
+    @classmethod
+    def today(cls) -> Self:
+        return cls(1980, 1, 1)
 
 
-def caller() -> str | None:
-    """The innermost file on the stack outside the guards and the standard library, or None
-    for the runner's own work."""
-    frame: FrameType | None = sys._getframe(1)
-    while frame is not None:
-        code = frame.f_code
-        if code.co_filename == __file__:
-            if code.co_name not in GUARDS:
-                return None
-        elif not code.co_filename.startswith("<") and not is_stdlib(code.co_filename):
-            return code.co_filename
-        frame = frame.f_back
-    return None
-
-
-@functools.cache
-def is_stdlib(file: str) -> bool:
-    return Path(file).resolve().is_relative_to(STDLIB)
-
-
-def strip(guard: Guard) -> dict[tuple[object, str], object]:
-    """Guard effectful APIs and return the originals. A call from application code raises; a
-    call from an installed library, such as the SDK drawing request-state keys, goes through."""
-    replaced: dict[tuple[object, str], object] = {}
-
-    def guarded(
-        real: Callable[..., Any], name: str, capability: str
-    ) -> Callable[..., Any]:
-        def call(*args: Any, **kwargs: Any) -> Any:
-            if guard():
-                unavailable(name, capability)()
-            return real(*args, **kwargs)
-
-        if not isinstance(real, type):
-            return call
-
-        # A class stays a class, so annotations such as subprocess.Popen[bytes] still evaluate.
-        def initialize(self: object, *args: Any, **kwargs: Any) -> None:
-            if guard():
-                unavailable(name, capability)()
-            real.__init__(self, *args, **kwargs)  # type: ignore[misc]  # the guarded base
-
-        return type(
-            real.__name__,
-            (real,),
-            {"__init__": initialize, "__module__": real.__module__},
-        )
-
-    def stub(owner: ModuleType, names: str, capability: str) -> None:
-        for name in names.split():
-            replaced[(owner, name)] = real = getattr(owner, name)
-            prefix = "" if owner is builtins else f"{owner.__name__}."
-            setattr(owner, name, guarded(real, f"{prefix}{name}", capability))
-
-    replaced[(os, "environ")] = os.environ
-    environ = Environ(guard)
-    replaced[(os, "getenv")] = os.getenv
-    os.environ, os.getenv = environ, environ.getenv  # type: ignore[assignment]
-    stub(os, "putenv unsetenv", "environment")
-    stub(builtins, "open", "filesystem")
-    stub(io, "open", "filesystem")
-    stub(os, "open listdir scandir stat remove unlink mkdir makedirs", "filesystem")
-    stub(os, "rename replace rmdir getcwd", "filesystem")
-    stub(socket, "socket socketpair create_connection getaddrinfo", "network")
-    stub(subprocess, "Popen run call check_call check_output", "child processes")
-    stub(os, "system popen execv execve", "child processes")
-    stub(time, "time time_ns localtime gmtime ctime", "clock")
-    stub(random, "random randint randrange choice choices shuffle sample", "randomness")
-    stub(random, "uniform getrandbits", "randomness")
-    stub(os, "urandom", "randomness")
-    for cls in (datetime.datetime, datetime.date):
-        replaced[(datetime, cls.__name__)] = cls
-        clock = {
-            name: classmethod(
-                guarded(getattr(cls, name), f"{cls.__name__}.{name}", "clock")
-            )
-            for name in ("now", "utcnow", "today")
-            if hasattr(cls, name)
-        }
-        setattr(datetime, cls.__name__, type(cls.__name__, (cls,), clock))
-    return replaced
-
-
-def restore(replaced: dict[tuple[object, str], object]) -> None:
-    for (owner, name), value in replaced.items():
+def freeze(finder: Finder) -> None:
+    """Give the server the same world on every machine, for every caller, libraries included."""
+    os.environ.clear()
+    random.seed(0)
+    frozen: dict[tuple[object, str], object] = {
+        (os, "urandom"): lambda size: bytes(size),
+        (time, "time"): lambda: float(EPOCH),
+        (time, "time_ns"): lambda: EPOCH * 10**9,
+        (time, "monotonic"): lambda: float(EPOCH),
+        (datetime, "datetime"): FrozenDatetime,
+        (datetime, "date"): FrozenDate,
+    }
+    for (owner, name), value in frozen.items():
+        if isinstance(value, type):
+            value.__name__ = value.__qualname__ = name
         setattr(owner, name, value)
+    forbid(socket, "socket socketpair create_connection getaddrinfo", "network")
+    forbid(subprocess, "Popen run call check_call check_output", "child processes")
+    forbid(
+        os,
+        "system popen execl execle execlp execlpe execv execve execvp execvpe",
+        "child processes",
+    )
+    readable = [finder.root, STDLIB, *(Path(p).resolve() for p in finder.packages)]
+    real_open, real_os_open = builtins.open, os.open
+
+    def check(name: str, file: Any, writing: bool) -> None:
+        path = Path(os.fsdecode(file)).resolve()
+        if writing:
+            unavailable(f"{name} {path} for writing", "file writes")()
+        if not any(path.is_relative_to(directory) for directory in readable):
+            unavailable(
+                f"{name} {path}",
+                "files outside the application, its packages and the standard library",
+            )()
+        if finder.application(path):
+            finder.served.add(path)
+
+    def frozen_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(file, int):
+            check("open", file, any(flag in mode for flag in "wax+"))
+        return real_open(file, mode, *args, **kwargs)
+
+    def frozen_os_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        writes = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+        check("os.open", path, bool(flags & writes))
+        return real_os_open(path, flags, *args, **kwargs)
+
+    builtins.open = io.open = frozen_open
+    os.open = frozen_os_open
+
+
+def forbid(owner: ModuleType, names: str, capability: str) -> None:
+    for name in names.split():
+        real = getattr(owner, name, None)
+        fail = unavailable(f"{owner.__name__}.{name}", capability)
+        if isinstance(real, type):
+            # A class stays a class, so annotations such as subprocess.Popen[bytes] still evaluate.
+            fail = type(
+                real.__name__,
+                (real,),
+                {"__init__": fail, "__module__": real.__module__},
+            )
+        if real is not None:
+            setattr(owner, name, fail)
+
+
+class Loop(asyncio.SelectorEventLoop):
+    """The client's event loop keeps a running clock under the frozen one."""
+
+    def time(self) -> float:
+        return MONOTONIC()
 
 
 def find_server(module: object) -> MCPServer | Server[Any]:
@@ -342,24 +277,21 @@ async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
 
 def contract(root: Path, entry: str, stdout: TextIO) -> int:
     """Run one entry, ask its server for the catalog and print it; return the exit status."""
+    os.chdir(root)  # relative paths name application files, wherever the runner started
     path = root / entry
     finder = Finder(root, path)
     sys.meta_path.insert(0, finder)
-    import asyncio
-
+    loop = Loop()  # before freezing: its wakeup channel is a socket pair
     try:
-        replaced = strip(Guard(finder.application))
-        try:
-            # Import the entry as a script beside its project would, without its __main__ block.
-            spec = importlib.util.spec_from_file_location(path.stem, path)
-            if spec is None or spec.loader is None:
-                raise ImportError(f"cannot import {path}")
-            finder.served.add(path.resolve())
-            module = sys.modules[path.stem] = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            result = asyncio.run(catalog(find_server(module)))
-        finally:
-            restore(replaced)
+        freeze(finder)
+        # Import the entry as a script beside its project would, without its __main__ block.
+        spec = importlib.util.spec_from_file_location(path.stem, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot import {path}")
+        finder.served.add(path.resolve())
+        module = sys.modules[path.stem] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        result = loop.run_until_complete(catalog(find_server(module)))
     except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
         frames = [
             frame
@@ -391,9 +323,11 @@ if __name__ == "__main__":
     mode, root, entry = sys.argv[1:]
     if mode != "contract":
         sys.exit(f"unknown operation {mode}")
-    if not (sys.flags.isolated and sys.flags.no_site):
-        # Without site packages, the caller's environment or bytecode written beside the sources.
-        os.execv(sys.executable, [sys.executable, "-I", "-S", "-B", *sys.argv])
+    if not sys.flags.no_site:
+        # Without site packages, the caller's environment or bytecode beside the sources, and with
+        # the same string hashes, so set order does not vary between runs.
+        argv = [sys.executable, "-s", "-S", "-P", "-B", *sys.argv]
+        os.execve(sys.executable, argv, {"PYTHONHASHSEED": "0"})
     # The contract is all that stdout carries; whatever the application prints goes to stderr.
     stdout = os.fdopen(os.dup(1), "w")
     os.dup2(2, 1)

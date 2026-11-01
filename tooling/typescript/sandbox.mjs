@@ -1,12 +1,13 @@
-// A module graph evaluated in a fresh vm context with no host capabilities.
+// A module graph evaluated in a fresh vm context that is the same world on every machine.
 //
 // The loader decides what every specifier resolves to: application files from its tree (TypeScript
 // transpiled with source maps, `.js` specifiers mapped to `.ts`, tsconfig paths honoured), packages
 // through package.json exports with the import/node conditions (CommonJS packages through a shim
 // whose require uses the same resolver), and node: builtins as stubs that throw when used. Zod and
 // the MCP SDK fall back to the copies bundled with the tooling when the application has none. The
-// context has the ECMAScript intrinsics, console, and the web APIs the MCP SDK needs to serve an
-// in-memory request; no process, filesystem, network, timers or clock.
+// context has the ECMAScript intrinsics, console, the web APIs the MCP SDK needs to serve an
+// in-memory request, and a frozen process (an empty environment, a fixed platform), a fixed clock and
+// seeded randomness; no filesystem, network or timers.
 import vm from "node:vm";
 import module from "node:module";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -15,8 +16,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const schemaPackages = new Set(["zod", "@modelcontextprotocol/server", "@modelcontextprotocol/core"]);
-const capabilities = { fs: "filesystem", "fs/promises": "filesystem", net: "network", http: "network", https: "network", http2: "network", dns: "network", "dns/promises": "network", tls: "network", dgram: "network", child_process: "child processes", cluster: "child processes", worker_threads: "child processes", timers: "timers", "timers/promises": "timers", process: "process environment", os: "host information" };
-const globalCapabilities = { process: "process environment", fetch: "network", XMLHttpRequest: "network", WebSocket: "network", setTimeout: "timers", setInterval: "timers", setImmediate: "timers", Buffer: "Node.js buffers", require: "require", __dirname: "filesystem", __filename: "filesystem" };
+const capabilities = { fs: "filesystem", "fs/promises": "filesystem", net: "network", http: "network", https: "network", http2: "network", dns: "network", "dns/promises": "network", tls: "network", dgram: "network", child_process: "child processes", cluster: "child processes", worker_threads: "child processes", timers: "timers", "timers/promises": "timers", os: "host information" };
+const globalCapabilities = { fetch: "network", XMLHttpRequest: "network", WebSocket: "network", setTimeout: "timers", setInterval: "timers", setImmediate: "timers", Buffer: "Node.js buffers", require: "require", __dirname: "filesystem", __filename: "filesystem" };
 const extensions = ["", ".ts", ".tsx", ".mts", ".js", ".mjs", ".cjs", ".json", "/index.ts", "/index.tsx", "/index.js", "/index.mjs"];
 
 export class MissingPackage extends Error {}
@@ -31,16 +32,24 @@ export function createSandbox(root, vendor) {
     const fail = () => { throw new Error(name + " is unavailable: contract evaluation has no " + capability); };
     return new Proxy(function () {}, { apply: fail, construct: fail, get: (_, key) => key === "then" || typeof key === "symbol" ? undefined : fail() });
   }`, context, { filename: "holon:stub" });
-  // The clock and randomness are intrinsics; dated values and Date.parse keep working.
-  vm.runInContext(`{
-    const fail = name => () => { throw new Error(name + " is unavailable: contract evaluation has no " + (name === "Math.random" ? "randomness" : "clock")); };
+  // The clock shows 1980-01-01T00:00:00Z and Math.random is mulberry32 from a fixed seed.
+  vm.runInContext(`(stub, cwd, node) => {
+    const instant = 315532800000;
     globalThis.Date = new Proxy(Date, {
-      apply: fail("Date()"),
-      construct: (target, args, newTarget) => args.length ? Reflect.construct(target, args, newTarget) : fail("new Date()")(),
-      get: (target, key) => key === "now" ? fail("Date.now") : Reflect.get(target, key),
+      apply: (target) => new target(instant).toString(),
+      construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [instant], newTarget),
+      get: (target, key) => key === "now" ? () => instant : Reflect.get(target, key),
     });
-    Math.random = fail("Math.random");
-  }`, context, { filename: "holon:stub" });
+    let seed = 0;
+    Math.random = () => {
+      let t = (seed = (seed + 0x6d2b79f5) | 0);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const control = name => stub("process." + name, "process control");
+    globalThis.process = Object.freeze({ env: {}, platform: "linux", arch: "x64", versions: Object.freeze({ node }), cwd: () => cwd, exit: control("exit"), on: control("on"), nextTick: control("nextTick") });
+  }`, context, { filename: "holon:stub" })(stub, root, process.versions.node);
   const parse = vm.runInContext("JSON.parse", context);
   const modules = new Map(), files = new Map(), commonjs = new Map(), builtins = new Map(), maps = new Map(), served = new Set();
   const paths = tsconfigPaths(root);
@@ -111,8 +120,10 @@ export function createSandbox(root, vendor) {
     return outputText.replace(/\/\/# sourceMappingURL=.*\s*$/, "");
   }
 
-  // stubs mirrors a builtin's exports with stubs, so imports link and every use fails.
+  // stubs mirrors a builtin's exports with stubs, so imports link and every use fails. node:process
+  // is the context's frozen process.
   function stubs(name) {
+    if (name === "process") return context.process;
     if (!builtins.has(name)) {
       const real = module.createRequire(import.meta.url)(`node:${name}`);
       const capability = capabilities[name] ?? `node:${name}`;
@@ -138,6 +149,7 @@ export function createSandbox(root, vendor) {
     const record = { exports: {} };
     commonjs.set(file, record);
     if (formatOf(file) === "json") return (record.exports = parse(readFileSync(file, "utf8")));
+    if (file.endsWith(".node")) throw new Error(`${file} is a native addon: contract evaluation runs JavaScript only`);
     const url = pathToFileURL(file).href;
     const fn = vm.compileFunction(source(file, url, ts.ModuleKind.CommonJS), ["exports", "require", "module", "__filename", "__dirname"], { parsingContext: context, filename: url });
     const local = specifier => {

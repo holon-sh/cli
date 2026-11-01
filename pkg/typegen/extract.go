@@ -210,8 +210,8 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	return result, nil
 }
 
-// runLocal runs a contract runner with the host's interpreter, in the server's directory (args[1]).
-// A Python server runs in its own environment when that imports mcp and pydantic.
+// runLocal runs a contract runner with the host's interpreter. A Python server (args[1]) runs in its
+// own environment when that imports mcp and pydantic.
 func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
 	if err := validateEnv(env); err != nil {
 		return err
@@ -229,7 +229,6 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdo
 	limited, cancel := context.WithTimeout(ctx, serverTimeout)
 	defer cancel()
 	command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
-	command.Dir = args[1]
 	command.Env = append(command.Environ(), env...)
 	var stderr bytes.Buffer
 	command.Stdout, command.Stderr = stdout, &stderr

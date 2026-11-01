@@ -21,8 +21,8 @@ function unpackTooling(t) {
   }
   const run = (mode, ...args) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), mode, ...args], { encoding: "utf8", stdio: "pipe" });
   // extract returns each app's contract, or its diagnostic and the package it missed.
-  const extract = apps => Object.fromEntries(apps.map(({ name, path, entry }) => {
-    const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "contract", path, entry], { encoding: "utf8" });
+  const extract = (apps, env = process.env) => Object.fromEntries(apps.map(({ name, path, entry }) => {
+    const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "contract", path, entry], { encoding: "utf8", env });
     assert.ok([0, 2, 3].includes(status), stderr);
     return [name, status === 0 ? JSON.parse(stdout) : { diagnostic: stderr, missing: status === 3 ? stderr.trimEnd().split("\n").at(-1) : undefined }];
   }));
@@ -108,18 +108,33 @@ export default createMcpHandler(() => {
   assert.deepEqual(Object.keys(units.sources), ["server.ts"]);
 });
 
-test("module-scope effects fail with the capability, file and line; missing packages are named", t => {
-  const { root, run, extract } = unpackTooling(t);
+test("module-scope reads of the environment, clock and randomness give one contract", t => {
+  const { root, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
-    "env.ts": 'interface Settings {\n  key: string;\n}\nconst settings: Settings = { key: process.env.API_KEY ?? "" };\nexport default settings;\n',
+    "server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { z } from "zod";
+const seen = \`\${process.env.API_KEY} \${Date.now()} \${new Date().toString()} \${Math.random()}\`;
+export default createMcpHandler(() => {
+  const server = new McpServer({ name: "frozen", version: "1" });
+  server.registerTool("read", { inputSchema: z.object({ seen: z.string().default(seen) }) }, () => ({ content: [] }));
+  return server;
+});`,
+  });
+  const [first, second] = ["first", "second"].map(key => extract([{ name: "frozen", path: app, entry: "server.ts" }], { ...process.env, API_KEY: key, TZ: key === "first" ? "Asia/Tokyo" : "America/Denver" }).frozen);
+  assert.deepEqual(first.tools.map(tool => tool.name), ["read"]);
+  assert.deepEqual(first, second);
+});
+
+test("module-scope effects fail with the capability, file and line; missing packages are named", t => {
+  const { root, extract } = unpackTooling(t);
+  const app = application(root, {
+    "package.json": '{"type":"module"}',
     "fetch.ts": 'const response: unknown = null;\nawait fetch("https://example.com/schema.json");\nexport default response;\n',
     "fs.ts": 'import { readFileSync } from "node:fs";\nexport default readFileSync("schema.json", "utf8");\n',
     "missing.ts": 'import pad from "left-pad";\nexport default pad;\n',
   });
-  const entries = ["env.ts", "fetch.ts", "fs.ts", "missing.ts"].map(entry => ({ name: entry.slice(0, -3), path: app, entry }));
-  const extracted = extract(entries);
-  assert.match(extracted.env.diagnostic, /no process environment[\s\S]*\/env\.ts:4:/);
+  const extracted = extract(["fetch.ts", "fs.ts", "missing.ts"].map(entry => ({ name: entry.slice(0, -3), path: app, entry })));
   assert.match(extracted.fetch.diagnostic, /no network[\s\S]*\/fetch\.ts:2:/);
   assert.match(extracted.fs.diagnostic, /no filesystem[\s\S]*\/fs\.ts:2:/);
   assert.equal(extracted.missing.missing, "left-pad");

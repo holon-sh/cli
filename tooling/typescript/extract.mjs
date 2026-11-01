@@ -1,8 +1,9 @@
-// Obtain an application's MCP contract by running its server in a capability-stripped sandbox and
-// asking it.
+// Obtain an application's MCP contract by running its server and asking it.
 //
-// The entry and everything it imports are evaluated in a fresh vm context (see sandbox.mjs): module-scope code has no filesystem, network, environment, timers or clock, and the
-// application's own Zod and MCP SDK compute the schemas, or the tooling's copies when it has none.
+// The entry and everything it imports are evaluated in a fresh vm context (see sandbox.mjs): an
+// empty environment, a fixed clock and seeded randomness, so the contract is the same everywhere;
+// no filesystem, network or timers. The application's own Zod and MCP SDK compute the schemas, or
+// the tooling's copies when it has none.
 // The files the loader serves from the application tree are recorded as `sources`, the inputs check
 // and verify require to be unchanged.
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
