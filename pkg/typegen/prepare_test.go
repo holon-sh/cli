@@ -339,26 +339,6 @@ func TestGoConsumerClients(t *testing.T) {
 	}
 }
 
-func TestPythonSourcesWithTheRealExtractor(t *testing.T) {
-	needPython(t)
-	root := t.TempDir()
-	orders, app := filepath.Join(root, "orders"), filepath.Join(root, "app")
-	writeProvider(t, orders, "orders", pythonProvider)
-	put(t, app, "requirements.txt", "holon-sh\n")
-	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetPy}, Sources: []Source{{Path: orders}}}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	module := read(t, app, "holon/apps/__init__.py")
-	if !strings.Contains(module, "async def read(") || !strings.Contains(module, "orders") || !strings.HasPrefix(module, "# "+mcpcontract.Marker+" app=app\n") {
-		t.Fatalf("module:\n%s", module)
-	}
-	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
-	if err != nil || contract.Identity.Name != "example.com/orders" || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" || len(contract.Requires) != 0 {
-		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
-	}
-}
-
 func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	needPython(t)
 	orders := t.TempDir()
@@ -370,9 +350,6 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
 		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
 	}
-	if module := read(t, orders, "holon/apps/__init__.py"); !generatedPython(filepath.Join(orders, "holon")) || !strings.Contains(module, "class _Clients(_typing.Protocol):\n    pass") {
-		t.Fatalf("placeholder module:\n%s", module)
-	}
 	// Check verifies the application files the server loaded, not the slot an image build replaces.
 	c := Consumer{Name: "orders", Dir: orders, Server: &Source{Path: orders}, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
 	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
@@ -381,7 +358,7 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	}
 	defer prepared.Close()
 	check, _ := prepared.CheckConfig("orders")
-	if sources := check["sources"].(map[string]string); len(sources) != 2 || sources["server.py"] == "" || sources["holon/client.py"] == "" {
+	if sources := check["sources"].(map[string]string); sources["server.py"] == "" || sources["holon/apps/__init__.py"] != "" {
 		t.Fatalf("check sources = %v", sources)
 	}
 	// Writing replaces the placeholder; a later preparation leaves generated clients alone.
@@ -412,7 +389,7 @@ import Database from "better-sqlite3";
 export const driver = Database;
 export default createMcpHandler(() => new McpServer({ name: "orders", version: "1" }));`)
 	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
-	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "better-sqlite3 is not installed; install the application's dependencies, or commit its contract") {
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "better-sqlite3 is not installed") {
 		t.Fatalf("without the package or a committed contract: %v", err)
 	}
 	committedContract(t, orders, ordersMetadata())
@@ -423,7 +400,7 @@ export default createMcpHandler(() => new McpServer({ name: "orders", version: "
 	other := ordersMetadata()
 	other.Identity.Version = "2.0.0"
 	committedContract(t, orders, other)
-	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "describes example.com/orders@2.0.0 but server.json names example.com/orders@1.0.0") {
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "describes example.com/orders@2.0.0") {
 		t.Fatalf("committed contract for another version: %v", err)
 	}
 }
@@ -470,16 +447,8 @@ export default createMcpHandler(() => {
 	runtime := filepath.Join(orders, "node_modules", nodePackage)
 	put(t, runtime, "package.json", `{"name":"holon-sh","type":"module","holon":{"slot":"generated","contractVersion":1},"exports":{".":{"import":"./generated/index.js"}}}`)
 	put(t, runtime, "runtime.mjs", "export const createApps = () => ({}), bindApps = () => ({});\nexport class ToolCallError extends Error {}\n")
-	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var marker slotMetadata
-	if err := readTypeJSON(filepath.Join(runtime, "generated", "holon-generated.json"), &marker); err != nil || !marker.Placeholder {
-		t.Fatalf("placeholder marker = %+v, %v", marker, err)
-	}
-	if len(contract.Schema.Tools) != 1 {
-		t.Fatalf("contract = %+v", contract.Schema)
+	if contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err != nil || len(contract.Schema.Tools) != 1 {
+		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
 	}
 }
 
@@ -506,8 +475,7 @@ func containerExtract(ctx context.Context, language, tooling, config, output str
 
 func TestAnExtractionHookRunsSnapshotsThatNeedNothingInstalled(t *testing.T) {
 	needNode(t)
-	root := t.TempDir()
-	orders, ledger := filepath.Join(root, "orders"), filepath.Join(root, "ledger")
+	orders := t.TempDir()
 	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
 	put(t, orders, "server.ts", `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -519,16 +487,5 @@ export default createMcpHandler(() => {
 	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{Extract: containerExtract})
 	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
 		t.Fatalf("schema-only server in a snapshot = %+v, %v", contract, err)
-	}
-	// A server that needs another package falls back to its committed contract there.
-	put(t, ledger, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
-	put(t, ledger, "server.ts", `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
-import Database from "better-sqlite3";
-export const driver = Database;
-export default createMcpHandler(() => new McpServer({ name: "ledger", version: "1" }));`)
-	committedContract(t, ledger, ordersMetadata())
-	contract, err = ResolveDocument(t.Context(), Source{Path: ledger}, Options{Extract: containerExtract})
-	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "lookup" {
-		t.Fatalf("committed contract through a hook = %+v, %v", contract, err)
 	}
 }

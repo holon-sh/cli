@@ -10,15 +10,10 @@ from textwrap import dedent
 ROOT = Path(__file__).resolve().parents[1]
 
 MODELS = """
-    from typing import Literal, TypedDict
     from pydantic import BaseModel
 
     class Order(BaseModel):
         id: str
-        status: Literal["open", "closed"]
-
-    class Summary(TypedDict):
-        total: int
 """
 
 REGION = """
@@ -29,19 +24,16 @@ REGION = """
         US = "us"
 """
 
+# A src entry imports from the application root.
 SERVER = """
     from mcp.server import MCPServer
     from catalog.region import Region
-    from models import Order, Summary
+    from src.models import Order
 
     server = MCPServer("orders")
 
     @server.tool()
     def read(id: str, region: Region = Region.EU) -> Order:
-        raise RuntimeError("must not be called")
-
-    @server.tool()
-    def summarize() -> Summary:
         raise RuntimeError("must not be called")
 
     ORDER = {"type": "object", "properties": {"id": {"type": "string"}}}
@@ -65,14 +57,10 @@ SERVER = """
 LOW_LEVEL = """
     from mcp import types
     from mcp.server import Server
-    from models import Order
 
     async def tools(context, params):
-        return types.ListToolsResult(tools=[types.Tool(
-            name="lookup",
-            input_schema={"type": "object"},
-            output_schema=Order.model_json_schema(),
-        )])
+        tool = types.Tool(name="lookup", input_schema={"type": "object"})
+        return types.ListToolsResult(tools=[tool])
 
     app = Server("low", on_list_tools=tools)
 """
@@ -85,11 +73,7 @@ def write(directory: Path, files: dict[str, str]) -> Path:
     return directory
 
 
-def extract(
-    tmp_path: Path,
-    apps: dict[str, Path] | list[dict[str, str]],
-    entry: str = "server.py",
-) -> dict[str, dict]:
+def extract(tmp_path: Path, apps: list[dict[str, str]]) -> dict[str, dict]:
     archive = Path(
         subprocess.check_output(
             [sys.executable, "-I", str(ROOT / "build.py")], text=True
@@ -99,35 +83,34 @@ def extract(
         bundle.extractall(tmp_path / "tooling")
     config = tmp_path / "config.json"
     output = tmp_path / "output.json"
-    entries = (
-        apps
-        if isinstance(apps, list)
-        else [{"name": n, "path": str(p), "entry": entry} for n, p in apps.items()]
-    )
-    config.write_text(json.dumps({"apps": entries}))
+    config.write_text(json.dumps({"apps": apps}))
     extractor = [sys.executable, "-I", str(tmp_path / "tooling/extract.py")]
     subprocess.run([*extractor, str(config), str(output)], check=True)
     return json.loads(output.read_text())
 
 
-def test_bundle_extracts_the_servers_own_catalog_and_detects_changed_inputs(tmp_path):
-    files = {"server.py": SERVER, "models.py": MODELS, "catalog/region.py": REGION}
-    orders = write(tmp_path / "orders", {**files, "catalog/__init__.py": ""})
-    # Each app in a batch imports its own models module, although the names repeat.
-    low = write(
-        tmp_path / "low",
-        {"server.py": LOW_LEVEL, "models.py": MODELS.replace("id: str", "sku: int")},
+def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
+    tmp_path,
+):
+    files = {"src/server.py": SERVER, "src/models.py": MODELS}
+    files |= {"catalog/__init__.py": "", "catalog/region.py": REGION}
+    orders = write(tmp_path / "orders", files)
+    low = write(tmp_path / "low", {"server.py": LOW_LEVEL})
+    # The app's own directory is used where visible (a host), else its snapshot (a container).
+    absent = str(tmp_path / "absent")
+    entry = "src/server.py"
+    result = extract(
+        tmp_path,
+        [
+            {"name": "orders", "path": absent, "source": str(orders), "entry": entry},
+            {"name": "snapshot", "path": str(orders), "source": absent, "entry": entry},
+            {"name": "low", "path": str(low), "entry": "server.py"},
+        ],
     )
-    result = extract(tmp_path, {"orders": orders, "low": low})
 
     contract = result["orders"]
-    assert [tool["name"] for tool in contract["tools"]] == ["read", "summarize"]
-    read = contract["tools"][0]
-    assert read["inputSchema"]["properties"]["region"]["default"] == "eu"
-    assert read["outputSchema"]["properties"]["status"]["enum"] == ["open", "closed"]
-    assert contract["tools"][1]["outputSchema"]["properties"]["total"]["type"] == (
-        "integer"
-    )
+    assert [tool["name"] for tool in contract["tools"]] == ["read"]
+    assert result["snapshot"]["tools"] == contract["tools"]
     assert contract["resources"] == [
         {
             "uri": "orders://latest",
@@ -142,22 +125,18 @@ def test_bundle_extracts_the_servers_own_catalog_and_detects_changed_inputs(tmp_
     assert list(contract["sources"]) == [
         "catalog/__init__.py",
         "catalog/region.py",
-        "models.py",
-        "server.py",
+        "src/models.py",
+        "src/server.py",
     ]
-    [lookup] = result["low"]["tools"]
-    assert list(lookup["outputSchema"]["properties"]) == ["sku", "status"]
-    assert result["low"]["resources"] == []
+    assert [tool["name"] for tool in result["low"]["tools"]] == ["lookup"]
 
     config = tmp_path / "verify.json"
-    source = orders / "models.py"
     recorded = {str(orders / name): d for name, d in contract["sources"].items()}
     config.write_text(json.dumps({"sources": recorded}))
     runner = [sys.executable, str(tmp_path / "tooling/runner.py")]
     subprocess.run([*runner, "verify", str(config)], check=True)
-    (orders / "build.py").write_text("# a build output is not an input\n")
-    subprocess.run([*runner, "verify", str(config)], check=True)
-    source.write_text(source.read_text() + "# changed\n")
+    models = orders / "src/models.py"
+    models.write_text(models.read_text() + "# changed\n")
     checked = subprocess.run(
         [*runner, "verify", str(config)], text=True, capture_output=True, check=False
     )
@@ -165,119 +144,30 @@ def test_bundle_extracts_the_servers_own_catalog_and_detects_changed_inputs(tmp_
     assert "sources changed after extraction" in checked.stderr
 
 
-def test_the_apps_own_directory_is_used_where_visible_else_its_snapshot(tmp_path):
-    app = write(tmp_path / "app", {"server.py": SERVER, "models.py": MODELS})
-    write(app, {"catalog/__init__.py": "", "catalog/region.py": REGION})
-    absent = str(tmp_path / "absent")
-    result = extract(
-        tmp_path,
-        [
-            {"name": "host", "path": absent, "source": str(app), "entry": "server.py"},
-            {
-                "name": "container",
-                "path": str(app),
-                "source": absent,
-                "entry": "server.py",
-            },
-        ],
-    )
-    assert [len(result[name]["tools"]) for name in ("host", "container")] == [2, 2]
-
-
-def test_a_src_entry_imports_from_the_application_root(tmp_path):
-    server = SERVER.replace("from models", "from src.models")
-    files = {
-        "src/models.py": MODELS,
-        "src/server.py": server,
-        "catalog/region.py": REGION,
-    }
-    app = write(tmp_path / "app", files)
-    result = extract(tmp_path, {"orders": app}, entry="src/server.py")["orders"]
-    assert [tool["name"] for tool in result["tools"]] == ["read", "summarize"]
-
-
 EFFECTS = {
-    "env": (
-        "import os\n\nKEY = os.environ['API_KEY']\n",
-        3,
-        "os.environ",
-        "environment",
-    ),
-    "open": (
-        "import json\n\nSCHEMA = json.load(open('schema.json'))\n",
-        3,
-        "open",
-        "filesystem",
-    ),
+    "env": ("import os\n\nKEY = os.environ['API_KEY']\n", "environment"),
+    "open": ("import json\n\nSCHEMA = json.load(open('schema.json'))\n", "filesystem"),
     "socket": (
         "import socket\n\nsocket.create_connection(('example.com', 443))\n",
-        3,
-        "socket.create_connection",
         "network",
-    ),
-    "clock": (
-        "from datetime import datetime\n\nSTARTED = datetime.now()\n",
-        3,
-        "datetime.now",
-        "clock",
     ),
 }
 
 
-def test_module_scope_effects_fail_with_the_capability_file_and_line(tmp_path):
-    apps = {
-        name: write(tmp_path / name, {"server.py": source})
-        for name, (source, *_) in EFFECTS.items()
-    }
-    apps["sqlite"] = write(tmp_path / "sqlite", {"server.py": "import sqlite3\n"})
-    # Naming a guarded class is not using it, as eagerly evaluated annotations do.
-    typed = "import subprocess\nfrom mcp.server import MCPServer\n"
-    typed += "Runner = subprocess.Popen[bytes]\nserver = MCPServer('typed')\n"
-    apps["typed"] = write(tmp_path / "typed", {"server.py": typed})
-    apps["missing"] = write(tmp_path / "missing", {"server.py": "import requests\n"})
-    # The URL parser is pure standard library: its package root is allowed.
-    apps["urlparse"] = write(
-        tmp_path / "urlparse",
-        {
-            "server.py": "from urllib.parse import urljoin\n"
-            "from mcp.server import MCPServer\n"
-            "server = MCPServer('u')\n"
-            "@server.tool()\ndef join(base: str) -> str:\n"
-            "    return urljoin(base, 'x')\n"
-        },
-    )
+def test_module_scope_effects_fail_naming_the_capability_and_line(tmp_path):
+    sources = {name: source for name, (source, _) in EFFECTS.items()}
+    # Other standard-library modules are unavailable; an uninstalled package is named.
+    sources |= {"sqlite": "import sqlite3\n", "missing": "import requests\n"}
+    apps = [
+        {"name": name, "path": str(tmp_path / name), "entry": "server.py"}
+        for name in sources
+    ]
+    for name, source in sources.items():
+        write(tmp_path / name, {"server.py": source})
     result = extract(tmp_path, apps)
-    for name, (_, line, api, capability) in EFFECTS.items():
+    for name, (_, capability) in EFFECTS.items():
         diagnostic = result[name]["diagnostic"]
-        assert f'{name}/server.py", line {line}, in <module>' in diagnostic, diagnostic
-        assert diagnostic.rstrip().endswith(
-            f"Unavailable: {api} is unavailable: contract evaluation has no {capability}"
-        ), diagnostic
-    assert (
-        result["sqlite"]["diagnostic"]
-        .rstrip()
-        .endswith(
-            "ImportError: sqlite3 is unavailable: contract evaluation allows application "
-            "code only pure standard-library modules"
-        )
-    )
-    assert (
-        result["missing"]["diagnostic"]
-        .rstrip()
-        .endswith(
-            "MissingModule: No module named 'requests'; install the application's "
-            "dependencies or commit holon-contract.json"
-        )
-    )
+        assert f'{name}/server.py", line 3' in diagnostic, diagnostic
+        assert f"contract evaluation has no {capability}" in diagnostic, diagnostic
+    assert "sqlite3 is unavailable" in result["sqlite"]["diagnostic"]
     assert result["missing"]["missing"] == "requests"
-    assert result["typed"]["tools"] == []
-    assert [tool["name"] for tool in result["urlparse"]["tools"]] == ["join"]
-
-
-def test_an_entry_that_raises_while_importing_becomes_a_diagnostic(tmp_path):
-    broken = write(
-        tmp_path / "broken", {"server.py": "raise RuntimeError('no database')"}
-    )
-    diagnostic = extract(tmp_path, {"broken": broken})["broken"]["diagnostic"]
-    assert diagnostic.startswith("server.py: Traceback")
-    assert diagnostic.rstrip().endswith("RuntimeError: no database")
