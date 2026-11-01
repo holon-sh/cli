@@ -316,6 +316,7 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
             digest = hashlib.file_digest(source, "sha256").hexdigest()
         sources[file.relative_to(root).as_posix()] = digest
     json.dump({**result, "sources": sources}, stdout)
+    stdout.flush()  # Python 3.11 loses it at exit once the server's world is frozen
     return 0
 
 
