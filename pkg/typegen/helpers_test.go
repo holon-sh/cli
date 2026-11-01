@@ -96,32 +96,26 @@ func needNode(t *testing.T) {
 	}
 }
 
-// fakeExtract stands in for the language runners: it answers each snapshot from results, keyed by
-// the server.json name beside the snapshot's entry.
-func fakeExtract(results map[string]extraction) func(context.Context, string, string, string, string) error {
-	return func(_ context.Context, _, _, config, output string) error {
-		var request struct {
-			Apps []struct{ Name, Path, Entry string }
+// fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
+// snapshot's server.json name, printing an extraction or returning an error as the runner's failure.
+func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
+	return func(_ context.Context, _, _ string, args []string, stdout io.Writer) error {
+		root, entry := args[1], args[2]
+		if !isFile(filepath.Join(root, entry)) {
+			return fmt.Errorf("entry %s is not in its snapshot %s", entry, root)
 		}
-		if err := readTypeJSON(config, &request); err != nil {
+		var descriptor struct{ Name string }
+		if err := readTypeJSON(filepath.Join(root, "server.json"), &descriptor); err != nil {
 			return err
 		}
-		found := map[string]extraction{}
-		for _, app := range request.Apps {
-			if !isFile(filepath.Join(app.Path, app.Entry)) {
-				return fmt.Errorf("%s entry %s is not in its snapshot", app.Name, app.Entry)
-			}
-			var descriptor struct{ Name string }
-			if err := readTypeJSON(filepath.Join(app.Path, "server.json"), &descriptor); err != nil {
-				return err
-			}
-			result, ok := results[descriptor.Name]
-			if !ok {
-				return fmt.Errorf("no fake result for %s", descriptor.Name)
-			}
-			found[app.Name] = result
+		switch result := results[descriptor.Name].(type) {
+		case extraction:
+			return json.NewEncoder(stdout).Encode(result)
+		case error:
+			return result
+		default:
+			return fmt.Errorf("no fake result for %s", descriptor.Name)
 		}
-		return writeJSON(output, found)
 	}
 }
 

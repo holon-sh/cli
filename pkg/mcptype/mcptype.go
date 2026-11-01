@@ -104,9 +104,6 @@ type GenerateRequest struct {
 	Protocol          string `json:"protocol,omitempty"`
 	RuntimeSpecifier  string `json:"runtime_specifier,omitempty"`
 	ProtocolSpecifier string `json:"protocol_specifier,omitempty"`
-	// PythonModule defaults to holon/apps/__init__.py; PythonRuntimeModule to holon.client.
-	PythonModule        string `json:"python_module,omitempty"`
-	PythonRuntimeModule string `json:"python_runtime_module,omitempty"`
 	// Banner is the first-line comment on generated sources, excluding copied Runtime files.
 	Banner   string `json:"banner,omitempty"`
 	GoModule string `json:"go_module,omitempty"`

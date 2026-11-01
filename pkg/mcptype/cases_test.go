@@ -118,18 +118,16 @@ func generationCases(t *testing.T) []generationCase {
 	}
 	add("empty-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
 	for _, target := range []string{"node", "python"} {
-		options := `"runtime_specifier": "../runtime.mjs", "protocol_specifier": "../protocol.js"`
-		if target == "python" {
-			options = `"python_module": "holon/apps/__init__.py", "python_runtime_module": "holon.client"`
+		options := ""
+		if target == "node" {
+			options = `, "runtime_specifier": "../runtime.mjs", "protocol_specifier": "../protocol.js"`
 		}
-		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+sampleContracts+`, "banner": "holon-generated-apps-v1 app=checkout", `+options+`}`)
+		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+sampleContracts+`, "banner": "holon-generated-apps-v1 app=checkout"`+options+`}`)
 	}
 	for _, test := range []struct{ name, patch string }{
 		{"go-module-missing", `"target": "go", "go_module": ""`},
 		{"runtime-escape", `"runtime": {"../escape": ""}`},
 		{"protocol-exclusive", `"protocol": "type X = 1;", "protocol_specifier": "../protocol.js"`},
-		{"python-module-escape", `"python_module": "../escape.py"`},
-		{"python-runtime-relative", `"python_runtime_module": ".client"`},
 		{"banner-newline", `"banner": "marker\nimport os"`},
 		{"binding-empty", `"contracts": {"": {"tools": []}}`},
 		{"bad-target", `"target": "wasm"`},

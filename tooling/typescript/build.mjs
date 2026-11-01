@@ -13,7 +13,9 @@ const destination = join(root, "..", "..", "pkg", "tooling");
 const nodeBanner = 'import { createRequire as _createRequire } from "node:module"; import { fileURLToPath as _fileURLToPath } from "node:url"; import { dirname as _dirname } from "node:path"; const require = _createRequire(import.meta.url); const __filename = _fileURLToPath(import.meta.url); const __dirname = _dirname(__filename);';
 const { metafile, outputFiles } = await build({ entryPoints: [join(root, "runner.mjs")], bundle: true, write: false, metafile: true, format: "esm", legalComments: "inline", absWorkingDir: root, platform: "node", target: "node22", banner: { js: nodeBanner }, outfile: "runner.mjs" });
 
-const packages = new Set();
+// Zod and the MCP SDK ship as published ES modules for applications that have not installed them.
+const vendored = ["zod", "@modelcontextprotocol/server", "@modelcontextprotocol/core"].map(name => join(root, "node_modules", name));
+const packages = new Set(vendored);
 for (const path of Object.keys(metafile.inputs)) {
   if (!path.includes("node_modules/")) continue;
   let directory = dirname(join(root, path));
@@ -32,6 +34,11 @@ for (const directory of [...packages].sort()) {
 }
 
 const files = { "runner.mjs": outputFiles[0].contents, "THIRD-PARTY-NOTICES.txt": Buffer.from(notices.join("\n\n")), "version.json": Buffer.from(JSON.stringify({ version }) + "\n") };
+for (const directory of vendored) {
+  for (const file of readdirSync(directory, { recursive: true })) {
+    if (/(^|\/)(package\.json|[^/]*\.m?js|licen[sc]e[^/]*)$/i.test(file) && !file.startsWith("src/")) files[`vendor/${relative(root, directory)}/${file}`] = readFileSync(join(directory, file));
+  }
+}
 const bytes = zipSync(Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)).map(([name, data]) => [name, [new Uint8Array(data), { mtime: new Date(1980, 0, 1) }]])), { level: 9 });
 mkdirSync(destination, { recursive: true });
 for (const name of readdirSync(destination)) if (/^cli-tooling-ts-.*\.zip$/.test(name)) rmSync(join(destination, name));

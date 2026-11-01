@@ -102,16 +102,6 @@ func (r generateRequest) validate() error {
 			return fmt.Errorf("%s must be nonempty and contain no line breaks or control characters", option.name)
 		}
 	}
-	if path := r.PythonModule; path != "" && (!relative(path) || strings.ContainsAny(path, "\\:") || strings.ContainsFunc(path, unicode.IsControl) || !strings.HasSuffix(path, ".py")) {
-		return errors.New("python_module must be a relative, normalized .py path")
-	}
-	if module := r.PythonRuntimeModule; module != "" {
-		for _, part := range strings.Split(module, ".") {
-			if !pythonName.MatchString(part) || slices.Contains(pythonKeywords, part) {
-				return errors.New("python_runtime_module must be an absolute Python module name")
-			}
-		}
-	}
 	if r.Target == "go" && r.GoModule == "" {
 		return errors.New("go_module is required for the go target")
 	}

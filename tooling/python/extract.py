@@ -1,660 +1,334 @@
+"""Obtain an application's MCP contract by running its server and asking it.
+
+Usage: extract.py contract ROOT ENTRY. The contract (tools, resources and the application files the
+server loaded) is printed on stdout; a failure is a diagnostic on stderr with status 2, or status 3
+with the uninstalled package's name as the last line. The runner re-runs itself without site
+packages or the caller's environment, where an import finder serves the application's files, the
+standard library and its environment's installed packages (mcp and pydantic among them), and names
+any module it cannot serve. The server sees the same world on every machine: an empty
+environment, a fixed clock and seeded randomness, so its contract is the same everywhere. Reading
+files outside the application, its packages and the standard library, writing files, sockets and
+child processes raise naming the capability. The interpreter is the application's environment when
+that has mcp, else the tooling's; the CLI chooses.
+"""
+
 from __future__ import annotations
 
-import ast
+import asyncio
+import builtins
+import datetime
 import hashlib
-import inspect
+import importlib.abc
+import importlib.machinery
+import importlib.util
+import io
 import json
 import os
+import random
+import socket
+import subprocess
 import sys
-import types
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+import sysconfig
+import time
+import traceback
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Never, cast
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, NoReturn, Self, TextIO
 
-import typing_extensions as typing
-from mcp.server import MCPServer
-from mcp.server.mcpserver import Context
-from mcp.server.mcpserver.exceptions import InvalidSignature
-from mcp.server.mcpserver.tools import Tool as SDKTool
-from mcp.types import CallToolResult, InputRequiredResult, Tool
-from pydantic import BaseModel, Field, TypeAdapter
-from pydantic.errors import PydanticUserError
-from pydantic.fields import FieldInfo
-from pydantic_core import SchemaError
+if TYPE_CHECKING:
+    from mcp.server import MCPServer, Server
 
-IGNORED = frozenset(
-    {
-        ".git",
-        ".venv",
-        "venv",
-        "node_modules",
-        "holon",
-        ".holon",
-        ".holon-types",
-        "__pycache__",
-    }
-)
-ALIASES = {
-    "typing_extensions": "typing",
-    "mcp.server.mcpserver": "mcp.server",
-    "mcp.server.lowlevel": "mcp.server",
-}
-SERVERS = {"mcp.server:MCPServer", "mcp.server:Server"}
-REGISTRATIONS = {"tool", "add_tool", "list_tools", "remove_tool"}
-CONSTRUCTOR_CATALOGS = {"tools", "on_list_tools", None}
-FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
-ASSIGNMENTS = (ast.Assign, ast.AnnAssign, ast.AugAssign)
-# Only these trusted types may reach the SDK. Application symbols are resolved
-# from their AST; no application module, annotation or callback is evaluated.
-TYPES: dict[object, Any] = {
-    "builtins:str": str,
-    "builtins:int": int,
-    "builtins:float": float,
-    "builtins:bool": bool,
-    "builtins:None": type(None),
-    "builtins:object": object,
-    "builtins:list": list,
-    "builtins:tuple": tuple,
-    "builtins:dict": dict,
-    "pydantic:BaseModel": BaseModel,
-    "mcp.server:Context": Context,
-    "mcp.types:CallToolResult": CallToolResult,
-    "mcp.types:InputRequiredResult": InputRequiredResult,
-    **{
-        f"typing:{name}": getattr(typing, name)
-        for name in (
-            "Any",
-            "Annotated",
-            "NotRequired",
-            "Required",
-            "Literal",
-            "Optional",
-            "Union",
-            "List",
-            "Tuple",
-            "Dict",
-            "TypedDict",
-        )
-    },
-}
-DUPLICATE = "duplicate"
+RESOURCE_SCHEMA = "sh.holon/outputSchema"
+INSTALLED = {"site-packages", "dist-packages", ".venv", "venv", "node_modules"}
+STDLIB = Path(sysconfig.get_paths()["stdlib"]).resolve()
+EPOCH = 315532800  # 1980-01-01T00:00:00Z, the instant the frozen clock shows
+MONOTONIC = time.monotonic
 
 
-class Analyzer:
-    def __init__(self, root: Path):
-        self.root = root.resolve()
-        self.trees: dict[Path, ast.Module] = {}
-        self.modules: dict[Path, dict[str, ast.AST | str]] = {}
-        self.active: set[tuple[Path, str]] = set()
-        self.models: dict[tuple[Path, str], type[Any]] = {}
+class Unavailable(RuntimeError):
+    """A capability that contract evaluation does not have."""
 
-    def fail(self, path: Path, node: ast.AST, message: str) -> Never:
-        raise ValueError(
-            f"{path.relative_to(self.root)}:{getattr(node, 'lineno', 1)}:{getattr(node, 'col_offset', 0) + 1}: {message}"
+
+class MissingModule(ModuleNotFoundError):
+    """A module that neither the application nor its installed packages provide."""
+
+
+def unavailable(name: str, capability: str) -> Callable[..., NoReturn]:
+    def fail(*args: object, **kwargs: object) -> NoReturn:
+        raise Unavailable(
+            f"{name} is unavailable: contract evaluation has no {capability}"
         )
 
-    @contextmanager
-    def visiting(self, path: Path, node: ast.AST, name: str) -> Iterator[None]:
-        if (path, name) in self.active:
-            self.fail(path, node, "Recursive or cyclic contracts are unsupported.")
-        self.active.add((path, name))
-        try:
-            yield
-        finally:
-            self.active.remove((path, name))
+    return fail
 
-    def tree(self, path: Path) -> ast.Module:
-        path = path.resolve()
-        if path not in self.trees:
-            self.trees[path] = ast.parse(
-                path.read_bytes(), filename=str(path.relative_to(self.root))
-            )
-        return self.trees[path]
 
-    def load(self, path: Path) -> dict[str, ast.AST | str]:
-        if path not in self.modules:
-            symbols = self.modules[path] = {}
-            for node in self.tree(path).body:
-                for name, value in self.bindings(path, node):
-                    symbols[name] = DUPLICATE if name in symbols else value
-        return self.modules[path]
+class Finder(importlib.abc.MetaPathFinder):
+    """Serves the application's files and installed packages, recording application files."""
 
-    def bindings(self, path: Path, node: ast.stmt) -> list[tuple[str, ast.AST | str]]:
-        match node:
-            case ast.ImportFrom(module=module, level=level, names=names):
-                prefix = "." * level + (module or "")
-                return [
-                    (alias.asname or alias.name, f"{prefix}:{alias.name}")
-                    for alias in names
-                ]
-            case ast.Import(names=names):
-                return [
-                    (
-                        name := alias.asname or alias.name.split(".")[0],
-                        f"{alias.name if alias.asname else name}:",
-                    )
-                    for alias in names
-                ]
-            case (
-                ast.ClassDef(name=name)
-                | ast.FunctionDef(name=name)
-                | ast.AsyncFunctionDef(name=name)
-            ):
-                return [(name, node)]
-            case ast.Assign() | ast.AnnAssign() | ast.AugAssign():
-                targets = (
-                    node.targets if isinstance(node, ast.Assign) else [node.target]
-                )
-                if any(
-                    isinstance(target, (ast.Attribute, ast.Subscript))
-                    for target in targets
-                ):
-                    self.fail(
-                        path,
-                        node,
-                        "Module-level schema or catalog mutation is unsupported.",
-                    )
-                value = node if isinstance(node, ast.AugAssign) else node.value
-                if value is None:
-                    return []
-                return [
-                    (target.id, value)
-                    for target in targets
-                    if isinstance(target, ast.Name)
-                ]
-        return []
-
-    def resolve(self, path: Path, node: ast.AST) -> tuple[Path, ast.AST | str]:
-        match node:
-            case ast.Constant(value=None):
-                return path, "builtins:None"
-            case ast.Constant(value=str() as text):
-                return self.resolve(path, ast.parse(text, mode="eval").body)
-            case ast.Attribute(value=base, attr=attr):
-                source, value = self.resolve(path, base)
-                if isinstance(value, str):
-                    return self.imported(
-                        source, value.replace(":", ".").rstrip(".") + ":" + attr
-                    )
-                return source, node
-            case ast.Name(id=name):
-                value = self.load(path).get(name, "builtins:" + name)
-                if value == DUPLICATE:
-                    self.fail(
-                        path,
-                        node,
-                        "Reassigned contract symbols cannot be established statically.",
-                    )
-                with self.visiting(path, node, name):
-                    if isinstance(value, str):
-                        return self.imported(path, value)
-                    if isinstance(value, (ast.Name, ast.Attribute)):
-                        return self.resolve(path, value)
-                    return path, value
-        return path, node
-
-    def imported(self, path: Path, symbol: str) -> tuple[Path, ast.AST | str]:
-        module, _, name = symbol.rpartition(":")
-        level = len(module) - len(module.lstrip("."))
-        base = path.parent.joinpath(*[".."] * (level - 1)) if level else self.root
-        parts = module.lstrip(".").split(".")
-        if not level and parts[0] in IGNORED:
-            return path, f"{module}:{name}"
-        local = base.joinpath(*parts).with_suffix(".py")
-        if not local.is_file():
-            local = base.joinpath(*parts, "__init__.py")
-        local = local.resolve()
-        submodule = base.joinpath(*parts, name).with_suffix(".py").resolve()
-        if name and submodule.is_file() and submodule.is_relative_to(self.root):
-            return path, f"{module}.{name}:"
-        if name and local.is_file() and local.is_relative_to(self.root):
-            return self.resolve(local, ast.Name(id=name))
-        return path, f"{ALIASES.get(module, module)}:{name}"
-
-    def is_server(self, path: Path, node: ast.AST) -> bool:
-        source, value = self.resolve(path, node)
-        return (
-            isinstance(value, ast.Call)
-            and self.resolve(source, value.func)[1] in SERVERS
+    def __init__(self, root: Path, entry: Path) -> None:
+        self.root = root
+        self.packages = installed()
+        self.search = list(
+            dict.fromkeys([str(root), str(entry.parent), *self.packages])
+        )
+        self.served: set[Path] = set()
+        # importlib.metadata finds distributions on sys.path; imports still go through find_spec.
+        sys.path.extend(
+            directory for directory in self.packages if directory not in sys.path
         )
 
-    def constant(self, path: Path, node: ast.AST) -> Any:
-        if isinstance(node, ast.Constant):
-            return node.value
-        _, target = self.resolve(path, node)
-        return target.value if isinstance(target, ast.Constant) else None
+    def application(self, path: Path) -> bool:
+        if not path.is_relative_to(self.root):
+            return False
+        return not INSTALLED & set(path.relative_to(self.root).parts)
 
-    def literal(self, path: Path, node: ast.AST) -> Any:
-        match node:
-            case ast.Constant(value=constant):
-                return constant
-            case ast.UnaryOp(op=ast.USub(), operand=operand):
-                return -self.literal(path, operand)
-            case ast.List(elts=items) | ast.Tuple(elts=items):
-                return [self.literal(path, item) for item in items]
-            case ast.Dict(keys=keys, values=values):
-                result: dict[Any, Any] = {}
-                for key, item in zip(keys, values):
-                    result.update(
-                        self.literal(path, item)
-                        if key is None
-                        else {self.literal(path, key): self.literal(path, item)}
-                    )
-                return result
-        source, target = self.resolve(path, node)
-        if isinstance(target, ast.AST) and target is not node:
-            return self.literal(source, target)
-        return self.fail(
-            path,
-            node,
-            "Expected a literal contract value; application code is never evaluated.",
-        )
-
-    def annotation(self, path: Path, node: ast.AST) -> Any:
-        source, origin = self.resolve(path, node)
-        args = []
-        if isinstance(origin, ast.Subscript):
-            args = (
-                origin.slice.elts
-                if isinstance(origin.slice, ast.Tuple)
-                else [origin.slice]
+    def find_spec(
+        self, name: str, path: Sequence[str] | None, target: ModuleType | None = None
+    ) -> importlib.machinery.ModuleSpec | None:
+        if path is None and name in sys.stdlib_module_names:
+            return None
+        search = self.search if path is None else path
+        spec = importlib.machinery.PathFinder.find_spec(name, search, target)
+        if spec is None and path is None:
+            raise MissingModule(
+                f"No module named {name!r}; install the application's dependencies "
+                "or commit holon-contract.json",
+                name=name,
             )
-            _, origin = self.resolve(source, origin.value)
-        if isinstance(origin, ast.ClassDef):
-            return self.model(source, origin)
-        if isinstance(origin, ast.BinOp) and isinstance(origin.op, ast.BitOr):
-            return self.annotation(source, origin.left) | self.annotation(
-                source, origin.right
-            )
-        if isinstance(origin, ast.Constant) and origin.value is Ellipsis:
-            return Ellipsis
-        if origin not in TYPES:
-            self.fail(path, node, "Schema cannot be established statically.")
-        target = TYPES[origin]
-        if not args:
-            return target
-        if target is typing.Literal:
-            return target[tuple(self.literal(source, arg) for arg in args)]
-        parameters = tuple(
-            self.field(source, arg)
-            if isinstance(arg, ast.Call)
-            else self.annotation(source, arg)
-            for arg in args
-        )
-        return target[parameters[0] if len(parameters) == 1 else parameters]
-
-    def model(self, path: Path, value: ast.ClassDef) -> type[Any]:
-        key = (path, value.name)
-        if key in self.models:
-            return self.models[key]
-        if value.decorator_list or len(value.bases) != 1:
-            self.fail(
-                path, value, "Use an undecorated BaseModel or TypedDict contract."
-            )
-        with self.visiting(path, value, value.name):
-            base = self.annotation(path, value.bases[0])
-            if not (
-                base is typing.TypedDict
-                or typing.is_typeddict(base)
-                or isinstance(base, type)
-                and issubclass(base, BaseModel)
-            ):
-                self.fail(
-                    path, value, "Use an undecorated BaseModel or TypedDict contract."
-                )
-            annotations: dict[str, Any] = {}
-            namespace: dict[str, Any] = {
-                "__annotations__": annotations,
-                "__module__": __name__,
-            }
-            for member in value.body:
-                match member:
-                    case ast.AnnAssign(
-                        target=ast.Name(id=name), annotation=annotation
-                    ) if not name.startswith("_"):
-                        annotations[name] = self.annotation(path, annotation)
-                        if member.value is not None:
-                            namespace[name] = self.default(path, member.value)
-                    case ast.Assign(targets=[ast.Name(id="model_config")]):
-                        namespace["model_config"] = self.literal(path, member.value)
-                    case ast.Pass() | ast.Expr(value=ast.Constant()):
-                        pass
-                    case _:
-                        self.fail(
-                            path,
-                            member,
-                            "Private fields, methods, validators and computed fields are unsupported.",
-                        )
-            keywords = {
-                item.arg: self.literal(path, item.value) for item in value.keywords
-            }
-            # types.new_class invokes only the trusted BaseModel/TypedDict machinery
-            # with this inert namespace, never the original class body or decorators.
-            model = types.new_class(
-                value.name,
-                (base,),
-                cast(dict[str, Any], keywords),
-                lambda ns: ns.update(namespace),
-            )
-            self.models[key] = model
-            return model
-
-    def field(self, path: Path, node: ast.AST) -> FieldInfo:
         if (
-            not isinstance(node, ast.Call)
-            or self.resolve(path, node.func)[1] != "pydantic:Field"
+            spec is not None
+            and spec.origin
+            and self.application(Path(spec.origin).resolve())
         ):
-            self.fail(path, node, "Only static pydantic.Field metadata is supported.")
-        return cast(
-            FieldInfo,
-            Field(
-                *(self.literal(path, arg) for arg in node.args),
-                **{
-                    cast(str, item.arg): self.literal(path, item.value)
-                    for item in node.keywords
-                },
-            ),
-        )
+            self.served.add(Path(spec.origin).resolve())
+        return spec
 
-    def default(self, path: Path, node: ast.AST) -> Any:
-        return (
-            self.field(path, node)
-            if isinstance(node, ast.Call)
-            else self.literal(path, node)
-        )
 
-    def tool(
-        self,
-        path: Path,
-        function: ast.FunctionDef | ast.AsyncFunctionDef,
-        options: Mapping[str, ast.AST],
-    ) -> dict[str, Any]:
-        name = TypeAdapter(str | None).validate_python(
-            self.literal(path, options.get("name", ast.Constant(None)))
-        )
-        signature = function.args
-        if signature.posonlyargs or signature.vararg or signature.kwarg:
-            self.fail(
-                path,
-                function,
-                "Variadic and positional-only tool parameters are unsupported.",
-            )
-        defaults = (
-            [None] * (len(signature.args) - len(signature.defaults))
-            + signature.defaults
-            + signature.kw_defaults
-        )
-        parameters = []
-        for arg, default in zip(signature.args + signature.kwonlyargs, defaults):
-            if arg.annotation is None:
-                self.fail(
-                    path, arg, "Typed tool parameters require explicit annotations."
-                )
-            parameters.append(
-                inspect.Parameter(
-                    arg.arg,
-                    inspect.Parameter.KEYWORD_ONLY,
-                    annotation=self.annotation(path, arg.annotation),
-                    default=inspect.Parameter.empty
-                    if default is None
-                    else self.default(path, default),
-                )
-            )
-
-        def stub() -> Never:
-            raise AssertionError("Contract extraction must never call a tool.")
-
-        stub.__name__ = function.name
-        stub.__annotations__ = {param.name: param.annotation for param in parameters}
-        structured = self.literal(
-            path, options.get("structured_output", ast.Constant(None))
-        )
-        returns = inspect.Signature.empty
-        if function.returns is not None and structured is not False:
-            returns = self.annotation(path, function.returns)
-            stub.__annotations__["return"] = returns
-        # The SDK sees concrete trusted annotations and a signature, not source code.
-        stub.__signature__ = inspect.Signature(parameters, return_annotation=returns)  # type: ignore[attr-defined]
-        tool = SDKTool.from_function(stub, name=name, structured_output=structured)
-        return Tool(
-            name=tool.name,
-            input_schema=tool.parameters,
-            output_schema=tool.output_schema,
-        ).model_dump(by_alias=True, exclude_none=True)
-
-    def registration(self, node: ast.AST, servers: set[str]) -> str | None:
-        match node:
-            case ast.Call(func=ast.Attribute(value=ast.Name(id=name), attr=attr)) if (
-                name in servers
-            ):
-                return attr
-        return None
-
-    def decorated(
-        self,
-        path: Path,
-        function: ast.FunctionDef | ast.AsyncFunctionDef,
-        call: ast.Call,
-    ) -> list[dict[str, Any]]:
-        signature = inspect.signature(MCPServer.tool)
-        options = signature.bind(
-            None,
-            *call.args,
-            **{cast(str, item.arg): item.value for item in call.keywords},
-        ).arguments
-        return [self.tool(path, function, options)]
-
-    def resource(
-        self,
-        path: Path,
-        function: ast.FunctionDef | ast.AsyncFunctionDef,
-        call: ast.Call,
-    ) -> list[dict[str, Any]]:
-        signature = inspect.signature(MCPServer.resource)
-        options = signature.bind(
-            None,
-            *call.args,
-            **{cast(str, item.arg): item.value for item in call.keywords},
-        ).arguments
-        mime_type = self.constant(path, options.get("mime_type", ast.Constant(None)))
-        if mime_type != "application/json" or function.returns is None:
-            return []
-        uri = self.constant(path, options.get("uri", ast.Constant(None)))
-        if not isinstance(uri, str) or not uri:
-            self.fail(path, call, "Typed resources require a constant URI.")
-        return [
-            {
-                "uri": uri,
-                "outputSchema": TypeAdapter(
-                    self.annotation(path, function.returns)
-                ).json_schema(),
-            }
-        ]
-
-    def catalog(
-        self,
-        path: Path,
-        function: ast.FunctionDef | ast.AsyncFunctionDef,
-        call: ast.Call,
-    ) -> list[dict[str, Any]]:
-        body = (
-            function.body[1:]
-            if ast.get_docstring(function) is not None
-            else function.body
-        )
-        match body:
-            case [ast.Return(value=ast.List(elts=items) | ast.Tuple(elts=items))]:
-                return [self.listed(path, item) for item in items]
-        return self.fail(
-            path, function, "tools/list must return a fixed literal catalog."
-        )
-
-    def listed(self, path: Path, item: ast.expr) -> dict[str, Any]:
-        match item:
-            case ast.Call(func=func, args=[], keywords=keywords) if (
-                self.resolve(path, func)[1] == "mcp.types:Tool"
-            ):
-                tool = Tool(
-                    **{
-                        cast(str, keyword.arg): self.literal(path, keyword.value)
-                        for keyword in keywords
-                    }
-                )
-                return tool.model_dump(
-                    by_alias=True,
-                    exclude_none=True,
-                    include={"name", "input_schema", "output_schema"},
-                )
-        return self.fail(
-            path,
-            item,
-            "Expected a literal official MCP Tool with name and input_schema.",
-        )
-
-    def added(self, path: Path, call: ast.Call) -> list[dict[str, Any]]:
-        match call:
-            case ast.Call(args=[argument], keywords=[]):
-                source, value = self.resolve(path, argument)
-                if isinstance(value, FUNCTIONS) and not value.decorator_list:
-                    return [self.tool(source, value, {})]
-        return self.fail(
-            path,
-            call,
-            "add_tool requires one statically resolvable undecorated function.",
-        )
-
-    def extract(self, path: Path) -> dict[str, list[dict[str, Any]]]:
-        tree = self.tree(path)
-        servers = {
-            name for name in self.load(path) if self.is_server(path, ast.Name(id=name))
-        }
-        if (
-            "server" not in servers
-            or len({self.resolve(path, ast.Name(id=name))[1] for name in servers}) != 1
-        ):
-            self.fail(
-                path,
-                tree,
-                "The entrypoint must expose one official MCP server as server.",
-            )
-        match self.resolve(path, ast.Name(id="server")):
-            case (source, ast.Call(keywords=keywords) as construction) if any(
-                item.arg in CONSTRUCTOR_CATALOGS for item in keywords
-            ):
-                self.fail(
-                    source,
-                    construction,
-                    "Register tools only with top-level MCP decorators or add_tool in the entrypoint.",
-                )
-        tools: list[dict[str, Any]] = []
-        resources: list[dict[str, Any]] = []
-        handled = set()
-        for node in tree.body:
-            match node:
-                case (
-                    ast.FunctionDef(decorator_list=[ast.Call() as call])
-                    | ast.AsyncFunctionDef(decorator_list=[ast.Call() as call])
-                ) if (kind := self.registration(call, servers)) in DECORATORS:
-                    handled.add(call.func)
-                    registered = resources if kind == "resource" else tools
-                    registered += DECORATORS[kind](self, path, node, call)
-                case ast.Expr(value=ast.Call() as call) if (
-                    self.registration(call, servers) == "add_tool"
-                ):
-                    handled.add(call.func)
-                    tools += self.added(path, call)
-                case ast.Expr(value=ast.Call(func=func)) if isinstance(
-                    self.resolve(path, func)[1], FUNCTIONS
-                ):
-                    self.fail(
-                        path,
-                        node,
-                        "Module-level helper execution cannot establish a static catalog.",
-                    )
-                case ast.If() | ast.For() | ast.While() | ast.With() | ast.Try() if any(
-                    isinstance(item, ASSIGNMENTS) for item in ast.walk(node)
-                ):
-                    self.fail(
-                        path,
-                        node,
-                        "Conditional or computed module assignments are unsupported.",
-                    )
-        for child in ast.walk(tree):
-            match child:
-                case ast.Call(args=args, keywords=keywords) if any(
-                    isinstance(item, ast.Name) and item.id in servers
-                    for item in [*args, *(keyword.value for keyword in keywords)]
-                ):
-                    self.fail(
-                        path,
-                        child,
-                        "Passing the server to other code cannot establish a static contract.",
-                    )
-        for source, module in list(self.trees.items()):
-            for child in ast.walk(module):
+def installed() -> list[str]:
+    """The environment's package directories, which -S leaves off sys.path."""
+    # Without site, a virtual environment's prefix is not applied; it is the interpreter's parent.
+    venv = str(Path(sys.executable).parent.parent)
+    if Path(venv, "pyvenv.cfg").is_file():
+        paths = sysconfig.get_paths("venv", vars={"base": venv, "platbase": venv})
+    else:
+        paths = sysconfig.get_paths()
+    found = list(dict.fromkeys([paths["purelib"], paths["platlib"]]))
+    for directory in list(found):
+        for pth in sorted(Path(directory).glob("*.pth")):
+            for line in pth.read_text().splitlines():
+                entry = Path(directory, line.strip())
                 if (
-                    isinstance(child, ast.Attribute)
-                    and child.attr in REGISTRATIONS
-                    and child not in handled
-                    and self.is_server(source, child.value)
+                    line.strip()
+                    and not line.startswith(("#", "import"))
+                    and entry.is_dir()
                 ):
-                    self.fail(
-                        source,
-                        child,
-                        "Register tools only with top-level MCP decorators or add_tool in the entrypoint.",
-                    )
-        names = [tool["name"] for tool in tools]
-        uris = [resource["uri"] for resource in resources]
-        if len(names) != len(set(names)) or len(uris) != len(set(uris)):
-            self.fail(path, tree, "Duplicate tool registrations are unsupported.")
-        return {"tools": tools, "resources": resources}
+                    found.append(str(entry.resolve()))
+    return found
 
 
-def extract(root: str | Path, entry: str) -> dict[str, Any]:
-    analyzer = Analyzer(Path(root))
-    sources: dict[str, str] = {}
+class FrozenDatetime(datetime.datetime):
+    @classmethod
+    def now(cls, tz: datetime.tzinfo | None = None) -> Self:
+        instant = cls.fromtimestamp(EPOCH, tz or datetime.UTC)
+        return instant if tz else instant.replace(tzinfo=None)
+
+    @classmethod
+    def utcnow(cls) -> Self:
+        return cls.now()
+
+    @classmethod
+    def today(cls) -> Self:
+        return cls.now()
+
+
+class FrozenDate(datetime.date):
+    @classmethod
+    def today(cls) -> Self:
+        return cls(1980, 1, 1)
+
+
+def freeze(finder: Finder) -> None:
+    """Give the server the same world on every machine, for every caller, libraries included."""
+    os.environ.clear()
+    random.seed(0)
+    frozen: dict[tuple[object, str], object] = {
+        (os, "urandom"): lambda size: bytes(size),
+        (time, "time"): lambda: float(EPOCH),
+        (time, "time_ns"): lambda: EPOCH * 10**9,
+        (time, "monotonic"): lambda: float(EPOCH),
+        (datetime, "datetime"): FrozenDatetime,
+        (datetime, "date"): FrozenDate,
+    }
+    for (owner, name), value in frozen.items():
+        if isinstance(value, type):
+            value.__name__ = value.__qualname__ = name
+        setattr(owner, name, value)
+    forbid(socket, "socket socketpair create_connection getaddrinfo", "network")
+    forbid(subprocess, "Popen run call check_call check_output", "child processes")
+    forbid(
+        os,
+        "system popen execl execle execlp execlpe execv execve execvp execvpe",
+        "child processes",
+    )
+    readable = [finder.root, STDLIB, *(Path(p).resolve() for p in finder.packages)]
+    real_open, real_os_open = builtins.open, os.open
+
+    def check(name: str, file: Any, writing: bool) -> None:
+        path = Path(os.fsdecode(file)).resolve()
+        if writing:
+            unavailable(f"{name} {path} for writing", "file writes")()
+        if not any(path.is_relative_to(directory) for directory in readable):
+            unavailable(
+                f"{name} {path}",
+                "files outside the application, its packages and the standard library",
+            )()
+        if finder.application(path):
+            finder.served.add(path)
+
+    def frozen_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(file, int):
+            check("open", file, any(flag in mode for flag in "wax+"))
+        return real_open(file, mode, *args, **kwargs)
+
+    def frozen_os_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        writes = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+        check("os.open", path, bool(flags & writes))
+        return real_os_open(path, flags, *args, **kwargs)
+
+    builtins.open = io.open = frozen_open
+    os.open = frozen_os_open
+
+
+def forbid(owner: ModuleType, names: str, capability: str) -> None:
+    for name in names.split():
+        real = getattr(owner, name, None)
+        fail = unavailable(f"{owner.__name__}.{name}", capability)
+        if isinstance(real, type):
+            # A class stays a class, so annotations such as subprocess.Popen[bytes] still evaluate.
+            fail = type(
+                real.__name__,
+                (real,),
+                {"__init__": fail, "__module__": real.__module__},
+            )
+        if real is not None:
+            setattr(owner, name, fail)
+
+
+class Loop(asyncio.SelectorEventLoop):
+    """The client's event loop keeps a running clock under the frozen one."""
+
+    def time(self) -> float:
+        return MONOTONIC()
+
+
+def find_server(module: object) -> MCPServer | Server[Any]:
+    from mcp.server import MCPServer, Server
+
+    servers = {
+        name: value
+        for name, value in vars(module).items()
+        if isinstance(value, (MCPServer, Server))
+    }
+    if "server" in servers:
+        return servers["server"]
+    if len(servers) == 1:
+        return next(iter(servers.values()))
+    found = ", ".join(sorted(servers)) or "none"
+    raise LookupError(
+        f"expose one MCPServer or Server as the module attribute server (found {found})"
+    )
+
+
+async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
+    from mcp.client import Client
+
+    tools: list[dict[str, Any]] = []
+    resources: list[dict[str, Any]] = []
+    async with Client(server) as client:
+        capabilities = client.server_capabilities
+        cursor = None
+        while capabilities and capabilities.tools:
+            page = await client.list_tools(cursor=cursor)
+            for tool in page.tools:
+                schemas = {"inputSchema": tool.input_schema}
+                if tool.output_schema is not None:
+                    schemas["outputSchema"] = tool.output_schema
+                tools.append({"name": tool.name, **schemas})
+            if not (cursor := page.next_cursor):
+                break
+        while capabilities and capabilities.resources:
+            listed = await client.list_resources(cursor=cursor)
+            # Like a live server's contract, a resource is typed only by its sh.holon/outputSchema.
+            resources += [
+                {
+                    "uri": str(r.uri),
+                    "outputSchema": (r.meta or {}).get(RESOURCE_SCHEMA, {}),
+                }
+                for r in listed.resources
+            ]
+            if not (cursor := listed.next_cursor):
+                break
+    return {
+        "tools": sorted(tools, key=lambda tool: tool["name"]),
+        "resources": sorted(resources, key=lambda resource: resource["uri"]),
+    }
+
+
+def contract(root: Path, entry: str, stdout: TextIO) -> int:
+    """Run one entry, ask its server for the catalog and print it; return the exit status."""
+    os.chdir(root)  # relative paths name application files, wherever the runner started
+    path = root / entry
+    finder = Finder(root, path)
+    sys.meta_path.insert(0, finder)
+    loop = Loop()  # before freezing: its wakeup channel is a socket pair
     try:
-        for directory, folders, filenames in os.walk(analyzer.root):
-            folders[:] = [name for name in folders if name not in IGNORED]
-            for name in filenames:
-                if name.endswith(".py"):
-                    path = Path(directory, name)
-                    with path.open("rb") as source:
-                        sources[str(path.relative_to(analyzer.root))] = (
-                            hashlib.file_digest(source, "sha256").hexdigest()
-                        )
-        catalog = analyzer.extract((analyzer.root / entry).resolve())
-        return {**catalog, "sources": sources}
-    except (
-        ValueError,
-        SyntaxError,
-        OSError,
-        LookupError,
-        TypeError,
-        RecursionError,
-        PydanticUserError,
-        InvalidSignature,
-        SchemaError,
-    ) as error:
-        return {
-            "tools": [],
-            "diagnostic": str(error),
-            "sources": sources,
-        }
-
-
-DECORATORS = {
-    "tool": Analyzer.decorated,
-    "list_tools": Analyzer.catalog,
-    "resource": Analyzer.resource,
-}
+        freeze(finder)
+        # Import the entry as a script beside its project would, without its __main__ block.
+        spec = importlib.util.spec_from_file_location(path.stem, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot import {path}")
+        finder.served.add(path.resolve())
+        module = sys.modules[path.stem] = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        result = loop.run_until_complete(catalog(find_server(module)))
+    except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
+        frames = [
+            frame
+            for frame in traceback.extract_tb(error.__traceback__)
+            if frame.filename != __file__ and not frame.filename.startswith("<frozen")
+        ]
+        trace = traceback.format_list(frames)
+        if isinstance(error, MissingModule):
+            trace.append(f"{type(error).__name__}: {error}\n")
+        else:
+            trace += traceback.format_exception_only(error)
+        sys.stderr.write(
+            f"{entry}: Traceback (most recent call last):\n{''.join(trace)}"
+        )
+        if isinstance(error, MissingModule) and error.name:
+            sys.stderr.write(error.name.partition(".")[0] + "\n")
+            return 3
+        return 2
+    sources = {}
+    for file in sorted(finder.served):
+        with file.open("rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
+        sources[file.relative_to(root).as_posix()] = digest
+    json.dump({**result, "sources": sources}, stdout)
+    return 0
 
 
 if __name__ == "__main__":
-    # extract.py CONFIG OUTPUT: contracts for every app in the config, as JSON.
-    config, output = sys.argv[1:]
-    apps = json.loads(Path(config).read_text())["apps"]
-    Path(output).write_text(
-        json.dumps({app["name"]: extract(app["path"], app["entry"]) for app in apps})
-    )
+    mode, root, entry = sys.argv[1:]
+    if mode != "contract":
+        sys.exit(f"unknown operation {mode}")
+    if not sys.flags.no_site:
+        # Without site packages, the caller's environment or bytecode beside the sources, and with
+        # the same string hashes, so set order does not vary between runs.
+        argv = [sys.executable, "-s", "-S", "-P", "-B", *sys.argv]
+        os.execve(sys.executable, argv, {"PYTHONHASHSEED": "0"})
+    # The contract is all that stdout carries; whatever the application prints goes to stderr.
+    stdout = os.fdopen(os.dup(1), "w")
+    os.dup2(2, 1)
+    sys.exit(contract(Path(root).resolve(), entry, stdout))
