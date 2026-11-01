@@ -22,7 +22,8 @@ const extensions = ["", ".ts", ".tsx", ".mts", ".js", ".mjs", ".cjs", ".json", "
 
 export class MissingPackage extends Error {}
 
-export function createSandbox(root, vendor) {
+// read(path) supplies a file's text that node:fs readFileSync returns, or undefined.
+export function createSandbox(root, vendor, read = () => undefined) {
   root = realpathSync(root);
   // Whatever the application logs goes to stderr: stdout carries only the contract.
   const context = vm.createContext({ console: new console.Console(process.stderr) });
@@ -127,7 +128,12 @@ export function createSandbox(root, vendor) {
     if (!builtins.has(name)) {
       const real = module.createRequire(import.meta.url)(`node:${name}`);
       const capability = capabilities[name] ?? `node:${name}`;
-      builtins.set(name, Object.fromEntries(Object.keys(real).filter(n => n !== "default").map(n => [n, stub(`node:${name} ${n}`, capability)])));
+      const exported = Object.fromEntries(Object.keys(real).filter(n => n !== "default").map(n => [n, stub(`node:${name} ${n}`, capability)]));
+      if (name === "fs") {
+        const unavailable = exported.readFileSync;
+        exported.readFileSync = (path, ...rest) => read(path instanceof URL ? fileURLToPath(path) : String(path)) ?? unavailable(path, ...rest);
+      }
+      builtins.set(name, exported);
     }
     return builtins.get(name);
   }

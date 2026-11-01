@@ -22,10 +22,12 @@ import (
 )
 
 // extraction is the contract a runner prints: the server's catalog, the server.json it implies, and
-// the application files it loaded, with their SHA-256 digests.
+// the application files it loaded, with their SHA-256 digests. App is the generated app.json that
+// holon-sh/app's register reads, for a server that registers typed function declarations.
 type extraction struct {
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`
+	App        json.RawMessage        `json:"app"`
 	Descriptor json.RawMessage        `json:"descriptor"`
 	Sources    map[string]string      `json:"sources"`
 }

@@ -60,6 +60,8 @@ type preparedSource struct {
 	sources                                    map[string]string
 	// descriptor is the server.json the server implies, for a source without one.
 	descriptor json.RawMessage
+	// app is the contract holon-sh/app's register reads, for a server that uses it.
+	app json.RawMessage
 }
 
 func (s *preparedSource) extract(result *extraction) error {
@@ -79,7 +81,7 @@ func (s *preparedSource) extract(result *extraction) error {
 			s.sources[path] = digest
 		}
 	}
-	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
+	s.metadata.Schema, s.app = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}, result.App
 	if s.metadata.Identity == (mcpcontract.Identity{}) {
 		descriptor, err := ParseDescriptor(result.Descriptor)
 		if err != nil {
@@ -369,6 +371,9 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		files, err := generateTypes(ctx, target, request, c.metadata, p.options.GoModule)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
+		}
+		if target == TargetTS && c.server != nil && c.server.app != nil {
+			files["app.json"] = c.server.app
 		}
 		c.packages[target] = files
 	}

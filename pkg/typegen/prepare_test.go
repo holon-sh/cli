@@ -27,7 +27,7 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 	put(t, checkout, "server.json", string(mustJSON(t, map[string]any{"name": "example.com/checkout", "version": "1.0.0", "description": "Checkout"})))
 	own := mcpcontract.Tool{Name: "status", Input: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
 	results := map[string]any{
-		"example.com/checkout": extraction{Tools: []mcpcontract.Tool{own}, Sources: map[string]string{"server.ts": "sha256:checkout"}},
+		"example.com/checkout": extraction{Tools: []mcpcontract.Tool{own}, App: json.RawMessage(`{"schema":{"tools":[]}}`), Sources: map[string]string{"server.ts": "sha256:checkout"}},
 		"example.com/orders":   extraction{Tools: []mcpcontract.Tool{lookupTool}},
 	}
 	c := Consumer{Name: "checkout", Dir: checkout, Targets: targets, Server: &Source{Path: filepath.Join(checkout, "server.ts")}, Sources: []Source{{Path: orders}}}
@@ -57,6 +57,10 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 	// Server code calls its dependencies; browser code also calls the server itself, through its App.
 	if node := read(t, stage, "holon-sh/generated/index.js"); !strings.Contains(node, `"lookup"`) || strings.Contains(node, `"status"`) {
 		t.Fatalf("node client:\n%s", node)
+	}
+	// holon-sh/app's register reads the own server's function declarations from app.json.
+	if app := read(t, stage, "holon-sh/generated/app.json"); app != `{"schema":{"tools":[]}}` {
+		t.Fatalf("app.json = %s", app)
 	}
 	if browser := read(t, stage, "holon-ui/generated/index.js"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `export const App = appClass(identity, contracts, "checkout")`) {
 		t.Fatalf("browser client:\n%s", browser)

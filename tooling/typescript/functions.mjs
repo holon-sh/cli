@@ -1,0 +1,80 @@
+// The contract holon-sh/app's register reads from its generated app.json, derived from the entry's
+// TypeScript: for each register call, its tools by name, with JSON Schemas for each function's input
+// and awaited result types, and its resources by URI, with their read result's.
+import { join, relative } from "node:path";
+import ts from "typescript";
+
+const options = { strict: true, allowJs: true, noEmit: true, skipLibCheck: true, target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, allowImportingTsExtensions: true, lib: ["lib.esnext.d.ts"], types: [] };
+
+// functionContract returns that contract and the application files the program read.
+export function functionContract(root, entry) {
+  const file = join(root, entry);
+  const program = ts.createProgram([file], options);
+  const checker = program.getTypeChecker();
+  const app = ts.resolveModuleName("holon-sh/app", file, options, ts.sys).resolvedModule?.resolvedFileName;
+  const tools = [], resources = [];
+  const fail = (node, message) => {
+    const source = node.getSourceFile();
+    const { line, character } = source.getLineAndCharacterOfPosition(node.getStart());
+    throw new Error(`${relative(root, source.fileName)}:${line + 1}:${character + 1}: ${message}`);
+  };
+  const members = (type, key) => {
+    const symbol = type.getProperty(key);
+    return symbol ? checker.getTypeOfSymbol(symbol).getProperties() : [];
+  };
+  const schema = (type, at, seen = new Set()) => {
+    if (type.isStringLiteral() || type.isNumberLiteral()) return { const: type.value };
+    if (type.flags & ts.TypeFlags.BooleanLiteral) return { const: checker.typeToString(type) === "true" };
+    if (type.flags & ts.TypeFlags.String) return { type: "string" };
+    if (type.flags & ts.TypeFlags.Number) return { type: "number" };
+    if (type.flags & ts.TypeFlags.Null) return { type: "null" };
+    if (type.isUnion()) {
+      // boolean is true | false; an optional property adds undefined, which JSON omits.
+      const options = type.types.filter(option => !(option.flags & ts.TypeFlags.Undefined));
+      if (options.every(option => option.flags & ts.TypeFlags.BooleanLiteral)) return { type: "boolean" };
+      return options.length === 1 ? schema(options[0], at, seen) : { anyOf: options.map(option => schema(option, at, seen)) };
+    }
+    if (checker.isArrayType(type)) return { type: "array", items: schema(checker.getTypeArguments(type)[0], at, seen) };
+    if (type.flags & ts.TypeFlags.Object && !type.getCallSignatures().length && !checker.isTupleType(type) && !checker.getIndexInfosOfType(type).length && !seen.has(type)) {
+      const properties = {}, required = [];
+      for (const property of type.getProperties()) {
+        properties[property.name] = schema(checker.getTypeOfSymbol(property), at, new Set(seen).add(type));
+        if (!(property.flags & ts.SymbolFlags.Optional)) required.push(property.name);
+      }
+      return { type: "object", properties, ...(required.length && { required }), additionalProperties: false };
+    }
+    fail(at, `${checker.typeToString(type)} has no JSON Schema; register this tool with schemas instead`);
+  };
+  const object = (type, at) => {
+    const result = schema(type, at);
+    return result.type === "object" ? result : fail(at, "tool inputs and results must be JSON objects");
+  };
+  // A resource's URI is the string constant its resource(uri, read) declaration passes.
+  const uri = property => {
+    const assigned = property.valueDeclaration;
+    let value = ts.isShorthandPropertyAssignment(assigned) ? checker.getShorthandAssignmentValueSymbol(assigned)?.valueDeclaration?.initializer : assigned.initializer;
+    if (value && ts.isIdentifier(value)) value = checker.getSymbolAtLocation(value)?.valueDeclaration?.initializer;
+    const type = value && ts.isCallExpression(value) && value.arguments.length && checker.getTypeAtLocation(value.arguments[0]);
+    return type?.isStringLiteral() ? type.value : fail(assigned, `resource ${property.name} needs a string constant URI`);
+  };
+  const visit = node => {
+    const declaration = ts.isCallExpression(node) ? checker.getResolvedSignature(node)?.declaration : undefined;
+    if (declaration?.getSourceFile().fileName === app && declaration.name?.text === "register") {
+      const declared = checker.getTypeAtLocation(node.arguments[1]);
+      for (const property of members(declared, "tools")) {
+        const [input, output] = checker.getTypeArguments(checker.getTypeOfSymbol(property));
+        const at = property.valueDeclaration ?? node;
+        // A function without a parameter takes no arguments.
+        const inputSchema = input.flags & ts.TypeFlags.Unknown ? { type: "object", properties: {}, additionalProperties: false } : object(input, at);
+        tools.push({ name: property.name, inputSchema, outputSchema: object(output, at) });
+      }
+      for (const property of members(declared, "resources")) {
+        resources.push({ uri: uri(property), outputSchema: schema(checker.getTypeArguments(checker.getTypeOfSymbol(property))[0], property.valueDeclaration ?? node) });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  const files = program.getSourceFiles().filter(source => !source.isDeclarationFile && !program.isSourceFileFromExternalLibrary(source));
+  for (const source of files) visit(source);
+  return { contract: { schema: { tools, resources } }, files: files.map(source => source.fileName) };
+}

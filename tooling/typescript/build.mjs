@@ -1,5 +1,6 @@
 // Bundle the standalone extractor and check runner into the archive pkg/tooling embeds.
-// Type checking uses the consumer's installed compiler and standard declarations.
+// Type checking uses the consumer's installed compiler and standard declarations; the extractor's
+// bundled compiler reads the ECMAScript ones beside runner.mjs.
 // The output is byte-for-byte reproducible from package-lock.json.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -34,6 +35,8 @@ for (const directory of [...packages].sort()) {
 }
 
 const files = { "runner.mjs": outputFiles[0].contents, "THIRD-PARTY-NOTICES.txt": Buffer.from(notices.join("\n\n")), "version.json": Buffer.from(JSON.stringify({ version }) + "\n") };
+const library = join(root, "node_modules", "typescript", "lib");
+for (const name of readdirSync(library)) if (/^lib\.(es|decorators).*\.d\.ts$/.test(name)) files[name] = readFileSync(join(library, name));
 for (const directory of vendored) {
   for (const file of readdirSync(directory, { recursive: true })) {
     if (/(^|\/)(package\.json|[^/]*\.m?js|licen[sc]e[^/]*)$/i.test(file) && !file.startsWith("src/")) files[`vendor/${relative(root, directory)}/${file}`] = readFileSync(join(directory, file));

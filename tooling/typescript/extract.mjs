@@ -6,19 +6,37 @@
 // the tooling's copies when it has none.
 // The files the loader serves from the application tree are recorded as `sources`, the inputs check
 // and verify require to be unchanged. The `descriptor` is the server.json the server implies: the
-// entry's `publishing` export with the serverInfo the server reports.
+// entry's `publishing` export with the serverInfo the server reports. A server that registers typed
+// function declarations with holon-sh/app gets their schemas from the entry's TypeScript, which are
+// also printed as `app`, what holon-sh's generated app.json holds.
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { createSandbox, MissingPackage } from "./sandbox.mjs";
+import { functionContract } from "./functions.mjs";
 
 const identity = { name: "holon-contract", version: "1" };
 const resourceSchemaKey = "sh.holon/outputSchema";
 // contract evaluates one entry in the sandbox and asks its server for the catalog.
 export async function contract(root, entry) {
   const vendor = join(dirname(realpathSync(process.argv[1])), "vendor", "node_modules");
-  const sandbox = createSandbox(root, vendor);
+  const real = realpathSync(root);
+  // holon-sh/app replaces a failure to read app.json with its own message, so the runner reports its own.
+  let app, failure;
+  const sandbox = createSandbox(root, vendor, path => {
+    if (!/[\\/]holon-sh[\\/]generated[\\/]app\.json$/.test(path)) return;
+    try {
+      if (!app) {
+        const { contract, files } = functionContract(real, entry);
+        app = contract;
+        for (const file of files) sandbox.served.add(file);
+      }
+      return JSON.stringify(app);
+    } catch (error) {
+      throw (failure = error);
+    }
+  });
   try {
     const file = join(root, entry);
     const { default: exported, publishing } = await sandbox.import(file);
@@ -30,11 +48,10 @@ export async function contract(root, entry) {
       handler = createMcpHandler(() => exported);
     }
     const { info, ...result } = await catalog(handler);
-    const real = realpathSync(root);
     const files = [...sandbox.served].map(served => relative(real, served)).filter(path => !path.startsWith("..") && !path.split(sep).includes("node_modules")).sort();
-    return { ...result, descriptor: { ...publishing, ...info }, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
+    return { ...result, ...(app && { app }), descriptor: { ...publishing, ...info }, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
   } catch (error) {
-    return { diagnostic: `${entry}: ${sandbox.diagnostic(error)}`, ...(error instanceof MissingPackage && { missing: error.cause }) };
+    return { diagnostic: `${entry}: ${sandbox.diagnostic(failure ?? error)}`, ...(error instanceof MissingPackage && { missing: error.cause }) };
   }
 }
 
