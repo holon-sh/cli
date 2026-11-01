@@ -5,7 +5,8 @@
 // no filesystem, network or timers. The application's own Zod and MCP SDK compute the schemas, or
 // the tooling's copies when it has none.
 // The files the loader serves from the application tree are recorded as `sources`, the inputs check
-// and verify require to be unchanged.
+// and verify require to be unchanged. The `descriptor` is the server.json the server implies: the
+// entry's `publishing` export with the serverInfo the server reports.
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
@@ -20,7 +21,7 @@ export async function contract(root, entry) {
   const sandbox = createSandbox(root, vendor);
   try {
     const file = join(root, entry);
-    const exported = (await sandbox.import(file)).default;
+    const { default: exported, publishing } = await sandbox.import(file);
     let handler = exported;
     if (typeof exported?.fetch !== "function") {
       if (typeof exported?.registerTool !== "function") throw new Error("the default export is neither a createMcpHandler handler nor an McpServer");
@@ -28,10 +29,10 @@ export async function contract(root, entry) {
       const { createMcpHandler } = await sandbox.import(sandbox.resolve("@modelcontextprotocol/server", file));
       handler = createMcpHandler(() => exported);
     }
-    const result = await catalog(handler);
+    const { info, ...result } = await catalog(handler);
     const real = realpathSync(root);
     const files = [...sandbox.served].map(served => relative(real, served)).filter(path => !path.startsWith("..") && !path.split(sep).includes("node_modules")).sort();
-    return { ...result, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
+    return { ...result, descriptor: { ...publishing, ...info }, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
   } catch (error) {
     return { diagnostic: `${entry}: ${sandbox.diagnostic(error)}`, ...(error instanceof MissingPackage && { missing: error.cause }) };
   }
@@ -49,6 +50,7 @@ async function catalog(handler) {
     const tools = capabilities.tools ? await all(client, "tools/list", "tools") : [];
     const resources = capabilities.resources ? await all(client, "resources/list", "resources") : [];
     return {
+      info: client.getServerVersion(),
       tools: tools.map(({ name, inputSchema, outputSchema }) => ({ name, inputSchema, ...(outputSchema && { outputSchema }) })).sort((a, b) => a.name.localeCompare(b.name)),
       // Like a live server's contract, a resource is typed only by its sh.holon/outputSchema.
       resources: resources.map(({ uri, _meta }) => ({ uri, outputSchema: _meta?.[resourceSchemaKey] ?? {} })).sort((a, b) => a.uri.localeCompare(b.uri)),

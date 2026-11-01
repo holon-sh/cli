@@ -21,12 +21,13 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
-// extraction is the contract a runner prints: the server's catalog and the application files it
-// loaded, with their SHA-256 digests.
+// extraction is the contract a runner prints: the server's catalog, the server.json it implies, and
+// the application files it loaded, with their SHA-256 digests.
 type extraction struct {
-	Tools     []mcpcontract.Tool     `json:"tools"`
-	Resources []mcpcontract.Resource `json:"resources"`
-	Sources   map[string]string      `json:"sources"`
+	Tools      []mcpcontract.Tool     `json:"tools"`
+	Resources  []mcpcontract.Resource `json:"resources"`
+	Descriptor json.RawMessage        `json:"descriptor"`
+	Sources    map[string]string      `json:"sources"`
 }
 
 // RunnerError is a contract runner's failure: the status it exited with and what it wrote to
@@ -132,7 +133,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			if document == nil {
 				return fmt.Errorf("%s: %s is not installed; install the application's dependencies, or commit its contract (holon types generate --contract %s -o %s)\n%s", s.origin, missing.name, s.origin, filepath.Join(s.origin, ContractFile), missing.diagnostic)
 			}
-			s.metadata.Schema = document.Schema
+			s.metadata.Identity, s.metadata.Schema = document.Identity, document.Schema
 			s.sources = map[string]string{ContractFile: digest.FromBytes(document.Data).Encoded()}
 			continue
 		}
@@ -151,7 +152,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			if err != nil {
 				return err
 			}
-			if answered.Digest != recorded.Digest {
+			if answered.Digest != recorded.Digest || document.Identity != s.metadata.Identity {
 				contract := filepath.Join(s.origin, ContractFile)
 				return fmt.Errorf("%s is stale: the server answers a different contract; regenerate it with holon types generate --contract %s -o %s", contract, s.origin, contract)
 			}
@@ -177,7 +178,7 @@ func (s *preparedSource) committedContract(ctx context.Context) (*Document, erro
 	if document.Schema == nil {
 		return nil, fmt.Errorf("%s has no contract", path)
 	}
-	if document.Identity != s.metadata.Identity {
+	if s.metadata.Identity != (mcpcontract.Identity{}) && document.Identity != s.metadata.Identity {
 		return nil, fmt.Errorf("%s describes %s@%s but server.json names %s@%s", path, document.Identity.Name, document.Identity.Version, s.metadata.Identity.Name, s.metadata.Identity.Version)
 	}
 	return document, nil

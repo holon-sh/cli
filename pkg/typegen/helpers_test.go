@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -97,7 +99,8 @@ func needNode(t *testing.T) {
 }
 
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
-// snapshot's server.json name, printing an extraction or returning an error as the runner's failure.
+// snapshot's server.json name ("" without one), printing an extraction or returning an error as the
+// runner's failure.
 func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
 	return func(_ context.Context, _, _ string, args []string, stdout io.Writer) error {
 		root, entry := args[1], args[2]
@@ -105,7 +108,7 @@ func fakeRun(results map[string]any) func(context.Context, string, string, []str
 			return fmt.Errorf("entry %s is not in its snapshot %s", entry, root)
 		}
 		var descriptor struct{ Name string }
-		if err := readTypeJSON(filepath.Join(root, "server.json"), &descriptor); err != nil {
+		if err := readTypeJSON(filepath.Join(root, "server.json"), &descriptor); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		switch result := results[descriptor.Name].(type) {

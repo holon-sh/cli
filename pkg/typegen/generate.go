@@ -3,6 +3,7 @@ package typegen
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -57,6 +58,8 @@ type preparedSource struct {
 	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
+	// descriptor is the server.json the server implies, for a source without one.
+	descriptor json.RawMessage
 }
 
 func (s *preparedSource) extract(result *extraction) error {
@@ -77,6 +80,13 @@ func (s *preparedSource) extract(result *extraction) error {
 		}
 	}
 	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
+	if s.metadata.Identity == (mcpcontract.Identity{}) {
+		descriptor, err := ParseDescriptor(result.Descriptor)
+		if err != nil {
+			return fmt.Errorf("%s: %w; declare the server's name, version and description in its MCP constructor, or add a server.json", s.origin, err)
+		}
+		s.metadata.Identity, s.descriptor = descriptor.Identity(), result.Descriptor
+	}
 	return nil
 }
 
@@ -130,18 +140,19 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 	if err != nil {
 		return nil, err
 	}
-	s := &preparedSource{origin: origin, name: name, entry: entry, language: language}
-	data, err := os.ReadFile(filepath.Join(origin, "server.json"))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w (a server source needs a server.json beside its entry)", origin, err)
+	s := &preparedSource{origin: origin, name: name, entry: entry, language: language, metadata: &mcpcontract.Metadata{}}
+	// A server.json names the server. Without one, the server names itself when it runs.
+	if data, err := os.ReadFile(filepath.Join(origin, "server.json")); err == nil {
+		descriptor, err := ParseDescriptor(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s/server.json: %w", origin, err)
+		}
+		s.metadata.Identity = descriptor.Identity()
+	} else if !errors.Is(err, fs.ErrNotExist) || language == "go" {
+		return nil, fmt.Errorf("%s: %w (a Go server source needs a server.json beside its entry)", origin, err)
 	}
-	descriptor, err := ParseDescriptor(data)
-	if err != nil {
-		return nil, fmt.Errorf("%s/server.json: %w", origin, err)
-	}
-	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
 	if language != "go" {
-		if err = writePlaceholders(ctx, origin, s.metadata.Identity); err != nil {
+		if err = writePlaceholders(ctx, origin, cmp.Or(s.metadata.Identity, mcpcontract.Identity{Name: name, Version: "0.0.0"})); err != nil {
 			return nil, fmt.Errorf("%s: %w", origin, err)
 		}
 	}

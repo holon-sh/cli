@@ -71,10 +71,12 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	writeProvider(t, filepath.Join(root, "odd"), "odd", pythonProvider)
 	put(t, filepath.Join(root, "odd"), "server.json", `{"name":"example.com/---","version":"1.0.0","description":"Odd"}`)
 	put(t, filepath.Join(root, "nameless"), "server.py", pythonProvider)
+	put(t, filepath.Join(root, "go"), "server.go", "package main\n")
 	results := map[string]any{
 		"example.com/orders": extraction{Tools: []mcpcontract.Tool{lookupTool}},
 		"example.com/broken": &RunnerError{Status: 2, Stderr: "tools are registered dynamically"},
 		"example.com/---":    extraction{Tools: []mcpcontract.Tool{lookupTool}},
+		"":                   extraction{Descriptor: json.RawMessage(`{"name":"provider"}`)},
 	}
 	source := func(name string) Source { return Source{Path: filepath.Join(root, name)} }
 	orders := source("orders")
@@ -87,7 +89,8 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 		run     func(context.Context, string, string, []string, io.Writer) error
 		want    string
 	}{
-		{name: "missing server.json", sources: []Source{source("nameless")}, want: "needs a server.json"},
+		{name: "unnamed server", sources: []Source{source("nameless")}, want: "declare the server's name, version and description in its MCP constructor, or add a server.json"},
+		{name: "go without server.json", sources: []Source{source("go")}, want: "needs a server.json"},
 		{name: "extraction diagnostic", sources: []Source{source("broken")}, want: "tools are registered dynamically"},
 		{name: "extractor failure", sources: []Source{orders}, run: failing, want: failure.Error()},
 		{name: "invalid derived alias", sources: []Source{source("odd")}, want: `cannot derive a client name from "example.com/---"; write ALIAS=`},

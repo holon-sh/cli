@@ -114,7 +114,7 @@ func TestUsageErrors(t *testing.T) {
 	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
 	run(t, "holon-sh is not installed", "check", "--no-generate")
 	installCLISlot(t, root)
-	run(t, "has no requires in server.json; pass -s", "check")
+	run(t, "declares no requires; pass -s", "check")
 	run(t, "has no generated clients; run holon types generate", "check", "--no-generate")
 }
 
