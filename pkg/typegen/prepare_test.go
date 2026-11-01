@@ -35,7 +35,7 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 }
 
 func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
-	c, extract := checkoutConsumer(t, TargetTS)
+	c, extract := checkoutConsumer(t, TargetTS, TargetUI)
 	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Run: extract})
 	if err != nil {
 		t.Fatal(err)
@@ -46,17 +46,19 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 		t.Fatalf("consumer metadata = %+v", metadata)
 	}
 	stage := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(stage, "holon-sh"), 0o755); err != nil {
-		t.Fatal(err)
+	for pkg, write := range map[string]func(string, string) error{"holon-sh": prepared.WriteNodeSlot, "holon-ui": prepared.WriteBrowserSlot} {
+		if err := os.MkdirAll(filepath.Join(stage, pkg), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err = write("checkout", filepath.Join(stage, pkg)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err = prepared.WriteNodeSlot("checkout", filepath.Join(stage, "holon-sh")); err != nil {
-		t.Fatal(err)
-	}
-	// Server code calls its dependencies; browser code also calls the server itself.
+	// Server code calls its dependencies; browser code also calls the server itself, through its App.
 	if node := read(t, stage, "holon-sh/generated/index.js"); !strings.Contains(node, `"lookup"`) || strings.Contains(node, `"status"`) {
 		t.Fatalf("node client:\n%s", node)
 	}
-	if browser := read(t, stage, "holon-sh/generated/browser.js"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `"status"`) {
+	if browser := read(t, stage, "holon-ui/generated/index.js"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `export const App = appClass(identity, contracts, "checkout")`) {
 		t.Fatalf("browser client:\n%s", browser)
 	}
 }
@@ -123,7 +125,7 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	c, extract := checkoutConsumer(t, TargetTS)
 	bin := t.TempDir()
-	put(t, bin, "npm", "#!/bin/sh\nset -e\n[ \"$HOLON_SKIP_POSTINSTALL\" = 1 ]\n[ \"$INSTALL_MODE\" = from-options ]\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
+	put(t, bin, "npm", "#!/bin/sh\nset -e\n[ \"$INSTALL_MODE\" = from-options ]\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
 	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +179,7 @@ func TestGenerateGivesEachProjectItsOwnNodeSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := Options{Run: fakeRun(map[string]any{"example.com/orders": extraction{Tools: []mcpcontract.Tool{lookupTool}}})}
-	if err := Generate(t.Context(), consumers, options); err == nil || !strings.Contains(err.Error(), "install a separate holon-sh") {
+	if err := Generate(t.Context(), consumers, options); err == nil || !strings.Contains(err.Error(), "install a separate") {
 		t.Fatalf("shared slot not diagnosed: %v", err)
 	}
 	if got := read(t, pkg, "generated/index.js"); got != "placeholder" {
@@ -189,7 +191,7 @@ func TestGenerateGivesEachProjectItsOwnNodeSlot(t *testing.T) {
 	if !strings.Contains(read(t, pkg, "generated/index.js"), `"lookup"`) {
 		t.Fatal("first project's clients were not generated")
 	}
-	if err := Generate(t.Context(), consumers[1:], options); err == nil || !strings.Contains(err.Error(), "install a separate holon-sh") {
+	if err := Generate(t.Context(), consumers[1:], options); err == nil || !strings.Contains(err.Error(), "install a separate") {
 		t.Fatalf("a later project took over the slot: %v", err)
 	}
 }
@@ -331,7 +333,7 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 	root := t.TempDir()
 	orders, app := filepath.Join(root, "orders"), filepath.Join(root, "app")
 	writeProvider(t, orders, "orders", pythonProvider)
-	slotPackage(t, app, nodePackage)
+	slotPackage(t, app, nodePackages[TargetTS])
 	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Path: orders}}}
 	options := Options{Run: fakeRun(map[string]any{"example.com/orders": extraction{Tools: ordersMetadata().Schema.Tools}})}
 	committedContract(t, orders, ordersMetadata())
@@ -366,7 +368,7 @@ export default createMcpHandler(() => {
   return server;
 });`)
 	// An installed runtime package whose generated slot is empty, as after a failed generation.
-	runtime := filepath.Join(orders, "node_modules", nodePackage)
+	runtime := filepath.Join(orders, "node_modules", nodePackages[TargetTS])
 	put(t, runtime, "package.json", `{"name":"holon-sh","type":"module","holon":{"slot":"generated","contractVersion":1},"exports":{".":{"import":"./generated/index.js"}}}`)
 	put(t, runtime, "runtime.mjs", "export const createApps = () => ({}), bindApps = () => ({});\nexport class ToolCallError extends Error {}\n")
 	if contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err != nil || len(contract.Schema.Tools) != 1 {
