@@ -2,7 +2,6 @@ package typegen
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -126,9 +125,8 @@ func (response registryResponse) RoundTrip(request *http.Request) (*http.Respons
 	return response(request)
 }
 
-// imageClient serves an annotated index and its document blob. An empty annotation
-// uses the blob digest; nil metadata leaves the index without a contract.
-func imageClient(t *testing.T, metadata *mcpcontract.Metadata, annotation string) *http.Client {
+// imageClient serves an index annotated with its document blob; nil metadata leaves the index without a contract.
+func imageClient(t *testing.T, metadata *mcpcontract.Metadata) *http.Client {
 	t.Helper()
 	type document struct {
 		descriptor ocispec.Descriptor
@@ -144,7 +142,7 @@ func imageClient(t *testing.T, metadata *mcpcontract.Metadata, annotation string
 	index := ocispec.Index{Manifests: []ocispec.Descriptor{}}
 	if metadata != nil {
 		layer := add(mcpcontract.MediaType, metadata)
-		index.Annotations = map[string]string{mcpcontract.DigestAnnotation: cmp.Or(annotation, layer.Digest.String())}
+		index.Annotations = map[string]string{mcpcontract.DigestAnnotation: layer.Digest.String()}
 	}
 	index.SchemaVersion = 2
 	descriptor := add(ocispec.MediaTypeImageIndex, index)
@@ -169,7 +167,7 @@ func imageClient(t *testing.T, metadata *mcpcontract.Metadata, annotation string
 // authenticatedRegistry serves imageClient's documents only with HTTP basic credentials user:secret.
 func authenticatedRegistry(t *testing.T, metadata *mcpcontract.Metadata) *http.Client {
 	t.Helper()
-	inner := imageClient(t, metadata, "").Transport
+	inner := imageClient(t, metadata).Transport
 	return &http.Client{Transport: registryResponse(func(request *http.Request) (*http.Response, error) {
 		if user, password, ok := request.BasicAuth(); !ok || user != "user" || password != "secret" {
 			header := http.Header{"Www-Authenticate": {`Basic realm="images.example"`}, "Content-Type": {"application/json"}}
