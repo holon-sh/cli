@@ -1,8 +1,8 @@
 // Obtain an application's MCP contract by running its server in a capability-stripped sandbox and
 // asking it.
 //
-// Each application runs in its own child process, killed after HOLON_CONTRACT_TIMEOUT seconds (30
-// by default). There the entry and everything it imports are evaluated in a fresh vm context (see
+// Each application runs in its own child process, all at once. There the entry and everything it
+// imports are evaluated in a fresh vm context (see
 // sandbox.mjs): module-scope code has no filesystem, network, environment, timers or clock, and the
 // application's own Zod and MCP SDK compute the schemas, or the tooling's copies when it has none.
 // The files the loader serves from the application tree are recorded as `sources`, the inputs check
@@ -18,15 +18,10 @@ const identity = { name: "holon-contract", version: "1" };
 const resourceSchemaKey = "sh.holon/outputSchema";
 
 export function extract(root, entry) {
-  const seconds = Number(process.env.HOLON_CONTRACT_TIMEOUT) || 30;
   const child = fork(process.argv[1], ["contract", resolve(root), entry], { execArgv: ["--experimental-vm-modules", "--no-warnings"] });
   return new Promise(done => {
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      done({ diagnostic: `${entry}: no catalog within ${seconds}s; raise HOLON_CONTRACT_TIMEOUT if module-scope work needs longer` });
-    }, seconds * 1000);
-    child.on("message", result => { clearTimeout(timer); done(result); });
-    child.on("exit", (code, signal) => { clearTimeout(timer); done({ diagnostic: `${entry}: exited (${signal ?? code}) before answering` }); });
+    child.on("message", done);
+    child.on("exit", (code, signal) => done({ diagnostic: `${entry}: exited (${signal ?? code}) before answering` }));
   });
 }
 
@@ -54,6 +49,7 @@ export async function contract(root, entry) {
 }
 
 async function catalog(handler) {
+  // The modern protocol: on the legacy path the SDK server needs crypto, which the sandbox lacks.
   const client = new Client(identity, { versionNegotiation: { mode: "auto" } });
   try {
     await client.connect(new StreamableHTTPClientTransport(new URL("http://holon-contract/mcp"), {

@@ -1,8 +1,8 @@
 """Obtain an application's MCP contract by running its server in a capability-stripped sandbox.
 
-Usage: extract.py CONFIG OUTPUT. Each entry runs in its own `python -I -S` child process, killed
-after HOLON_CONTRACT_TIMEOUT seconds (30 by default). There an import finder serves the
-application's files and its environment's installed packages (mcp and pydantic among them),
+Usage: extract.py CONFIG OUTPUT. The entries run at once, each in its own `python -I -S` child
+process. There an import finder serves the application's files and its environment's installed
+packages (mcp and pydantic among them),
 allows application code only pure standard-library modules, and names any module it cannot serve.
 Before the entry runs, the environment, files, sockets, subprocesses, the clock and randomness are
 replaced with stubs that raise naming the capability, so module-scope effects fail with the
@@ -384,24 +384,24 @@ def contract(root: Path, entry: str) -> dict[str, Any]:
     return {**result, "sources": sources}
 
 
-def extract(root: str | Path, entry: str) -> dict[str, Any]:
-    timeout = float(os.environ.get("HOLON_CONTRACT_TIMEOUT") or 30)
-    with tempfile.TemporaryDirectory() as directory:
-        output = Path(directory, "contract.json")
-        command = [sys.executable, "-I", "-S", __file__, "--contract", str(root), entry]
-        try:
-            subprocess.run(
-                [*command, str(output)], cwd=root, timeout=timeout, check=False
-            )
-        except subprocess.TimeoutExpired:
-            return {
-                "diagnostic": f"{entry}: no catalog within {timeout:g}s; raise "
-                "HOLON_CONTRACT_TIMEOUT if module-scope work needs longer"
-            }
-        if not output.exists():
-            return {"diagnostic": f"{entry}: exited before answering"}
-        result: dict[str, Any] = json.loads(output.read_text())
-        return result
+def extract(apps: list[dict[str, str]]) -> dict[str, dict[str, Any]]:
+    """Run every app's entry in its own child process, at once, and collect their contracts."""
+    with tempfile.TemporaryDirectory() as scratch:
+        children = []
+        for index, app in enumerate(apps):
+            root, output = directory(app), Path(scratch, f"{index}.json")
+            command = [sys.executable, "-I", "-S", __file__, "--contract", root]
+            child = subprocess.Popen([*command, app["entry"], str(output)], cwd=root)
+            children.append((app, child, output))
+        results: dict[str, dict[str, Any]] = {}
+        for app, child, output in children:
+            child.wait()
+            if output.exists():
+                results[app["name"]] = json.loads(output.read_text())
+            else:
+                exited = f"exited ({child.returncode}) before answering"
+                results[app["name"]] = {"diagnostic": f"{app['entry']}: {exited}"}
+        return results
 
 
 def directory(app: dict[str, str]) -> str:
@@ -419,6 +419,4 @@ elif __name__ == "__main__":
     # extract.py CONFIG OUTPUT: contracts for every app in the config, as JSON.
     config, output = sys.argv[1:]
     apps = json.loads(Path(config).read_text())["apps"]
-    Path(output).write_text(
-        json.dumps({app["name"]: extract(directory(app), app["entry"]) for app in apps})
-    )
+    Path(output).write_text(json.dumps(extract(apps)))

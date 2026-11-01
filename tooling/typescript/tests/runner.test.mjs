@@ -19,7 +19,7 @@ function unpackTooling(t) {
     mkdirSync(dirname(join(tooling, name)), { recursive: true });
     writeFileSync(join(tooling, name), bytes);
   }
-  const run = (mode, config, output = [], env = {}) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), mode, config, ...output], { encoding: "utf8", stdio: "pipe", timeout: 30000, env: { ...process.env, ...env } });
+  const run = (mode, config, output = []) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), mode, config, ...output], { encoding: "utf8", stdio: "pipe" });
   return { root, run };
 }
 
@@ -33,12 +33,12 @@ function application(root, files) {
   return app;
 }
 
-function extractApps(root, run, app, entries, env) {
+function extractApps(root, run, app, entries) {
   const config = join(root, "extract.json");
   const output = join(root, "output.json");
   const apps = Array.isArray(entries) ? entries : Object.entries(entries).map(([name, entry]) => ({ name, path: app, entry }));
   writeFileSync(config, JSON.stringify({ apps }));
-  run("extract", config, [output], env);
+  run("extract", config, [output]);
   return JSON.parse(readFileSync(output, "utf8"));
 }
 
@@ -137,7 +137,6 @@ test("module-scope effects fail with the capability, file and line; missing pack
     "fs.ts": 'import { readFileSync } from "node:fs";\nexport default readFileSync("schema.json", "utf8");\n',
     "missing.ts": 'import pad from "left-pad";\nexport default pad;\n',
     "throw.mjs": 'throw new Error("database unavailable");',
-    "hang.mjs": "while (true) {}",
   });
   const extracted = extractApps(root, run, app, { env: "env.ts", fetch: "fetch.ts", fs: "fs.ts", missing: "missing.ts", broken: "throw.mjs" });
   assert.match(extracted.env.diagnostic, /^env\.ts: ReferenceError: process is not defined: contract evaluation has no process environment\n\s+at \S*\/env\.ts:4:/);
@@ -146,8 +145,6 @@ test("module-scope effects fail with the capability, file and line; missing pack
   assert.match(extracted.missing.diagnostic, /^missing\.ts: Error: Cannot find package left-pad imported from \S*\/missing\.ts; install the application's dependencies or commit holon-contract\.json/);
   assert.equal(extracted.missing.missing, "left-pad");
   assert.match(extracted.broken.diagnostic, /^throw\.mjs: Error: database unavailable\n\s+at \S*\/throw\.mjs:1:/);
-  const { hung } = extractApps(root, run, app, { hung: "hang.mjs" }, { HOLON_CONTRACT_TIMEOUT: "1" });
-  assert.equal(hung.diagnostic, "hang.mjs: no catalog within 1s; raise HOLON_CONTRACT_TIMEOUT if module-scope work needs longer");
 });
 
 test("check uses the application's compiler CLI and honors project file selection", t => {

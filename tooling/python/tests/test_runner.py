@@ -1,7 +1,6 @@
 """The bundled extractor runs the app in a capability-stripped sandbox and asks its server."""
 
 import json
-import os
 import subprocess
 import sys
 import zipfile
@@ -90,7 +89,6 @@ def extract(
     tmp_path: Path,
     apps: dict[str, Path] | list[dict[str, str]],
     entry: str = "server.py",
-    **env: str,
 ) -> dict[str, dict]:
     archive = Path(
         subprocess.check_output(
@@ -108,8 +106,7 @@ def extract(
     )
     config.write_text(json.dumps({"apps": entries}))
     extractor = [sys.executable, "-I", str(tmp_path / "tooling/extract.py")]
-    environment = {**os.environ, **env}
-    subprocess.run([*extractor, str(config), str(output)], check=True, env=environment)
+    subprocess.run([*extractor, str(config), str(output)], check=True)
     return json.loads(output.read_text())
 
 
@@ -277,16 +274,10 @@ def test_module_scope_effects_fail_with_the_capability_file_and_line(tmp_path):
     assert [tool["name"] for tool in result["urlparse"]["tools"]] == ["join"]
 
 
-def test_an_entry_that_raises_or_hangs_while_importing_becomes_a_diagnostic(tmp_path):
+def test_an_entry_that_raises_while_importing_becomes_a_diagnostic(tmp_path):
     broken = write(
         tmp_path / "broken", {"server.py": "raise RuntimeError('no database')"}
     )
     diagnostic = extract(tmp_path, {"broken": broken})["broken"]["diagnostic"]
     assert diagnostic.startswith("server.py: Traceback")
     assert diagnostic.rstrip().endswith("RuntimeError: no database")
-    hung = write(tmp_path / "hung", {"server.py": "while True:\n    pass\n"})
-    result = extract(tmp_path, {"hung": hung}, HOLON_CONTRACT_TIMEOUT="1")
-    assert result["hung"]["diagnostic"] == (
-        "server.py: no catalog within 1s; raise HOLON_CONTRACT_TIMEOUT if "
-        "module-scope work needs longer"
-    )
