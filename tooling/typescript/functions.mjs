@@ -48,11 +48,11 @@ export function functionContract(root, entry) {
     const assigned = property.valueDeclaration;
     let value = ts.isShorthandPropertyAssignment(assigned) ? checker.getShorthandAssignmentValueSymbol(assigned)?.valueDeclaration?.initializer : assigned.initializer;
     if (value && ts.isIdentifier(value)) value = checker.getSymbolAtLocation(value)?.valueDeclaration?.initializer;
-    const type = value && ts.isCallExpression(value) && value.arguments.length && checker.getTypeAtLocation(value.arguments[0]);
+    const type = value && ts.isCallExpression(value) && value.arguments[0] && checker.getTypeAtLocation(value.arguments[0]);
     return type?.isStringLiteral() ? type.value : fail(assigned, `resource ${property.name} needs a string constant URI`);
   };
   const visit = node => {
-    const callee = ts.isCallExpression(node) ? checker.getTypeAtLocation(node.expression).symbol : undefined;
+    const callee = ts.isCallExpression(node) && node.arguments.length > 1 ? checker.getTypeAtLocation(node.expression).symbol : undefined;
     if (callee?.name === "register" && callee.declarations?.[0]?.getSourceFile().fileName === app) {
       for (const [property, [input, output], at] of declarations(node, "tools")) {
         const inputSchema = input.flags & ts.TypeFlags.Unknown ? { type: "object", properties: {}, additionalProperties: false } : object(input, at);
