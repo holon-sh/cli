@@ -29,16 +29,16 @@ export async function contract(root, entry) {
       const { createMcpHandler } = await sandbox.import(sandbox.resolve("@modelcontextprotocol/server", file));
       handler = createMcpHandler(() => exported);
     }
-    const { info, ...result } = await catalog(handler);
+    const result = await catalog(handler, publishing);
     const real = realpathSync(root);
     const files = [...sandbox.served].map(served => relative(real, served)).filter(path => !path.startsWith("..") && !path.split(sep).includes("node_modules")).sort();
-    return { ...result, descriptor: { ...publishing, ...info }, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
+    return { ...result, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
   } catch (error) {
     return { diagnostic: `${entry}: ${sandbox.diagnostic(error)}`, ...(error instanceof MissingPackage && { missing: error.cause }) };
   }
 }
 
-async function catalog(handler) {
+async function catalog(handler, publishing) {
   // The modern protocol: on the legacy path the SDK server needs crypto, which the sandbox lacks.
   const client = new Client(identity, { versionNegotiation: { mode: "auto" } });
   try {
@@ -50,7 +50,7 @@ async function catalog(handler) {
     const tools = capabilities.tools ? await all(client, "tools/list", "tools") : [];
     const resources = capabilities.resources ? await all(client, "resources/list", "resources") : [];
     return {
-      info: client.getServerVersion(),
+      descriptor: { ...publishing, ...client.getServerVersion() },
       tools: tools.map(({ name, inputSchema, outputSchema }) => ({ name, inputSchema, ...(outputSchema && { outputSchema }) })).sort((a, b) => a.name.localeCompare(b.name)),
       // Like a live server's contract, a resource is typed only by its sh.holon/outputSchema.
       resources: resources.map(({ uri, _meta }) => ({ uri, outputSchema: _meta?.[resourceSchemaKey] ?? {} })).sort((a, b) => a.uri.localeCompare(b.uri)),
