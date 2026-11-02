@@ -100,8 +100,7 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 // ErrNoRuntime identifies a project without a declared Holon SDK runtime.
 var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh or holon-ui in package.json, on holon-sh in pyproject.toml, or on github.com/holon-sh/sdk/go in go.mod")
 
-// DeclaredTargets are the slots a project declares: ts and ui when package.json depends on holon-sh
-// and holon-ui, py when pyproject.toml or requirements declare holon-sh, and go when go.mod requires the Go SDK. None is an error.
+// DeclaredTargets are the slots a project's SDK dependencies declare. None is an error.
 func DeclaredTargets(dir string) ([]string, error) {
 	var targets []string
 	var manifest packageJSON
