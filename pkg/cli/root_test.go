@@ -98,7 +98,7 @@ func TestExplicitOwnServer(t *testing.T) {
 	}
 	writeCLIFile(t, root, "server.json", `{"name":"example.com/---","version":"1.0.0","description":"View"}`)
 	run(t, "", "types", "generate", "-s", "./server.py")
-	if data, err := os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts")); err != nil || !strings.Contains(string(data), `Apps["app"]["tools"]`) {
+	if data, err := os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts")); err != nil || !strings.Contains(string(data), `OwnAppKey = "app"`) {
 		t.Fatalf("punctuation-only server name lost its App class: %s, %v", data, err)
 	}
 	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")
