@@ -4,7 +4,6 @@ package cli
 import (
 	"bytes"
 	"cmp"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,7 +87,7 @@ func clientDir(path string) (string, error) {
 
 // consumer selects dependencies from -s. A -s path inside dir is the project's own server, which
 // supplies its identity and contract.
-func consumer(ctx context.Context, dir string, servers []string, options typegen.Options) (typegen.Consumer, error) {
+func consumer(dir string, servers []string) (typegen.Consumer, error) {
 	targets, err := typegen.DeclaredTargets(dir)
 	if err != nil {
 		return typegen.Consumer{}, err
@@ -109,7 +108,7 @@ func consumer(ctx context.Context, dir string, servers []string, options typegen
 		c.Sources = append(c.Sources, source)
 	}
 	if len(servers) == 0 {
-		c.Sources, err = typegen.DeclaredSources(ctx, dir, options)
+		c.Sources, err = typegen.DeclaredSources(dir)
 		if err != nil {
 			return c, err
 		}
@@ -159,12 +158,11 @@ func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (
 	if err != nil {
 		return "", err
 	}
-	options := typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()}
-	c, err := consumer(cmd.Context(), dir, servers, options)
+	c, err := consumer(dir, servers)
 	if err != nil {
 		return "", err
 	}
-	return dir, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, options)
+	return dir, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
 }
 
 // newCheck builds the check command; it is registered as "holon types check" and as the

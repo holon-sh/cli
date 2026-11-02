@@ -76,7 +76,7 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 		"example.com/orders": extraction{Tools: []mcpcontract.Tool{lookupTool}},
 		"example.com/broken": &RunnerError{Status: 2, Stderr: "tools are registered dynamically"},
 		"example.com/---":    extraction{Tools: []mcpcontract.Tool{lookupTool}},
-		"":                   extraction{Descriptor: json.RawMessage(`{"name":"provider"}`)},
+		"":                   extraction{ServerInfo: json.RawMessage(`{"name":"provider"}`)},
 	}
 	source := func(name string) Source { return Source{Path: filepath.Join(root, name)} }
 	orders := source("orders")
