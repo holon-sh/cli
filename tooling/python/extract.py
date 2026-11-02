@@ -90,7 +90,7 @@ class Finder(importlib.abc.MetaPathFinder):
             return None
         search = self.search if path is None else path
         spec = importlib.machinery.PathFinder.find_spec(name, search, target)
-        if spec is None and name == "holon.apps":
+        if name == "holon.apps" and (spec is None or spec.origin is None):
             return importlib.machinery.ModuleSpec(name, EmptyApps())
         if spec is None and path is None:
             raise MissingModule(

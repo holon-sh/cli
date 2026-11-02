@@ -277,8 +277,11 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	}
 	// Check verifies the application files the server loaded, not the slot an image build replaces.
 	c := Consumer{Name: "orders", Dir: orders, Server: &Source{Path: orders}, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+	if err := os.MkdirAll(filepath.Join(orders, "holon/apps/__pycache__"), 0o755); err != nil {
 		t.Fatal(err)
+	}
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+		t.Fatalf("generate beside a holon/apps directory without a module: %v", err)
 	}
 	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
 	if err != nil {
