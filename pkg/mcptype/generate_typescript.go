@@ -6,16 +6,9 @@ import (
 	"fmt"
 )
 
-// Generated entries are index.* for Node and browser.* for browsers.
-
 const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
-`
-
-const factoryTypes = `export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: %s }, options?: CreateOptions): Pick<Apps,K>;
-`
-
-const hostBindingTypes = `export interface HostBinding { host: { callServerTool(params: { name: string; arguments?: Record<string, unknown> }, options?: { signal?: AbortSignal }): Promise<unknown>; readServerResource(params: { uri: string }, options?: { signal?: AbortSignal }): Promise<unknown> } }
+export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 `
 
 const exposeTypes = `export interface ExposeOptions { signal?: AbortSignal; execute?: (name: string, args: Record<string, unknown>) => Promise<unknown> }
@@ -58,22 +51,25 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		protocol = request.Protocol
 	}
 	identity, contracts := encode(request.caller()), encode(request.contracts)
-	types := func(resources string) string {
-		return fmt.Sprintf("import type { Outputs as Resources } from \"./%s.js\";\n%s\nexport type { Resources };\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", resources, protocol, tools)
-	}
-	bound := fmt.Sprintf("export function createApps(bindings,options){return bindApps(%s,%s,bindings,options)}\n", identity, contracts)
-	if request.Target == "browser" {
-		runtime := quoted(cmp.Or(request.RuntimeSpecifier, "./browser-runtime.mjs"))
-		return map[string]string{
-			"browser.js":             fmt.Sprintf("import { bindApps } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", runtime, runtime, bound),
-			"browser.d.ts":           types("browser-resources") + hostBindingTypes + bindingTypes + fmt.Sprintf(factoryTypes, "EndpointBinding | HostBinding") + exposeTypes,
-			"browser-resources.d.ts": resources,
-		}, nil
-	}
+	types := fmt.Sprintf("import type { Outputs as Resources } from \"./resources.js\";\n%s\nexport type { Resources };\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", protocol, tools)
+	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
 	runtime := quoted(cmp.Or(request.RuntimeSpecifier, "./runtime.mjs"))
+	if request.Target == "browser" {
+		files := map[string]string{
+			"index.js":       fmt.Sprintf("import { bindApps, appClass } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", runtime, runtime, bound),
+			"index.d.ts":     types + bindingTypes + exposeTypes,
+			"resources.d.ts": resources,
+		}
+		if request.Own != "" {
+			own := quoted(request.Own)
+			files["index.js"] += fmt.Sprintf("export const App = /* @__PURE__ */ appClass(identity, contracts, %s);\n", own)
+			files["index.d.ts"] += fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\ntype OwnAppKey = %s;\nexport declare class App extends HostApp { readonly tools: Apps[OwnAppKey][\"tools\"]; readonly resources: Apps[OwnAppKey][\"resources\"]; readonly callTool: Apps[OwnAppKey][\"callTool\"] }\n", own)
+		}
+		return files, nil
+	}
 	return map[string]string{
-		"index.js":       fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\nexport const apps = create(%s, %s);\n%s", runtime, runtime, identity, contracts, bound),
-		"index.d.ts":     types("resources") + "export declare const apps: Apps;\n" + bindingTypes + fmt.Sprintf(factoryTypes, "EndpointBinding"),
+		"index.js":       fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\n%sexport const apps = create(identity, contracts);\n", runtime, runtime, bound),
+		"index.d.ts":     types + "export declare const apps: Apps;\n" + bindingTypes,
 		"resources.d.ts": resources,
 	}, nil
 }

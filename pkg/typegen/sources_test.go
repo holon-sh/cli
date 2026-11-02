@@ -110,7 +110,7 @@ func TestDeclaredTargetsFollowSDKDependencies(t *testing.T) {
 		{"optional node", map[string]string{"package.json": `{"optionalDependencies":{"holon-sh":"*"}}`}, []string{TargetTS}, nil},
 		{"python with frontend", map[string]string{"package.json": `{}`, "pyproject.toml": `[project]
 dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetPy}, nil},
-		{"both", map[string]string{"package.json": `{"devDependencies":{"holon-sh":"*"}}`, "requirements.txt": "holon-sh==1.0.0"}, []string{TargetTS, TargetPy}, nil},
+		{"all", map[string]string{"package.json": `{"devDependencies":{"holon-sh":"*","holon-ui":"*"}}`, "requirements.txt": "holon-sh==1.0.0"}, []string{TargetTS, TargetUI, TargetPy}, nil},
 		{"go", map[string]string{"go.mod": "module app\nrequire (\n github.com/holon-sh/sdk/go v0.0.1\n)\n"}, []string{TargetGo}, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
