@@ -60,8 +60,7 @@ export function functionContract(root, entry) {
   };
   const visit = node => {
     // Resolving the callee alone keeps other calls, such as registerTool with Zod schemas, unchecked.
-    let callee = ts.isCallExpression(node) ? checker.getSymbolAtLocation(node.expression) : undefined;
-    if (callee && callee.flags & ts.SymbolFlags.Alias) callee = checker.getAliasedSymbol(callee);
+    const callee = ts.isCallExpression(node) ? checker.getTypeAtLocation(node.expression).symbol : undefined;
     if (callee?.name === "register" && callee.declarations?.[0]?.getSourceFile().fileName === app) {
       for (const [property, [input, output], at] of declarations(node, "tools")) {
         // A function without a parameter takes no arguments.

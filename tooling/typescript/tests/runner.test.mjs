@@ -142,7 +142,9 @@ const add = tool({}, async ({ amount }: { amount: number }): Promise<Count> => (
 const reset = tool({}, () => ({ ok: true as const }));
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "counter", version: "1" });
-  register(server, { tools: { add, reset }, resources: { state } });
+  const addDeclarations = register;
+  register(server, { tools: { add }, resources: { state } });
+  addDeclarations(server, { tools: { reset } });
   server.registerResource("View", "ui://counter/app.html", { mimeType: "text/html" }, () => ({ contents: [] }));
   return server;
 });`,
