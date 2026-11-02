@@ -132,9 +132,7 @@ const add = tool({}, async ({ amount }: { amount: number }): Promise<Count> => (
 const reset = tool({}, () => ({ ok: true as const }));
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "counter", version: "1" });
-  const addDeclarations = register;
-  register(server, { tools: { add }, resources: { state } });
-  addDeclarations(server, { tools: { reset } });
+  register(server, { tools: { add, reset }, resources: { state } });
   return server;
 });`,
     "untyped.ts": `import { McpServer } from "@modelcontextprotocol/server";
