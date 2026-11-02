@@ -49,7 +49,7 @@ export async function contract(root, entry) {
     }
     const result = await catalog(handler, publishing);
     const files = [...sandbox.served].map(served => relative(real, served)).filter(path => !path.startsWith("..") && !path.split(sep).includes("node_modules")).sort();
-    return { ...result, ...(app && { app }), sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
+    return { ...result, app, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
   } catch (error) {
     return { diagnostic: `${entry}: ${sandbox.diagnostic(failure ?? error)}`, ...(error instanceof MissingPackage && { missing: error.cause }) };
   }

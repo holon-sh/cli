@@ -23,7 +23,7 @@ const extensions = ["", ".ts", ".tsx", ".mts", ".js", ".mjs", ".cjs", ".json", "
 export class MissingPackage extends Error {}
 
 // read(path) supplies a file's text that node:fs readFileSync returns, or undefined.
-export function createSandbox(root, vendor, read = () => undefined) {
+export function createSandbox(root, vendor, read) {
   root = realpathSync(root);
   // Whatever the application logs goes to stderr: stdout carries only the contract.
   const context = vm.createContext({ console: new console.Console(process.stderr) });

@@ -18,9 +18,10 @@ export function functionContract(root, entry) {
     const { line, character } = source.getLineAndCharacterOfPosition(node.getStart());
     throw new Error(`${relative(root, source.fileName)}:${line + 1}:${character + 1}: ${message}`);
   };
-  const members = (type, key) => {
-    const symbol = type.getProperty(key);
-    return symbol ? checker.getTypeOfSymbol(symbol).getProperties() : [];
+  // The declarations a register call passes under key, with their type arguments and position.
+  const declarations = (call, key) => {
+    const symbol = checker.getTypeAtLocation(call.arguments[1]).getProperty(key);
+    return (symbol ? checker.getTypeOfSymbol(symbol).getProperties() : []).map(property => [property, checker.getTypeArguments(checker.getTypeOfSymbol(property)), property.valueDeclaration ?? call]);
   };
   const schema = (type, at, seen = new Set()) => {
     if (type.isStringLiteral() || type.isNumberLiteral()) return { const: type.value };
@@ -36,9 +37,9 @@ export function functionContract(root, entry) {
     }
     if (checker.isArrayType(type)) return { type: "array", items: schema(checker.getTypeArguments(type)[0], at, seen) };
     if (type.flags & ts.TypeFlags.Object && !type.getCallSignatures().length && !checker.isTupleType(type) && !checker.getIndexInfosOfType(type).length && !seen.has(type)) {
-      const properties = {}, required = [];
+      const properties = {}, required = [], inside = new Set(seen).add(type);
       for (const property of type.getProperties()) {
-        properties[property.name] = schema(checker.getTypeOfSymbol(property), at, new Set(seen).add(type));
+        properties[property.name] = schema(checker.getTypeOfSymbol(property), at, inside);
         if (!(property.flags & ts.SymbolFlags.Optional)) required.push(property.name);
       }
       return { type: "object", properties, ...(required.length && { required }), additionalProperties: false };
@@ -58,19 +59,16 @@ export function functionContract(root, entry) {
     return type?.isStringLiteral() ? type.value : fail(assigned, `resource ${property.name} needs a string constant URI`);
   };
   const visit = node => {
-    const declaration = ts.isCallExpression(node) ? checker.getResolvedSignature(node)?.declaration : undefined;
-    if (declaration?.getSourceFile().fileName === app && declaration.name?.text === "register") {
-      const declared = checker.getTypeAtLocation(node.arguments[1]);
-      for (const property of members(declared, "tools")) {
-        const [input, output] = checker.getTypeArguments(checker.getTypeOfSymbol(property));
-        const at = property.valueDeclaration ?? node;
+    // Resolving the callee alone keeps other calls, such as registerTool with Zod schemas, unchecked.
+    let callee = ts.isCallExpression(node) ? checker.getSymbolAtLocation(node.expression) : undefined;
+    if (callee && callee.flags & ts.SymbolFlags.Alias) callee = checker.getAliasedSymbol(callee);
+    if (callee?.name === "register" && callee.declarations?.[0]?.getSourceFile().fileName === app) {
+      for (const [property, [input, output], at] of declarations(node, "tools")) {
         // A function without a parameter takes no arguments.
         const inputSchema = input.flags & ts.TypeFlags.Unknown ? { type: "object", properties: {}, additionalProperties: false } : object(input, at);
         tools.push({ name: property.name, inputSchema, outputSchema: object(output, at) });
       }
-      for (const property of members(declared, "resources")) {
-        resources.push({ uri: uri(property), outputSchema: schema(checker.getTypeArguments(checker.getTypeOfSymbol(property))[0], property.valueDeclaration ?? node) });
-      }
+      for (const [property, [output], at] of declarations(node, "resources")) resources.push({ uri: uri(property), outputSchema: schema(output, at) });
     }
     ts.forEachChild(node, visit);
   };
