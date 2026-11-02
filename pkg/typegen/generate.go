@@ -384,7 +384,6 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 	case TargetTS:
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
 	case TargetUI:
-		// Browser code also calls the server itself, through an MCP Apps App typed by its contract.
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "browser", "../runtime.mjs", "holon-sh/protocol"
 		if own.Schema != nil {
 			request.Own = cmp.Or(serverKey(own.Identity.Name), "app")
@@ -438,7 +437,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 // Write validates all consumer slots before writing any of them. Callers hold AcquireLocks
 // and install dependencies before Prepare. Repeating Write repairs slots replaced by an install.
 func (p *Prepared) Write() error {
-	slots := map[[2]string]string{} // by consumer and target
+	slots := map[[2]string]string{}
 	owners := map[string]string{}
 	for _, c := range p.consumers {
 		for _, target := range c.Targets {
@@ -512,8 +511,6 @@ func (p *Prepared) WriteNodeSlot(consumer, pkgDir string) error {
 	return p.writePackageSlot(consumer, TargetTS, pkgDir)
 }
 
-// WriteBrowserSlot writes the consumer's ui clients and their marker into pkgDir/generated, where
-// pkgDir is an installed holon-ui package or a copy staged for an image, as WriteNodeSlot does.
 func (p *Prepared) WriteBrowserSlot(consumer, pkgDir string) error {
 	return p.writePackageSlot(consumer, TargetUI, pkgDir)
 }

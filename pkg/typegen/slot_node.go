@@ -19,8 +19,7 @@ type slotMetadata struct {
 	Identity    mcpcontract.Identity `json:"identity,omitempty"`
 }
 
-// InstalledRuntime resolves the runtime package pkg (holon-sh or holon-ui) from root and verifies
-// its generated-slot contract.
+// InstalledRuntime resolves pkg from root and verifies its generated-slot contract.
 func InstalledRuntime(root, pkg string) (string, error) {
 	for dir := root; ; dir = filepath.Dir(dir) {
 		candidate := filepath.Join(dir, "node_modules", pkg)
