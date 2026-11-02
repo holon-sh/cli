@@ -103,22 +103,12 @@ Let's say you have a server that you're still developing, and it's not in any [M
 # bar/server.py
 from mcp.server import MCPServer
 
-server = MCPServer("bar")
+server = MCPServer("com.example/bar", version="0.1.0", description="Example Bar")
 
 
 @server.tool()
 def greet(name: str) -> str:
     return f"hello {name}"
-```
-
-Give it a `server.json` beside the entry file.
-
-```json
-{
-  "name": "com.example/bar",
-  "version": "0.1.0",
-  "description": "Example Bar"
-}
 ```
 
 Pass its entry file with `-s`.
@@ -178,7 +168,7 @@ A dependency is written in one of three ways.
 <details open>
 <summary><h3>Source code</h3></summary>
 
-An implementation of an MCP server, or its parent directory, with a `server.json` beside its entry.
+An implementation of an MCP server, or its parent directory.
 
 ```sh
 holon types check -s bar/server.py
@@ -217,15 +207,14 @@ holon types check -s https://mcp.context7.com/mcp
 Generate typed clients for MCP servers.
 
 Leverages sh.holon.requires in the publisher-provided metadata field
-(https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) from
-server.json (https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) to
+(https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to
 resolve dependencies, or the -s list for explicit dependencies.
 
 Usage:
   holon types generate [DIR] [flags]
 
 Examples:
-  # Generate for the current project, from server.json requires
+  # Generate for the current project
   holon types generate
 
   # Another project
@@ -247,7 +236,7 @@ Flags:
   -h, --help                 help for generate
   -o, --output string        Write the --contract document to FILE, such as holon-contract.json
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
-                             directory; repeatable. Without it, server.json requires is used
+                             directory; repeatable. Without it, sh.holon.requires is used
   -v, --verbose              Show generation details
 ```
 
@@ -260,15 +249,14 @@ Flags:
 Generate typed clients for MCP servers, then type-check the project's calls to them.
 
 Leverages sh.holon.requires in the publisher-provided metadata field
-(https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) from
-server.json (https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) to
+(https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to
 resolve dependencies, or the -s list for explicit dependencies.
 
 Usage:
   holon types check [DIR] [flags]
 
 Examples:
-  # Generate from server.json requires, then type-check
+  # Generate, then type-check
   holon types check
 
   # Type-check the existing clients only (no network, no writes)
@@ -282,7 +270,7 @@ Flags:
       --no-generate          Type-check the existing clients only: no network, no install, no
                              writes
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
-                             directory; repeatable. Without it, server.json requires is used
+                             directory; repeatable. Without it, sh.holon.requires is used
 ```
 
 </details>

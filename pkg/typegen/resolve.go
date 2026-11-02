@@ -25,23 +25,8 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	}
 	switch {
 	case source.Path != "":
-		root, err := os.MkdirTemp("", "holon-types-")
+		prepared, err := extractSource(ctx, source.Path, o)
 		if err != nil {
-			return nil, err
-		}
-		defer os.RemoveAll(root)
-		if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
-			return nil, err
-		}
-		prepared, err := prepareSource(ctx, "source", source.Path)
-		if err != nil {
-			return nil, err
-		}
-		if prepared.language == "go" {
-			return nil, fmt.Errorf("%s: Go server contracts are not statically extracted", source.Path)
-		}
-		// Printing a contract is how a committed one is regenerated, so a stale file is not an error here.
-		if err := extractSources(ctx, root, []*preparedSource{prepared}, o, false); err != nil {
 			return nil, err
 		}
 		return NewDocument(ctx, prepared.metadata)
@@ -52,6 +37,26 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	default:
 		return ParseDocument(ctx, source.Document.Data)
 	}
+}
+
+func extractSource(ctx context.Context, path string, o Options) (*preparedSource, error) {
+	root, err := os.MkdirTemp("", "holon-types-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(root)
+	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
+		return nil, err
+	}
+	prepared, err := prepareSource(ctx, "source", path)
+	if err != nil {
+		return nil, err
+	}
+	if prepared.language == "go" {
+		return nil, fmt.Errorf("%s: Go server contracts are not statically extracted", path)
+	}
+	// Printing a contract is how a committed one is regenerated, so a stale file is not an error here.
+	return prepared, extractSources(ctx, root, []*preparedSource{prepared}, o, false)
 }
 
 // resolveRegistry fetches a registry record, then its first OCI package's

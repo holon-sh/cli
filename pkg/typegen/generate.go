@@ -3,6 +3,7 @@ package typegen
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -57,6 +58,7 @@ type preparedSource struct {
 	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
+	descriptor                                 json.RawMessage
 }
 
 func (s *preparedSource) extract(result *extraction) error {
@@ -77,6 +79,13 @@ func (s *preparedSource) extract(result *extraction) error {
 		}
 	}
 	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
+	if s.metadata.Identity == (mcpcontract.Identity{}) {
+		descriptor, err := ParseDescriptor(result.Descriptor)
+		if err != nil {
+			return fmt.Errorf("%s: %w; declare the server's name, version and description in its MCP constructor, or add a server.json", s.origin, err)
+		}
+		s.metadata.Identity, s.descriptor = descriptor.Identity(), result.Descriptor
+	}
 	return nil
 }
 
@@ -130,18 +139,18 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 	if err != nil {
 		return nil, err
 	}
-	s := &preparedSource{origin: origin, name: name, entry: entry, language: language}
-	data, err := os.ReadFile(filepath.Join(origin, "server.json"))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w (a server source needs a server.json beside its entry)", origin, err)
+	s := &preparedSource{origin: origin, name: name, entry: entry, language: language, metadata: &mcpcontract.Metadata{}}
+	if data, err := os.ReadFile(filepath.Join(origin, "server.json")); err == nil {
+		descriptor, err := ParseDescriptor(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s/server.json: %w", origin, err)
+		}
+		s.metadata.Identity = descriptor.Identity()
+	} else if !errors.Is(err, fs.ErrNotExist) || language == "go" {
+		return nil, fmt.Errorf("%s: %w (a Go server source needs a server.json beside its entry)", origin, err)
 	}
-	descriptor, err := ParseDescriptor(data)
-	if err != nil {
-		return nil, fmt.Errorf("%s/server.json: %w", origin, err)
-	}
-	s.metadata = &mcpcontract.Metadata{Identity: descriptor.Identity()}
 	if language != "go" {
-		if err = writePlaceholders(ctx, origin, s.metadata.Identity); err != nil {
+		if err = writePlaceholders(ctx, origin); err != nil {
 			return nil, fmt.Errorf("%s: %w", origin, err)
 		}
 	}
@@ -156,7 +165,7 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 // writePlaceholders gives a path source's declared slots empty clients when they have none, so a
 // server that imports its own generated clients can run before they exist. A slot that has
 // contents, or that its validation refuses, is left alone.
-func writePlaceholders(ctx context.Context, dir string, identity mcpcontract.Identity) error {
+func writePlaceholders(ctx context.Context, dir string) error {
 	targets, err := DeclaredTargets(dir)
 	if errors.Is(err, ErrNoRuntime) {
 		return nil
@@ -164,7 +173,7 @@ func writePlaceholders(ctx context.Context, dir string, identity mcpcontract.Ide
 	if err != nil {
 		return err
 	}
-	request := mcptype.GenerateRequest{Identity: identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + filepath.Base(dir)}
+	request := mcptype.GenerateRequest{Identity: mcpcontract.Identity{Name: filepath.Base(dir), Version: "0.0.0"}, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + filepath.Base(dir)}
 	for _, target := range targets {
 		var write func(map[string][]byte) error
 		switch target {

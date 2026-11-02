@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -105,7 +107,7 @@ func fakeRun(results map[string]any) func(context.Context, string, string, []str
 			return fmt.Errorf("entry %s is not in its snapshot %s", entry, root)
 		}
 		var descriptor struct{ Name string }
-		if err := readTypeJSON(filepath.Join(root, "server.json"), &descriptor); err != nil {
+		if err := readTypeJSON(filepath.Join(root, "server.json"), &descriptor); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		switch result := results[descriptor.Name].(type) {

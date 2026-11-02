@@ -4,6 +4,7 @@ package cli
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,9 +19,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const dependencyHelp = "Leverages sh.holon.requires in the publisher-provided metadata field (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) from server.json (https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) to resolve dependencies, or the -s list for explicit dependencies."
+const dependencyHelp = "Leverages sh.holon.requires in the publisher-provided metadata field (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to resolve dependencies, or the -s list for explicit dependencies."
 
-const generateExamples = `  # Generate for the current project, from server.json requires
+const generateExamples = `  # Generate for the current project
   holon types generate
 
   # Another project
@@ -85,9 +86,9 @@ func clientDir(path string) (string, error) {
 	return filepath.EvalSymlinks(dir)
 }
 
-// consumer selects dependencies from -s or server.json. A -s path inside dir is the project's own
-// server, which supplies its identity and contract.
-func consumer(dir string, servers []string) (typegen.Consumer, error) {
+// consumer selects dependencies from -s. A -s path inside dir is the project's own server, which
+// supplies its identity and contract.
+func consumer(ctx context.Context, dir string, servers []string, options typegen.Options) (typegen.Consumer, error) {
 	targets, err := typegen.DeclaredTargets(dir)
 	if err != nil {
 		return typegen.Consumer{}, err
@@ -108,13 +109,13 @@ func consumer(dir string, servers []string) (typegen.Consumer, error) {
 		c.Sources = append(c.Sources, source)
 	}
 	if len(servers) == 0 {
-		c.Sources, err = typegen.DeclaredSources(dir)
+		c.Sources, err = typegen.DeclaredSources(ctx, dir, options)
 		if err != nil {
 			return c, err
 		}
 	}
 	if len(c.Sources) == 0 && c.Server == nil {
-		return c, fmt.Errorf("%s has no requires in server.json; pass -s", dir)
+		return c, fmt.Errorf("%s declares no requires; pass -s", dir)
 	}
 	return c, nil
 }
@@ -158,11 +159,12 @@ func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (
 	if err != nil {
 		return "", err
 	}
-	c, err := consumer(dir, servers)
+	options := typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()}
+	c, err := consumer(cmd.Context(), dir, servers, options)
 	if err != nil {
 		return "", err
 	}
-	return dir, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
+	return dir, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, options)
 }
 
 // newCheck builds the check command; it is registered as "holon types check" and as the
@@ -170,7 +172,7 @@ func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (
 func newCheck(short string) *cobra.Command {
 	var servers []string
 	var noGenerate bool
-	cmd := &cobra.Command{Use: "check [DIR]", Short: short, Long: "Generate typed clients for MCP servers, then type-check the project's calls to them.\n\n" + dependencyHelp, Example: `  # Generate from server.json requires, then type-check
+	cmd := &cobra.Command{Use: "check [DIR]", Short: short, Long: "Generate typed clients for MCP servers, then type-check the project's calls to them.\n\n" + dependencyHelp, Example: `  # Generate, then type-check
   holon types check
 
   # Type-check the existing clients only (no network, no writes)
@@ -198,7 +200,7 @@ func newCheck(short string) *cobra.Command {
 	return cmd
 }
 
-const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, server.json requires is used"
+const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, sh.holon.requires is used"
 
 // NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string) *cobra.Command {
