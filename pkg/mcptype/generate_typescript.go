@@ -63,7 +63,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		if request.Own != "" {
 			own := quoted(request.Own)
 			files["index.js"] += fmt.Sprintf("export const App = /* @__PURE__ */ appClass(identity, contracts, %s);\n", own)
-			files["index.d.ts"] += fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\nexport declare class App extends HostApp { readonly tools: Apps[%s][\"tools\"]; readonly resources: Apps[%s][\"resources\"]; readonly callTool: Apps[%s][\"callTool\"] }\n", own, own, own)
+			files["index.d.ts"] += fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\ntype OwnAppKey = %s;\nexport declare class App extends HostApp { readonly tools: Apps[OwnAppKey][\"tools\"]; readonly resources: Apps[OwnAppKey][\"resources\"]; readonly callTool: Apps[OwnAppKey][\"callTool\"] }\n", own)
 		}
 		return files, nil
 	}
