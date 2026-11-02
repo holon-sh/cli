@@ -124,10 +124,7 @@ export declare function register(server: unknown, declarations: { tools?: Record
 const { default: { schema } } = await import(new URL("./generated/app.json", import.meta.url).href, { with: { type: "json" } });
 export const tool = () => ({}), resource = uri => ({ uri });
 export function register(server, { tools = {}, resources = {} }) {
-  for (const name in tools) {
-    const { inputSchema, outputSchema } = schema.tools.find(tool => tool.name === name);
-    server.registerTool(name, { inputSchema: fromJsonSchema(inputSchema), outputSchema: fromJsonSchema(outputSchema) }, () => ({ content: [] }));
-  }
+  for (const { name, inputSchema, outputSchema } of schema.tools.filter(tool => tool.name in tools)) server.registerTool(name, { inputSchema: fromJsonSchema(inputSchema), outputSchema: fromJsonSchema(outputSchema) }, () => ({ content: [] }));
   for (const [name, { uri }] of Object.entries(resources)) server.registerResource(name, uri, { _meta: { "sh.holon/outputSchema": schema.resources.find(resource => resource.uri === uri).outputSchema } }, () => ({ contents: [] }));
 }`,
     "types.ts": "export interface Count { count: number; label?: string | null; tags: string[]; done: boolean }",
