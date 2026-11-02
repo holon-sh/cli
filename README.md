@@ -170,8 +170,6 @@ A dependency is written in one of three ways.
 
 An implementation of an MCP server, or its parent directory.
 
-A TypeScript server can declare tools and resources as typed functions and add them with `register` from `holon-sh/app`. Their JSON Schemas come from the functions' types, and `holon types generate` writes them to the `holon-sh` package's `generated/app.json`, where `register` reads them.
-
 ```sh
 holon types check -s bar/server.py
 ```

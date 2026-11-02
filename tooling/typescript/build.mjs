@@ -1,6 +1,5 @@
 // Bundle the standalone extractor and check runner into the archive pkg/tooling embeds.
-// Type checking uses the consumer's installed compiler and standard declarations; the extractor's
-// bundled compiler reads the ECMAScript ones beside runner.mjs.
+// Type checking uses the consumer's installed compiler and standard declarations.
 // The output is byte-for-byte reproducible from package-lock.json.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";

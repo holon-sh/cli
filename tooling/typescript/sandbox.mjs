@@ -22,7 +22,6 @@ const extensions = ["", ".ts", ".tsx", ".mts", ".js", ".mjs", ".cjs", ".json", "
 
 export class MissingPackage extends Error {}
 
-// read(path) supplies a file's text that node:fs readFileSync returns, or undefined.
 export function createSandbox(root, vendor, read) {
   root = realpathSync(root);
   // Whatever the application logs goes to stderr: stdout carries only the contract.
@@ -188,7 +187,9 @@ export function createSandbox(root, vendor, read) {
     resolve: (specifier, referrer) => resolveSpecifier(specifier, realpathSync(referrer), ["import", "node"]).file,
     // diagnostic rewrites transpiled positions to the original source and names missing capabilities.
     diagnostic(error) {
-      let text = String(error?.stack ?? error).replace(/(file:\/\/[^\s):]+):(\d+):(\d+)/g, (match, url, line, column) => {
+      let text = String(error?.stack ?? error);
+      for (let cause = error?.cause; cause?.stack; cause = cause.cause) text += `\n${cause.stack}`;
+      text = text.replace(/(file:\/\/[^\s):]+):(\d+):(\d+)/g, (match, url, line, column) => {
         const entry = maps.get(url)?.findEntry(line - 1, column - 1);
         const path = fileURLToPath(url);
         return entry?.originalLine === undefined ? `${path}:${line}:${column}` : `${path}:${entry.originalLine + 1}:${entry.originalColumn + 1}`;

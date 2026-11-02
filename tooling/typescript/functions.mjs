@@ -1,12 +1,8 @@
-// The contract holon-sh/app's register reads from its generated app.json, derived from the entry's
-// TypeScript: for each register call, its tools by name, with JSON Schemas for each function's input
-// and awaited result types, and its resources by URI, with their read result's.
 import { join, relative } from "node:path";
 import ts from "typescript";
 
-const options = { strict: true, allowJs: true, noEmit: true, skipLibCheck: true, target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, allowImportingTsExtensions: true, lib: ["lib.esnext.d.ts"], types: [] };
+const options = { strict: true, allowJs: true, moduleResolution: ts.ModuleResolutionKind.Bundler, lib: ["lib.esnext.d.ts"], types: [] };
 
-// functionContract returns that contract and the application files the program read.
 export function functionContract(root, entry) {
   const file = join(root, entry);
   const program = ts.createProgram([file], options);
@@ -18,7 +14,6 @@ export function functionContract(root, entry) {
     const { line, character } = source.getLineAndCharacterOfPosition(node.getStart());
     throw new Error(`${relative(root, source.fileName)}:${line + 1}:${character + 1}: ${message}`);
   };
-  // The declarations a register call passes under key, with their type arguments and position.
   const declarations = (call, key) => {
     const symbol = checker.getTypeAtLocation(call.arguments[1]).getProperty(key);
     return (symbol ? checker.getTypeOfSymbol(symbol).getProperties() : []).map(property => [property, checker.getTypeArguments(checker.getTypeOfSymbol(property)), property.valueDeclaration ?? call]);
@@ -30,7 +25,6 @@ export function functionContract(root, entry) {
     if (type.flags & ts.TypeFlags.Number) return { type: "number" };
     if (type.flags & ts.TypeFlags.Null) return { type: "null" };
     if (type.isUnion()) {
-      // boolean is true | false; an optional property adds undefined, which JSON omits.
       const options = type.types.filter(option => !(option.flags & ts.TypeFlags.Undefined));
       if (options.every(option => option.flags & ts.TypeFlags.BooleanLiteral)) return { type: "boolean" };
       return options.length === 1 ? schema(options[0], at, seen) : { anyOf: options.map(option => schema(option, at, seen)) };
@@ -50,7 +44,6 @@ export function functionContract(root, entry) {
     const result = schema(type, at);
     return result.type === "object" ? result : fail(at, "tool inputs and results must be JSON objects");
   };
-  // A resource's URI is the string constant its resource(uri, read) declaration passes.
   const uri = property => {
     const assigned = property.valueDeclaration;
     let value = ts.isShorthandPropertyAssignment(assigned) ? checker.getShorthandAssignmentValueSymbol(assigned)?.valueDeclaration?.initializer : assigned.initializer;
@@ -59,11 +52,9 @@ export function functionContract(root, entry) {
     return type?.isStringLiteral() ? type.value : fail(assigned, `resource ${property.name} needs a string constant URI`);
   };
   const visit = node => {
-    // Resolving the callee alone keeps other calls, such as registerTool with Zod schemas, unchecked.
     const callee = ts.isCallExpression(node) ? checker.getTypeAtLocation(node.expression).symbol : undefined;
     if (callee?.name === "register" && callee.declarations?.[0]?.getSourceFile().fileName === app) {
       for (const [property, [input, output], at] of declarations(node, "tools")) {
-        // A function without a parameter takes no arguments.
         const inputSchema = input.flags & ts.TypeFlags.Unknown ? { type: "object", properties: {}, additionalProperties: false } : object(input, at);
         tools.push({ name: property.name, inputSchema, outputSchema: object(output, at) });
       }

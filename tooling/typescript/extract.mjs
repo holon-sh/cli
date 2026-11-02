@@ -19,20 +19,15 @@ const resourceSchemaKey = "sh.holon/outputSchema";
 export async function contract(root, entry) {
   const vendor = join(dirname(realpathSync(process.argv[1])), "vendor", "node_modules");
   const real = realpathSync(root);
-  // holon-sh/app replaces a failure to read app.json with its own message, so the runner reports its own.
-  let app, failure;
+  let app;
   const sandbox = createSandbox(root, vendor, path => {
     if (!/[\\/]holon-sh[\\/]generated[\\/]app\.json$/.test(path)) return;
-    try {
-      if (!app) {
-        const { contract, files } = functionContract(real, entry);
-        app = contract;
-        for (const file of files) sandbox.served.add(file);
-      }
-      return JSON.stringify(app);
-    } catch (error) {
-      throw (failure = error);
+    if (!app) {
+      const { contract, files } = functionContract(real, entry);
+      app = contract;
+      for (const file of files) sandbox.served.add(file);
     }
+    return JSON.stringify(app);
   });
   try {
     const file = join(root, entry);
@@ -48,7 +43,7 @@ export async function contract(root, entry) {
     const files = [...sandbox.served].map(served => relative(real, served)).filter(path => !path.startsWith("..") && !path.split(sep).includes("node_modules")).sort();
     return { ...result, app, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
   } catch (error) {
-    return { diagnostic: `${entry}: ${sandbox.diagnostic(failure ?? error)}`, ...(error instanceof MissingPackage && { missing: error.cause }) };
+    return { diagnostic: `${entry}: ${sandbox.diagnostic(error)}`, ...(error instanceof MissingPackage && { missing: error.cause }) };
   }
 }
 
