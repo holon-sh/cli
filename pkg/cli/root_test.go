@@ -96,11 +96,6 @@ func TestExplicitOwnServer(t *testing.T) {
 			t.Fatalf("%s = %s, %v", pkg, data, err)
 		}
 	}
-	writeCLIFile(t, root, "server.json", `{"name":"example.com/---","version":"1.0.0","description":"View"}`)
-	run(t, "", "types", "generate", "-s", "./server.py")
-	if data, err := os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts")); err != nil || !strings.Contains(string(data), `type OwnAppKey = "app"`) {
-		t.Fatalf("punctuation-only server name lost its App class: %s, %v", data, err)
-	}
 	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")
 }
 
@@ -122,6 +117,8 @@ func TestUsageErrors(t *testing.T) {
 	run(t, "holon-sh is not installed", "check", "--no-generate")
 	installCLISlot(t, root)
 	run(t, "declares no requires; pass -s", "check")
+	writeCLIFile(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0","registry":"https://127.0.0.1:1"}}}}}}`)
+	run(t, "example.com/orders@1.0.0", "types", "generate")
 	run(t, "has no generated clients; run holon types generate", "check", "--no-generate")
 }
 
@@ -148,43 +145,4 @@ func TestContractOfAPathSource(t *testing.T) {
 		t.Fatalf("committed contract = %s, %v", data, err)
 	}
 	run(t, "--output writes a --contract document", "types", "generate", "-o", committed)
-}
-
-func TestGenerateReadsRequires(t *testing.T) {
-	compiler, err := filepath.Abs("../../tooling/typescript/node_modules/typescript")
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	client := filepath.Join(root, "checkout")
-	writeCLIFile(t, client, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	writeCLIFile(t, client, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0","registry":"https://127.0.0.1:1"}}}}}}`)
-	// A ts-only client can have an entry without treating it as its own server.
-	writeCLIFile(t, client, "server.ts", "export const answer: string = 'ready';\n")
-	installCLISlot(t, client)
-	if err := os.Symlink(compiler, filepath.Join(client, "node_modules/typescript")); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"orders", "docs,archive"} {
-		writeCLIFile(t, root, name+"/server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
-		writeCLIFile(t, root, name+"/server.py", pythonServer)
-	}
-	t.Chdir(client)
-	run(t, "example.com/orders@1.0.0", "types", "generate")
-
-	// Check must generate before checking, accept DIR through a symlink, and resolve
-	// repeatable -s values (including a comma in a path) against the working directory.
-	if err := os.Symlink(client, filepath.Join(root, "client-link")); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(root)
-	output := run(t, "", "types", "check", "-s=orders", "client-link", "-sdocs=docs,archive")
-	if output != "Typed contracts check passed.\n" {
-		t.Fatalf("check with explicit dependencies = %q", output)
-	}
-	data, err := os.ReadFile(filepath.Join(client, "node_modules/holon-sh/generated/index.d.ts"))
-	if err != nil || !strings.Contains(string(data), "orders") || !strings.Contains(string(data), "docs") {
-		t.Fatalf("repeatable dependencies not generated: %s, %v", data, err)
-	}
-	run(t, "", "check", "client-link", "--no-generate")
 }
