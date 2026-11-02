@@ -24,14 +24,13 @@ var appName = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 // Targets name the SDK slot a consumer receives clients in.
 const (
 	TargetTS = "ts" // node_modules/holon-sh/generated, resolved upward from the consumer
-	TargetUI = "ui" // node_modules/holon-ui/generated, resolved upward from the consumer
+	TargetUI = "ui"
 	TargetPy = "py" // holon/apps/__init__.py in the consumer
 	TargetGo = "go" // holon/ Go package in the consumer; needs Options.GoModule
 )
 
 var targets = []string{TargetTS, TargetUI, TargetPy, TargetGo}
 
-// nodePackages are the installed packages that own the ts and ui targets' generated slots.
 var nodePackages = map[string]string{TargetTS: "holon-sh", TargetUI: "holon-ui"}
 
 // Source is one MCP server whose contract becomes a client, supplied explicitly or declared in
@@ -41,8 +40,7 @@ type Source struct {
 	// name (example.com/orders → orders), or the live server's serverInfo name for an Endpoint.
 	Alias string
 	// Path is a server entry file (server.py, server.ts, server.js, or the same under src/) or a
-	// directory containing exactly one. Its contract is extracted by running its server, whose
-	// serverInfo supplies the identity unless a server.json beside the entry does.
+	// directory containing exactly one.
 	Path string
 	// Registry is an MCP registry server version. Resolve its OCI package's document,
 	// falling back to its streamable-http remote when the image has no contract.
@@ -104,7 +102,7 @@ type Consumer struct {
 	// Server is the consumer's own MCP server, a path source inside Dir. It supplies the
 	// consumer's identity, contract (Metadata) and check configuration.
 	Server *Source
-	// Targets are the slots to write, from TargetTS, TargetUI, TargetPy and TargetGo.
+	// Targets are the slots to write.
 	// A server can have no targets when only its contract is needed.
 	Targets []string
 	// Sources are the servers that become apps.<alias> clients.

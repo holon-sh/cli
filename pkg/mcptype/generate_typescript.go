@@ -6,8 +6,6 @@ import (
 	"fmt"
 )
 
-// Generated entries are index.* in holon-sh for Node and in holon-ui for browsers.
-
 const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
@@ -64,7 +62,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		}
 		if request.Own != "" {
 			own := quoted(request.Own)
-			files["index.js"] += fmt.Sprintf("export const App = appClass(identity, contracts, %s);\n", own)
+			files["index.js"] += fmt.Sprintf("export const App = /* @__PURE__ */ appClass(identity, contracts, %s);\n", own)
 			files["index.d.ts"] += fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\nexport declare class App extends HostApp { readonly tools: Apps[%s][\"tools\"]; readonly resources: Apps[%s][\"resources\"]; readonly callTool: Apps[%s][\"callTool\"] }\n", own, own, own)
 		}
 		return files, nil

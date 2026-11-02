@@ -54,15 +54,14 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Server code calls its dependencies; browser code also calls the server itself, through its App.
+	// Server code calls its dependencies; browser code also calls the server itself.
 	if node := read(t, stage, "holon-sh/generated/index.js"); !strings.Contains(node, `"lookup"`) || strings.Contains(node, `"status"`) {
 		t.Fatalf("node client:\n%s", node)
 	}
-	// holon-sh/app's register reads the own server's function declarations from app.json.
 	if app := read(t, stage, "holon-sh/generated/app.json"); app != `{"schema":{"tools":[]}}` {
 		t.Fatalf("app.json = %s", app)
 	}
-	if browser := read(t, stage, "holon-ui/generated/index.js"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `export const App = appClass(identity, contracts, "checkout")`) {
+	if browser := read(t, stage, "holon-ui/generated/index.js"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `appClass(identity, contracts, "checkout")`) {
 		t.Fatalf("browser client:\n%s", browser)
 	}
 }

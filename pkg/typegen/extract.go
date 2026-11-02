@@ -21,9 +21,8 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
-// extraction is the contract a runner prints: the server's catalog, the server.json it implies, and
-// the application files it loaded, with their SHA-256 digests. App is the generated app.json that
-// holon-sh/app's register reads, for a server that registers typed function declarations.
+// extraction is the contract a runner prints: the server's catalog and the application files it
+// loaded, with their SHA-256 digests.
 type extraction struct {
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`

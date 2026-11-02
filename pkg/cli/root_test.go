@@ -89,7 +89,7 @@ func TestExplicitOwnServer(t *testing.T) {
 	writeCLIFile(t, orders, "server.py", pythonServer)
 	writeCLIFile(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
 	run(t, "", "types", "generate", "-s", "./server.py", "-s", orders)
-	// The own server is callable from the browser, through holon-ui's App, but is not a dependency of itself.
+	// The own server is callable from the browser but is not a dependency of itself.
 	for pkg, want := range map[string]bool{"holon-sh": false, "holon-ui": true} {
 		data, err := os.ReadFile(filepath.Join(root, "node_modules", pkg, "generated/index.d.ts"))
 		if err != nil || strings.Contains(string(data), `"view"`) != want || strings.Contains(string(data), "class App") != want || !strings.Contains(string(data), `"orders"`) {
