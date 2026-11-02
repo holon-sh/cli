@@ -41,8 +41,7 @@ type Source struct {
 	// name (example.com/orders → orders), or the live server's serverInfo name for an Endpoint.
 	Alias string
 	// Path is a server entry file (server.py, server.ts, server.js, or the same under src/) or a
-	// directory containing exactly one. Its contract is extracted by running its server, whose
-	// serverInfo supplies the identity unless a server.json beside the entry does.
+	// directory containing exactly one.
 	Path string
 	// Registry is an MCP registry server version. Resolve its OCI package's document,
 	// falling back to its streamable-http remote when the image has no contract.

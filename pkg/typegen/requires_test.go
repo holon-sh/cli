@@ -50,8 +50,6 @@ func TestDeclaredSources(t *testing.T) {
 	}
 }
 
-// Without a server.json, a server's constructor names it and its publishing declaration supplies
-// the rest of its descriptor; a server.json takes precedence.
 func TestServerDescribesItself(t *testing.T) {
 	const meta = `{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"}}}}}`
 	for entry, source := range map[string]string{

@@ -99,8 +99,7 @@ func needNode(t *testing.T) {
 }
 
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
-// snapshot's server.json name ("" without one), printing an extraction or returning an error as the
-// runner's failure.
+// snapshot's server.json name, printing an extraction or returning an error as the runner's failure.
 func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
 	return func(_ context.Context, _, _ string, args []string, stdout io.Writer) error {
 		root, entry := args[1], args[2]

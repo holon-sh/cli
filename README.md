@@ -111,7 +111,7 @@ def greet(name: str) -> str:
     return f"hello {name}"
 ```
 
-The constructor names the server; a [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) beside the entry file takes precedence. Pass its entry file with `-s`.
+Pass its entry file with `-s`.
 
 ```sh
 holon types check foo -s bar/server.py
@@ -168,7 +168,7 @@ A dependency is written in one of three ways.
 <details open>
 <summary><h3>Source code</h3></summary>
 
-An implementation of an MCP server, or its parent directory. Its MCP constructor or a `server.json` beside its entry names it.
+An implementation of an MCP server, or its parent directory.
 
 ```sh
 holon types check -s bar/server.py
@@ -179,7 +179,7 @@ holon types check -s bar/server.py
 <details open>
 <summary><h3>Registry</h3></summary>
 
-A `sh.holon.requires` entry in [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json), or `-s` with a registry version URL. Without a `server.json`, the server entry's `publishing` declaration (an exported object in TypeScript, a module-level dictionary in Python) supplies the descriptor's other fields, `_meta` among them. The record is fetched for its contract.
+A `sh.holon.requires` entry in [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json), or `-s` with a registry version URL. The record is fetched for its contract.
 
 ```sh
 holon types check -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
@@ -207,16 +207,14 @@ holon types check -s https://mcp.context7.com/mcp
 Generate typed clients for MCP servers.
 
 Leverages sh.holon.requires in the publisher-provided metadata field
-(https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) from
-server.json (https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json), or
-from the server's publishing declaration when it has none, to resolve dependencies, or the -s
-list for explicit dependencies.
+(https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to
+resolve dependencies, or the -s list for explicit dependencies.
 
 Usage:
   holon types generate [DIR] [flags]
 
 Examples:
-  # Generate for the current project, from its declared requires
+  # Generate for the current project
   holon types generate
 
   # Another project
@@ -238,7 +236,7 @@ Flags:
   -h, --help                 help for generate
   -o, --output string        Write the --contract document to FILE, such as holon-contract.json
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
-                             directory; repeatable. Without it, the declared requires are used
+                             directory; repeatable. Without it, sh.holon.requires is used
   -v, --verbose              Show generation details
 ```
 
@@ -251,16 +249,14 @@ Flags:
 Generate typed clients for MCP servers, then type-check the project's calls to them.
 
 Leverages sh.holon.requires in the publisher-provided metadata field
-(https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) from
-server.json (https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json), or
-from the server's publishing declaration when it has none, to resolve dependencies, or the -s
-list for explicit dependencies.
+(https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to
+resolve dependencies, or the -s list for explicit dependencies.
 
 Usage:
   holon types check [DIR] [flags]
 
 Examples:
-  # Generate from the declared requires, then type-check
+  # Generate, then type-check
   holon types check
 
   # Type-check the existing clients only (no network, no writes)
@@ -274,7 +270,7 @@ Flags:
       --no-generate          Type-check the existing clients only: no network, no install, no
                              writes
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
-                             directory; repeatable. Without it, the declared requires are used
+                             directory; repeatable. Without it, sh.holon.requires is used
 ```
 
 </details>

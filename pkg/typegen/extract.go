@@ -21,8 +21,8 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
-// extraction is the contract a runner prints: the server's catalog, the server.json it implies, and
-// the application files it loaded, with their SHA-256 digests.
+// extraction is the contract a runner prints: the server's catalog and the application files it
+// loaded, with their SHA-256 digests.
 type extraction struct {
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`

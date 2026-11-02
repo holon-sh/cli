@@ -12,9 +12,6 @@ import (
 	"slices"
 )
 
-// ReadDescriptor returns dir's MCP descriptor: its server.json or, without one, the descriptor its
-// Python or TypeScript server implies when it runs (the entry's publishing declaration with the
-// serverInfo the server reports). It is nil for a directory with neither.
 func ReadDescriptor(ctx context.Context, dir string, options Options) (json.RawMessage, error) {
 	data, err := os.ReadFile(filepath.Join(dir, "server.json"))
 	if !errors.Is(err, fs.ErrNotExist) {
@@ -31,9 +28,7 @@ func ReadDescriptor(ctx context.Context, dir string, options Options) (json.RawM
 	return s.descriptor, nil
 }
 
-// DeclaredSources returns one registry source per sh.holon.requires entry of dir's descriptor,
-// keyed by its alias and sorted by it. A directory without a descriptor, or whose descriptor
-// declares no requires, has no declared sources and returns nil, nil.
+// DeclaredSources returns one registry source per sh.holon.requires entry, sorted by alias.
 func DeclaredSources(ctx context.Context, dir string, options Options) ([]Source, error) {
 	data, err := ReadDescriptor(ctx, dir, options)
 	if err != nil || data == nil {

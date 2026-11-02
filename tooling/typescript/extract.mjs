@@ -5,8 +5,7 @@
 // no filesystem, network or timers. The application's own Zod and MCP SDK compute the schemas, or
 // the tooling's copies when it has none.
 // The files the loader serves from the application tree are recorded as `sources`, the inputs check
-// and verify require to be unchanged. The `descriptor` is the server.json the server implies: the
-// entry's `publishing` export with the serverInfo the server reports.
+// and verify require to be unchanged.
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
