@@ -509,17 +509,17 @@ func (p *Prepared) files(consumer, target string) (*preparedConsumer, map[string
 // pkgDir/generated, where pkgDir is an installed holon-sh package or a copy staged for an image.
 // It refuses slots that are unmarked, symlinked or owned by another consumer, and leaves an identical slot untouched.
 func (p *Prepared) WriteNodeSlot(consumer, pkgDir string) error {
-	c, files, err := p.files(consumer, TargetTS)
-	if err != nil {
-		return err
-	}
-	return writeNodeSlot(pkgDir, files, c.slot)
+	return p.writePackageSlot(consumer, TargetTS, pkgDir)
 }
 
 // WriteBrowserSlot writes the consumer's ui clients and their marker into pkgDir/generated, where
 // pkgDir is an installed holon-ui package or a copy staged for an image, as WriteNodeSlot does.
 func (p *Prepared) WriteBrowserSlot(consumer, pkgDir string) error {
-	c, files, err := p.files(consumer, TargetUI)
+	return p.writePackageSlot(consumer, TargetUI, pkgDir)
+}
+
+func (p *Prepared) writePackageSlot(consumer, target, pkgDir string) error {
+	c, files, err := p.files(consumer, target)
 	if err != nil {
 		return err
 	}
