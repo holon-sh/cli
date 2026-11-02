@@ -26,7 +26,7 @@ import (
 type extraction struct {
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`
-	Descriptor json.RawMessage        `json:"descriptor"`
+	ServerInfo json.RawMessage        `json:"serverInfo"`
 	Sources    map[string]string      `json:"sources"`
 }
 

@@ -90,6 +90,8 @@ class Finder(importlib.abc.MetaPathFinder):
             return None
         search = self.search if path is None else path
         spec = importlib.machinery.PathFinder.find_spec(name, search, target)
+        if name == "holon.apps" and (spec is None or spec.origin is None):
+            return importlib.machinery.ModuleSpec(name, EmptyApps())
         if spec is None and path is None:
             raise MissingModule(
                 f"No module named {name!r}; install the application's dependencies "
@@ -103,6 +105,15 @@ class Finder(importlib.abc.MetaPathFinder):
         ):
             self.served.add(Path(spec.origin).resolve())
         return spec
+
+
+class EmptyApps(importlib.abc.Loader):
+    def exec_module(self, module: ModuleType) -> None:
+        apps = importlib.import_module("holon.client").Apps
+        vars(module).update(
+            apps=apps({"requires": {}}, {}),
+            create_apps=lambda bindings: apps({"requires": {}}, {}, bindings),
+        )
 
 
 def installed() -> list[str]:
@@ -240,9 +251,7 @@ def find_server(module: object) -> MCPServer | Server[Any]:
     )
 
 
-async def catalog(
-    server: MCPServer | Server[Any], publishing: dict[str, Any]
-) -> dict[str, Any]:
+async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
     from mcp.client import Client
 
     tools: list[dict[str, Any]] = []
@@ -273,10 +282,7 @@ async def catalog(
             if not (cursor := listed.next_cursor):
                 break
     return {
-        "descriptor": {
-            **publishing,
-            **(info.model_dump(by_alias=True, exclude_none=True) if info else {}),
-        },
+        "serverInfo": info.model_dump(by_alias=True, exclude_none=True) if info else {},
         "tools": sorted(tools, key=lambda tool: tool["name"]),
         "resources": sorted(resources, key=lambda resource: resource["uri"]),
     }
@@ -298,8 +304,7 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
         finder.served.add(path.resolve())
         module = sys.modules[path.stem] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        publishing = getattr(module, "publishing", None) or {}
-        result = loop.run_until_complete(catalog(find_server(module), publishing))
+        result = loop.run_until_complete(catalog(find_server(module)))
     except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
         frames = [
             frame

@@ -3,7 +3,6 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -58,7 +57,6 @@ type preparedSource struct {
 	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
-	descriptor                                 json.RawMessage
 }
 
 func (s *preparedSource) extract(result *extraction) error {
@@ -80,11 +78,11 @@ func (s *preparedSource) extract(result *extraction) error {
 	}
 	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
 	if s.metadata.Identity == (mcpcontract.Identity{}) {
-		descriptor, err := ParseDescriptor(result.Descriptor)
+		descriptor, err := ParseDescriptor(result.ServerInfo)
 		if err != nil {
 			return fmt.Errorf("%s: %w; declare the server's name, version and description in its MCP constructor, or add a server.json", s.origin, err)
 		}
-		s.metadata.Identity, s.descriptor = descriptor.Identity(), result.Descriptor
+		s.metadata.Identity = descriptor.Identity()
 	}
 	return nil
 }
@@ -149,11 +147,6 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 	} else if !errors.Is(err, fs.ErrNotExist) || language == "go" {
 		return nil, fmt.Errorf("%s: %w (a Go server source needs a server.json beside its entry)", origin, err)
 	}
-	if language != "go" {
-		if err = writePlaceholders(ctx, origin); err != nil {
-			return nil, fmt.Errorf("%s: %w", origin, err)
-		}
-	}
 	// The runners import the server where it lives, beside its installed dependencies, so the
 	// fingerprint guards against changes until preparation finishes.
 	if s.fingerprint, err = SnapshotSource(name, origin, ""); err != nil {
@@ -162,54 +155,8 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 	return s, ctx.Err()
 }
 
-// writePlaceholders gives a path source's declared slots empty clients when they have none, so a
-// server that imports its own generated clients can run before they exist. A slot that has
-// contents, or that its validation refuses, is left alone.
-func writePlaceholders(ctx context.Context, dir string) error {
-	targets, err := DeclaredTargets(dir)
-	if errors.Is(err, ErrNoRuntime) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	request := mcptype.GenerateRequest{Identity: mcpcontract.Identity{Name: filepath.Base(dir), Version: "0.0.0"}, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + filepath.Base(dir)}
-	for _, target := range targets {
-		var write func(map[string][]byte) error
-		switch target {
-		case TargetPy:
-			if _, err := os.Lstat(filepath.Join(dir, "holon/apps/__init__.py")); !errors.Is(err, fs.ErrNotExist) || validatePythonSlot(dir) != nil {
-				continue
-			}
-			write = func(files map[string][]byte) error { return writePythonSlot(dir, files) }
-		case TargetTS:
-			slot, err := InstalledRuntime(dir, nodePackages[TargetTS])
-			if err != nil {
-				continue
-			}
-			if entries, err := os.ReadDir(filepath.Join(slot, "generated")); len(entries) > 0 || err != nil && !errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			write = func(files map[string][]byte) error {
-				return writeNodeSlot(slot, files, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})
-			}
-		default:
-			continue
-		}
-		files, err := generateTypes(ctx, target, request, &mcpcontract.Metadata{}, "")
-		if err != nil {
-			return err
-		}
-		if err = write(files); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // Prepare fingerprints and extracts every path source once, resolves every other source once, and
-// generates the client files for each consumer and target. Apart from placeholder slots for path
-// sources that have none, nothing is written to the consumers.
+// generates the client files for each consumer and target. Nothing is written to the consumers.
 func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Prepared, err error) {
 	o := options.defaults()
 	for _, c := range consumers {
