@@ -27,7 +27,7 @@ export async function contract(root, entry) {
   });
   try {
     const file = join(root, entry);
-    const { default: exported, publishing } = await sandbox.import(file);
+    const exported = (await sandbox.import(file)).default;
     let handler = exported;
     if (typeof exported?.fetch !== "function") {
       if (typeof exported?.registerTool !== "function") throw new Error("the default export is neither a createMcpHandler handler nor an McpServer");
@@ -35,7 +35,7 @@ export async function contract(root, entry) {
       const { createMcpHandler } = await sandbox.import(sandbox.resolve("@modelcontextprotocol/server", file));
       handler = createMcpHandler(() => exported);
     }
-    const result = await catalog(handler, publishing);
+    const result = await catalog(handler);
     const files = [...sandbox.served].map(served => relative(real, served)).filter(path => !path.startsWith("..") && !path.split(sep).includes("node_modules")).sort();
     return { ...result, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
   } catch (error) {
@@ -43,7 +43,7 @@ export async function contract(root, entry) {
   }
 }
 
-async function catalog(handler, publishing) {
+async function catalog(handler) {
   // The modern protocol: on the legacy path the SDK server needs crypto, which the sandbox lacks.
   const client = new Client(identity, { versionNegotiation: { mode: "auto" } });
   try {
@@ -55,7 +55,7 @@ async function catalog(handler, publishing) {
     const tools = capabilities.tools ? await all(client, "tools/list", "tools") : [];
     const resources = capabilities.resources ? await all(client, "resources/list", "resources") : [];
     return {
-      descriptor: { ...publishing, ...client.getServerVersion() },
+      serverInfo: client.getServerVersion(),
       tools: tools.map(({ name, inputSchema, outputSchema }) => ({ name, inputSchema, ...(outputSchema && { outputSchema }) })).sort((a, b) => a.name.localeCompare(b.name)),
       // Like a live server's contract, a resource is typed only by its sh.holon/outputSchema.
       resources: resources.map(({ uri, _meta }) => ({ uri, outputSchema: _meta?.[resourceSchemaKey] ?? {} })).sort((a, b) => a.uri.localeCompare(b.uri)),
