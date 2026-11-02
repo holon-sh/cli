@@ -3,7 +3,6 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -58,7 +57,6 @@ type preparedSource struct {
 	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
-	descriptor                                 json.RawMessage
 }
 
 func (s *preparedSource) extract(result *extraction) error {
@@ -80,11 +78,11 @@ func (s *preparedSource) extract(result *extraction) error {
 	}
 	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
 	if s.metadata.Identity == (mcpcontract.Identity{}) {
-		descriptor, err := ParseDescriptor(result.Descriptor)
+		descriptor, err := ParseDescriptor(result.ServerInfo)
 		if err != nil {
 			return fmt.Errorf("%s: %w; declare the server's name, version and description in its MCP constructor, or add a server.json", s.origin, err)
 		}
-		s.metadata.Identity, s.descriptor = descriptor.Identity(), result.Descriptor
+		s.metadata.Identity = descriptor.Identity()
 	}
 	return nil
 }
