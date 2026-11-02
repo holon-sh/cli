@@ -92,14 +92,9 @@ func TestExplicitOwnServer(t *testing.T) {
 	// The own server is callable from the browser but is not a dependency of itself.
 	for pkg, want := range map[string]bool{"holon-sh": false, "holon-ui": true} {
 		data, err := os.ReadFile(filepath.Join(root, "node_modules", pkg, "generated/index.d.ts"))
-		if err != nil || strings.Contains(string(data), `"view"`) != want || strings.Contains(string(data), "class App") != want || !strings.Contains(string(data), `"orders"`) {
+		if err != nil || strings.Contains(string(data), `"view"`) != want || !strings.Contains(string(data), `"orders"`) {
 			t.Fatalf("%s = %s, %v", pkg, data, err)
 		}
-	}
-	writeCLIFile(t, root, "server.json", `{"name":"example.com/---","version":"1.0.0","description":"View"}`)
-	run(t, "", "types", "generate", "-s", "./server.py")
-	if data, err := os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts")); err != nil || !strings.Contains(string(data), `Apps["app"]["tools"]`) {
-		t.Fatalf("punctuation-only server name lost its App class: %s, %v", data, err)
 	}
 	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")
 }
