@@ -39,7 +39,6 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	}
 }
 
-// extractSource runs one path source's server and returns the source with its contract.
 func extractSource(ctx context.Context, path string, o Options) (*preparedSource, error) {
 	root, err := os.MkdirTemp("", "holon-types-")
 	if err != nil {

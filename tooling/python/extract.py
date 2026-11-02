@@ -1,16 +1,15 @@
 """Obtain an application's MCP contract by running its server and asking it.
 
 Usage: extract.py contract ROOT ENTRY. The contract (tools, resources and the application files the
-server loaded) is printed on stdout, with the server.json the server implies: the module's
-publishing dictionary with the serverInfo the server reports. A failure is a diagnostic on stderr
-with status 2, or status 3 with the uninstalled package's name as the last line. The runner re-runs
-itself without site packages or the caller's environment, where an import finder serves the
-application's files, the standard library and its environment's installed packages (mcp and pydantic
-among them), and names any module it cannot serve. The server sees the same world on every machine:
-an empty environment, a fixed clock and seeded randomness, so its contract is the same everywhere.
-Reading files outside the application, its packages and the standard library, writing files, sockets
-and child processes raise naming the capability. The interpreter is the application's environment
-when that has mcp, else the tooling's; the CLI chooses.
+server loaded) is printed on stdout; a failure is a diagnostic on stderr with status 2, or status 3
+with the uninstalled package's name as the last line. The runner re-runs itself without site
+packages or the caller's environment, where an import finder serves the application's files, the
+standard library and its environment's installed packages (mcp and pydantic among them), and names
+any module it cannot serve. The server sees the same world on every machine: an empty
+environment, a fixed clock and seeded randomness, so its contract is the same everywhere. Reading
+files outside the application, its packages and the standard library, writing files, sockets and
+child processes raise naming the capability. The interpreter is the application's environment when
+that has mcp, else the tooling's; the CLI chooses.
 """
 
 from __future__ import annotations

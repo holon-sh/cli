@@ -58,8 +58,7 @@ type preparedSource struct {
 	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
-	// descriptor is the server.json the server implies, for a source without one.
-	descriptor json.RawMessage
+	descriptor                                 json.RawMessage
 }
 
 func (s *preparedSource) extract(result *extraction) error {
@@ -141,7 +140,6 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 		return nil, err
 	}
 	s := &preparedSource{origin: origin, name: name, entry: entry, language: language, metadata: &mcpcontract.Metadata{}}
-	// A server.json names the server. Without one, the server names itself when it runs.
 	if data, err := os.ReadFile(filepath.Join(origin, "server.json")); err == nil {
 		descriptor, err := ParseDescriptor(data)
 		if err != nil {
@@ -152,7 +150,7 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 		return nil, fmt.Errorf("%s: %w (a Go server source needs a server.json beside its entry)", origin, err)
 	}
 	if language != "go" {
-		if err = writePlaceholders(ctx, origin, cmp.Or(s.metadata.Identity, mcpcontract.Identity{Name: name, Version: "0.0.0"})); err != nil {
+		if err = writePlaceholders(ctx, origin); err != nil {
 			return nil, fmt.Errorf("%s: %w", origin, err)
 		}
 	}
@@ -167,7 +165,7 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 // writePlaceholders gives a path source's declared slots empty clients when they have none, so a
 // server that imports its own generated clients can run before they exist. A slot that has
 // contents, or that its validation refuses, is left alone.
-func writePlaceholders(ctx context.Context, dir string, identity mcpcontract.Identity) error {
+func writePlaceholders(ctx context.Context, dir string) error {
 	targets, err := DeclaredTargets(dir)
 	if errors.Is(err, ErrNoRuntime) {
 		return nil
@@ -175,7 +173,7 @@ func writePlaceholders(ctx context.Context, dir string, identity mcpcontract.Ide
 	if err != nil {
 		return err
 	}
-	request := mcptype.GenerateRequest{Identity: identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + filepath.Base(dir)}
+	request := mcptype.GenerateRequest{Identity: mcpcontract.Identity{Name: filepath.Base(dir), Version: "0.0.0"}, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + filepath.Base(dir)}
 	for _, target := range targets {
 		var write func(map[string][]byte) error
 		switch target {
