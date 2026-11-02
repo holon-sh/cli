@@ -112,19 +112,28 @@ test("holon-sh/app declarations get JSON Schemas from their TypeScript types", t
   const { root, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
+    "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@app/*": ["./*"] } } }),
     "node_modules/holon-sh/package.json": '{"name":"holon-sh","type":"module","exports":{"./app":{"types":"./app.d.ts","import":"./app.js"}}}',
-    "node_modules/holon-sh/app.d.ts": `export interface Resource<T> { readonly uri: string; readonly read: () => T | Promise<T> }
+    "node_modules/holon-sh/generated/app.json": "{}",
+    "node_modules/holon-sh/app.d.ts": `export interface Resource<T, U extends string = string> { readonly uri: U; readonly read: () => T | Promise<T> }
 export interface Tool<I, O> { readonly run: (input: I) => O | Promise<O> }
-export declare function resource<T>(uri: string, read: () => T | Promise<T>): Resource<T>;
-export declare function tool<I, O>(options: object, run: (input: I) => O | Promise<O>): Tool<I, O>;
-export declare function register(server: unknown, declarations: { tools: Record<string, Tool<any, any>>; resources?: Record<string, Resource<any>> }): void;`,
-    "node_modules/holon-sh/app.js": `import { readFileSync } from "node:fs";
-readFileSync(new URL("./generated/app.json", import.meta.url), "utf8");
-export const tool = () => ({}), resource = () => ({}), register = () => {};`,
+export declare function resource<T, U extends string = string>(uri: U, read: () => T | Promise<T>): Resource<T, U>;
+export declare function tool<I = Record<never, never>, O = unknown>(options: object, run: (input: I) => O | Promise<O>): Tool<I, O>;
+export declare function register(server: unknown, declarations: { tools?: Record<string, Tool<any, any>>; resources?: Record<string, Resource<any>> }): void;`,
+    "node_modules/holon-sh/app.js": `import { fromJsonSchema } from "@modelcontextprotocol/server";
+const { default: { schema } } = await import(new URL("./generated/app.json", import.meta.url).href, { with: { type: "json" } });
+export const tool = () => ({}), resource = uri => ({ uri });
+export function register(server, { tools = {}, resources = {} }) {
+  for (const name in tools) {
+    const { inputSchema, outputSchema } = schema.tools.find(tool => tool.name === name);
+    server.registerTool(name, { inputSchema: fromJsonSchema(inputSchema), outputSchema: fromJsonSchema(outputSchema) }, () => ({ content: [] }));
+  }
+  for (const [name, { uri }] of Object.entries(resources)) server.registerResource(name, uri, { _meta: { "sh.holon/outputSchema": schema.resources.find(resource => resource.uri === uri).outputSchema } }, () => ({ contents: [] }));
+}`,
     "types.ts": "export interface Count { count: number; label?: string | null; tags: string[]; done: boolean }",
-    "server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+    "counter.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { register, resource, tool } from "holon-sh/app";
-import type { Count } from "./types.ts";
+import type { Count } from "@app/types";
 let count = 0;
 const URI = "counter://state";
 const state = resource(URI, (): Count => ({ count, tags: [], done: false }));
@@ -132,7 +141,8 @@ const add = tool({}, async ({ amount }: { amount: number }): Promise<Count> => (
 const reset = tool({}, () => ({ ok: true as const }));
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "counter", version: "1" });
-  register(server, { tools: { add, reset }, resources: { state } });
+  register(server, { tools: { add }, resources: { state } });
+  register(server, { tools: { reset } });
   return server;
 });`,
     "untyped.ts": `import { McpServer } from "@modelcontextprotocol/server";
@@ -141,6 +151,11 @@ const server = new McpServer({ name: "untyped", version: "1" });
 const score = tool({}, (input: { scores: Record<string, number> }) => input);
 register(server, { tools: { score } });
 export default server;`,
+    "registry.ts": `import { McpServer } from "@modelcontextprotocol/server";
+import { register, type Tool } from "holon-sh/app";
+const server = new McpServer({ name: "registry", version: "1" });
+export const add = (tools: Record<string, Tool<{}, {}>>) => register(server, { tools });
+export default server;`,
     "moving.ts": `import { McpServer } from "@modelcontextprotocol/server";
 import { register, resource } from "holon-sh/app";
 const server = new McpServer({ name: "moving", version: "1" });
@@ -148,15 +163,16 @@ const state = resource("counter://" + "state", () => ({}));
 register(server, { resources: { state } });
 export default server;`,
   });
-  const { counter, untyped, moving } = extract([{ name: "counter", path: app, entry: "server.ts" }, { name: "untyped", path: app, entry: "untyped.ts" }, { name: "moving", path: app, entry: "moving.ts" }]);
+  const { counter, untyped, registry, moving } = extract(["counter", "untyped", "registry", "moving"].map(name => ({ name, path: app, entry: `${name}.ts` })));
   const total = { type: "object", properties: { count: { type: "number" }, label: { anyOf: [{ type: "null" }, { type: "string" }] }, tags: { type: "array", items: { type: "string" } }, done: { type: "boolean" } }, required: ["count", "tags", "done"], additionalProperties: false };
-  const tools = [
+  assert.deepEqual(counter.tools, [
     { name: "add", inputSchema: { type: "object", properties: { amount: { type: "number" } }, required: ["amount"], additionalProperties: false }, outputSchema: total },
     { name: "reset", inputSchema: { type: "object", properties: {}, additionalProperties: false }, outputSchema: { type: "object", properties: { ok: { const: true } }, required: ["ok"], additionalProperties: false } },
-  ];
-  assert.deepEqual(counter.app, { schema: { tools, resources: [{ uri: "counter://state", outputSchema: total }] } });
-  assert.deepEqual(Object.keys(counter.sources), ["server.ts", "types.ts"]);
-  assert.match(untyped.diagnostic, /untyped\.ts:5:29: Record<string, number> has no JSON Schema/);
+  ]);
+  assert.deepEqual(counter.resources, [{ uri: "counter://state", outputSchema: total }]);
+  assert.deepEqual(Object.keys(counter.sources), ["counter.ts", "types.ts"]);
+  assert.match(untyped.diagnostic, /^untyped\.ts: Error: untyped\.ts:5:29: Record<string, number> has no JSON Schema/);
+  assert.match(registry.diagnostic, /registry\.ts:4:80: register's declarations must be listed statically/);
   assert.match(moving.diagnostic, /moving\.ts:5:33: resource state needs a string constant URI/);
 });
 

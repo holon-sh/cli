@@ -19,15 +19,11 @@ const resourceSchemaKey = "sh.holon/outputSchema";
 export async function contract(root, entry) {
   const vendor = join(dirname(realpathSync(process.argv[1])), "vendor", "node_modules");
   const real = realpathSync(root);
-  let app;
-  const sandbox = createSandbox(root, vendor, path => {
-    if (!/[\\/]holon-sh[\\/]generated[\\/]app\.json$/.test(path)) return;
-    if (!app) {
-      const { contract, files } = functionContract(real, entry);
-      app = contract;
-      for (const file of files) sandbox.served.add(file);
-    }
-    return JSON.stringify(app);
+  const sandbox = createSandbox(root, vendor, file => {
+    if (!file.endsWith(join(sep, "holon-sh", "generated", "app.json"))) return;
+    const { schema, files } = functionContract(real, entry);
+    for (const served of files) sandbox.served.add(served);
+    return JSON.stringify({ schema });
   });
   try {
     const file = join(root, entry);
@@ -41,7 +37,7 @@ export async function contract(root, entry) {
     }
     const result = await catalog(handler, publishing);
     const files = [...sandbox.served].map(served => relative(real, served)).filter(path => !path.startsWith("..") && !path.split(sep).includes("node_modules")).sort();
-    return { ...result, app, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
+    return { ...result, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
   } catch (error) {
     return { diagnostic: `${entry}: ${sandbox.diagnostic(error)}`, ...(error instanceof MissingPackage && { missing: error.cause }) };
   }

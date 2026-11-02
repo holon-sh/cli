@@ -52,7 +52,7 @@ export function createSandbox(root, vendor, read) {
   }`, context, { filename: "holon:stub" })(stub, root, process.versions.node);
   const parse = vm.runInContext("JSON.parse", context);
   const modules = new Map(), files = new Map(), commonjs = new Map(), builtins = new Map(), maps = new Map(), served = new Set();
-  const paths = tsconfigPaths(root);
+  const paths = tsconfigPaths(compilerOptions(root));
 
   function resolveSpecifier(specifier, referrer, conditions) {
     if (specifier.startsWith("node:") || module.isBuiltin(specifier)) return { builtin: specifier.replace(/^node:/, "") };
@@ -91,7 +91,7 @@ export function createSandbox(root, vendor, read) {
     let created;
     const format = formatOf(file);
     if (format === "json") {
-      const value = parse(readFileSync(file, "utf8"));
+      const value = parse(read(file) ?? readFileSync(file, "utf8"));
       created = new vm.SyntheticModule(["default"], function () { this.setExport("default", value); }, { identifier: url, context });
     } else if (format === "commonjs") {
       const exports = require(file);
@@ -127,12 +127,7 @@ export function createSandbox(root, vendor, read) {
     if (!builtins.has(name)) {
       const real = module.createRequire(import.meta.url)(`node:${name}`);
       const capability = capabilities[name] ?? `node:${name}`;
-      const exported = Object.fromEntries(Object.keys(real).filter(n => n !== "default").map(n => [n, stub(`node:${name} ${n}`, capability)]));
-      if (name === "fs") {
-        const unavailable = exported.readFileSync;
-        exported.readFileSync = (path, ...rest) => read(path instanceof URL ? fileURLToPath(path) : String(path)) ?? unavailable(path, ...rest);
-      }
-      builtins.set(name, exported);
+      builtins.set(name, Object.fromEntries(Object.keys(real).filter(n => n !== "default").map(n => [n, stub(`node:${name} ${n}`, capability)])));
     }
     return builtins.get(name);
   }
@@ -187,9 +182,7 @@ export function createSandbox(root, vendor, read) {
     resolve: (specifier, referrer) => resolveSpecifier(specifier, realpathSync(referrer), ["import", "node"]).file,
     // diagnostic rewrites transpiled positions to the original source and names missing capabilities.
     diagnostic(error) {
-      let text = String(error?.stack ?? error);
-      for (let cause = error?.cause; cause?.stack; cause = cause.cause) text += `\n${cause.stack}`;
-      text = text.replace(/(file:\/\/[^\s):]+):(\d+):(\d+)/g, (match, url, line, column) => {
+      let text = String(error?.stack ?? error).replace(/(file:\/\/[^\s):]+):(\d+):(\d+)/g, (match, url, line, column) => {
         const entry = maps.get(url)?.findEntry(line - 1, column - 1);
         const path = fileURLToPath(url);
         return entry?.originalLine === undefined ? `${path}:${line}:${column}` : `${path}:${entry.originalLine + 1}:${entry.originalColumn + 1}`;
@@ -249,13 +242,16 @@ function conditional(value, match, conditions) {
   }
 }
 
-// tsconfigPaths maps a specifier through the application's tsconfig.json paths, if any.
-function tsconfigPaths(root) {
+export function compilerOptions(root) {
   const file = join(root, "tsconfig.json");
-  if (!existsSync(file)) return () => [];
+  if (!existsSync(file)) return {};
   const { config } = ts.readConfigFile(file, ts.sys.readFile);
-  const { options } = ts.parseJsonConfigFileContent(config ?? {}, ts.sys, root);
-  const base = options.baseUrl ?? options.pathsBasePath ?? root;
+  return ts.parseJsonConfigFileContent(config ?? {}, ts.sys, root).options;
+}
+
+// tsconfigPaths maps a specifier through the application's tsconfig.json paths, if any.
+function tsconfigPaths(options) {
+  const base = options.baseUrl ?? options.pathsBasePath;
   const entries = Object.entries(options.paths ?? {});
   return specifier => entries.flatMap(([pattern, targets]) => {
     const [prefix, suffix = ""] = pattern.split("*");

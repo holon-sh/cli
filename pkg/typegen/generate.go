@@ -59,7 +59,6 @@ type preparedSource struct {
 	metadata                                   *mcpcontract.Metadata
 	sources                                    map[string]string
 	descriptor                                 json.RawMessage
-	app                                        json.RawMessage
 }
 
 func (s *preparedSource) extract(result *extraction) error {
@@ -79,7 +78,7 @@ func (s *preparedSource) extract(result *extraction) error {
 			s.sources[path] = digest
 		}
 	}
-	s.metadata.Schema, s.app = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}, result.App
+	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
 	if s.metadata.Identity == (mcpcontract.Identity{}) {
 		descriptor, err := ParseDescriptor(result.Descriptor)
 		if err != nil {
@@ -369,9 +368,6 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
 		}
-		if target == TargetTS && c.server != nil && c.server.app != nil {
-			files["app.json"] = c.server.app
-		}
 		c.packages[target] = files
 	}
 	document, err := NewDocument(ctx, c.metadata)
@@ -403,7 +399,11 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 		request.Target = "go"
 		request.GoModule = goModule
 	}
-	return mcptype.Generate(ctx, request)
+	files, err := mcptype.Generate(ctx, request)
+	if err == nil && target == TargetTS {
+		files["app.json"], err = json.Marshal(own)
+	}
+	return files, err
 }
 
 // currentSources fails when any source directory changed since preparation.

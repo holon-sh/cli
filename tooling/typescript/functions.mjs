@@ -1,25 +1,26 @@
 import { join, relative } from "node:path";
 import ts from "typescript";
-
-const options = { strict: true, allowJs: true, moduleResolution: ts.ModuleResolutionKind.Bundler, lib: ["lib.esnext.d.ts"], types: [] };
+import { compilerOptions } from "./sandbox.mjs";
 
 export function functionContract(root, entry) {
   const file = join(root, entry);
+  const options = { ...compilerOptions(root), strict: true, allowJs: true, moduleResolution: ts.ModuleResolutionKind.Bundler, lib: ["lib.esnext.d.ts"], types: [] };
   const program = ts.createProgram([file], options);
   const checker = program.getTypeChecker();
-  const app = ts.resolveModuleName("holon-sh/app", file, options, ts.sys).resolvedModule?.resolvedFileName;
+  const app = from => ts.resolveModuleName("holon-sh/app", from, options, ts.sys).resolvedModule?.resolvedFileName;
   const tools = [], resources = [];
   const fail = (node, message) => {
     const source = node.getSourceFile();
     const { line, character } = source.getLineAndCharacterOfPosition(node.getStart());
     throw new Error(`${relative(root, source.fileName)}:${line + 1}:${character + 1}: ${message}`);
   };
+  const listed = (type, at) => type.flags & ts.TypeFlags.Object && !checker.getIndexInfosOfType(type).length ? type.getProperties() : fail(at, "register's declarations must be listed statically");
   const declarations = (call, key) => {
-    const symbol = checker.getTypeAtLocation(call.arguments[1]).getProperty(key);
-    return (symbol ? checker.getTypeOfSymbol(symbol).getProperties() : []).map(property => {
+    const group = listed(checker.getTypeAtLocation(call.arguments[1]), call.arguments[1]).find(symbol => symbol.name === key);
+    return (group ? listed(checker.getTypeOfSymbol(group), group.valueDeclaration ?? call) : []).map(property => {
       const type = checker.getTypeOfSymbol(property);
-      const [input = type, output = type] = checker.getTypeArguments(type);
-      return [property, [input, output], property.valueDeclaration ?? call];
+      const [first = type, second = type] = checker.getTypeArguments(type);
+      return [property.name, first, second, property.valueDeclaration ?? call];
     });
   };
   const schema = (type, at, seen = new Set()) => {
@@ -48,25 +49,15 @@ export function functionContract(root, entry) {
     const result = schema(type, at);
     return result.type === "object" ? result : fail(at, "tool inputs and results must be JSON objects");
   };
-  const uri = property => {
-    const assigned = property.valueDeclaration;
-    let value = ts.isShorthandPropertyAssignment(assigned) ? checker.getShorthandAssignmentValueSymbol(assigned)?.valueDeclaration?.initializer : assigned.initializer;
-    if (value && ts.isIdentifier(value)) value = checker.getSymbolAtLocation(value)?.valueDeclaration?.initializer;
-    const type = value && ts.isCallExpression(value) && value.arguments[0] ? checker.getTypeAtLocation(value.arguments[0]) : undefined;
-    return type?.isStringLiteral() ? type.value : fail(assigned, `resource ${property.name} needs a string constant URI`);
-  };
   const visit = node => {
     const callee = ts.isCallExpression(node) && node.arguments.length > 1 ? checker.getTypeAtLocation(node.expression).symbol : undefined;
-    if (callee?.name === "register" && callee.declarations?.[0]?.getSourceFile().fileName === app) {
-      for (const [property, [input, output], at] of declarations(node, "tools")) {
-        const inputSchema = input.flags & ts.TypeFlags.Unknown ? { type: "object", properties: {}, additionalProperties: false } : object(input, at);
-        tools.push({ name: property.name, inputSchema, outputSchema: object(output, at) });
-      }
-      for (const [property, [output], at] of declarations(node, "resources")) resources.push({ uri: uri(property), outputSchema: schema(output, at) });
+    if (callee?.name === "register" && callee.declarations?.[0]?.getSourceFile().fileName === app(node.getSourceFile().fileName)) {
+      for (const [name, input, output, at] of declarations(node, "tools")) tools.push({ name, inputSchema: object(input, at), outputSchema: object(output, at) });
+      for (const [name, output, uri, at] of declarations(node, "resources")) resources.push({ uri: uri.isStringLiteral() ? uri.value : fail(at, `resource ${name} needs a string constant URI`), outputSchema: schema(output, at) });
     }
     ts.forEachChild(node, visit);
   };
   const files = program.getSourceFiles().filter(source => !source.isDeclarationFile && !program.isSourceFileFromExternalLibrary(source));
   for (const source of files) visit(source);
-  return { contract: { schema: { tools, resources } }, files: files.map(source => source.fileName) };
+  return { schema: { tools, resources }, files: files.map(source => source.fileName) };
 }
