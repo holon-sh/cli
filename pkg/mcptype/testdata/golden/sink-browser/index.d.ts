@@ -120,4 +120,5 @@ export interface PageTool<S extends PageSchema = PageSchema> { description: stri
 export interface PageHost { registerTool(name: string, config: { description: string; inputSchema: PageSchema; annotations?: PageAnnotations }, callback: (args: any, extra: any) => any): { remove(): void } }
 export declare function registerPageTools<S extends { [name: string]: PageSchema }>(tools: { [K in keyof S]: PageTool<S[K]> }, options?: { view?: PageHost; signal?: AbortSignal }): Promise<boolean>;
 import { App as HostApp } from "@modelcontextprotocol/ext-apps";
-export declare class App extends HostApp { readonly tools: Apps["orders"]["tools"]; readonly resources: Apps["orders"]["resources"]; readonly callTool: Apps["orders"]["callTool"] }
+type OwnAppKey = "orders";
+export declare class App extends HostApp { readonly tools: Apps[OwnAppKey]["tools"]; readonly resources: Apps[OwnAppKey]["resources"]; readonly callTool: Apps[OwnAppKey]["callTool"] }
