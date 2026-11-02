@@ -241,7 +241,9 @@ def find_server(module: object) -> MCPServer | Server[Any]:
     )
 
 
-async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
+async def catalog(
+    server: MCPServer | Server[Any], publishing: dict[str, Any]
+) -> dict[str, Any]:
     from mcp.client import Client
 
     tools: list[dict[str, Any]] = []
@@ -272,7 +274,10 @@ async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
             if not (cursor := listed.next_cursor):
                 break
     return {
-        "info": info.model_dump(by_alias=True, exclude_none=True) if info else {},
+        "descriptor": {
+            **publishing,
+            **(info.model_dump(by_alias=True, exclude_none=True) if info else {}),
+        },
         "tools": sorted(tools, key=lambda tool: tool["name"]),
         "resources": sorted(resources, key=lambda resource: resource["uri"]),
     }
@@ -294,11 +299,8 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
         finder.served.add(path.resolve())
         module = sys.modules[path.stem] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        result = loop.run_until_complete(catalog(find_server(module)))
-        result["descriptor"] = {
-            **getattr(module, "publishing", {}),
-            **result.pop("info"),
-        }
+        publishing = getattr(module, "publishing", None) or {}
+        result = loop.run_until_complete(catalog(find_server(module), publishing))
     except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
         frames = [
             frame
@@ -323,6 +325,7 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
             digest = hashlib.file_digest(source, "sha256").hexdigest()
         sources[file.relative_to(root).as_posix()] = digest
     json.dump({**result, "sources": sources}, stdout)
+    stdout.flush()  # Python 3.11 loses it at exit once the server's world is frozen
     return 0
 
 

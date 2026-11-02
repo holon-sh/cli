@@ -10,9 +10,7 @@ import (
 
 const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
-`
-
-const factoryTypes = `export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: %s }, options?: CreateOptions): Pick<Apps,K>;
+export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 `
 
 const exposeTypes = `export interface ExposeOptions { signal?: AbortSignal; execute?: (name: string, args: Record<string, unknown>) => Promise<unknown> }
@@ -56,12 +54,12 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	}
 	identity, contracts := encode(request.caller()), encode(request.contracts)
 	types := fmt.Sprintf("import type { Outputs as Resources } from \"./resources.js\";\n%s\nexport type { Resources };\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", protocol, tools)
-	bound := fmt.Sprintf("export function createApps(bindings,options){return bindApps(%s,%s,bindings,options)}\n", identity, contracts)
+	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
 	runtime := quoted(cmp.Or(request.RuntimeSpecifier, "./runtime.mjs"))
 	if request.Target == "browser" {
 		files := map[string]string{
-			"index.js":       fmt.Sprintf("import { bindApps, appClass } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\nconst identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", runtime, runtime, identity, contracts),
-			"index.d.ts":     types + bindingTypes + fmt.Sprintf(factoryTypes, "EndpointBinding") + exposeTypes,
+			"index.js":       fmt.Sprintf("import { bindApps, appClass } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", runtime, runtime, bound),
+			"index.d.ts":     types + bindingTypes + exposeTypes,
 			"resources.d.ts": resources,
 		}
 		if request.Own != "" {
@@ -72,8 +70,8 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		return files, nil
 	}
 	return map[string]string{
-		"index.js":       fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\nexport const apps = create(%s, %s);\n%s", runtime, runtime, identity, contracts, bound),
-		"index.d.ts":     types + "export declare const apps: Apps;\n" + bindingTypes + fmt.Sprintf(factoryTypes, "EndpointBinding"),
+		"index.js":       fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\n%sexport const apps = create(identity, contracts);\n", runtime, runtime, bound),
+		"index.d.ts":     types + "export declare const apps: Apps;\n" + bindingTypes,
 		"resources.d.ts": resources,
 	}, nil
 }
