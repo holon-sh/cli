@@ -90,6 +90,8 @@ class Finder(importlib.abc.MetaPathFinder):
             return None
         search = self.search if path is None else path
         spec = importlib.machinery.PathFinder.find_spec(name, search, target)
+        if spec is None and name == "holon.apps":
+            return importlib.machinery.ModuleSpec(name, EmptyApps())
         if spec is None and path is None:
             raise MissingModule(
                 f"No module named {name!r}; install the application's dependencies "
@@ -103,6 +105,15 @@ class Finder(importlib.abc.MetaPathFinder):
         ):
             self.served.add(Path(spec.origin).resolve())
         return spec
+
+
+class EmptyApps(importlib.abc.Loader):
+    def exec_module(self, module: ModuleType) -> None:
+        apps = importlib.import_module("holon.client").Apps
+        vars(module).update(
+            apps=apps({"requires": {}}, {}),
+            create_apps=lambda bindings: apps({"requires": {}}, {}, bindings),
+        )
 
 
 def installed() -> list[str]:
