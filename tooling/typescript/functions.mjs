@@ -16,7 +16,11 @@ export function functionContract(root, entry) {
   };
   const declarations = (call, key) => {
     const symbol = checker.getTypeAtLocation(call.arguments[1]).getProperty(key);
-    return (symbol ? checker.getTypeOfSymbol(symbol).getProperties() : []).map(property => [property, checker.getTypeArguments(checker.getTypeOfSymbol(property)), property.valueDeclaration ?? call]);
+    return (symbol ? checker.getTypeOfSymbol(symbol).getProperties() : []).map(property => {
+      const type = checker.getTypeOfSymbol(property);
+      const [input = type, output = type] = checker.getTypeArguments(type);
+      return [property, [input, output], property.valueDeclaration ?? call];
+    });
   };
   const schema = (type, at, seen = new Set()) => {
     if (type.isStringLiteral() || type.isNumberLiteral()) return { const: type.value };
@@ -48,7 +52,7 @@ export function functionContract(root, entry) {
     const assigned = property.valueDeclaration;
     let value = ts.isShorthandPropertyAssignment(assigned) ? checker.getShorthandAssignmentValueSymbol(assigned)?.valueDeclaration?.initializer : assigned.initializer;
     if (value && ts.isIdentifier(value)) value = checker.getSymbolAtLocation(value)?.valueDeclaration?.initializer;
-    const type = value && ts.isCallExpression(value) && value.arguments[0] && checker.getTypeAtLocation(value.arguments[0]);
+    const type = value && ts.isCallExpression(value) && value.arguments[0] ? checker.getTypeAtLocation(value.arguments[0]) : undefined;
     return type?.isStringLiteral() ? type.value : fail(assigned, `resource ${property.name} needs a string constant URI`);
   };
   const visit = node => {
