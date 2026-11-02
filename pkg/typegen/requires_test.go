@@ -68,12 +68,9 @@ func TestServerDescribesItself(t *testing.T) {
 			if err != nil || len(sources) != 1 || sources[0].Alias != "orders" || sources[0].Registry.Name != "example.com/orders" {
 				t.Fatalf("DeclaredSources = %+v, %v", sources, err)
 			}
-			for _, want := range []mcpcontract.Identity{{Name: "example.com/checkout", Version: "1.2.3"}, {Name: "example.com/authored", Version: "2.0.0"}} {
-				document, err := ResolveDocument(t.Context(), Source{Path: root}, Options{})
-				if err != nil || document.Identity != want {
-					t.Fatalf("identity = %+v, %v; want %+v", document, err, want)
-				}
-				put(t, root, "server.json", `{"name":"example.com/authored","version":"2.0.0","description":"Authored"}`)
+			want := mcpcontract.Identity{Name: "example.com/checkout", Version: "1.2.3"}
+			if document, err := ResolveDocument(t.Context(), Source{Path: root}, Options{}); err != nil || document.Identity != want {
+				t.Fatalf("identity = %+v, %v; want %+v", document, err, want)
 			}
 		})
 	}

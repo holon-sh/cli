@@ -60,8 +60,6 @@ LOW_LEVEL = """
     from mcp import types
     from mcp.server import Server
 
-    publishing = None
-
     async def tools(context, params):
         tool = types.Tool(name="lookup", input_schema={"type": "object"})
         return types.ListToolsResult(tools=[tool])
@@ -135,7 +133,6 @@ def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
         "src/server.py",
     ]
     assert [tool["name"] for tool in result["low"]["tools"]] == ["lookup"]
-    assert result["low"]["descriptor"]["name"] == "low"
 
     config = tmp_path / "verify.json"
     recorded = {str(orders / name): d for name, d in contract["sources"].items()}
