@@ -19,10 +19,11 @@ const resourceSchemaKey = "sh.holon/outputSchema";
 export async function contract(root, entry) {
   const vendor = join(dirname(realpathSync(process.argv[1])), "vendor", "node_modules");
   const real = realpathSync(root);
+  let derived;
   const sandbox = createSandbox(root, vendor, file => {
     if (!file.endsWith(join(sep, "holon-sh", "generated", "app.json"))) return;
-    const { schema, files } = functionContract(real, entry);
-    for (const served of files) sandbox.served.add(served);
+    const { schema, files } = (derived ??= functionContract(real, entry));
+    for (const source of files) sandbox.served.add(source);
     return JSON.stringify({ schema });
   });
   try {
