@@ -9,9 +9,7 @@ import (
 	"slices"
 )
 
-// DeclaredSources returns one registry source per sh.holon.requires entry of dir/server.json,
-// keyed by its alias and sorted by it. A directory without server.json, or whose server.json
-// declares no requires, has no declared sources and returns nil, nil.
+// DeclaredSources returns one registry source per sh.holon.requires entry, sorted by alias.
 func DeclaredSources(dir string) ([]Source, error) {
 	path := filepath.Join(dir, "server.json")
 	data, err := os.ReadFile(path)
