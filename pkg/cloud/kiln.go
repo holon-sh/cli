@@ -68,9 +68,12 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	if _, err := hookartifact.Discover(os.DirFS(snapshot)); err != nil {
 		return "", err
 	}
-	entry, err := sourceEntry(snapshot)
-	if err != nil {
-		return "", err
+	var entry string
+	if !app.resolved.stdio {
+		entry, err = sourceEntry(snapshot)
+		if err != nil {
+			return "", err
+		}
 	}
 	var start []string
 	if slices.Contains([]string{".py", ".ts", ".js"}, filepath.Ext(entry)) {

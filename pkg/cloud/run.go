@@ -117,6 +117,7 @@ func uploadManifest(
 		_, retained := manifest.retained[app.Name]
 		return retained
 	})
+	options.origin = manager.client.baseURL
 	built, err := buildManifestImages(ctx, manager, name, prepared, options)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err

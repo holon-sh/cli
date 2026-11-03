@@ -26,10 +26,12 @@ type buildOptions struct {
 	catalogTag    string
 	types         *typeWorkspace
 	metadataGrant protocol.UploadGrant
+	checkedLayers *sync.Map
 	resolutions   *sync.Map
 	architectures []string
 	builder       buildApplication
 	builders      *builderConnections
+	origin        string
 	Stderr        io.Writer
 	Env           []string
 	HTTPClient    *http.Client
@@ -38,6 +40,7 @@ type buildOptions struct {
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
+	options.checkedLayers = cmp.Or(options.checkedLayers, new(sync.Map))
 	stderr := &buildLog{writer: cmp.Or(options.Stderr, io.Discard)}
 	apps := make([]protocol.App, len(manifest.Apps))
 	group, ctx := errgroup.WithContext(ctx)
@@ -72,9 +75,6 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 				apps[index] = declaration
 				return nil
 			}
-			if app.resolved.stdio {
-				return fmt.Errorf("%s: stdio images are not supported", app.Name)
-			}
 			var image string
 			if app.resolved.Image == "" {
 				image, err = buildSource(ctx, app, upload, options)
@@ -89,6 +89,14 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 						return fmt.Errorf("import %s: %w", app.Name, err)
 					}
 					image = imported
+				}
+				if app.resolved.stdio {
+					options.output.status(app.Name, "adapting", progressWorking)
+					prepared, err := prepareStdioImage(ctx, image, grant.Grant, options)
+					if err != nil {
+						return fmt.Errorf("adapt stdio app %s: %w", app.Name, err)
+					}
+					image = prepared
 				}
 				if options.catalogTag != "" && grant.Grant != "" {
 					return publishAppBuild(ctx, app, image, grant, options)
