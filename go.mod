@@ -11,7 +11,6 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/holon-sh/cli/pkg/oauthscope v0.0.1
 	github.com/holon-sh/mcp-bridge v0.0.4
-	github.com/klauspost/compress v1.19.2
 	github.com/moby/patternmatcher v0.6.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/opencontainers/go-digest v1.0.0

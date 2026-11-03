@@ -2,6 +2,7 @@ package mcpregistry
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,16 +11,14 @@ import (
 	"github.com/holon-sh/cli/pkg/protocol"
 )
 
-// Binding is an input's literal value, or the secret input Env that supplies it.
-type Binding struct {
-	Value *string
-	Env   string
+type inputBinding struct {
+	value *string
+	env   string
 }
 
-func BindInput(input protocol.Input, value Value, supplied bool, env map[string]protocol.Input) (Binding, error) {
-	var argument Binding
-	argument.Value, _ = input.Source("")
-	if !supplied {
+func bindInput(input protocol.Input, value Value, env map[string]protocol.Input) (inputBinding, error) {
+	argument := inputBinding{value: cmp.Or(input.Value, input.Default)}
+	if value == (Value{}) {
 		return argument, nil
 	}
 	if input.Value != nil {
@@ -32,7 +31,7 @@ func BindInput(input protocol.Input, value Value, supplied bool, env map[string]
 		if !protocol.ValidInputValue(*value.Value) {
 			return argument, errors.New("input must be single-line text without NUL characters")
 		}
-		argument.Value = value.Value
+		argument.value = value.Value
 		return argument, nil
 	}
 	if !input.IsSecret {
@@ -41,7 +40,7 @@ func BindInput(input protocol.Input, value Value, supplied bool, env map[string]
 	if err := mergeInput(env, value.Secret, input); err != nil {
 		return argument, err
 	}
-	argument.Value, argument.Env = nil, value.Secret
+	argument.value, argument.env = nil, value.Secret
 	return argument, nil
 }
 

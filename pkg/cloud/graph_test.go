@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/holon-sh/cli/pkg/protocol"
 )
 
 func descriptorDocument(name string) map[string]any {
@@ -19,13 +21,13 @@ func descriptorDocument(name string) map[string]any {
 	}
 }
 
-func descriptorRegistry(t *testing.T, document map[string]any) *registrySource {
+func descriptorRegistry(t *testing.T, document map[string]any) *protocol.RegistrySource {
 	t.Helper()
 	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"server": document})
 	}))
 	t.Cleanup(catalog.Close)
-	return &registrySource{RegistryRef: serverReference{
+	return &protocol.RegistrySource{RegistryRef: protocol.RegistryRef{
 		Name: document["name"].(string), Version: document["version"].(string), Registry: catalog.URL,
 	}}
 }

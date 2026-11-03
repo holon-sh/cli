@@ -45,7 +45,6 @@ type progressOutput struct {
 func newProgressOutput(stdout, stderr io.Writer, verbose bool, clock clock.PassiveClock) (*progressOutput, io.Writer, io.Writer) {
 	output := &progressOutput{
 		writer: &buildLog{writer: stderr}, verbose: verbose, clock: clock,
-		// Keep the root first in every sorted snapshot, even before its first report.
 		statuses: map[string]tea.ProgramStatus{"": {}},
 	}
 	_, outTerminal := terminalFile(stdout)
@@ -75,22 +74,6 @@ func (o *progressOutput) Write(data []byte) (int, error) {
 
 func (o *progressOutput) status(name, phase string, state tea.ProgramState) {
 	o.report(tea.ProgramStatus{Title: name, Message: phase, State: state})
-}
-
-// retry reports the current outcome of a recurring operation, including recovery.
-// OSC 7501 reserves error for work that has stopped; automatic retries are working.
-func (o *progressOutput) retry(name string, err error) {
-	if errors.Is(err, context.Canceled) {
-		return
-	}
-	status := tea.ProgramStatus{Title: name, Message: "ok", State: progressDone}
-	if err != nil {
-		status.Message, status.State = "retrying: "+err.Error(), progressWorking
-	}
-	if errors.Is(err, errReauthenticationRequired) {
-		status.Message, status.State, status.Kind = err.Error(), progressBlocked, tea.ProgramStatusKindAuth
-	}
-	o.report(status)
 }
 
 func (o *progressOutput) report(status tea.ProgramStatus) {
@@ -126,8 +109,6 @@ func (o *progressOutput) finish(err error, message string) error {
 				state, message = progressIdle, "Canceled"
 			}
 		}
-		// Producers have stopped before finish. Keep final statuses in the same
-		// registry as ordinary updates, and force one final root report.
 		delete(o.statuses, "")
 		for name, item := range o.statuses {
 			if slices.Contains([]progressState{progressWorking, progressBlocked}, item.State) {
@@ -147,12 +128,12 @@ func (o *progressOutput) logs(writer io.Writer) *buildLog {
 }
 
 func (o *progressOutput) measure(name, phase string) func() {
-	if o == nil {
+	if o == nil || !o.verbose {
 		return func() {}
 	}
 	started := o.clock.Now()
 	return func() {
-		_, _ = fmt.Fprintf(o.logs(o.writer), "Timing %s %s: %s\n", name, phase, o.clock.Since(started).Round(time.Millisecond))
+		_, _ = fmt.Fprintf(o.writer, "Timing %s %s: %s\n", name, phase, o.clock.Since(started).Round(time.Millisecond))
 	}
 }
 
@@ -171,7 +152,6 @@ func (m progressModel) Init() tea.Cmd { return nil }
 func (m progressModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if statuses, ok := message.([]tea.ProgramStatus); ok {
 		m.status, m.items = statuses[0], statuses[1:]
-		// The spinner's native tick tags discard superseded timer chains.
 		return m, m.spinner.Tick
 	}
 	var command tea.Cmd

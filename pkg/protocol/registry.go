@@ -26,7 +26,6 @@ func (r RegistryRef) Identity() mcpcontract.Identity {
 	return mcpcontract.Identity{Name: r.Name, Version: r.Version}
 }
 
-// The Registry resolves latest to whichever version is current, so a pin must name the version.
 func (r RegistryRef) Validate() error {
 	if r.Name == "" || r.Version == "" || strings.EqualFold(r.Version, "latest") {
 		return errors.New("server name and exact version are required; latest is unsupported")
@@ -44,9 +43,4 @@ func ValidateRegistry(registry string) error {
 		}
 	}
 	return errors.New("MCP registry must be an HTTPS URL (loopback HTTP is allowed)")
-}
-
-type RegistryHeader struct {
-	Name  string `json:"name"`
-	Input Input  `json:"input"`
 }

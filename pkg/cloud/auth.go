@@ -84,7 +84,6 @@ func targetForOAuth(info *protocol.OAuthInfo) *credentialTarget {
 }
 
 type Client struct {
-	hookMu   sync.Mutex
 	hookSent map[string]time.Time
 	machine  *clientcredentials.Config
 	output   io.Writer

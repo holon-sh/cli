@@ -7,16 +7,16 @@ import (
 	"github.com/holon-sh/cli/pkg/ociimage"
 )
 
-func importImage(ctx context.Context, image, registryHost, repository, grant string, extraEnv []string, client *http.Client) (string, error) {
+func importImage(ctx context.Context, image, registryHost, repository, grant string, client *http.Client) (string, error) {
 	named, err := ociimage.Parse(image)
 	if err != nil {
 		return "", err
 	}
-	source, err := imageRepository(named.Name(), "", extraEnv, client)
+	source, err := imageRepository(named.Name(), "", client)
 	if err != nil {
 		return "", err
 	}
-	destination, err := imageRepository(registryHost+"/"+repository, grant, extraEnv, client)
+	destination, err := imageRepository(registryHost+"/"+repository, grant, client)
 	if err != nil {
 		return "", err
 	}

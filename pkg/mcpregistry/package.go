@@ -1,6 +1,7 @@
 package mcpregistry
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,8 +21,6 @@ type RunConfig struct {
 	Env  map[string]Value
 }
 
-// SelectServerSource picks the one OCI, npm or PyPI package or Streamable HTTP remote that source allows. It does
-// not validate the choice: callers check the selected package for what they use it for.
 func SelectServerSource(d *Descriptor, source protocol.RegistrySource) (int, *Transport, error) {
 	if source.Package != nil && source.Remote != nil {
 		return -1, nil, errors.New("registry.package and registry.remote are mutually exclusive")
@@ -58,7 +57,6 @@ func SelectServerSource(d *Descriptor, source protocol.RegistrySource) (int, *Tr
 	return index, remote, nil
 }
 
-// environmentInputs returns the package's environment inputs and the variables it sets from templates over them.
 func (p Package) environmentInputs() (map[string]protocol.Input, map[string]string, error) {
 	inputs, templates := map[string]protocol.Input{}, map[string]string{}
 	set := func(name string, input protocol.Input, variables map[string]protocol.Input) error {
@@ -83,7 +81,6 @@ func (p Package) environmentInputs() (map[string]protocol.Input, map[string]stri
 	if slices.Contains([]string{"npm", "pypi"}, p.RegistryType) {
 		return inputs, templates, nil
 	}
-	// The other runtime arguments configure a local docker run, which Holon replaces.
 	for _, raw := range p.RuntimeArguments {
 		var spec DescriptorInput
 		err := json.Unmarshal(raw, &spec)
@@ -105,8 +102,6 @@ func (p Package) environmentInputs() (map[string]protocol.Input, map[string]stri
 	return inputs, templates, nil
 }
 
-// ValidateTransport checks how the package serves MCP. The CLI needs only this: it builds a local app's image from
-// source, parses a Registry OCI identifier when it copies the image, and the server checks npm and PyPI sources.
 func (p Package) ValidateTransport() error {
 	if _, err := p.Port(); err != nil {
 		return err
@@ -114,8 +109,7 @@ func (p Package) ValidateTransport() error {
 	if len(p.Transport.Headers) != 0 {
 		return errors.New("package HTTP headers are unsupported")
 	}
-	_, _, err := p.environmentInputs()
-	return err
+	return nil
 }
 
 func (p Package) Port() (int, error) {
@@ -125,7 +119,6 @@ func (p Package) Port() (int, error) {
 	if p.Transport.Type != "streamable-http" {
 		return 0, errors.New("package transport.type must be stdio or streamable-http")
 	}
-	// Any host: Holon reaches the package on its own pod. The URL names the package's published values.
 	raw, _ := protocol.Expand(p.Transport.URL, p.publishedValue)
 	if u, err := url.Parse(raw); err == nil && raw == "http://"+u.Host+"/mcp" {
 		if port, _ := strconv.Atoi(u.Port()); protocol.ValidPort(port) {
@@ -135,22 +128,17 @@ func (p Package) Port() (int, error) {
 	return 0, errors.New("package transport.url must be http://HOST:PORT/mcp with a port between 1 and 65535")
 }
 
-// publishedValue is the value or default the package publishes for an environment variable or an argument, which
-// transport.url names by its name or value hint.
 func (p Package) publishedValue(name string) (string, bool) {
 	for _, raw := range slices.Concat(p.Environment, p.PackageArguments) {
 		spec, input, _, _ := ParseInput(raw)
 		if spec.Name == name || spec.ValueHint == name {
-			value, _ := input.Source("")
+			value := cmp.Or(input.Value, input.Default)
 			return ptr.Deref(value, ""), value != nil
 		}
 	}
 	return "", false
 }
 
-// App returns the package's inputs, its environment templates and the container arguments its packageArguments and
-// run.args render to. A configurable argument becomes an input named after it, and values bind those inputs by
-// argument name: a literal fixes the input, and a secret reference must name the input itself.
 func (p Package) App(values map[string]Value, run RunConfig) (protocol.App, error) {
 	env, templates, err := p.environmentInputs()
 	if err != nil {
@@ -193,15 +181,15 @@ func (p Package) App(values map[string]Value, run RunConfig) (protocol.App, erro
 				return protocol.App{}, fmt.Errorf("argument %s: %w", id, err)
 			}
 			if bound, supplied := values[id]; supplied {
-				binding, err := BindInput(input, bound, true, env)
-				if err == nil && binding.Env != "" && binding.Env != key {
+				binding, err := bindInput(input, bound, env)
+				if err == nil && binding.env != "" && binding.env != key {
 					err = fmt.Errorf("secret reference must name the input %s", key)
 				}
 				if err != nil {
 					return protocol.App{}, fmt.Errorf("argument %s: %w", id, err)
 				}
-				if binding.Value != nil {
-					env[key] = protocol.Input{Value: binding.Value}
+				if binding.value != nil {
+					env[key] = protocol.Input{Value: binding.value}
 				}
 			}
 			value = "{" + key + "}"
@@ -236,8 +224,6 @@ func (p Package) App(values map[string]Value, run RunConfig) (protocol.App, erro
 	return protocol.App{Env: env, EnvTemplates: templates, Args: args}, nil
 }
 
-// argumentInput names the input of a configurable argument after its name or value hint: --api-key and apiKey become
-// API_KEY.
 func argumentInput(id string) string {
 	return strings.Trim(nonAlphanumeric.ReplaceAllString(strings.ToUpper(camelBoundary.ReplaceAllString(id, "${1}_${2}")), "_"), "_")
 }

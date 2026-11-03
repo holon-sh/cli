@@ -11,26 +11,14 @@ import (
 
 var platformPaths = strings.Fields(PlatformPaths)
 
-func WebPath(name string) string {
-	if name == "" {
-		return "/"
-	}
-	return "/" + name + "/"
-}
-
-func ParseWebPath(raw string) (string, bool) {
+func validMount(raw string) bool {
 	u, err := url.ParseRequestURI(raw)
-	if err != nil || u.IsAbs() || u.RawPath != "" || u.EscapedPath() != u.Path || !strings.HasPrefix(u.Path, "/") ||
-		strings.ContainsAny(u.Path, "\\\x00") || (u.Path != "/" && path.Clean(u.Path) != strings.TrimSuffix(u.Path, "/")) {
-		return "", false
+	if err != nil || u.Path != raw || u.RawPath != "" || u.EscapedPath() != u.Path || u.Path == MCPPath ||
+		!strings.HasPrefix(u.Path, "/") || strings.ContainsAny(u.Path, "\\\x00") || path.Clean(u.Path) != u.Path {
+		return false
 	}
-	return u.Path, u.Path != MCPPath
-}
-
-func BrowserPath(raw string) (string, bool) {
-	webPath, valid := ParseWebPath(raw)
-	first, _, _ := strings.Cut(strings.TrimPrefix(webPath, "/"), "/")
-	return webPath, valid && !slices.Contains(platformPaths, "/"+first)
+	first, _, _ := strings.Cut(strings.TrimPrefix(u.Path, "/"), "/")
+	return !slices.Contains(platformPaths, "/"+first)
 }
 
 func AppBrowserMount(app App, mode string) string {
@@ -51,8 +39,7 @@ func ValidateAppMounts(apps []App) error {
 			continue
 		}
 		mount := AppBrowserMount(app, ModeProduction)
-		parsed, valid := BrowserPath(mount)
-		if !valid || parsed != mount || mount != "/" && strings.HasSuffix(mount, "/") {
+		if !validMount(mount) {
 			return fmt.Errorf("app %s mount requires a canonical, non-platform browser path", app.Name)
 		}
 		if seen[mount] {

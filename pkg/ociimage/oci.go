@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 
 	"github.com/distribution/reference"
@@ -13,9 +12,9 @@ import (
 	"oras.land/oras-go/v2/content"
 )
 
-func FetchJSON(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor, kind string, value any) error {
+func fetchJSON(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor, value any) error {
 	if descriptor.Size <= 0 || descriptor.Size > 4<<20 {
-		return fmt.Errorf("invalid image %s size", kind)
+		return errors.New("invalid image metadata size")
 	}
 	data, err := content.FetchAll(ctx, source, descriptor)
 	if err != nil {
@@ -41,6 +40,6 @@ func Parse(image string) (reference.Named, error) {
 	return named, nil
 }
 
-func SupportedPlatform(platform ocispec.Platform) bool {
+func supportedPlatform(platform ocispec.Platform) bool {
 	return platform.OS == "linux" && slices.Contains([]string{"amd64", "arm64"}, platform.Architecture)
 }

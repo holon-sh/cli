@@ -15,22 +15,13 @@ import (
 	"github.com/holon-sh/cli/pkg/protocol"
 )
 
-const (
-	manifestFileName = "holon.yaml"
-	dockerignoreFile = ".dockerignore"
-)
+const manifestFileName = "holon.yaml"
 
 type manifestSpec struct {
 	Apps     []manifestApp `description:"Applications in this project." json:"apps,omitempty"`
 	file     string
 	retained map[string]protocol.App
 }
-
-type (
-	serverReference  = protocol.RegistryRef
-	registrySource   = protocol.RegistrySource
-	packageSelection = protocol.PackageSelection
-)
 
 type packageRun struct {
 	Transport manifestTransport            `json:"transport"      required:"true"`
@@ -51,7 +42,7 @@ type resolvedApp struct {
 	protocol.App
 
 	registryPackage *mcpregistry.Package
-	descriptor      *serverDescriptor
+	descriptor      *mcpregistry.Descriptor
 	stdio           bool
 	catalogEnv      map[string]protocol.Input
 }
@@ -70,7 +61,7 @@ type manifestApp struct {
 
 	Port *int `description:"HTTP port for image apps only; defaults to 3000." json:"port,omitempty" maximum:"65535" minimum:"1"`
 
-	Registry  *registrySource              `description:"Registry server reference; package or remote selection may be inferred." json:"registry,omitempty"`
+	Registry  *protocol.RegistrySource     `description:"Registry server reference; package or remote selection may be inferred." json:"registry,omitempty"`
 	Run       *packageRun                  `description:"Registry runtime arguments; cannot combine with arguments or headers."   json:"run,omitempty"`
 	Arguments map[string]mcpregistry.Value `description:"Argument literals, or secrets named for the input (--api-key: API_KEY)." json:"arguments,omitempty"`
 	Egress    protocol.Egress              `json:"egress,omitzero"`
@@ -139,7 +130,7 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 			errs = append(errs, label+": declare exactly one of image, registry, or remote")
 		}
 		if a.Remote != nil {
-			if _, err := protocol.RemoteURL(a.Remote.URL); err != nil {
+			if err := protocol.ValidateRemoteURL(a.Remote.URL); err != nil {
 				errs = append(errs, label+".remote: "+err.Error())
 			}
 		}
@@ -169,7 +160,7 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 	}
 	if len(errs) > 0 {
 		slices.Sort(errs)
-		return manifestSpec{}, errors.New(strings.Join(slices.Compact(errs), "\n"))
+		return manifestSpec{}, errors.New(strings.Join(errs, "\n"))
 	}
 	return p, nil
 }
