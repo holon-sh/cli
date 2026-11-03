@@ -8,7 +8,7 @@ import (
 
 // Generated entries fill the index.* slot of holon-sh or holon-ui.
 
-const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
+const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean; capabilities?: ClientCapabilities }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
 `
 
@@ -50,7 +50,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	switch {
 	case request.ProtocolSpecifier != "":
 		specifier := quoted(request.ProtocolSpecifier)
-		protocol = fmt.Sprintf("import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } from %s;\nexport { ToolCallError } from %s;", specifier, specifier)
+		protocol = fmt.Sprintf("import type { AuthProvider, ClientCapabilities, CallOptions, CallMetadata, ToolResult, ToolClient } from %s;\nexport { ToolCallError } from %s;", specifier, specifier)
 	case request.Protocol != "":
 		protocol = request.Protocol
 	}
