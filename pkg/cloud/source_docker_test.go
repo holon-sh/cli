@@ -55,7 +55,6 @@ func TestDockerSourceBuildFailures(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		canceled := options
-		canceled.architectures = []string{runtime.GOARCH}
 		canceled.Stderr = progressFunc(func(data []byte) (int, error) {
 			if strings.Contains(string(data), "cancel-build") {
 				cancel()

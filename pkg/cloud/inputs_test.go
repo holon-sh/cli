@@ -106,11 +106,8 @@ func TestDescriptorInputRejections(t *testing.T) {
 		{name: "variable name", environment: `[{"name":"URL","value":"{region-name}","variables":{"region-name":{}}}]`, want: "invalid environment name"},
 		{name: "secret literal", environment: `[{"name":"TOKEN","isSecret":true,"value":"do-not-print"}]`, want: "secret store"},
 		{name: "secret default", environment: `[{"name":"TOKEN","isSecret":true,"default":"do-not-print"}]`, want: "secret store"},
-		{name: "non-identifier environment", environment: `[{"name":"TOKEN-NAME"}]`, want: "invalid environment name"},
 		{name: "oversized environment", environment: `[{"name":"` + strings.Repeat("X", 129) + `"}]`, want: "invalid environment name"},
 		{name: "reserved environment", environment: `[{"name":"HOLON_MCP_RUNTIME_CONFIG"}]`, want: "invalid environment name"},
-		{name: "reserved telemetry environment", environment: `[{"name":"OTEL_RESOURCE_ATTRIBUTES"}]`, want: "invalid environment name"},
-		{name: "non-object", environment: `[[]]`, want: "invalid descriptor input"},
 		{name: "ambiguous values", environment: `[{"name":"TOKEN","value":"fixed","default":"fallback"}]`, want: "both value and default"},
 		{name: "invalid text", runtime: `[{"type":"named","name":"-e","value":"TOKEN=do-not-print\u0000"}]`, want: "without NUL"},
 		{

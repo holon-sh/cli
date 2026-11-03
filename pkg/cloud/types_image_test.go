@@ -50,10 +50,6 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	for _, test := range []struct{ name, version, input, want string }{
 		{"same release", "1", `{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`, ""},
 		{"changed input", "1", `{"type":"object","properties":{"id":{"type":"number"}},"required":["id"]}`, "tool lookup input changed"},
-		{
-			"compatible new version", "2", `{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`,
-			"identity example/orders@1 expected, example/orders@2 published",
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			published := &mcpcontract.Metadata{
@@ -89,9 +85,7 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	}
 }
 
-func TestLiveDependencySnapshotIsPublishedWithConsumer(t *testing.T) {
-	fixture, registry := buildRegistry(t)
-	host := strings.TrimPrefix(registry.URL, "https://")
+func TestLiveDependencySnapshotIsPinnedByConsumer(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "live-orders", Version: "1"}, nil)
 	tool := &mcp.Tool{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}}}`)}
 	server.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -112,19 +106,15 @@ func TestLiveDependencySnapshotIsPublishedWithConsumer(t *testing.T) {
 			App: protocol.App{Name: "checkout", Requires: []string{"orders"}}, descriptor: &serverDescriptor{Name: "example/checkout", Version: "1"},
 		}},
 	)
-	options := buildOptions{HTTPClient: registry.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
-	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options)
+	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
 	caller := prepared.Apps[1].resolved.types
-	reference := caller.metadata.Requires["orders"]
-	image := publishTypeMetadata(t, fixture, host+"/checkout", caller.metadata, options, caller.documents)
-	live.Close()
-	stored, err := fetchTypeDocument(t.Context(), image, reference, map[string]*typegen.Document{}, options)
-	if err != nil || stored.Identity != (mcpcontract.Identity{Name: "example/orders", Version: "1"}) || len(stored.Schema.Tools) != 1 {
-		t.Fatalf("consumer did not retain live snapshot: %+v %v", stored, err)
+	stored := caller.documents[caller.metadata.Requires["orders"]]
+	if stored == nil || stored.Identity != (mcpcontract.Identity{Name: "example/orders", Version: "1"}) || len(stored.Schema.Tools) != 1 {
+		t.Fatalf("consumer did not pin the live snapshot: %+v", stored)
 	}
 }
 

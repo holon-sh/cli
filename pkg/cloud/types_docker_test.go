@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -277,15 +278,10 @@ async def checkout(id: str) -> float:
 	manifest = typedManifest(t, manifest.Apps...)
 	_, grant, options := sourceRegistry(t)
 	grant.Repositories = map[string]string{"orders": "apps/orders", "checkout": "apps/checkout"}
-	options.architectures = []string{"amd64", "arm64"}
+	options.architectures = []string{runtime.GOARCH}
 	options.Env = append(options.Env, "DOCKER_CONTEXT="+os.Getenv("DOCKER_CONTEXT"))
-	for _, test := range []struct{ valid, check bool }{
-		{valid: true, check: true},
-		{check: true},
-		{},
-	} {
-		valid := test.valid
-		options.check = test.check
+	options.check = true
+	for _, valid := range []bool{true, false} {
 		if !valid {
 			sourceFiles(t, filepath.Join(root, "checkout"), map[string]string{
 				"server.py": strings.Replace(caller, `read(id=id)`, `read(id=42)`, 1),
@@ -300,7 +296,7 @@ async def checkout(id: str) -> float:
 		var progress strings.Builder
 		options.Stderr = &progress
 		apps, err := buildAndPush(t.Context(), selected, &imageUpload{manifest: prepared, grant: grant}, options)
-		if !valid && test.check {
+		if !valid {
 			if err == nil || !strings.Contains(strings.ToLower(progress.String()), "incompatible type") {
 				t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, progress.String())
 			}

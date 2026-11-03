@@ -2,7 +2,6 @@ package cloud
 
 import (
 	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -26,13 +25,11 @@ func typedManifest(t *testing.T, apps ...manifestApp) manifestSpec {
 	return manifestSpec{Apps: apps}
 }
 
-// installRuntime installs the declarations of the public holon-sh package (testdata/holon-sh) into
-// root, as its npm install would.
 func installRuntime(t *testing.T, root string) {
 	t.Helper()
-	if err := os.CopyFS(filepath.Join(root, "node_modules", nodeRuntime), os.DirFS(filepath.Join("testdata", nodeRuntime))); err != nil {
-		t.Fatal(err)
-	}
+	sourceFiles(t, filepath.Join(root, "node_modules", nodeRuntime), map[string]string{
+		"package.json": `{"name":"holon-sh","holon":{"slot":"generated","contractVersion":1}}`,
+	})
 }
 
 func TestGeneratedClientsAreAvailableDuringPostinstall(t *testing.T) {

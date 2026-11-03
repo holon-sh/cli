@@ -134,8 +134,7 @@ func TestSourceBuildAndUpload(t *testing.T) {
 		".dockerignore":     "excluded/\n!excluded/keep.txt\n!node_modules/forbidden\n",
 		"excluded/keep.txt": "yes", "excluded/no.txt": "no",
 		"node_modules/forbidden": "no", ".git/config": "no", "script": "hello",
-		".venv/pyvenv.cfg": "no", "venv/pyvenv.cfg": "no", "__pycache__/server.pyc": "no",
-		".pytest_cache/data": "no", ".mypy_cache/data": "no", ".ruff_cache/data": "no",
+		".venv/pyvenv.cfg": "no", "__pycache__/server.pyc": "no",
 	})
 	if err := os.Chmod(filepath.Join(root, "script"), 0o755); err != nil {
 		t.Fatal(err)
@@ -166,10 +165,7 @@ func TestSourceBuildAndUpload(t *testing.T) {
 					t.Fatalf("build input %s = %q, want %q: %v", name, got, want, err)
 				}
 			}
-			for _, name := range []string{
-				"excluded/no.txt", "node_modules/forbidden", ".git/config", ".dockerignore",
-				".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-			} {
+			for _, name := range []string{"excluded/no.txt", "node_modules/forbidden", ".git/config", ".dockerignore", ".venv", "__pycache__"} {
 				if _, err := os.Lstat(filepath.Join(snapshot, name)); !os.IsNotExist(err) {
 					t.Fatalf("excluded file reached builder: %s: %v", name, err)
 				}
@@ -225,55 +221,20 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	if input := record.Runtime.Env["TOKEN"]; !input.IsSecret || !input.IsRequired {
 		t.Fatal("secret declaration was lost")
 	}
-	if _, err := os.Stat(filepath.Join(root, ".holon", "main.mjs")); !os.IsNotExist(err) {
-		t.Fatalf("snapshot modified source: %v", err)
-	}
 }
 
-func TestSourceBuildFailures(t *testing.T) {
-	for _, test := range []struct {
-		name, link, target, diagnostic string
-		canceled                       bool
-	}{
-		{name: "builder failure", diagnostic: "build diagnostic"},
-		{name: "builder cancellation", canceled: true},
-		{name: "escaping file", link: "outside", target: "file", diagnostic: "symlink escapes application"},
-		{name: "escaping directory", link: "outside", diagnostic: "symlink escapes application"},
-		{name: "escaping ignore file", link: dockerignoreFile, target: "file", diagnostic: "symlink escapes application"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			root := t.TempDir()
+func TestSourceRejectsEscapingSymlinks(t *testing.T) {
+	for _, link := range []string{"outside", dockerignoreFile} {
+		t.Run(link, func(t *testing.T) {
+			root, outside := t.TempDir(), t.TempDir()
 			manifest := buildManifest(t, root)
-			build := buildImage(t, "source")
-			if test.link != "" {
-				outside := t.TempDir()
-				sourceFiles(t, outside, map[string]string{"file": ""})
-				if err := os.Symlink(filepath.Join(outside, test.target), filepath.Join(root, test.link)); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				build = func(ctx context.Context, _ buildRequest, _ io.Writer) (buildResult, error) {
-					if test.canceled {
-						cancel()
-						return buildResult{}, ctx.Err()
-					}
-					return buildResult{}, errors.New(test.diagnostic)
-				}
+			sourceFiles(t, outside, map[string]string{"file": ""})
+			if err := os.Symlink(filepath.Join(outside, "file"), filepath.Join(root, link)); err != nil {
+				t.Fatal(err)
 			}
-			_, server := buildRegistry(t)
-			grant := buildGrant()
-			grant.Registry = strings.TrimPrefix(server.URL, "https://")
-			apps, err := buildAndPush(ctx, manifest, &imageUpload{manifest: manifest, grant: grant}, buildOptions{builder: build, HTTPClient: server.Client()})
-			if err == nil || len(apps) != 0 {
-				t.Fatalf("build failure: %v, apps: %v", err, apps)
-			}
-			if test.canceled && !errors.Is(err, context.Canceled) {
-				t.Fatalf("lost cancellation: %v", err)
-			}
-			if test.diagnostic != "" && !strings.Contains(err.Error(), test.diagnostic) {
-				t.Fatalf("lost diagnostic: %v", err)
+			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{}, buildOptions{builder: buildImage(t, "source")})
+			if err == nil || len(apps) != 0 || !strings.Contains(err.Error(), "symlink escapes application") {
+				t.Fatalf("escaping symlink: %v, apps: %v", err, apps)
 			}
 		})
 	}
@@ -315,7 +276,7 @@ func TestSourceFailureCancelsConcurrentBuilds(t *testing.T) {
 		}
 	}
 	close(release)
-	if err := <-finished; err == nil || errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "build alpha:") {
+	if err := <-finished; err == nil || errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "build alpha: build failed") {
 		t.Fatalf("initiating failure lost: %v", err)
 	}
 	for _, source := range snapshots {

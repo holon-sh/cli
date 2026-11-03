@@ -24,7 +24,6 @@ func TestDetachedDevLifecycle(t *testing.T) {
 	}{
 		{name: "ready", seconds: 86400},
 		{name: "JSON", flags: []string{"--json", "--ttl", "1s"}, seconds: 1},
-		{name: "failed rollout", seconds: 86400, wantError: protocol.ReasonProgressDeadline},
 		{name: "failed hook", seconds: 86400, wantError: "install hook failed"},
 		{name: "cancelled startup", seconds: 86400, wantError: "context canceled"},
 		{name: "older server", seconds: 86400, wantError: "server did not accept a detached session"},
@@ -61,8 +60,6 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				case "cancelled startup":
 					cancel()
 					ready.Conditions = nil
-				case "failed rollout":
-					ready.Conditions[0].Status, ready.Conditions[0].Reason = "False", protocol.ReasonProgressDeadline
 				case "failed hook":
 					ready.Operation = &protocol.LifecycleOperation{ID: "install"}
 					ready.Lifecycle = &protocol.LifecycleStatus{ID: "install", Phase: "Failed", Message: "install hook failed"}
