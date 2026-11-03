@@ -3,6 +3,7 @@ package cloud
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -261,6 +262,7 @@ func TestPrebuiltImageImports(t *testing.T) {
 				destinationHost = strings.TrimPrefix(destinationServer.URL, "https://")
 			}
 			configDir := t.TempDir()
+			t.Setenv("DOCKER_CONFIG", configDir)
 			auths := map[string]map[string]string{}
 			for _, credential := range []struct{ host, user, password string }{
 				{host, "reader", scenario.sourcePassword},
@@ -278,8 +280,9 @@ func TestPrebuiltImageImports(t *testing.T) {
 			manifest := manifestSpec{Apps: []manifestApp{{Name: "echo", resolved: resolvedApp{App: protocol.App{
 				Name: "echo", Port: 3000, Image: host + "/source@" + indexDigest.String(),
 			}}}}}
-			options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + configDir}}
-			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{manifest: manifest, grant: grant}, options)
+			options := buildOptions{HTTPClient: server.Client()}
+			upload := imageUpload{manifest: manifest, grant: grant, load: func(context.Context) (protocol.UploadGrant, error) { return grant, nil }}
+			apps, err := buildAndPush(t.Context(), manifest, &upload, options)
 			if scenario.denied {
 				if err == nil || len(apps) != 0 {
 					t.Fatalf("invalid upload grant: apps=%v, error=%v", apps, err)
@@ -298,7 +301,7 @@ func TestPrebuiltImageImports(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(configDir, "config.json"), data, 0o600); err != nil {
 					t.Fatal(err)
 				}
-				repeated, err := buildAndPush(t.Context(), manifest, &imageUpload{manifest: manifest, grant: grant}, options)
+				repeated, err := buildAndPush(t.Context(), manifest, &upload, options)
 				if err != nil || len(repeated) != len(apps) || repeated[0].Image != apps[0].Image {
 					t.Fatalf("import after credentials changed: apps=%v, error=%v", repeated, err)
 				}

@@ -2,8 +2,6 @@ package cloud
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -29,7 +27,6 @@ const (
 type preparedTypes struct {
 	prepared    *typegen.Prepared
 	name        string
-	path        string
 	root        string
 	fingerprint string
 	metadata    *mcpcontract.Metadata
@@ -89,12 +86,12 @@ func (w *typeWorkspace) acquire(manifest manifestSpec) error {
 // prepareManifestTypes snapshots each path app for its image build and prepares its typed contract and
 // clients with typegen: extraction (on the host or in a container), dependency contract resolution and
 // generation. With a workspace it also writes the clients into the apps for their editors.
-func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options buildOptions) (_ manifestSpec, cleanup func(), err error) {
+func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options buildOptions) (_ manifestSpec, _ func(), err error) {
 	finish := options.output.measure("apps", "prepare contracts")
 	defer finish()
 	parent, err := os.MkdirTemp("", "holon-types-")
 	if err != nil {
-		return manifestSpec{}, func() {}, err
+		return manifestSpec{}, nil, err
 	}
 	var prepared *typegen.Prepared
 	remove := func() {
@@ -106,16 +103,8 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	defer func() {
 		if err != nil {
 			remove()
-			cleanup = func() {}
 		}
 	}()
-	// buildx keys BuildKit's incremental context sync by the context directory's base name, so a
-	// name derived from the manifest lets each preparation transfer only what changed since the last.
-	key := sha256.Sum256([]byte(manifest.file))
-	root := filepath.Join(parent, hex.EncodeToString(key[:8]))
-	if err = os.Mkdir(root, 0o700); err != nil {
-		return manifestSpec{}, nil, err
-	}
 	manifest.Apps = slices.Clone(manifest.Apps)
 	byApp := map[string]typegen.Source{}
 	var consumers []typegen.Consumer
@@ -123,16 +112,19 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	needed := map[string]bool{}
 	// Registry credentials stay with the platform, which resolves and publishes image contracts itself.
 	typeOptions := typegen.Options{
-		Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.Stderr, Run: options.extractTypes(),
+		Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.Stderr, Run: options.extractTypes,
 	}
 	var pathApps []*manifestApp
 	for i := range manifest.Apps {
 		app := &manifest.Apps[i]
 		switch {
 		case app.Path != "":
-			p := &preparedTypes{name: app.Name, path: app.Path, root: filepath.Join(root, "sources", app.Name)}
+			if pathInsideContext(parent, app.Path) {
+				return manifestSpec{}, nil, fmt.Errorf("%s: build metadata must be outside application source", app.Name)
+			}
+			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name)}
 			app.resolved.types = p
-			entry, err := typeServer(*app)
+			entry, err := typeServer(app.Path)
 			if err != nil {
 				return manifestSpec{}, nil, fmt.Errorf("%s: %w", app.Name, err)
 			}
@@ -271,16 +263,13 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 
 // typeServer is the path app's own MCP server entry, or "" for an app that is not an MCP server: one
 // without a server entry, or JavaScript that never mentions an MCP SDK or holon-sh.
-func typeServer(app manifestApp) (string, error) {
-	root := app.Path
+func typeServer(root string) (string, error) {
 	entry, err := typegen.SourceEntry(root)
 	if err != nil {
 		return "", err
 	}
-	if strings.HasSuffix(entry, ".ts") || strings.HasSuffix(entry, ".js") {
-		if !mentionsMCP(root) {
-			return "", nil
-		}
+	if (strings.HasSuffix(entry, ".ts") || strings.HasSuffix(entry, ".js")) && !mentionsMCP(root) {
+		return "", nil
 	}
 	return entry, nil
 }

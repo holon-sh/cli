@@ -66,8 +66,6 @@ func (policy Egress) Normalize() (Egress, error) {
 	return normalized, nil
 }
 
-// Validate checks the hosts against the app's inputs. Hosts land in network policy, so a placeholder may name only a
-// declared, non-secret input, and each host must be valid with every placeholder replaced by a DNS name.
 func (policy Egress) Validate(env map[string]Input) error {
 	declared := func(name string) (string, bool) {
 		input, ok := env[name]

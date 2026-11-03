@@ -28,7 +28,7 @@ const PlatformPaths = `/connections
 /v0.1
 `
 
-func ReservedAppNames() []string {
+func reservedAppNames() []string {
 	names := []string{"api", "default", "auth"}
 	for _, path := range strings.Fields(PlatformPaths) {
 		names = append(names, strings.TrimPrefix(path, "/"))
@@ -37,7 +37,7 @@ func ReservedAppNames() []string {
 }
 
 func ValidAppName(value string) bool {
-	return len(value) <= 49 && ValidDNSLabel(value) && !slices.Contains(ReservedAppNames(), value)
+	return len(value) <= 49 && ValidDNSLabel(value) && !slices.Contains(reservedAppNames(), value)
 }
 
 func ValidAppNames(names []string) bool {

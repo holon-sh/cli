@@ -18,10 +18,7 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"k8s.io/utils/ptr"
-	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content"
-	"oras.land/oras-go/v2/content/oci"
-	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/pkg/appartifact"
@@ -34,7 +31,7 @@ func buildImage(t *testing.T, marker string) buildApplication {
 		if _, err := io.WriteString(progress, "fixture build output\n"); err != nil {
 			return buildResult{}, err
 		}
-		fixture := newImageRegistry()
+		fixture, source := buildRegistry(t)
 		config := ocispec.ImageConfig{
 			User: "10001:10001", WorkingDir: "/app", Entrypoint: []string{"/bin/sh", "-c"},
 			Cmd: []string{"exec node main.mjs"}, Labels: map[string]string{"test.build": marker},
@@ -44,28 +41,11 @@ func buildImage(t *testing.T, marker string) buildApplication {
 			children = append(children, addTestImage(t, fixture, strings.TrimPrefix(platform, "linux/"), config, nil))
 		}
 		descriptor := addTestIndex(fixture, children...)
-		store, err := oci.NewWithContext(ctx, t.TempDir())
-		if err != nil {
-			return buildResult{}, err
-		}
-		store.AutoSaveIndex = false
-		for _, item := range fixture.items {
-			if _, err := oras.PushBytes(ctx, store, item.mediaType, item.data); err != nil && !errors.Is(err, errdef.ErrAlreadyExists) {
-				return buildResult{}, err
-			}
-		}
 		var image string
-		err = request.upload.run(ctx, func(grant protocol.UploadGrant) error {
-			name := grant.Registry + "/" + grant.Repositories[request.app.Name]
-			destination, err := imageRepository(name, grant.Grant, request.Env, request.httpClient)
-			if err != nil {
-				return err
-			}
-			if err := oras.CopyGraph(ctx, store, destination, descriptor, oras.DefaultCopyGraphOptions); err != nil {
-				return err
-			}
-			image = name + "@" + descriptor.Digest.String()
-			return nil
+		err := request.upload.run(ctx, func(grant protocol.UploadGrant) (err error) {
+			image, err = importImage(ctx, strings.TrimPrefix(source.URL, "https://")+"/source@"+descriptor.Digest.String(),
+				grant.Registry, grant.Repositories[request.app.Name], grant.Grant, request.httpClient)
+			return err
 		})
 		return buildResult{Image: image, Resolution: json.RawMessage(`{"fixture":"resolution"}`)}, err
 	}
@@ -100,8 +80,18 @@ func buildManifest(t *testing.T, root string) manifestSpec {
 	return resolved
 }
 
-func buildGrant() protocol.UploadGrant {
-	return protocol.UploadGrant{Grant: "grant-secret", Registry: "registry.example", Repositories: map[string]string{"alpha": "holon/upload/alpha"}}
+func prepareBuild(t *testing.T, manifest manifestSpec) manifestSpec {
+	t.Helper()
+	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanup)
+	return prepared
+}
+
+func buildGrant(server *httptest.Server) protocol.UploadGrant {
+	return protocol.UploadGrant{Grant: "grant-secret", Registry: strings.TrimPrefix(server.URL, "https://"), Repositories: map[string]string{"alpha": "holon/upload/alpha"}}
 }
 
 func sourceFiles(t *testing.T, root string, files map[string]string) {
@@ -187,12 +177,12 @@ func TestSourceBuildAndUpload(t *testing.T) {
 		return build(ctx, request, progress)
 	}
 
-	grant := buildGrant()
-	grant.Registry = strings.TrimPrefix(server.URL, "https://")
+	grant := buildGrant(server)
 	manifest.Apps[0].resolved.Env = map[string]protocol.Input{
 		"DEPLOYMENT_VALUE": {Value: ptr.To("only-for-this-deployment")},
 		"TOKEN":            {IsSecret: true, IsRequired: true},
 	}
+	manifest = prepareBuild(t, manifest)
 	apps, err := buildAndPush(t.Context(), manifest, &imageUpload{manifest: manifest, grant: grant}, options)
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +190,7 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	if len(apps) != 1 || !strings.HasPrefix(apps[0].Image, grant.Registry+"/holon/upload/alpha@sha256:") {
 		t.Fatalf("unexpected image: %#v", apps)
 	}
-	repository, err := imageRepository(grant.Registry+"/"+grant.Repositories["alpha"], grant.Grant, nil, server.Client())
+	repository, err := imageRepository(grant.Registry+"/"+grant.Repositories["alpha"], grant.Grant, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,9 +198,15 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, executable, err := appartifact.Read(t.Context(), repository, descriptor)
-	if err != nil || record.AppName != "alpha" || !strings.HasSuffix(apps[0].Image, "@"+executable.Digest.String()) {
-		t.Fatalf("published build: %+v %v", record, err)
+	var index ocispec.Index
+	publishedJSON(t, repository, descriptor, &index)
+	executable := index.Manifests[0]
+	var metadata ocispec.Manifest
+	publishedJSON(t, repository, index.Manifests[1], &metadata)
+	var record protocol.BuildRecord
+	publishedJSON(t, repository, metadata.Layers[0], &record)
+	if record.AppName != "alpha" || !strings.HasSuffix(apps[0].Image, "@"+executable.Digest.String()) {
+		t.Fatalf("published build: %+v", record)
 	}
 	if input := record.Runtime.Env["DEPLOYMENT_VALUE"]; !input.IsRequired || input.Value != nil || input.Default != nil {
 		t.Fatal("deployment value escaped into shared metadata")
@@ -232,9 +228,8 @@ func TestSourceRejectsEscapingSymlinks(t *testing.T) {
 			if err := os.Symlink(filepath.Join(outside, "file"), filepath.Join(root, link)); err != nil {
 				t.Fatal(err)
 			}
-			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{}, buildOptions{builder: buildImage(t, "source")})
-			if err == nil || len(apps) != 0 || !strings.Contains(err.Error(), "symlink escapes application") {
-				t.Fatalf("escaping symlink: %v, apps: %v", err, apps)
+			if _, _, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}); err == nil || !strings.Contains(err.Error(), "symlink escapes application") {
+				t.Fatalf("escaping symlink: %v", err)
 			}
 		})
 	}
@@ -248,6 +243,10 @@ func TestSourceFailureCancelsConcurrentBuilds(t *testing.T) {
 	beta := buildManifest(t, t.TempDir()).Apps[0]
 	beta.Name, beta.resolved.Name = "beta", "beta"
 	manifest.Apps = append(manifest.Apps, beta)
+	manifest, cleanup, err := prepareManifestTypes(ctx, manifest, buildOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	options := buildOptions{builder: func(ctx context.Context, request buildRequest, _ io.Writer) (buildResult, error) {
 		started <- request.Source
 		if request.app.Name == "alpha" {
@@ -279,6 +278,7 @@ func TestSourceFailureCancelsConcurrentBuilds(t *testing.T) {
 	if err := <-finished; err == nil || errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "build alpha: build failed") {
 		t.Fatalf("initiating failure lost: %v", err)
 	}
+	cleanup()
 	for _, source := range snapshots {
 		if _, err := os.Stat(filepath.Dir(source)); !os.IsNotExist(err) {
 			t.Fatal("failed build retained temporary source and image data")
@@ -291,8 +291,7 @@ func TestSourceSessionResolution(t *testing.T) {
 	manifest := buildManifest(t, root)
 	build := buildImage(t, "resolution")
 	_, server := buildRegistry(t)
-	grant := buildGrant()
-	grant.Registry = strings.TrimPrefix(server.URL, "https://")
+	grant := buildGrant(server)
 	options := buildOptions{resolutions: new(sync.Map), architectures: []string{"arm64"}, HTTPClient: server.Client()}
 	for _, resolution := range []string{"", `{"fixture":"resolution"}`} {
 		options.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
@@ -304,7 +303,8 @@ func TestSourceSessionResolution(t *testing.T) {
 			}
 			return build(ctx, request, progress)
 		}
-		if _, err := buildAndPush(t.Context(), manifest, &imageUpload{manifest: manifest, grant: grant}, options); err != nil {
+		prepared := prepareBuild(t, manifest)
+		if _, err := buildAndPush(t.Context(), prepared, &imageUpload{manifest: prepared, grant: grant}, options); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := os.Stat(filepath.Join(root, ".holon")); !os.IsNotExist(err) {
@@ -325,8 +325,7 @@ func TestSourcePublishExchangesGrantOncePerBuild(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	manifest := buildManifest(t, t.TempDir())
-	grant := buildGrant()
-	grant.Registry = strings.TrimPrefix(server.URL, "https://")
+	grant := buildGrant(server)
 	request := buildRequest{app: manifest.Apps[0], upload: &imageUpload{manifest: manifest, grant: grant}, httpClient: server.Client()}
 	for _, data := range []string{"config", "layer", "launcher"} {
 		err := request.publish(t.Context(), func(repository *remote.Repository) error {
@@ -339,5 +338,16 @@ func TestSourcePublishExchangesGrantOncePerBuild(t *testing.T) {
 	}
 	if tokens.Load() != 1 {
 		t.Fatalf("token exchanges in one build: %d", tokens.Load())
+	}
+}
+
+func publishedJSON(t *testing.T, source content.Fetcher, descriptor ocispec.Descriptor, value any) {
+	t.Helper()
+	data, err := content.FetchAll(t.Context(), source, descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, value); err != nil {
+		t.Fatal(err)
 	}
 }

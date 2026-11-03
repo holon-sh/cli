@@ -146,10 +146,6 @@ func withProgress(cmd *cobra.Command, config *commandConfig, message string) *co
 		cmd.SetErr(renderedErr)
 		defer func() {
 			result = errors.Join(result, output.finish(errors.Join(result, cmd.Context().Err()), message))
-			cmd.SetOut(stdout)
-			cmd.SetErr(stderr)
-			config.Auth.Output = stderr
-			config.output = nil
 		}()
 		return run(cmd, args)
 	}

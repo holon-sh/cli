@@ -49,7 +49,7 @@ os.execv(sys.executable, [sys.executable, str(runner), *sys.argv[1:]])
 // configuration that installs and checks them, or "" when it has none. Python and Go clients are
 // source files; the TypeScript clients fill the generated/ slots of the holon-sh and holon-ui packages
 // that the app's own install fetches.
-func stageTypes(p *preparedTypes, options buildOptions) (string, error) {
+func stageTypes(p *preparedTypes, check bool) (string, error) {
 	targets := p.prepared.Targets(p.name)
 	if len(targets) == 0 {
 		return "", nil
@@ -58,40 +58,25 @@ func stageTypes(p *preparedTypes, options buildOptions) (string, error) {
 	if err := os.Mkdir(directory, 0o755); err != nil {
 		return "", fmt.Errorf("prepare MCP types (.holon-types is reserved): %w", err)
 	}
-	python := slices.Contains(targets, typegen.TargetPy)
-	if python {
-		if err := p.prepared.WritePythonSlot(p.name, p.root); err != nil {
-			return "", fmt.Errorf("%s: %w", p.name, err)
-		}
-	}
-	if slices.Contains(targets, typegen.TargetGo) {
-		if err := p.prepared.WriteGoSlot(p.name, p.root); err != nil {
-			return "", fmt.Errorf("%s: %w", p.name, err)
-		}
-	}
-	var before, after, install []any
-	staged := false
 	for _, target := range targets {
-		var packageName string
-		var write func(string, string) error
+		path, write := p.root, p.prepared.WritePythonSlot
 		switch target {
+		case typegen.TargetGo:
+			write = p.prepared.WriteGoSlot
 		case typegen.TargetTS:
-			packageName, write = nodeRuntime, p.prepared.WriteNodeSlot
+			path, write = filepath.Join(directory, nodeRuntime), p.prepared.WriteNodeSlot
 		case typegen.TargetUI:
-			packageName, write = uiRuntime, p.prepared.WriteBrowserSlot
-		default:
-			continue
+			path, write = filepath.Join(directory, uiRuntime), p.prepared.WriteBrowserSlot
 		}
-		path := filepath.Join(directory, packageName)
-		if err := os.Mkdir(path, 0o755); err != nil {
+		if err := os.MkdirAll(path, 0o755); err != nil {
 			return "", err
 		}
 		if err := write(p.name, path); err != nil {
 			return "", fmt.Errorf("%s: %w", p.name, err)
 		}
-		staged = true
 	}
-	if staged {
+	var before, after, install []any
+	if slices.Contains(targets, typegen.TargetTS) || slices.Contains(targets, typegen.TargetUI) {
 		if err := os.WriteFile(filepath.Join(directory, "stage.sh"), []byte(stageRuntimeSlots), 0o755); err != nil {
 			return "", err
 		}
@@ -100,15 +85,15 @@ func stageTypes(p *preparedTypes, options buildOptions) (string, error) {
 		}
 		before = append(before, "sh .holon-types/stage.sh")
 	}
-	if check, ok := p.prepared.CheckConfig(p.name); ok && options.check {
+	if config, ok := p.prepared.CheckConfig(p.name); ok && check {
 		if err := tooling.Unpack(directory); err != nil {
 			return "", err
 		}
-		if err := writeTypeJSON(filepath.Join(directory, "check.json"), check); err != nil {
+		if err := writeTypeJSON(filepath.Join(directory, "check.json"), config); err != nil {
 			return "", err
 		}
 		runner := "node .holon-types/typescript/runner.mjs"
-		if python {
+		if slices.Contains(targets, typegen.TargetPy) {
 			runner = "python .holon-types/check.py"
 			if err := os.WriteFile(filepath.Join(directory, "check.py"), []byte(checkPython), 0o644); err != nil {
 				return "", err
@@ -118,7 +103,7 @@ func stageTypes(p *preparedTypes, options buildOptions) (string, error) {
 		before = append(before, runner+" check .holon-types/check.json")
 		after = append(after, runner+" verify .holon-types/check.json")
 	}
-	if len(before)+len(after)+len(install) == 0 {
+	if len(before) == 0 {
 		return "", stabilizeTimes(p.root)
 	}
 	railpack, err := checkedBuild(filepath.Join(p.root, "railpack.json"), before, after, install)
@@ -139,8 +124,6 @@ var checkerInstall = []any{
 	"/opt/holon-check/bin/pip install --disable-pip-version-check --no-cache-dir mypy==2.4.0",
 }
 
-// checkedBuild is the app's railpack.json (JSON with comments, or absent) with before and after
-// around its build commands, and install placed before its install commands.
 func railpackConfig(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -163,22 +146,18 @@ func checkedBuild(path string, before, after, install []any) (map[string]any, er
 	if err != nil {
 		return nil, err
 	}
-	if len(install) > 0 {
-		step := objectField(objectField(config, "steps"), "install")
+	surround := func(name string, before, after []any) {
+		step := objectField(objectField(config, "steps"), name)
 		commands, ok := step["commands"].([]any)
 		if !ok {
 			commands = []any{"..."}
 		}
-		step["commands"] = slices.Concat(install, commands)
+		step["commands"] = slices.Concat(before, commands, after)
 	}
-	if len(before)+len(after) > 0 {
-		build := objectField(objectField(config, "steps"), "build")
-		commands, ok := build["commands"].([]any)
-		if !ok {
-			commands = []any{"..."}
-		}
-		build["commands"] = slices.Concat(before, commands, after)
+	if len(install) > 0 {
+		surround("install", install, nil)
 	}
+	surround("build", before, after)
 	return config, nil
 }
 

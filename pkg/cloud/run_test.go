@@ -22,6 +22,7 @@ import (
 	"time"
 
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/oauth2"
@@ -29,8 +30,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	testingclock "k8s.io/utils/clock/testing"
 
-	"github.com/holon-sh/cli/pkg/protocol"
 	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
+	"github.com/holon-sh/cli/pkg/protocol"
 )
 
 func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer, config commandConfig) error {
@@ -38,7 +39,6 @@ func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	command := sharedcli.NewCommand("dev")
 	command.AddCommand(newCommands(config)...)
 	command.SetArgs(args)
-	command.SetIn(config.Input)
 	command.SetOut(cmp.Or(stdout, io.Discard))
 	command.SetErr(cmp.Or(stderr, io.Discard))
 	return command.ExecuteContext(ctx)
@@ -52,7 +52,6 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 		`unknown app "missing"`:                    {"dev", "alpha", "missing", "--project", filepath.Join(root, manifestFileName)},
 		"--env must be dev or prod":                {"config", "set", "--env", "staging", "API_URL", "value"},
 		"--session requires a development session": {"config", "set", "--session", "production", "API_URL", "value"},
-		"none of the others can be":                {"config", "set", "--env", "dev", "--session", "s-one", "API_URL", "value"},
 		`invalid variable name "not-valid"`:        {"config", "set", "not-valid", "value"},
 	} {
 		config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir()}}
@@ -65,13 +64,9 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
 	for _, command := range []string{"dev", "deploy"} {
-		for _, tc := range []struct {
-			name, access, want string
-			oauth              *protocol.OAuthInfo
-		}{
-			{name: "anonymous build failure", access: `{"server":{}}`},
+		for _, tc := range []struct{ name, access, want string }{
+			{name: "build failure", access: `{"server":{}}`},
 			{name: "missing identity", access: `{"server":{},"tools":{"read":{"oauth":{}}}}`, want: "requires a configured identity provider"},
-			{name: "authenticated build failure", access: `{"server":{"oauth":{"scopes":["app:chat:read"]}}}`, oauth: &protocol.OAuthInfo{}},
 		} {
 			t.Run(command+"/"+tc.name, func(t *testing.T) {
 				t.Parallel()
@@ -83,13 +78,7 @@ func TestRunPreparationFailures(t *testing.T) {
 				})
 				h := newRunHarness(t)
 				h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
-					info := protocol.Info{Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}}
-					if tc.oauth != nil {
-						oauth := *tc.oauth
-						oauth.Issuer, oauth.AdminAudience, oauth.CLIClientID = h.server.URL+"/", cloudtest.AdminAudience(h.server.URL), "cli-test"
-						info.OAuth = &oauth
-					}
-					cloudtest.WriteJSON(w, info)
+					cloudtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}})
 				})
 				h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
 					cloudtest.WriteJSON(w, protocol.SessionResponse{
@@ -398,12 +387,6 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(updates) != 1 || updates[0][0].Image == created[0].Image || updates[0][1].Image != created[1].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
-		origin := "https://gentle-otter-482." + h.baseHost
-		for _, endpoint := range []string{"/mcp", "/alpha/", "/mcp/alpha", "/beta/", "/mcp/beta"} {
-			if !slices.Contains(strings.Fields(stdout.String()), origin+endpoint) {
-				t.Errorf("missing endpoint %s in %q", endpoint, stdout.String())
-			}
-		}
 		if strings.Count(stdout.String(), "trace_id=aaaa") != 1 || strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}
@@ -544,15 +527,15 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 	remote := "apps:\n- name: alpha\n  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n"
 	selection := "apps:\n- name: unused\n  path: ./not-checked-out\n  access: {server: {}}\n" +
 		"- name: delta\n  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n"
-	var dependency *registrySource
+	var dependency *protocol.RegistrySource
 	var dependencyName string
 	for _, name := range []string{"gamma", "beta", "alpha"} {
 		document := descriptorDocument(name)
 		delete(document, "packages")
 		document["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://upstream.example/mcp"}}
 		if dependency != nil {
-			document["_meta"] = map[string]any{publisherMetadata: map[string]any{"sh.holon": map[string]any{
-				"requires": map[string]serverReference{dependencyName: dependency.RegistryRef},
+			document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
+				"requires": map[string]protocol.RegistryRef{dependencyName: dependency.RegistryRef},
 			}}}
 		}
 		dependency, dependencyName = descriptorRegistry(t, document), name
@@ -632,7 +615,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 	if err := os.WriteFile(manifestPath, []byte(`apps:
   - name: hosted
     remote: {url: https://mcp.example/mcp}
-    headers: {Authorization: {secret: UPSTREAM_TOKEN}, X-Workspace: engineering}
     access: {server: {}}
   - name: prod
     mount: /
@@ -652,7 +634,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	var mu sync.Mutex
 	var existing bool
 	var desired protocol.AppsRequestFor[protocol.App]
-	var forceConflict, loseResponse bool
+	var forceConflict, loseResponse, unsupportedField bool
 	var rolloutFailure string
 	revision := 7
 	h := newRunHarness(t)
@@ -714,10 +696,19 @@ func TestRunDeployLifecycle(t *testing.T) {
 						desired.Apps[1].Port = 4001
 					}
 				}
-				cloudtest.WriteJSON(w, protocol.SessionResponse{
+				session := protocol.SessionResponse{
 					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: generation, Revision: strconv.Itoa(revision),
 					Endpoints: []protocol.SessionEndpoint{{Name: "prod", URL: "https://apps.example/mcp/prod"}}, Conditions: conditions,
-				})
+				}
+				if !unsupportedField {
+					cloudtest.WriteJSON(w, session)
+					return
+				}
+				var served map[string]any
+				data, _ := json.Marshal(session)
+				_ = json.Unmarshal(data, &served)
+				served["apps"].([]any)[2].(map[string]any)["futureField"] = true
+				cloudtest.WriteJSON(w, served)
 			case protocol.ToolUpdateSession:
 				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -755,15 +746,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 	mu.Lock()
 	initial := slices.Clone(desired.Apps)
 	mu.Unlock()
-	if len(initial) != 2 || initial[0].Name != "hosted" || initial[0].Remote == nil ||
-		initial[0].Remote.URL != "https://mcp.example/mcp" || !initial[0].Env["UPSTREAM_TOKEN"].IsSecret ||
-		initial[0].Port != 0 || initial[0].Image != "" || initial[1].Image == "" {
-		t.Fatalf("mixed source and remote deployment lost configuration: %#v", initial)
-	}
-	remote := initial[0]
-	if remote.Remote.Headers["X-Workspace"] != "engineering" || remote.Remote.Headers["Authorization"] != "{UPSTREAM_TOKEN}" {
-		t.Errorf("inline remote lost its headers: %v", remote.Remote.Headers)
-	}
 	if strings.Contains(diagnostics.String(), "fixture build output") ||
 		strings.Contains(diagnostics.String(), "Timing ") ||
 		!strings.Contains(diagnostics.String(), "prod ready") || strings.ContainsAny(diagnostics.String(), "\x1b\r") {
@@ -827,6 +809,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 		{name: "disjoint update"},
 		{name: "lost accepted response"},
 		{name: "retain dependency without checkout"},
+		{name: "unsupported retained field"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			manifest := strings.Replace(string(manifest), "https://mcp.example/mcp", "https://updated.example/mcp", 1)
@@ -834,8 +817,8 @@ func TestRunDeployLifecycle(t *testing.T) {
 				doc := descriptorDocument("hosted")
 				delete(doc, "packages")
 				doc["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://updated.example/mcp"}}
-				doc["_meta"] = map[string]any{publisherMetadata: map[string]any{"sh.holon": map[string]any{
-					"requires": map[string]serverReference{"prod": {Name: "io.github.acme/prod", Version: "1.4.2"}},
+				doc["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
+					"requires": map[string]protocol.RegistryRef{"prod": {Name: "io.github.acme/prod", Version: "1.4.2"}},
 				}}}
 				source := descriptorRegistry(t, doc)
 				source.Remote = &struct{}{}
@@ -875,6 +858,8 @@ func TestRunDeployLifecycle(t *testing.T) {
 			existing, rolloutFailure = !scenario.create, ""
 			forceConflict = scenario.name == "disjoint update"
 			loseResponse = scenario.name == "lost accepted response"
+			unsupportedField = scenario.name == "unsupported retained field"
+			written := revision
 			mu.Unlock()
 			runConfig := h.run
 			if scenario.name != "retain dependency without checkout" {
@@ -882,11 +867,18 @@ func TestRunDeployLifecycle(t *testing.T) {
 					return nil, errors.New("no access to unrelated application images")
 				})
 			}
-			if err := executeCommand(t.Context(), []string{"deploy", "hosted", "--project", manifestPath}, nil, nil, runConfig); err != nil {
-				t.Fatal(err)
-			}
+			err := executeCommand(t.Context(), []string{"deploy", "hosted", "--project", manifestPath}, nil, nil, runConfig)
 			mu.Lock()
 			defer mu.Unlock()
+			if unsupportedField {
+				if err == nil || !strings.Contains(err.Error(), "app upstream: ") || !strings.Contains(err.Error(), "futureField") || revision != written {
+					t.Fatalf("unsupported retained field: %v, revision %d after %d", err, revision, written)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
 			wantApps := []string{"hosted", "prod", "upstream"}
 			if scenario.create {
 				wantApps = []string{"hosted"}

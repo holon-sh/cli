@@ -12,9 +12,9 @@ import (
 )
 
 func publishAppBuild(ctx context.Context, app manifestApp, image string, grant protocol.UploadGrant, options buildOptions) error {
-	record := mcpregistry.BuildRecord(app.resolved.App, app.resolved.catalogEnv, app.resolved.descriptor, app.OAuth != nil)
+	record := mcpregistry.BuildRecord(app.resolved.App, app.resolved.catalogEnv, app.resolved.descriptor)
 	client := cmp.Or(options.HTTPClient, &http.Client{Timeout: 5 * time.Minute})
-	repository, err := imageRepository(grant.Registry+"/"+grant.Repositories[app.Name], grant.Grant, options.Env, client)
+	repository, err := imageRepository(grant.Registry+"/"+grant.Repositories[app.Name], grant.Grant, client)
 	if err != nil {
 		return err
 	}
@@ -22,6 +22,5 @@ func publishAppBuild(ctx context.Context, app manifestApp, image string, grant p
 	if err != nil {
 		return err
 	}
-	_, err = appartifact.Publish(ctx, repository, executable, record, options.catalogTag)
-	return err
+	return appartifact.Publish(ctx, repository, executable, record, options.catalogTag)
 }

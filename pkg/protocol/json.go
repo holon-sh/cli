@@ -3,21 +3,13 @@ package protocol
 import (
 	"bytes"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"io"
 )
 
 func DecodeJSONStrict(data []byte, target any) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("trailing JSON data")
-	}
-	return nil
+	return jsonv2.Unmarshal(data, target, jsonv2.RejectUnknownMembers(true))
 }
 
 func DecodeJSONFields(data []byte, target any, required ...string) error {

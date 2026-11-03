@@ -60,9 +60,6 @@ func TestProgressTransitions(t *testing.T) {
 				}
 			}
 
-			// Compare the emitted records with the library's encoding of the contract.
-			// Normalize opaque child IDs by first appearance: identities must remain
-			// distinct and stable, but their hashing algorithm is not a contract.
 			reports := strings.Join(regexp.MustCompile("\x1b]7501;[^\x07]*\x07").FindAllString(stream.String(), -1), "")
 			ids := map[string]string{}
 			reports = regexp.MustCompile(`id=holon/items/[^:\x07]+`).ReplaceAllStringFunc(reports, func(id string) string {

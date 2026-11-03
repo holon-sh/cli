@@ -23,7 +23,6 @@ func replaceExecution(ctx context.Context, manager *Client, name string,
 	current := baseline
 	target := desired
 	target.RequestID = cmp.Or(target.RequestID, strings.ToLower(rand.Text()))
-	before := desiredFor(baseline)
 	for range 3 {
 		token, err := manager.controlToken(ctx, ControlPlane(name))
 		if err != nil {
@@ -59,12 +58,12 @@ func replaceExecution(ctx context.Context, manager *Client, name string,
 		if baseline.Revision == "" {
 			return protocol.SessionResponse{}, errors.New("execution was created concurrently")
 		}
-		if !targeted && len(protocol.ChangedApps(before.Apps, latest.Apps)) != 0 {
+		concurrent := protocol.ChangedApps(baseline.Apps, latest.Apps)
+		if !targeted && len(concurrent) != 0 {
 			return protocol.SessionResponse{}, errors.New("execution changed concurrently")
 		}
 		merged := desiredFor(latest)
-		concurrent := protocol.ChangedApps(before.Apps, latest.Apps)
-		for _, appName := range protocol.ChangedApps(before.Apps, desired.Apps) {
+		for _, appName := range protocol.ChangedApps(baseline.Apps, desired.Apps) {
 			if slices.Contains(concurrent, appName) {
 				return protocol.SessionResponse{}, errors.New("application " + appName + " changed concurrently")
 			}

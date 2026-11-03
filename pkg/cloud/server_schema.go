@@ -1,13 +1,17 @@
 package cloud
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/holon-sh/cli/pkg/mcpregistry"
+)
 
 func ServerJSONSchema() ([]byte, error) {
 	reflector := configurationReflector()
 	reflected, err := reflector.Reflect(struct {
 		Meta struct {
 			Publisher struct {
-				Holon holonDescriptorMetadata `json:"sh.holon,omitempty"`
+				Holon mcpregistry.HolonMetadata `json:"sh.holon,omitempty"`
 			} `json:"io.modelcontextprotocol.registry/publisher-provided,omitempty"`
 		} `json:"_meta,omitempty"`
 	}{})

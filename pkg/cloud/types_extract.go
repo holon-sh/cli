@@ -2,7 +2,6 @@ package cloud
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -32,26 +31,21 @@ var finalStage = regexp.MustCompile(`(?m)^FROM \S+ AS (\S+)$`)
 // extractTypes is typegen's contract-runner hook. It builds the app's image with Kiln, without the app's
 // build step, which may need the clients being prepared, and runs the runner there without network
 // access, so the server's imports resolve against the dependencies its image installs.
-func (o buildOptions) extractTypes() func(ctx context.Context, language, tooling string, args []string, stdout io.Writer) error {
-	return func(ctx context.Context, language, tooling string, args []string, stdout io.Writer) error {
-		runner, ok := contractRunners[language]
-		if !ok {
-			return fmt.Errorf("unsupported language %s", language)
-		}
-		env, err := commandenv.Environ(o.Env)
-		if err != nil {
-			return err
-		}
-		logs := o.output.logs(cmp.Or(o.Stderr, io.Discard))
-		command := slices.Concat([]string{runner.program, "/holon-tooling/" + language + "/" + runner.runner, args[0], "/app"}, args[2:])
-		if err := extractInImage(ctx, args[1], tooling, command, stdout, env, logs); err != nil {
-			if !errors.As(err, new(*typegen.RunnerError)) {
-				logs.failed("MCP types")
-			}
-			return fmt.Errorf("prepare MCP types: %w", err)
-		}
-		return nil
+func (o buildOptions) extractTypes(ctx context.Context, language, tooling string, args []string, stdout io.Writer) error {
+	runner := contractRunners[language]
+	env, err := commandenv.Environ(o.Env)
+	if err != nil {
+		return err
 	}
+	logs := o.output.logs(o.Stderr)
+	command := slices.Concat([]string{runner.program, "/holon-tooling/" + language + "/" + runner.runner, args[0], "/app"}, args[2:])
+	if err := extractInImage(ctx, args[1], tooling, command, stdout, env, logs); err != nil {
+		if !errors.As(err, new(*typegen.RunnerError)) {
+			logs.failed("MCP types")
+		}
+		return fmt.Errorf("prepare MCP types: %w", err)
+	}
+	return nil
 }
 
 // mentionsMCP reports whether any JavaScript or TypeScript source under root imports an MCP SDK or holon-sh.
@@ -62,7 +56,7 @@ func mentionsMCP(root string) bool {
 			return filepath.SkipAll
 		}
 		if entry.IsDir() {
-			if entry.Name() == "node_modules" {
+			if typegen.GeneratedSource(root, path) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -89,7 +83,7 @@ func extractInImage(ctx context.Context, source, tooling string, command []strin
 		return err
 	}
 	plan, err := kiln.Plan(ctx, kiln.Request{
-		Source: source, ConfigFilePath: ".holon-types/railpack.json", Platforms: []string{"linux/" + runtime.GOARCH}, Start: command[:1],
+		Source: source, ConfigFilePath: ".holon-types/railpack.json", Platforms: []string{"linux/" + runtime.GOARCH},
 	})
 	if err != nil {
 		return err

@@ -34,8 +34,6 @@ func (m *Client) authorizeOperation(ctx context.Context, s protocol.SessionRespo
 		lifecycle.Phase == "Failed" {
 		return nil
 	}
-	m.hookMu.Lock()
-	defer m.hookMu.Unlock()
 	key := s.UID + "/" + s.Operation.ID
 	if m.hookSent[key].After(m.now()) {
 		return nil
@@ -119,7 +117,7 @@ func (m *Client) DeleteSession(ctx context.Context, name, uid string, skip bool)
 				return false, errors.New("execution identity changed")
 			}
 			if lifecycleFailed(s) {
-				return false, &SessionFailure{Detail: s.Lifecycle.Message}
+				return false, errors.New("session failed: " + s.Lifecycle.Message)
 			}
 			return false, m.authorizeOperation(ctx, s)
 		})

@@ -46,10 +46,6 @@ func SessionScopes(mode string, apps []App) []string {
 	return slices.Compact(scopes)
 }
 
-func ValidMCPName(name string) bool {
-	return name != "" && len(name) <= 1024 && utf8.ValidString(name) && ValidInputValue(name)
-}
-
 func ValidateAccess(access *AppAccess) error {
 	if access == nil || access.Server == nil {
 		return errors.New("access.server must be explicit; use {} for public access")
@@ -61,7 +57,7 @@ func ValidateAccess(access *AppAccess) error {
 		return errors.New("access.tools must contain at most 256 entries")
 	}
 	for name := range access.Tools {
-		if !ValidMCPName(name) {
+		if name == "" || len(name) > 1024 || !utf8.ValidString(name) || !ValidInputValue(name) {
 			return errors.New("invalid access.tools name")
 		}
 	}

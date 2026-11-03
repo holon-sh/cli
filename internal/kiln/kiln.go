@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"runtime"
 	"unsafe"
 )
 
@@ -29,15 +28,11 @@ type Result struct {
 }
 
 func Plan(ctx context.Context, request Request) (Result, error) {
-	if err := ctx.Err(); err != nil {
-		return Result{}, err
-	}
 	input, err := json.Marshal(request)
 	if err != nil {
 		return Result{}, err
 	}
 	native := C.kiln_request_create((*C.char)(unsafe.Pointer(unsafe.SliceData(input))), C.size_t(len(input)))
-	runtime.KeepAlive(input)
 	if native == nil {
 		return Result{}, errors.New("cannot allocate Kiln request")
 	}
@@ -55,22 +50,18 @@ func Plan(ctx context.Context, request Request) (Result, error) {
 		return Result{}, err
 	}
 	output := C.GoBytes(unsafe.Pointer(response.data), C.int(response.len))
-	switch response.status {
-	case C.KILN_OK:
+	if response.status == C.KILN_OK {
 		var result Result
 		err = json.Unmarshal(output, &result)
 		return result, err
-	case C.KILN_CANCELLED:
-		return Result{}, context.Canceled
-	default:
-		var diagnostic struct {
-			Logs []struct {
-				Msg string `json:"Msg"`
-			} `json:"logs"`
-		}
-		if json.Unmarshal(output, &diagnostic) == nil && len(diagnostic.Logs) > 0 {
-			return Result{}, errors.New(diagnostic.Logs[0].Msg)
-		}
-		return Result{}, fmt.Errorf("kiln FFI: %s", output)
 	}
+	var diagnostic struct {
+		Logs []struct {
+			Msg string `json:"Msg"`
+		} `json:"logs"`
+	}
+	if json.Unmarshal(output, &diagnostic) == nil && len(diagnostic.Logs) > 0 {
+		return Result{}, errors.New(diagnostic.Logs[0].Msg)
+	}
+	return Result{}, fmt.Errorf("kiln FFI: %s", output)
 }
