@@ -31,6 +31,21 @@ func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	return command.ExecuteContext(ctx)
 }
 
+func TestRunRejectsInvalidInputs(t *testing.T) {
+	t.Parallel()
+	for want, args := range map[string][]string{
+		"--env must be dev or prod":                {"config", "set", "--env", "staging", "API_URL", "value"},
+		"--session requires a development session": {"config", "set", "--session", "production", "API_URL", "value"},
+		"none of the others can be":                {"config", "set", "--env", "dev", "--session", "s-one", "API_URL", "value"},
+		`invalid variable name "not-valid"`:        {"config", "set", "not-valid", "value"},
+	} {
+		config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir()}}
+		if err := executeCommand(t.Context(), args, nil, nil, config); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("invalid command %v: error=%v, want %q", args, err, want)
+		}
+	}
+}
+
 type runHarness struct {
 	mux      *http.ServeMux
 	control  *cloudtest.ControlFixtures
