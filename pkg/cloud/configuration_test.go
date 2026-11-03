@@ -51,6 +51,7 @@ func TestConfigurationSetSendsValuesAsGiven(t *testing.T) {
 func TestConfigurationScopes(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	sourceFiles(t, dir, map[string]string{manifestFileName: "invalid: project"})
 	for _, test := range []struct {
 		name        string
 		args        []string

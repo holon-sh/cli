@@ -296,6 +296,7 @@ func newManager(t *testing.T, server *httptest.Server, clock *testingclock.FakeP
 func TestAnonymousConnectionAndLogout(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
+	sourceFiles(t, dir, map[string]string{manifestFileName: "invalid: project"})
 	mux := http.NewServeMux()
 	mux.HandleFunc(protocol.APIPathInfo, func(w http.ResponseWriter, r *http.Request) {
 		cloudtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}, Version: "test"})

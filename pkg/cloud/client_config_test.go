@@ -123,3 +123,14 @@ func TestClientOriginErrorsBeforeNetwork(t *testing.T) {
 		})
 	}
 }
+
+func TestInstallationCommandsRejectProjectFlag(t *testing.T) {
+	for _, command := range []string{"login", "logout", "config", "secret"} {
+		t.Run(command, func(t *testing.T) {
+			err := executeCommand(t.Context(), []string{command, "--project", manifestFileName}, nil, nil, commandConfig{})
+			if err == nil || !strings.Contains(err.Error(), "unknown flag: --project") {
+				t.Fatalf("installation command accepted --project: %v", err)
+			}
+		})
+	}
+}
