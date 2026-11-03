@@ -253,7 +253,16 @@ def find_server(module: object) -> MCPServer | Server[Any]:
 
 async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
     from mcp.client import Client
+    from mcp.server import MCPServer
+    from mcp.server.lowlevel.server import lifespan
 
+    # An in-process Client enters the server's lifespan before listing
+    # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/client/client.py#L118),
+    # where servers open the databases and connections the sandbox does not have. Listing the
+    # catalog needs none of that, so the SDK's no-op lifespan stands in
+    # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/lowlevel/server.py#L115-L117).
+    lowlevel = server._lowlevel_server if isinstance(server, MCPServer) else server
+    lowlevel.lifespan = lifespan
     tools: list[dict[str, Any]] = []
     resources: list[dict[str, Any]] = []
     async with Client(server) as client:
