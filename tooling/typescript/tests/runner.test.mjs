@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,7 +79,7 @@ export default createMcpHandler(() => {
   }
 });
 
-test("installed packages resolve from the application: its own Zod and CommonJS packages", t => {
+test("installed packages resolve from the application: its own Zod, CommonJS packages and the MCP client", t => {
   const { root, run, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
@@ -96,12 +96,16 @@ export const z = { object: shape => schema({ type: "object", description: "zod 9
 import { z } from "zod";
 import units from "legacy-units";
 import { names } from "legacy-units/names";
+import { Client } from "@modelcontextprotocol/client";
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "units", version: "1" });
-  if (units.metric) server.registerTool("convert", { inputSchema: z.object({ unit: z.enum(names) }) }, () => ({ content: [] }));
+  if (units.metric && Client) server.registerTool("convert", { inputSchema: z.object({ unit: z.enum(names) }) }, () => ({ content: [] }));
   return server;
 });`,
   });
+  // Servers that call other apps import the MCP client.
+  mkdirSync(join(app, "node_modules/@modelcontextprotocol"));
+  symlinkSync(fileURLToPath(new URL("../node_modules/@modelcontextprotocol/client", import.meta.url)), join(app, "node_modules/@modelcontextprotocol/client"));
   const { units } = extract([{ name: "units", path: app, entry: "server.ts" }]);
   assert.deepEqual(units.tools, [{ name: "convert", inputSchema: { type: "object", description: "zod 9.9.9", properties: { unit: { type: "string", enum: ["cm", "in"] } } } }]);
   assert.deepEqual(Object.keys(units.sources), ["server.ts"]);
