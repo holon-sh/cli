@@ -3,7 +3,7 @@
 import json
 import subprocess
 import sys
-import zipfile
+import tomllib
 from pathlib import Path
 from textwrap import dedent
 
@@ -75,16 +75,9 @@ def write(directory: Path, files: dict[str, str]) -> Path:
     return directory
 
 
-def extract(tmp_path: Path, apps: dict[str, tuple[Path, str]]) -> dict[str, dict]:
+def extract(apps: dict[str, tuple[Path, str]]) -> dict[str, dict]:
     """Each app's contract, or its diagnostic and the package it missed."""
-    archive = Path(
-        subprocess.check_output(
-            [sys.executable, "-I", str(ROOT / "build.py")], text=True
-        ).strip()
-    )
-    with zipfile.ZipFile(archive) as bundle:
-        bundle.extractall(tmp_path / "tooling")
-    extractor = [sys.executable, str(tmp_path / "tooling/extract.py"), "contract"]
+    extractor = [sys.executable, str(ROOT / "extract.py"), "contract"]
     results = {}
     for name, (root, entry) in apps.items():
         run = subprocess.run(
@@ -108,7 +101,6 @@ def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
     orders = write(tmp_path / "orders", files)
     low = write(tmp_path / "low", {"server.py": LOW_LEVEL})
     result = extract(
-        tmp_path,
         {"orders": (orders, "src/server.py"), "low": (low, "server.py")},
     )
 
@@ -137,7 +129,7 @@ def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
     config = tmp_path / "verify.json"
     recorded = {str(orders / name): d for name, d in contract["sources"].items()}
     config.write_text(json.dumps({"sources": recorded}))
-    runner = [sys.executable, str(tmp_path / "tooling/runner.py")]
+    runner = [sys.executable, str(ROOT / "runner.py")]
     subprocess.run([*runner, "verify", str(config)], check=True)
     models = orders / "src/models.py"
     models.write_text(models.read_text() + "# changed\n")
@@ -172,7 +164,7 @@ def test_module_scope_environment_clock_and_randomness_give_one_contract(
     contracts = []
     for key in ("first", "second"):
         monkeypatch.setenv("API_KEY", key)
-        contracts.append(extract(tmp_path, {"frozen": (app, "server.py")})["frozen"])
+        contracts.append(extract({"frozen": (app, "server.py")})["frozen"])
     assert [tool["name"] for tool in contracts[0]["tools"]] == ["read"]
     assert contracts[0] == contracts[1]
 
@@ -190,10 +182,16 @@ def test_effects_and_missing_packages_fail_naming_them(tmp_path):
         name: (write(tmp_path / name, {"server.py": source}), "server.py")
         for name, source in sources.items()
     }
-    result = extract(tmp_path, apps)
+    result = extract(apps)
     for name, capability in (("socket", "network"), ("write", "file writes")):
         diagnostic = result[name]["diagnostic"]
         assert f'{name}/server.py", line 3' in diagnostic, diagnostic
         assert f"contract evaluation has no {capability}" in diagnostic, diagnostic
     assert result["missing"]["missing"] == "requests"
     assert result["typed"]["tools"] == []
+
+
+def test_requirements_list_the_project_dependencies():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    requirements = (ROOT / "requirements.txt").read_text().splitlines()
+    assert requirements == project["dependencies"]

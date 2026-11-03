@@ -7,8 +7,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 import { unzipSync } from "fflate";
 
-const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-const archive = new URL(`../../../pkg/tooling/cli-tooling-ts-${version}.zip`, import.meta.url);
+const archive = new URL("../../../pkg/tooling/cli-tooling-ts.zip", import.meta.url);
 
 // Exercise the archive embedded by the CLI, outside the development dependency tree.
 function unpackTooling(t) {
