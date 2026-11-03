@@ -12,9 +12,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/protocol"
-	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
 )
 
 func registryPackageManifest(t *testing.T, registryType string) manifestSpec {
@@ -87,12 +87,7 @@ func TestRegistryPackagesImportOnTheServerAndBindArguments(t *testing.T) {
 					t.Errorf("resolve build = %+v", input)
 				}
 				cloudtest.WriteJSON(w, protocol.ResolvedAppBuild{AppBuildRef: ref, Image: image, BuildRecord: protocol.BuildRecord{
-					SchemaVersion: 1, AppName: "echo", ServerName: "com.example/echo", ServerVersion: "1.0.0",
-					Runtime: protocol.BuildRuntime{Port: 3000, Args: []protocol.Template{"--workspace={WORKSPACE}", "--api-key={API_KEY}"}, Env: map[string]protocol.Input{
-						"API_TOKEN": {IsSecret: true, IsRequired: true},
-						"WORKSPACE": {IsRequired: true},
-						"API_KEY":   {IsRequired: true, IsSecret: true},
-					}}, UnsupportedReasons: []string{},
+					Runtime: protocol.BuildRuntime{Port: 8080},
 				}})
 			})
 			h.start(t, nil)
@@ -105,7 +100,7 @@ func TestRegistryPackagesImportOnTheServerAndBindArguments(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := protocol.App{
-				Name: "echo", Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, Image: image, Port: 3000,
+				Name: "echo", Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, Image: image, Port: 8080,
 				Args: []protocol.Template{"--workspace={WORKSPACE}", "--api-key={API_KEY}"},
 				Env: map[string]protocol.Input{
 					"API_TOKEN": {IsSecret: true, IsRequired: true}, "WORKSPACE": {Value: new("legal")}, "API_KEY": {IsRequired: true, IsSecret: true},

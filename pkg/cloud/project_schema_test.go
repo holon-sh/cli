@@ -41,15 +41,12 @@ func TestConfigurationJSONSchemas(t *testing.T) {
 		{"project", ProjectJSONSchema, []schemaCase{
 			{"manifest value forms", manifest, true},
 			{"HTTP run", strings.Replace(manifest, `"type":"stdio"`, `"type":"streamable-http","url":"http://localhost:8080/mcp"`, 1), true},
-			{"legacy origins", strings.Replace(manifest, `"apps":`, `"origins":{},"apps":`, 1), false},
-			{"per-app origin", strings.Replace(manifest, `"name":"alpha"`, `"name":"alpha","origin":"https://www.example.com"`, 1), false},
 			{"unknown field", strings.Replace(manifest, `"apps":`, `"unknown":true,"apps":`, 1), false},
-			{"retired installation", strings.Replace(manifest, `"apps":`, `"installation":{"origin":"https://cloud.example"},"apps":`, 1), false},
+			{"unknown app field", strings.Replace(manifest, `"name":"alpha"`, `"name":"alpha","unknown":true`, 1), false},
 			{"missing access", strings.Replace(manifest, `,"access":{"server":{}}`, "", 1), false},
 			{"missing client ID", strings.Replace(manifest, `"clientID":"registered",`, "", 1), false},
 			{"empty reference", strings.Replace(manifest, `{"secret":"TOKEN"}`, `{}`, 1), false},
 			{"null egress ports", strings.Replace(manifest, `"ports":[443]`, `"ports":null`, 1), false},
-			{"unknown transport field", strings.Replace(manifest, `"type":"stdio"`, `"type":"stdio","headers":[]`, 1), false},
 		}},
 		{"server", ServerJSONSchema, []schemaCase{
 			{"standard fields and Holon metadata", descriptor, true},

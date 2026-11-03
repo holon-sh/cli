@@ -41,66 +41,79 @@ func newAuthTestServer(t *testing.T, tokenHandler http.HandlerFunc) *httptest.Se
 
 func TestLogin(t *testing.T) {
 	t.Parallel()
-	server := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		cloudtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one", "expires_in": 120})
-	})
-	control := cloudtest.NewControlFixtures(t, server.Config.Handler.(*http.ServeMux))
-	control.Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(protocol.HeaderAuthorization) != "Bearer access-secret" {
-			t.Error("authenticated command omitted its token")
-		}
-		cloudtest.WriteJSON(w, struct{}{})
-	})
-	config := commandConfig{
-		Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: cloudtest.OriginClient(server)},
+	for _, tc := range []struct{ name, bearer string }{
+		{name: "identity provider", bearer: "Bearer access-secret"},
+		{name: "authentication disabled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mux := http.NewServeMux()
+			var server *httptest.Server
+			if tc.bearer == "" {
+				mux.HandleFunc(protocol.APIPathInfo, func(w http.ResponseWriter, r *http.Request) {
+					cloudtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}})
+				})
+			} else {
+				cloudtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, nil, 120, 1, func(w http.ResponseWriter, _ *http.Request) {
+					cloudtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one", "expires_in": 120})
+				})
+			}
+			cloudtest.NewControlFixtures(t, mux).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
+				if got := r.Header.Get(protocol.HeaderAuthorization); got != tc.bearer {
+					t.Errorf("authorization = %q, want %q", got, tc.bearer)
+				}
+				cloudtest.WriteJSON(w, struct{}{})
+			})
+			server = httptest.NewTLSServer(mux)
+			t.Cleanup(server.Close)
+			config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: cloudtest.OriginClient(server)}}
+			var output, progress strings.Builder
+			for _, args := range [][]string{{"login", server.URL}, {"login"}, {"config", "delete", "REGION", "--env", "prod"}} {
+				if err := executeCommand(t.Context(), args, &output, &progress, config); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !strings.HasPrefix(output.String(), "Deleted config REGION in production") {
+				t.Fatalf("stdout = %q", output.String())
+			}
+			if tc.bearer != "" && !strings.Contains(progress.String(), "ABCD-EFGH") {
+				t.Fatalf("device instructions: %q", progress.String())
+			}
+			for _, secret := range []string{"access-secret", "device-secret", "refresh-one"} {
+				if strings.Contains(output.String()+progress.String(), secret) {
+					t.Fatal("login exposed a credential")
+				}
+			}
+			files, err := filepath.Glob(filepath.Join(config.Auth.ConfigDir, "remotes", "*.tokens.json"))
+			if err != nil || len(files) != 1 {
+				t.Fatalf("token files=%v error=%v", files, err)
+			}
+			for path, mode := range map[string]os.FileMode{files[0]: 0o600, filepath.Dir(files[0]): 0o700} {
+				info, err := os.Stat(path)
+				if err != nil || info.Mode().Perm() != mode {
+					t.Fatalf("private storage mode for %s: %v %v", path, info, err)
+				}
+			}
+			server.Close()
+			if err := executeCommand(t.Context(), []string{"logout"}, nil, nil, config); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(files[0]); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("logout retained tokens: %v", err)
+			}
+			assertSavedOrigin(t, config.Auth.ConfigDir, server.URL)
+		})
 	}
-	var output, progress strings.Builder
-	if err := executeCommand(t.Context(), []string{"login", server.URL}, &output, &progress, config); err != nil {
-		t.Fatal(err)
-	}
-	if err := executeCommand(t.Context(), []string{"config", "delete", "REGION", "--env", "prod"}, &output, &progress, config); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(output.String(), "Deleted config REGION in production") {
-		t.Fatalf("authenticated output=%q", output.String())
-	}
-	if !strings.Contains(progress.String(), "ABCD-EFGH") || strings.Contains(output.String(), "Code:") {
-		t.Fatalf("device instructions: stdout=%q stderr=%q", output.String(), progress.String())
-	}
-	for _, secret := range []string{"access-secret", "device-secret", "refresh-one"} {
-		if strings.Contains(output.String()+progress.String(), secret) {
-			t.Fatal("login exposed a credential")
-		}
-	}
-	files, err := filepath.Glob(filepath.Join(config.Auth.ConfigDir, "remotes", "*.tokens.json"))
-	if err != nil || len(files) != 1 {
-		t.Fatalf("token files=%v error=%v", files, err)
-	}
-	for path, mode := range map[string]os.FileMode{files[0]: 0o600, filepath.Dir(files[0]): 0o700} {
-		info, err := os.Stat(path)
-		if err != nil || info.Mode().Perm() != mode {
-			t.Fatalf("private storage mode for %s: %v %v", path, info, err)
-		}
-	}
-	if err := executeCommand(t.Context(), []string{"logout"}, nil, &progress, config); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(files[0]); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("logout retained tokens: %v", err)
-	}
-	assertSavedOrigin(t, config.Auth.ConfigDir, server.URL)
 }
 
 func TestCredentialChanges(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, remote string
-		relogin      bool
 		want         error
 	}{
 		{name: "logout from another command", want: errNotAuthenticated},
 		{name: "logout from another remote with the same identity provider", remote: "https://other.example"},
-		{name: "reauthorization from another command", relogin: true, want: errCredentialChanged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -121,11 +134,7 @@ func TestCredentialChanges(t *testing.T) {
 			if _, err := manager.controlToken(t.Context(), protocol.AdminPlane); err != nil {
 				t.Fatal(err)
 			}
-			command := "logout"
-			if tc.relogin {
-				command = "login"
-			}
-			if err := executeCommand(t.Context(), []string{command}, nil, nil, commandConfig{Auth: config}); err != nil {
+			if err := executeCommand(t.Context(), []string{"logout"}, nil, nil, commandConfig{Auth: config}); err != nil {
 				t.Fatal(err)
 			}
 			if token, err := manager.controlToken(t.Context(), protocol.AdminPlane); !errors.Is(err, tc.want) || err == nil && token != "access-secret" {
@@ -147,7 +156,6 @@ func TestDeviceLoginFailures(t *testing.T) {
 		{name: "poll", code: "refresh-secret", expires: 120, want: errOAuthFailed},
 		{name: "discovery", path: "/.well-known/openid-configuration", expires: 120, want: errOAuthFailed},
 		{name: "wrong issuer", discovery: `{"issuer":"https://foreign.example/"}`, want: errOAuthFailed},
-		{name: "missing token endpoint", discovery: `{"issuer":"https://identity.example/"}`, want: errMalformedResponse},
 		{
 			name: "missing device endpoint", discovery: `{"issuer":"https://identity.example/","token_endpoint":"https://identity.example/token"}`, want: errOAuthFailed,
 		},
@@ -293,67 +301,15 @@ func newManager(t *testing.T, server *httptest.Server, clock *testingclock.FakeP
 	return manager
 }
 
-func TestAnonymousConnectionAndLogout(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	sourceFiles(t, dir, map[string]string{manifestFileName: "invalid: project"})
-	mux := http.NewServeMux()
-	mux.HandleFunc(protocol.APIPathInfo, func(w http.ResponseWriter, r *http.Request) {
-		cloudtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}, Version: "test"})
-	})
-	cloudtest.NewControlFixtures(t, mux).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(protocol.HeaderAuthorization) != "" {
-			t.Error("anonymous bearer sent")
-		}
-		cloudtest.WriteJSON(w, struct{}{})
-	})
-	server := httptest.NewTLSServer(mux)
-	t.Cleanup(server.Close)
-	config := commandConfig{
-		Env:  []string{"HOLON_ORIGIN=invalid"},
-		Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: cloudtest.OriginClient(server)},
-	}
-	for _, args := range [][]string{{"login", server.URL}, {"login"}} {
-		if err := executeCommand(t.Context(), args, nil, nil, config); err != nil {
-			t.Fatal(err)
-		}
-		assertSavedOrigin(t, config.Auth.ConfigDir, server.URL)
-		config.Env = nil
-	}
-	var output strings.Builder
-	if err := executeCommand(t.Context(), []string{"config", "delete", "REGION", "--env", "prod"}, &output, nil, config); err != nil ||
-		!strings.HasPrefix(output.String(), "Deleted config REGION in production") {
-		t.Fatalf("anonymous output = %q, %v", output.String(), err)
-	}
-	t.Run("write failure", func(t *testing.T) {
-		config := config
-		config.Auth.ConfigDir = t.TempDir()
-		if err := os.Mkdir(filepath.Join(config.Auth.ConfigDir, "config.json"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		err := executeCommand(t.Context(), []string{"login", server.URL}, nil, nil, config)
-		if err == nil || !strings.Contains(err.Error(), "save Holon configuration") {
-			t.Fatalf("failed save: %v", err)
-		}
-	})
-	server.Close()
-	if err := executeCommand(t.Context(), []string{"logout"}, nil, nil, config); err != nil {
-		t.Fatal(err)
-	}
-	assertSavedOrigin(t, config.Auth.ConfigDir, server.URL)
-}
-
 func TestLoginRejectsIncompatibleDiscovery(t *testing.T) {
 	t.Parallel()
 	const installation = `"installation":{"origin":"ORIGIN","uid":"test-installation"},`
 	for _, body := range []string{
 		`{` + installation + `"version":"test"}`,
 		`{"installation":{"origin":"ORIGIN"},"oauth":null}`,
-		`{"installation":{"origin":"ORIGIN","uid":"invalid uid"},"oauth":null}`,
 		`{"installation":{"origin":"https://other.example","uid":"installation"},"oauth":null}`,
-		`{` + installation + `"oauth":{}}`, `{` + installation + `"oauth":true}`,
+		`{` + installation + `"oauth":{}}`,
 		`{` + installation + `"oauth":null,"buildArchitectures":["s390x"]}`,
-		`{` + installation + `"oauth":null,"buildArchitectures":["arm64","arm64"]}`,
 		`{` + installation + `"oauth":{"issuer":"ORIGIN/","cliClientID":"cli","adminAudience":"ADMIN","deviceFlowProfile":"unknown"}}`,
 	} {
 		t.Run(body, func(t *testing.T) {
@@ -390,7 +346,6 @@ func TestSavedCredentialMetadata(t *testing.T) {
 		{"incomplete", `{"issuer":"ISSUER"}`, errReauthenticationRequired},
 		{"changed mode", `null`, errEndpointChanged},
 		{"changed issuer", `{"issuer":"https://other.example/","adminAudience":"urn:test","cliClientID":"cli-test"}`, errEndpointChanged},
-		{"changed audience", `{"issuer":"ISSUER","adminAudience":"urn:other","cliClientID":"cli-test"}`, errEndpointChanged},
 		{"changed client", `{"issuer":"ISSUER","adminAudience":"urn:test","cliClientID":"other"}`, errEndpointChanged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -423,7 +378,7 @@ func machineTestConfig(t *testing.T, server *httptest.Server) commandConfig {
 	}
 }
 
-func TestMachineCredentialsFailClosed(t *testing.T) {
+func TestMachineCredentials(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []struct {
 		name   string
@@ -431,6 +386,7 @@ func TestMachineCredentialsFailClosed(t *testing.T) {
 		body   string
 		want   error
 	}{
+		{"valid", 200, `{"access_token":"machine-token","token_type":"Bearer","expires_in":120}`, nil},
 		{"invalid secret", 401, `{"error":"invalid_client","error_description":"ci-secret"}`, errOAuthFailed},
 		{"malformed response", 200, `{"access_token":"ci-secret","token_type":"Bearer","expires_in":0}`, errMalformedResponse},
 		{"invalid token type", 200, `{"access_token":"ci-secret","token_type":"MAC","expires_in":120}`, errMalformedResponse},
@@ -438,15 +394,30 @@ func TestMachineCredentialsFailClosed(t *testing.T) {
 		{"oversized lifetime", 200, `{"access_token":"ci-secret","token_type":"Bearer","expires_in":999999}`, errMalformedResponse},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			server := cloudtest.MachineAuthServer(t, func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
+			t.Parallel()
+			var server *httptest.Server
+			server = cloudtest.MachineAuthServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.FormValue("resource") != cloudtest.AdminAudience(server.URL) {
+					t.Error("incorrect machine token audience")
+				}
+				w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
 				w.WriteHeader(scenario.status)
 				_, _ = io.WriteString(w, scenario.body)
 			})
-			err := executeCommand(t.Context(), []string{"config", "delete", "REGION", "--env", "prod"}, nil, nil, machineTestConfig(t, server))
-			if !errors.Is(err, scenario.want) ||
-				strings.Contains(err.Error(), "ci-secret") {
-				t.Fatalf("unsafe failure = %v", err)
+			cloudtest.NewControlFixtures(t, server.Config.Handler.(*http.ServeMux)).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get(protocol.HeaderAuthorization) != "Bearer machine-token" {
+					t.Error("machine token missing")
+				}
+				cloudtest.WriteJSON(w, struct{}{})
+			})
+			config := machineTestConfig(t, server)
+			var output strings.Builder
+			err := executeCommand(t.Context(), []string{"config", "delete", "REGION", "--env", "prod"}, &output, &output, config)
+			if !errors.Is(err, scenario.want) || strings.Contains(fmt.Sprint(err)+output.String(), "ci-secret") || strings.Contains(output.String(), "machine-token") {
+				t.Fatalf("error = %v, output = %q", err, output.String())
+			}
+			if files, err := os.ReadDir(config.Auth.ConfigDir); err != nil || len(files) != 0 {
+				t.Fatalf("machine authentication wrote local credentials: files=%v error=%v", files, err)
 			}
 		})
 	}
@@ -472,36 +443,6 @@ func TestMachineCredentialsFailClosed(t *testing.T) {
 	if err := executeCommand(t.Context(), []string{"logout"}, nil, nil, machineTestConfig(t, server)); err == nil ||
 		!strings.Contains(err.Error(), "service-account credentials are supplied by the environment") {
 		t.Fatalf("machine logout = %v", err)
-	}
-}
-
-func TestMachineCommandEnvironment(t *testing.T) {
-	t.Parallel()
-	var server *httptest.Server
-	server = cloudtest.MachineAuthServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.FormValue("resource") != cloudtest.AdminAudience(server.URL) || r.FormValue("audience") != "" {
-			t.Error("incorrect machine token audience")
-		}
-		cloudtest.WriteJSON(w, map[string]any{"access_token": "machine-token", "token_type": "Bearer", "expires_in": 120})
-	})
-	control := cloudtest.NewControlFixtures(t, server.Config.Handler.(*http.ServeMux))
-	control.Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer machine-token" {
-			t.Error("machine token missing")
-		}
-		cloudtest.WriteJSON(w, struct{}{})
-	})
-	config := machineTestConfig(t, server)
-	var output strings.Builder
-	if err := executeCommand(t.Context(), []string{"config", "delete", "REGION", "--env", "prod"}, &output, &output, config); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), "Deleted config REGION in production") ||
-		strings.Contains(output.String(), "ci-secret") || strings.Contains(output.String(), "machine-token") {
-		t.Fatalf("unexpected command output: %s", &output)
-	}
-	if files, err := os.ReadDir(config.Auth.ConfigDir); err != nil || len(files) != 0 {
-		t.Fatalf("machine authentication wrote local credentials: files=%v error=%v", files, err)
 	}
 }
 

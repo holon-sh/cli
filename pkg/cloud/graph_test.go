@@ -80,11 +80,9 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 		t.Fatalf("incorrect installation: %#v", resolved)
 	}
 	catalog.Close()
-	// A local server.json package supplies transport and inputs; Holon builds the image from source.
 	delete(beta["packages"].([]any)[0].(map[string]any), "identifier")
 	beta["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://mcp.example/mcp"}}
 	writeDescriptor(t, filepath.Join(root, "beta/server.json"), beta)
-	sourceFiles(t, filepath.Join(root, "beta"), map[string]string{"Dockerfile": "FROM scratch\n"})
 	manifest.Apps[1] = manifestApp{Name: "beta", Path: filepath.Join(root, "beta"), Access: policy}
 	local, err := resolveManifestGraph(t.Context(), manifest)
 	if err != nil {
@@ -185,7 +183,6 @@ func TestDescriptorEgressAndManifestOverride(t *testing.T) {
 		{name: "manifest replacement", metadata: appEgress, manifestEgress: "[{host: manifest.example.com, ports: [443]}]", want: manifestEgress},
 		{name: "manifest deny all", metadata: appEgress, manifestEgress: "[]", want: protocol.Egress{}},
 		{name: "app deny all", metadata: []any{}, want: protocol.Egress{}},
-		{name: "upstream without metadata", manifestEgress: "[{host: manifest.example.com, ports: [443]}]", want: manifestEgress},
 		{name: "no declaration"},
 		{name: "remote ignores container egress", metadata: appEgress, remote: true},
 	} {

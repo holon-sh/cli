@@ -14,9 +14,7 @@ func TestScopeContract(t *testing.T) {
 		valid  bool
 	}{
 		{"unscoped", nil, true},
-		{"control", []string{"system:prod:read"}, true},
-		{"development", []string{"read", "Read", strings.Repeat("x", 256)}, true},
-		{"production", []string{"app:chat:read"}, true},
+		{"valid", []string{"system:prod:read", "read", "Read", strings.Repeat("x", 256)}, true},
 		{"duplicate", []string{"read", "read"}, false},
 		{"empty", []string{""}, false},
 		{"space", []string{"read write"}, false},

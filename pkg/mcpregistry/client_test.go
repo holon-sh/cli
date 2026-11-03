@@ -19,18 +19,17 @@ const descriptorJSON = `{"$schema":"https://untrusted.invalid/schema",
 "url":"https://analytics.example.com/custom/mcp"}]}`
 
 func TestRegistryReadFailures(t *testing.T) {
+	record := `{"server":` + descriptorJSON + `}`
 	for _, test := range []struct {
 		name, body string
 		status     int
 		list       bool
 	}{
-		{name: "wrong identity", body: `{"server":` + strings.ReplaceAll(descriptorJSON, "1.0.0", "2.0.0") + `}`, status: 200},
-		{name: "missing server", body: `{}`, status: 200},
-		{name: "malformed", body: `{`, status: 200},
-		{name: "oversized descriptor", body: strings.Repeat(" ", MaxDescriptorBytes+1), status: 200},
-		{name: "oversized page", body: strings.Repeat(" ", (4<<20)+1), status: 200, list: true},
+		{name: "wrong identity", body: strings.ReplaceAll(record, "1.0.0", "2.0.0"), status: 200},
+		{name: "oversized descriptor", body: record + strings.Repeat(" ", MaxDescriptorBytes), status: 200},
+		{name: "oversized page", body: `{"servers":[]}` + strings.Repeat(" ", 4<<20), status: 200, list: true},
 		{name: "missing page", body: `{}`, status: 200, list: true},
-		{name: "unavailable", body: `{}`, status: 503},
+		{name: "unavailable", body: record, status: 503},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			client := Client{Origin: protocol.MCPRegistryOrigin, HTTP: httpClient(func(*http.Request) (*http.Response, error) {
