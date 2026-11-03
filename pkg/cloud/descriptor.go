@@ -14,8 +14,6 @@ import (
 
 const publisherMetadata = mcpregistry.PublisherMetadata
 
-type holonDescriptorMetadata = mcpregistry.HolonMetadata
-
 type (
 	serverDescriptor = mcpregistry.Descriptor
 	serverTransport  = mcpregistry.Transport

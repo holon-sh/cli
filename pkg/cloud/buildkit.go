@@ -91,7 +91,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 	err = request.publish(ctx, func(repository *remote.Repository) error {
 		entries := slices.Clone(manifests)
 		var annotations map[string]string
-		if p := request.app.resolved.types; p != nil && p.metadata != nil {
+		if p := request.app.resolved.types; p.metadata != nil {
 			metadata, ownDigest, err := pushTypeMetadata(ctx, repository, p.metadata, p.documents)
 			if err != nil {
 				return err

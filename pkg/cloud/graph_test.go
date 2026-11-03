@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,12 +38,7 @@ func descriptorRegistry(t *testing.T, document map[string]any) *registrySource {
 func writeDescriptor(t *testing.T, path string, document map[string]any) {
 	t.Helper()
 	data, _ := json.Marshal(document)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	sourceFiles(t, filepath.Dir(path), map[string]string{filepath.Base(path): string(data)})
 }
 
 func TestDescriptorInstallAndSourceReplacement(t *testing.T) {

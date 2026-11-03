@@ -47,8 +47,8 @@ jobs:
       fail-fast: false
       matrix:
         # Pull requests run Linux only; main pushes and releases add macOS.
-        target: ${{ fromJSON(github.event_name == 'pull_request' && '["linux_amd64"]' || '["linux_amd64","darwin_arm64"]') }}
-    runs-on: ${{ fromJSON('{"linux_amd64":"ubuntu-24.04","darwin_arm64":"macos-15"}')[matrix.target] }}
+        runner: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04","macos-15"]') }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -56,8 +56,6 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/kiln
-        with:
-          target: ${{ matrix.target }}
       - run: scripts/build-mcp-runtime
       - uses: actions/setup-node@v7
         with:
@@ -94,7 +92,6 @@ jobs:
           go-version-file: go.mod
       - uses: ./.github/actions/kiln
         with:
-          target: ${{ matrix.target }}
           static: "true"
       - run: scripts/build-mcp-runtime
       - uses: actions/setup-node@v7

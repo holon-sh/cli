@@ -1,7 +1,6 @@
 package cloud
 
 import (
-	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -12,14 +11,10 @@ func typedManifest(t *testing.T, apps ...manifestApp) manifestSpec {
 	t.Helper()
 	for _, app := range apps {
 		if d := app.resolved.descriptor; d != nil && app.Path != "" {
-			data, err := json.Marshal(map[string]any{
+			writeDescriptor(t, filepath.Join(app.Path, "server.json"), map[string]any{
 				"name": d.Name, "version": d.Version, "description": app.Name,
 				"_meta": map[string]any{publisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": d.Requires}}},
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			sourceFiles(t, app.Path, map[string]string{"server.json": string(data)})
 		}
 	}
 	return manifestSpec{Apps: apps}

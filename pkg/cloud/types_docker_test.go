@@ -93,7 +93,7 @@ export default createMcpHandler(() => {
 		manifest.Apps = append(manifest.Apps, app)
 	}
 	manifest = typedManifest(t, manifest.Apps...)
-	_, grant, options := sourceRegistry(t)
+	grant, options := sourceRegistry(t)
 	options.check = true
 	var diagnostics strings.Builder
 	options.Stderr = &buildLog{writer: &diagnostics}
@@ -276,7 +276,7 @@ async def checkout(id: str) -> float:
 		manifest.Apps = append(manifest.Apps, app)
 	}
 	manifest = typedManifest(t, manifest.Apps...)
-	_, grant, options := sourceRegistry(t)
+	grant, options := sourceRegistry(t)
 	grant.Repositories = map[string]string{"orders": "apps/orders", "checkout": "apps/checkout"}
 	options.architectures = []string{runtime.GOARCH}
 	options.Env = append(options.Env, "DOCKER_CONTEXT="+os.Getenv("DOCKER_CONTEXT"))

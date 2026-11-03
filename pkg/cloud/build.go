@@ -139,18 +139,13 @@ func regularNoSymlink(path, label string) error {
 }
 
 func pathInsideContext(path, contextPath string) bool {
-	absolutePath, pathErr := filepath.Abs(path)
-	absoluteContext, contextErr := filepath.Abs(contextPath)
-	if pathErr != nil || contextErr != nil {
-		return true
+	if realPath, err := filepath.EvalSymlinks(path); err == nil {
+		path = realPath
 	}
-	if realPath, err := filepath.EvalSymlinks(absolutePath); err == nil {
-		absolutePath = realPath
+	if realContext, err := filepath.EvalSymlinks(contextPath); err == nil {
+		contextPath = realContext
 	}
-	if realContext, err := filepath.EvalSymlinks(absoluteContext); err == nil {
-		absoluteContext = realContext
-	}
-	relative, _ := filepath.Rel(absoluteContext, absolutePath)
+	relative, _ := filepath.Rel(contextPath, path)
 	return filepath.IsLocal(relative)
 }
 

@@ -62,11 +62,11 @@ func TestImageContractsSurviveImport(t *testing.T) {
 				{Name: "checkout", resolved: resolvedApp{App: protocol.App{Name: "checkout", Image: copied}, descriptor: descriptor}},
 			}}
 			_, cleanup, err := prepareManifestTypes(t.Context(), deployment, options)
-			defer cleanup()
 			if test.want == "" {
 				if err != nil {
 					t.Fatal(err)
 				}
+				cleanup()
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), test.want) || !strings.Contains(err.Error(), "holon deploy orders checkout") {
@@ -78,8 +78,7 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	delete(fixture.items, "destination/checkout/blobs/"+expected.Digest)
 	fixture.mu.Unlock()
 	deployment := manifestSpec{Apps: []manifestApp{{Name: "checkout", resolved: resolvedApp{App: protocol.App{Image: copied}}}}}
-	_, cleanup, err := prepareManifestTypes(t.Context(), deployment, options)
-	defer cleanup()
+	_, _, err = prepareManifestTypes(t.Context(), deployment, options)
 	if err == nil || !strings.Contains(err.Error(), "fetch expected orders contract "+expected.Digest) {
 		t.Fatalf("missing pinned blob: %v", err)
 	}
