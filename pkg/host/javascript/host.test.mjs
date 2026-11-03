@@ -52,7 +52,6 @@ async function app(t, peers = {}, extra = {}) {
   });
   t.after(async () => {
     if (stderr) t.diagnostic(stderr);
-    if (t.signal.aborted) t.diagnostic(`${port}: ${events.join(", ")}`);
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGTERM");
       const force = setTimeout(() => child.kill("SIGKILL"), 2000);

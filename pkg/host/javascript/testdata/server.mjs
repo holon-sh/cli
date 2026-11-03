@@ -118,7 +118,6 @@ export default {
       });
       emit("stream-peer-ready");
       void (async () => {
-        // The downstream close event verifies cancellation; wait for this body to settle.
         await peer.text().catch(() => {});
         await assert.rejects(fetch(process.env.PEER_MCP_URL), {
           message: "Holon peer call rejected or cancelled",

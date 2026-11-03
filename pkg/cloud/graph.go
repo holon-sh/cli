@@ -34,7 +34,7 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 			continue
 		}
 		if app, ok := manifest.retained[name]; ok {
-			nodes[name] = &manifestApp{Name: name, Access: app.Access, resolved: resolvedApp{App: app}}
+			nodes[name] = &manifestApp{Name: name, resolved: resolvedApp{App: app}}
 			apps = append(apps, app.Requires...)
 			continue
 		}
@@ -60,7 +60,7 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 				err = nil
 			}
 		} else if app.Registry != nil {
-			app.resolved.descriptor, err = fetchServerDescriptor(ctx, app.Registry.RegistryRef)
+			app.resolved.descriptor, err = mcpregistry.Fetch(ctx, app.Registry.RegistryRef)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s descriptor: %w", app.Name, err)
@@ -82,7 +82,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	}
 	resolved := manifest
 	resolved.Apps = nil
-	selections := map[string]serverReference{}
+	selections := map[string]protocol.RegistryRef{}
 	envTypes := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(nodes)) {
 		app := nodes[name]
@@ -100,13 +100,10 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 				return manifestSpec{}, fmt.Errorf("conflicting references for dependency %s", dependency)
 			}
 			selections[dependency] = ref
-			selected := nodes[dependency]
-			if selected.Access == nil || selected.Access.Server == nil {
-				return manifestSpec{}, fmt.Errorf("%s dependency %s must be declared in apps with explicit access.server", name, dependency)
-			}
 			if _, ok := manifest.retained[dependency]; ok {
 				continue
 			}
+			selected := nodes[dependency]
 			if selected.resolved.descriptor == nil || selected.resolved.descriptor.Identity() != ref.Identity() {
 				return manifestSpec{}, fmt.Errorf("%s requires %s to be %s@%s; declared app does not match", name, dependency, ref.Name, ref.Version)
 			}
@@ -139,9 +136,9 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 func resolveApp(app *manifestApp) error {
 	d := app.resolved.descriptor
 	var pkg mcpregistry.Package
-	var remote *serverTransport
+	var remote *mcpregistry.Transport
 	if d != nil && (len(d.Packages) != 0 || app.Registry != nil) {
-		selection := ptr.Deref(app.Registry, registrySource{Package: &packageSelection{RegistryType: "oci"}})
+		selection := ptr.Deref(app.Registry, protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}})
 		index, selected, err := mcpregistry.SelectServerSource(d, selection)
 		if err != nil {
 			return err
@@ -152,7 +149,7 @@ func resolveApp(app *manifestApp) error {
 			if app.Run != nil {
 				pkg = mcpregistry.Package{
 					RegistryType: pkg.RegistryType, Identifier: pkg.Identifier,
-					Transport: serverTransport{Type: app.Run.Transport.Type, URL: app.Run.Transport.URL},
+					Transport: mcpregistry.Transport{Type: app.Run.Transport.Type, URL: app.Run.Transport.URL},
 				}
 			}
 			if err := pkg.ValidateTransport(); err != nil {
@@ -161,9 +158,9 @@ func resolveApp(app *manifestApp) error {
 		}
 	}
 	if app.Remote != nil {
-		remote = &serverTransport{URL: app.Remote.URL}
+		remote = &mcpregistry.Transport{URL: app.Remote.URL}
 		for name, value := range app.Headers {
-			remote.Headers = append(remote.Headers, descriptorInput{Name: name, InputFields: inputFields{IsSecret: value.Secret != "", IsRequired: true}})
+			remote.Headers = append(remote.Headers, mcpregistry.DescriptorInput{Name: name, InputFields: mcpregistry.InputFields{IsSecret: value.Secret != "", IsRequired: true}})
 		}
 	}
 	if remote != nil {
@@ -171,7 +168,7 @@ func resolveApp(app *manifestApp) error {
 			return errors.New("remote apps cannot declare run, arguments, or egress")
 		}
 		var err error
-		app.resolved.Remote, app.resolved.Env, err = remoteInputs(*remote, app.Headers)
+		app.resolved.Remote, app.resolved.Env, err = remote.Remote(app.Headers)
 		return err
 	}
 	if len(app.Headers) != 0 {

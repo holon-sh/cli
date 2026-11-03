@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/protocol"
 )
 
@@ -24,13 +25,13 @@ func descriptorDocument(name string) map[string]any {
 	}
 }
 
-func descriptorRegistry(t *testing.T, document map[string]any) *registrySource {
+func descriptorRegistry(t *testing.T, document map[string]any) *protocol.RegistrySource {
 	t.Helper()
 	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"server": document})
 	}))
 	t.Cleanup(catalog.Close)
-	return &registrySource{RegistryRef: serverReference{
+	return &protocol.RegistrySource{RegistryRef: protocol.RegistryRef{
 		Name: document["name"].(string), Version: document["version"].(string), Registry: catalog.URL,
 	}}
 }
@@ -52,18 +53,18 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	}))
 	defer catalog.Close()
 	root := t.TempDir()
-	ref := serverReference{Name: "io.github.acme/beta", Version: "1.4.2", Registry: catalog.URL}
+	ref := protocol.RegistryRef{Name: "io.github.acme/beta", Version: "1.4.2", Registry: catalog.URL}
 	alpha := descriptorDocument("alpha")
 	delete(alpha, "packages")
 	alpha["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://mcp.example/mcp"}}
-	alpha["_meta"] = map[string]any{publisherMetadata: map[string]any{
-		"sh.holon": map[string]any{"requires": map[string]serverReference{"beta": ref}},
+	alpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
+		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{"beta": ref}},
 	}}
 	writeDescriptor(t, filepath.Join(root, "alpha/server.json"), alpha)
 	policy := &protocol.AppAccess{Server: &protocol.AccessRule{}}
 	manifest := manifestSpec{Apps: []manifestApp{
 		{Name: "alpha", Path: filepath.Join(root, "alpha"), Access: policy},
-		{Name: "beta", Registry: &registrySource{RegistryRef: ref}, Access: policy},
+		{Name: "beta", Registry: &protocol.RegistrySource{RegistryRef: ref}, Access: policy},
 	}}
 	resolved, err := resolveManifestGraph(t.Context(), manifest)
 	if err != nil {
@@ -86,15 +87,15 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 		t.Fatalf("local replacement failed: %#v", local.Apps[1])
 	}
 	cycleBeta := descriptorDocument("beta")
-	cycleBeta["_meta"] = map[string]any{publisherMetadata: map[string]any{
-		"sh.holon": map[string]any{"requires": map[string]serverReference{
+	cycleBeta["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
+		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{
 			"alpha": {Name: "io.github.acme/alpha", Version: "1.4.2"},
 		}},
 	}}
 	writeDescriptor(t, filepath.Join(root, "beta-cycle/server.json"), cycleBeta)
 	conflictGamma := descriptorDocument("gamma")
-	conflictGamma["_meta"] = map[string]any{publisherMetadata: map[string]any{
-		"sh.holon": map[string]any{"requires": map[string]serverReference{
+	conflictGamma["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
+		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{
 			"beta": {Name: "io.github.acme/beta", Version: "9.0.0"},
 		}},
 	}}
@@ -107,7 +108,7 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	writeDescriptor(t, filepath.Join(root, "alpha-secret/server.json"), secretAlpha)
 	writeDescriptor(t, filepath.Join(root, "invalid/server.json"), map[string]any{})
 	invalidMetadata := descriptorDocument("invalid")
-	invalidMetadata["_meta"] = map[string]any{publisherMetadata: map[string]any{
+	invalidMetadata["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
 		"sh.holon": map[string]any{"egress": json.RawMessage("null")},
 	}}
 	writeDescriptor(t, filepath.Join(root, "invalid-metadata/server.json"), invalidMetadata)
@@ -128,7 +129,6 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata")}}
 		}},
 		{name: "missing dependency", want: "must be declared", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
-		{name: "dependency without server access", want: "explicit access.server", change: func(p *manifestSpec) { p.Apps[1].Access = nil }},
 		{name: "different dependency descriptor", want: "does not match", change: func(p *manifestSpec) {
 			p.Apps[1] = manifestApp{Name: "beta", Path: filepath.Join(root, "alpha"), Access: policy}
 		}},
@@ -184,7 +184,7 @@ func TestDescriptorEgressAndManifestOverride(t *testing.T) {
 			document := descriptorDocument("alpha")
 			document["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{map[string]any{"name": "DATABASE_IP"}}
 			if test.metadata != nil {
-				document["_meta"] = map[string]any{publisherMetadata: map[string]any{
+				document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
 					"sh.holon": map[string]any{"egress": test.metadata},
 				}}
 			}

@@ -37,32 +37,19 @@ func TestProgressTransitions(t *testing.T) {
 			})
 			for range 2 {
 				output.status("alpha", "building", progressWorking)
-				output.retry("session status", errors.New("offline"))
-				output.retry("session renewal", errReauthenticationRequired)
 				output.status("", "Watching for changes", progressIdle)
 			}
-			for range 2 {
-				output.retry("session status", nil)
-				output.retry("session renewal", nil)
-			}
-			output.retry("session status", errors.New("offline"))
-			output.retry("session status", errors.New("different failure"))
-			output.retry("session renewal", errReauthenticationRequired)
-			output.retry("session status", context.Canceled)
 			output.status("beta", "ready", progressDone)
 			if err := output.finish(tc.err, "Finished"); err != nil {
 				t.Fatal(err)
 			}
 			visible := strings.Join(strings.Fields(ansi.Strip(stream.String())), " ")
-			for _, want := range []string{"alpha " + tc.message, "beta ready", "session renewal " + tc.message, "session status " + tc.message} {
+			for _, want := range []string{"alpha " + tc.message, "beta ready"} {
 				if !strings.Contains(visible, want) {
 					t.Fatalf("final terminal status = %q, missing %q", visible, want)
 				}
 			}
 
-			// Compare the emitted records with the library's encoding of the contract.
-			// Normalize opaque child IDs by first appearance: identities must remain
-			// distinct and stable, but their hashing algorithm is not a contract.
 			reports := strings.Join(regexp.MustCompile("\x1b]7501;[^\x07]*\x07").FindAllString(stream.String(), -1), "")
 			ids := map[string]string{}
 			reports = regexp.MustCompile(`id=holon/items/[^:\x07]+`).ReplaceAllStringFunc(reports, func(id string) string {
@@ -72,21 +59,8 @@ func TestProgressTransitions(t *testing.T) {
 			var want strings.Builder
 			for _, status := range []tea.ProgramStatus{
 				{ID: "holon/items/0", Title: "alpha", Message: "building", State: tea.ProgramStateWorking},
-				{ID: "holon/items/1", Title: "session status", Message: "retrying: offline", State: tea.ProgramStateWorking},
-				{
-					ID: "holon/items/2", Title: "session renewal", Message: "reauthentication required; rerun the command",
-					State: tea.ProgramStateBlocked, Kind: tea.ProgramStatusKindAuth,
-				},
 				{ID: "holon", Message: "Watching for changes", State: tea.ProgramStateIdle},
-				{ID: "holon/items/1", Title: "session status", Message: "ok", State: tea.ProgramStateDone},
-				{ID: "holon/items/2", Title: "session renewal", Message: "ok", State: tea.ProgramStateDone},
-				{ID: "holon/items/1", Title: "session status", Message: "retrying: offline", State: tea.ProgramStateWorking},
-				{ID: "holon/items/1", Title: "session status", Message: "retrying: different failure", State: tea.ProgramStateWorking},
-				{
-					ID: "holon/items/2", Title: "session renewal", Message: "reauthentication required; rerun the command",
-					State: tea.ProgramStateBlocked, Kind: tea.ProgramStatusKindAuth,
-				},
-				{ID: "holon/items/3", Title: "beta", Message: "ready", State: tea.ProgramStateDone},
+				{ID: "holon/items/1", Title: "beta", Message: "ready", State: tea.ProgramStateDone},
 			} {
 				status.App = "holon"
 				want.WriteString(ansi.SetProgramStatus(status))

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 
 	"github.com/holon-sh/cli/pkg/protocol"
 )
@@ -41,7 +42,7 @@ func main() {
 }
 `,
 	})
-	descriptor := &serverDescriptor{Name: "example.org/caller", Version: "1.0.0", Requires: map[string]serverReference{
+	descriptor := &mcpregistry.Descriptor{Name: "example.org/caller", Version: "1.0.0", Requires: map[string]protocol.RegistryRef{
 		"orders": {Name: metadata.Identity.Name, Version: metadata.Identity.Version},
 	}}
 	manifest := typedManifest(t,

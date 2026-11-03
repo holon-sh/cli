@@ -84,7 +84,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			}
 			err = upload.run(ctx, func(grant protocol.UploadGrant) error {
 				if image == "" {
-					imported, err := importImage(ctx, app.resolved.Image, grant.Registry, grant.Repositories[app.Name], grant.Grant, options.Env, options.HTTPClient)
+					imported, err := importImage(ctx, app.resolved.Image, grant.Registry, grant.Repositories[app.Name], grant.Grant, options.HTTPClient)
 					if err != nil {
 						return fmt.Errorf("import %s: %w", app.Name, err)
 					}
@@ -177,7 +177,7 @@ type imageUpload struct {
 func (u *imageUpload) destination(ctx context.Context, rejected string) (protocol.UploadGrant, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.load != nil && (u.grant.Registry == "" || rejected != "" && rejected == u.grant.Grant && !u.renewed) {
+	if u.grant.Registry == "" || rejected != "" && rejected == u.grant.Grant && !u.renewed {
 		grant, err := u.load(ctx)
 		if err != nil {
 			return protocol.UploadGrant{}, err
@@ -193,9 +193,6 @@ func (u *imageUpload) destination(ctx context.Context, rejected string) (protoco
 		}
 		u.grant = grant
 	}
-	if err := validateUploadGrant(u.grant, u.manifest); err != nil {
-		return protocol.UploadGrant{}, err
-	}
 	return u.grant, nil
 }
 
@@ -206,7 +203,7 @@ func (u *imageUpload) run(ctx context.Context, operation func(protocol.UploadGra
 	}
 	err = operation(grant)
 	var response *errcode.ErrorResponse
-	if u.load != nil && grant.Grant != "" && errors.As(err, &response) &&
+	if grant.Grant != "" && errors.As(err, &response) &&
 		slices.Contains([]int{http.StatusUnauthorized, http.StatusForbidden}, response.StatusCode) {
 		grant, err = u.destination(ctx, grant.Grant)
 		if err == nil {

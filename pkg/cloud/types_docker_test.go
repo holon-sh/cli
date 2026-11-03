@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
 
 	"github.com/holon-sh/cli/pkg/protocol"
@@ -82,10 +83,10 @@ export default createMcpHandler(() => {
 		})
 		originalFiles[filepath.Join(path, "package.json")] = []byte(packageJSON)
 		originalFiles[filepath.Join(path, lockName)] = lock
-		descriptor := &serverDescriptor{Name: "io.github.example/" + name, Version: "1.0.0"}
+		descriptor := &mcpregistry.Descriptor{Name: "io.github.example/" + name, Version: "1.0.0"}
 		app := manifestApp{Name: name, Path: path, resolved: resolvedApp{App: protocol.App{Name: name, Port: 3000}, descriptor: descriptor}}
 		if name == "checkout" {
-			descriptor.Requires = map[string]serverReference{
+			descriptor.Requires = map[string]protocol.RegistryRef{
 				"orders": {Name: "io.github.example/orders", Version: "1.0.0", Registry: "https://private-registry.example"},
 			}
 			app.resolved.Requires = []string{"orders"}
@@ -256,11 +257,11 @@ async def checkout(id: str) -> float:
 	manifest := manifestSpec{}
 	for _, name := range []string{"orders", "checkout"} {
 		code := provider
-		descriptor := &serverDescriptor{Name: "example.org/" + name, Version: "1"}
+		descriptor := &mcpregistry.Descriptor{Name: "example.org/" + name, Version: "1"}
 		app := manifestApp{Name: name, Path: filepath.Join(root, name), resolved: resolvedApp{App: protocol.App{Name: name}, descriptor: descriptor}}
 		if name == "checkout" {
 			code = caller
-			descriptor.Requires = map[string]serverReference{"orders": {Name: "example.org/orders", Version: "1"}}
+			descriptor.Requires = map[string]protocol.RegistryRef{"orders": {Name: "example.org/orders", Version: "1"}}
 			app.resolved.Requires = []string{"orders"}
 		}
 		// Pin the merged keyword-call runtime until it is released on PyPI.

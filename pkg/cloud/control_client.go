@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -54,8 +55,11 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 		}
 		return &protocol.Error{Code: code, Message: message}
 	}
-	if output != nil && json.Unmarshal(encoded, output) != nil {
-		return errMalformedResponse
+	if output == nil {
+		return nil
+	}
+	if err := json.Unmarshal(encoded, output); err != nil {
+		return fmt.Errorf("%w: %w", errMalformedResponse, err)
 	}
 	return nil
 }
@@ -71,9 +75,7 @@ func (t *controlTransport) RoundTrip(request *http.Request) (*http.Response, err
 	if t.token != "" {
 		request.Header.Set(protocol.HeaderAuthorization, protocol.BearerPrefix+t.token)
 	}
-	if t.installation != "" {
-		request.Header.Set(protocol.HeaderInstallationUID, t.installation)
-	}
+	request.Header.Set(protocol.HeaderInstallationUID, t.installation)
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
 		return nil, err

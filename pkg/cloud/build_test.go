@@ -44,7 +44,7 @@ func buildImage(t *testing.T, marker string) buildApplication {
 		var image string
 		err := request.upload.run(ctx, func(grant protocol.UploadGrant) (err error) {
 			image, err = importImage(ctx, strings.TrimPrefix(source.URL, "https://")+"/source@"+descriptor.Digest.String(),
-				grant.Registry, grant.Repositories[request.app.Name], grant.Grant, request.Env, request.httpClient)
+				grant.Registry, grant.Repositories[request.app.Name], grant.Grant, request.httpClient)
 			return err
 		})
 		return buildResult{Image: image, Resolution: json.RawMessage(`{"fixture":"resolution"}`)}, err
@@ -190,7 +190,7 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	if len(apps) != 1 || !strings.HasPrefix(apps[0].Image, grant.Registry+"/holon/upload/alpha@sha256:") {
 		t.Fatalf("unexpected image: %#v", apps)
 	}
-	repository, err := imageRepository(grant.Registry+"/"+grant.Repositories["alpha"], grant.Grant, nil, server.Client())
+	repository, err := imageRepository(grant.Registry+"/"+grant.Repositories["alpha"], grant.Grant, server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,9 +198,15 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, executable, err := appartifact.Read(t.Context(), repository, descriptor)
-	if err != nil || record.AppName != "alpha" || !strings.HasSuffix(apps[0].Image, "@"+executable.Digest.String()) {
-		t.Fatalf("published build: %+v %v", record, err)
+	var index ocispec.Index
+	publishedJSON(t, repository, descriptor, &index)
+	executable := index.Manifests[0]
+	var metadata ocispec.Manifest
+	publishedJSON(t, repository, index.Manifests[1], &metadata)
+	var record protocol.BuildRecord
+	publishedJSON(t, repository, metadata.Layers[0], &record)
+	if record.AppName != "alpha" || !strings.HasSuffix(apps[0].Image, "@"+executable.Digest.String()) {
+		t.Fatalf("published build: %+v", record)
 	}
 	if input := record.Runtime.Env["DEPLOYMENT_VALUE"]; !input.IsRequired || input.Value != nil || input.Default != nil {
 		t.Fatal("deployment value escaped into shared metadata")
@@ -332,5 +338,16 @@ func TestSourcePublishExchangesGrantOncePerBuild(t *testing.T) {
 	}
 	if tokens.Load() != 1 {
 		t.Fatalf("token exchanges in one build: %d", tokens.Load())
+	}
+}
+
+func publishedJSON(t *testing.T, source content.Fetcher, descriptor ocispec.Descriptor, value any) {
+	t.Helper()
+	data, err := content.FetchAll(t.Context(), source, descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, value); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opencontainers/image-spec/specs-go"
@@ -32,10 +33,10 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	descriptor := &serverDescriptor{Name: "example/checkout", Version: "1"}
+	descriptor := &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"}
 	caller := &mcpcontract.Metadata{Identity: descriptor.Identity(), Requires: map[string]string{"orders": expected.Digest}}
 	image := publishTypeMetadata(t, fixture, host+"/checkout", caller, options, map[string]*typegen.Document{expected.Digest: expected})
-	copied, err := importImage(t.Context(), image, host, "destination/checkout", "", options.Env, options.HTTPClient)
+	copied, err := importImage(t.Context(), image, host, "destination/checkout", "", options.HTTPClient)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +100,10 @@ func TestLiveDependencySnapshotIsPinnedByConsumer(t *testing.T) {
 	})
 	manifest := typedManifest(t,
 		manifestApp{Name: "orders", resolved: resolvedApp{
-			App: protocol.App{Name: "orders", Remote: &protocol.Remote{URL: live.URL}}, descriptor: &serverDescriptor{Name: "example/orders", Version: "1"},
+			App: protocol.App{Name: "orders", Remote: &protocol.Remote{URL: live.URL}}, descriptor: &mcpregistry.Descriptor{Name: "example/orders", Version: "1"},
 		}},
 		manifestApp{Name: "checkout", Path: root, resolved: resolvedApp{
-			App: protocol.App{Name: "checkout", Requires: []string{"orders"}}, descriptor: &serverDescriptor{Name: "example/checkout", Version: "1"},
+			App: protocol.App{Name: "checkout", Requires: []string{"orders"}}, descriptor: &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"},
 		}},
 	)
 	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{})
@@ -121,7 +122,7 @@ func publishTypeMetadata(
 	t *testing.T, fixture *imageRegistry, image string, metadata *mcpcontract.Metadata, options buildOptions, documents map[string]*typegen.Document,
 ) string {
 	t.Helper()
-	repository, err := imageRepository(image, "", options.Env, options.HTTPClient)
+	repository, err := imageRepository(image, "", options.HTTPClient)
 	if err != nil {
 		t.Fatal(err)
 	}

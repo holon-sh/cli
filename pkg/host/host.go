@@ -11,43 +11,47 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/holon-sh/cli/pkg/protocol"
-	"github.com/holon-sh/cli/pkg/runtimecontract"
 )
 
-type RequestContext struct {
-	Context  context.Context //nolint:containedctx
-	Token    string
+type scope struct {
+	ctx      context.Context //nolint:containedctx
+	token    string
 	identity *identity
 	trace    http.Header
 }
 
-type Host struct {
+type config struct {
+	Version          int               `json:"version"`
+	Peers            map[string]string `json:"peers"`
+	ControlNamespace string            `json:"controlNamespace"`
+}
+
+type host struct {
 	callers     []string
 	peers       map[string]*url.URL
 	transport   *http.Transport
 	application http.Handler
 	frontend    http.Handler
-	now         func() time.Time
 	mu          sync.Mutex
-	scopes      map[string]*RequestContext
+	scopes      map[string]*scope
 }
 
-func New(raw string, configured bool) (*Host, error) {
+func newHost() (*host, error) {
 	var peers map[string]*url.URL
-	config := runtimecontract.Config{ControlNamespace: runtimecontract.DefaultControlNamespace}
-	if configured {
-		if protocol.DecodeJSONNonNull([]byte(raw), &config) != nil || config.Version != 1 || config.Peers == nil {
+	settings := config{ControlNamespace: "holon-system"}
+	if raw, configured := os.LookupEnv(protocol.RuntimeConfigEnv); configured {
+		if protocol.DecodeJSONNonNull([]byte(raw), &settings) != nil || settings.Version != 1 || settings.Peers == nil {
 			return nil, errors.New("invalid platform identity configuration")
 		}
-		peers = make(map[string]*url.URL, len(config.Peers))
-		for name, endpoint := range config.Peers {
+		peers = make(map[string]*url.URL, len(settings.Peers))
+		for name, endpoint := range settings.Peers {
 			u, err := url.Parse(endpoint)
 			if err != nil || u.Host == "" || *u != (url.URL{Scheme: "http", Host: u.Host, Path: "/mcp"}) || u.String() != endpoint {
 				return nil, errors.New("invalid platform peer endpoint")
@@ -57,31 +61,29 @@ func New(raw string, configured bool) (*Host, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	return &Host{
+	return &host{
 		callers: []string{
-			"spiffe://" + runtimecontract.Principal(config.ControlNamespace, runtimecontract.APIServiceName),
-			"spiffe://" + runtimecontract.Principal(config.ControlNamespace, runtimecontract.AuthzServiceName),
+			"spiffe://cluster.local/ns/" + settings.ControlNamespace + "/sa/holon-api",
+			"spiffe://cluster.local/ns/" + settings.ControlNamespace + "/sa/holon-authz",
 		},
-		peers: peers, transport: transport, now: time.Now,
-		scopes: map[string]*RequestContext{},
+		peers: peers, transport: transport,
+		scopes: map[string]*scope{},
 	}, nil
 }
 
-func (h *Host) Close() { h.transport.CloseIdleConnections() }
-
-func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.Clone(r.Context())
 	var identity *identity
 	var token string
 	if h.peers != nil {
 		var accepted bool
-		identity, accepted = admit(r, h.now(), h.callers)
+		identity, accepted = admit(r, h.callers)
 		if !accepted {
 			w.Header().Set("Cache-Control", "no-store")
 			http.Error(w, "Invalid platform request context", http.StatusForbidden)
 			return
 		}
-		token = r.Header.Get(runtimecontract.ContextHeader)
+		token = r.Header.Get(contextHeader)
 		r.Header.Del("Authorization")
 	}
 	if r.URL.Path != "/mcp" {
@@ -93,9 +95,8 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stripHolon(r.Header)
-	ctx, cancel := context.WithCancel(r.Context())
 	id := rand.Text()
-	s := &RequestContext{Context: ctx, Token: token, identity: identity, trace: http.Header{}}
+	s := &scope{ctx: r.Context(), token: token, identity: identity, trace: http.Header{}}
 	for _, name := range []string{"Traceparent", "Tracestate"} {
 		if value := r.Header.Get(name); value != "" {
 			s.trace.Set(name, value)
@@ -105,21 +106,20 @@ func (h *Host) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.scopes[id] = s
 	h.mu.Unlock()
 	defer func() {
-		cancel()
 		h.mu.Lock()
 		delete(h.scopes, id)
 		h.mu.Unlock()
 	}()
-	r.Header.Set(runtimecontract.ScopeHeader, id)
-	h.application.ServeHTTP(w, r.WithContext(ctx))
+	r.Header.Set(scopeHeader, id)
+	h.application.ServeHTTP(w, r)
 }
 
-func (h *Host) context(w http.ResponseWriter, r *http.Request) {
+func (h *host) context(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	h.mu.Lock()
 	s := h.scopes[r.PathValue("scope")]
 	h.mu.Unlock()
-	if s == nil || s.Context.Err() != nil {
+	if s == nil || s.ctx.Err() != nil {
 		http.Error(w, "Request context unavailable", http.StatusForbidden)
 		return
 	}
@@ -127,14 +127,10 @@ func (h *Host) context(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(s.identity)
 }
 
-func (h *Host) peer(w http.ResponseWriter, r *http.Request) {
+func (h *host) peer(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
-	s := h.scopes[r.Header.Get(runtimecontract.ScopeHeader)]
+	s := h.scopes[r.Header.Get(scopeHeader)]
 	h.mu.Unlock()
-	h.Peer(w, r, s)
-}
-
-func (h *Host) Peer(w http.ResponseWriter, r *http.Request, s *RequestContext) {
 	target, found := h.peers[r.PathValue("peer")]
 	if !found || r.URL.RawQuery != "" {
 		http.NotFound(w, r)
@@ -142,24 +138,24 @@ func (h *Host) Peer(w http.ResponseWriter, r *http.Request, s *RequestContext) {
 	}
 	for name := range r.Header {
 		if strings.EqualFold(name, "Authorization") ||
-			strings.HasPrefix(strings.ToLower(name), "x-holon-") && name != runtimecontract.ScopeHeader {
-			PeerError(w, "Platform peer credentials cannot be supplied by applications", http.StatusForbidden)
+			strings.HasPrefix(strings.ToLower(name), "x-holon-") && name != scopeHeader {
+			peerError(w, "Platform peer credentials cannot be supplied by applications", http.StatusForbidden)
 			return
 		}
 	}
-	if len(r.Header.Values(runtimecontract.ScopeHeader)) != 1 || s == nil || s.Token == "" || s.Context.Err() != nil {
-		PeerError(w, "Peer calls require an active incoming request", http.StatusForbidden)
+	if len(r.Header.Values(scopeHeader)) != 1 || s == nil || s.token == "" || s.ctx.Err() != nil {
+		peerError(w, "Peer calls require an active incoming request", http.StatusForbidden)
 		return
 	}
-	ctx, cancel := context.WithCancel(s.Context)
+	ctx, cancel := context.WithCancel(s.ctx)
 	stop := context.AfterFunc(r.Context(), cancel)
 	defer stop()
 	defer cancel()
 	proxy := h.proxy(func(p *httputil.ProxyRequest) {
 		*p.Out.URL = *target
 		p.Out.Host = target.Host
-		stripHolon(p.Out.Header)
-		p.Out.Header.Set(runtimecontract.ContextHeader, s.Token)
+		p.Out.Header.Del(scopeHeader)
+		p.Out.Header.Set(contextHeader, s.token)
 		maps.Copy(p.Out.Header, s.trace)
 	})
 	proxy.ModifyResponse = func(response *http.Response) error {
@@ -169,17 +165,17 @@ func (h *Host) Peer(w http.ResponseWriter, r *http.Request, s *RequestContext) {
 		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
-		PeerError(w, "Peer unavailable", http.StatusBadGateway)
+		peerError(w, "Peer unavailable", http.StatusBadGateway)
 	}
 	proxy.ServeHTTP(w, r.WithContext(ctx))
 }
 
-func PeerError(w http.ResponseWriter, message string, status int) {
+func peerError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("X-Holon-Error", "true")
 	http.Error(w, message, status)
 }
 
-func (h *Host) proxy(rewrite func(*httputil.ProxyRequest)) *httputil.ReverseProxy {
+func (h *host) proxy(rewrite func(*httputil.ProxyRequest)) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Rewrite: rewrite, Transport: h.transport, FlushInterval: -1,
 		ErrorLog: log.New(io.Discard, "", 0),
@@ -189,12 +185,12 @@ func (h *Host) proxy(rewrite func(*httputil.ProxyRequest)) *httputil.ReverseProx
 	}
 }
 
-func (h *Host) connect(port uint16) {
+func (h *host) connect(port uint16) {
 	target := &url.URL{Scheme: "http", Host: "127.0.0.1:" + strconv.Itoa(int(port))}
 	h.application = h.proxy(func(p *httputil.ProxyRequest) {
 		p.SetURL(target)
 		p.Out.Host = p.In.Host
-		for _, name := range []string{runtimecontract.ScopeHeader, "X-Forwarded-Host", "X-Forwarded-Proto"} {
+		for _, name := range []string{"X-Forwarded-Host", "X-Forwarded-Proto"} {
 			p.Out.Header[name] = p.In.Header[name]
 		}
 	})

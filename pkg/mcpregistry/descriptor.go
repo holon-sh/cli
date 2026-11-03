@@ -29,7 +29,6 @@ type Descriptor struct {
 	Remotes  []Transport                 `json:"remotes"`
 	Packages []Package                   `json:"packages"`
 	Meta     map[string]json.RawMessage  `json:"_meta"`
-	Raw      json.RawMessage             `json:"-"`
 	Requires map[string]wire.RegistryRef `json:"-"`
 	Egress   wire.Egress                 `json:"-"`
 }
@@ -42,7 +41,6 @@ type HolonMetadata struct {
 
 type Package struct {
 	Version          string            `json:"version"`
-	RegistryBaseURL  string            `json:"registryBaseUrl"`
 	RegistryType     string            `json:"registryType"`
 	Identifier       string            `json:"identifier"`
 	Transport        Transport         `json:"transport"`
@@ -70,7 +68,6 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 	if err := (wire.RegistryRef{Name: descriptor.Name, Version: descriptor.Version}).Validate(); err != nil {
 		return &descriptor, err
 	}
-	descriptor.Raw = data
 	if value := descriptor.Meta[PublisherMetadata]; value != nil {
 		var publisher map[string]json.RawMessage
 		if err := json.Unmarshal(value, &publisher); err != nil {
@@ -107,7 +104,6 @@ type DescriptorInput struct {
 	Variables map[string]InputFields `json:"variables"`
 }
 
-// Format, choices and isRepeated only guide how a client prompts, so every input is a string.
 func ParseInput(raw json.RawMessage) (DescriptorInput, wire.Input, map[string]wire.Input, error) {
 	var spec DescriptorInput
 	if json.Unmarshal(raw, &spec) != nil {
@@ -117,8 +113,6 @@ func ParseInput(raw json.RawMessage) (DescriptorInput, wire.Input, map[string]wi
 	return spec, input, variables, err
 }
 
-// Parse reads the input's value as a template when it declares variables, and returns the variables it names as
-// inputs of their own. Without variables, braces in a value are literal.
 func (spec DescriptorInput) Parse() (wire.Input, map[string]wire.Input, error) {
 	input := wire.Input(spec.InputFields)
 	if input.Value == nil || len(spec.Variables) == 0 {
@@ -128,7 +122,6 @@ func (spec DescriptorInput) Parse() (wire.Input, map[string]wire.Input, error) {
 	return wire.Input{Value: input.Value}, variables, err
 }
 
-// Variables returns the inputs a template names, which it must declare. A required template requires all of them.
 func Variables(template string, declared map[string]InputFields, required bool) (map[string]wire.Input, error) {
 	variables := map[string]wire.Input{}
 	for _, name := range wire.TemplateInputs(template) {

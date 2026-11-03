@@ -58,7 +58,7 @@ func contractRepository(image string, options buildOptions) (*remote.Repository,
 			break
 		}
 	}
-	return imageRepository(named.Name(), grant, options.Env, options.HTTPClient)
+	return imageRepository(named.Name(), grant, options.HTTPClient)
 }
 
 func resolveTypeMetadata(ctx context.Context, image string, options buildOptions) (string, *typegen.Document, error) {

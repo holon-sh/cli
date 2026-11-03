@@ -3,7 +3,6 @@ package protocol
 import (
 	"cmp"
 	"errors"
-	"net/http"
 	"net/netip"
 	"net/url"
 	"slices"
@@ -13,31 +12,20 @@ import (
 	"golang.org/x/net/http/httpguts"
 )
 
-func RemoteURL(raw string) (*url.URL, error) {
+func ValidateRemoteURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.Fragment != "" || u.RawQuery != "" || u.RawPath != "" {
-		return nil, errors.New("remote endpoint must be an HTTPS URL without credentials, query, or fragment")
+		return errors.New("remote endpoint must be an HTTPS URL without credentials, query, or fragment")
 	}
 	port, _ := strconv.ParseInt(cmp.Or(u.Port(), "443"), 10, 32)
 	if _, err := netip.ParseAddr(u.Hostname()); err == nil {
-		return nil, errors.New("remote endpoints require DNS hostnames")
+		return errors.New("remote endpoints require DNS hostnames")
 	}
-	if _, err = (Egress{{Host: u.Hostname(), Ports: []int32{int32(port)}}}).Normalize(); err != nil {
-		return nil, err
-	}
-	return u, nil
+	_, err = (Egress{{Host: u.Hostname(), Ports: []int32{int32(port)}}}).Normalize()
+	return err
 }
 
-// Endpoint expands the URL with lookup's input values and checks the result.
-func (r Remote) Endpoint(lookup func(string) (string, bool)) (*url.URL, error) {
-	raw, complete := Expand(r.URL, lookup)
-	if !complete {
-		return nil, errors.New("remote endpoint names an input without a value")
-	}
-	return RemoteURL(raw)
-}
-
-func ValidRemoteHeader(name string) bool {
+func validRemoteHeader(name string) bool {
 	name = strings.ToLower(name)
 	if !httpguts.ValidHeaderFieldName(name) || slices.ContainsFunc(
 		[]string{"x-holon-", "x-forwarded-", "x-envoy-", "x-b3-", "mcp-", "sec-"},
@@ -55,26 +43,25 @@ func ValidRemoteHeader(name string) bool {
 	}, name)
 }
 
-// Validate checks the remote against the app's inputs. A placeholder in the URL may stand for a DNS label or a path
-// segment, so the URL must be valid with every declared input replaced by one.
 func (r Remote) Validate(env map[string]Input) error {
 	declared := func(name string) (string, bool) {
 		_, ok := env[name]
 		return "holon.invalid", ok
 	}
-	if _, err := r.Endpoint(declared); err != nil {
+	endpoint, complete := Expand(r.URL, declared)
+	if !complete {
+		return errors.New("remote endpoint names an input without a value")
+	}
+	if err := ValidateRemoteURL(endpoint); err != nil {
 		return err
 	}
-	seen := map[string]bool{}
 	for name, template := range r.Headers {
-		canonical := http.CanonicalHeaderKey(name)
-		if _, complete := Expand(template, declared); !ValidRemoteHeader(name) || seen[canonical] || !complete {
+		if _, complete := Expand(template, declared); !validRemoteHeader(name) || !complete {
 			return errors.New("invalid remote header binding")
 		}
-		if canonical == "Authorization" && !slices.ContainsFunc(TemplateInputs(template), func(name string) bool { return env[name].IsSecret }) {
+		if name == "Authorization" && !slices.ContainsFunc(TemplateInputs(template), func(name string) bool { return env[name].IsSecret }) {
 			return errors.New("authorization header requires a secret reference")
 		}
-		seen[canonical] = true
 	}
 	return nil
 }

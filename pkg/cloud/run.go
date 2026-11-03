@@ -11,10 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,9 +24,7 @@ import (
 )
 
 const (
-	cleanupTimeout   = 10 * time.Second
 	workflowPoll     = time.Second
-	renewalInterval  = time.Minute
 	maxCommandOutput = 64 << 10
 )
 
@@ -40,7 +36,6 @@ type commandConfig struct {
 	Auth               ClientConfig
 	Env                []string
 	Clock              clock.WithTicker
-	Input              io.Reader
 	verbose            bool
 	output             *progressOutput
 }
@@ -146,10 +141,6 @@ func imageDestination(ctx context.Context, manager *Client, name string, manifes
 	return grant, err
 }
 
-func sessionPath(name, suffix string) string {
-	return path.Join(protocol.APIPathSessions, name, suffix)
-}
-
 func ControlPlane(name string) protocol.Plane {
 	if name == protocol.ProductionName {
 		return protocol.AdminPlane
@@ -163,26 +154,22 @@ func (m *Client) Session(ctx context.Context, name string) (protocol.SessionResp
 	return session, err
 }
 
-type SessionFailure struct{ Detail string }
-
-func (e *SessionFailure) Error() string { return "session failed: " + e.Detail }
-
 func SessionReady(session protocol.SessionResponse) (bool, error) {
 	if lifecyclePending(session) {
 		if lifecycleFailed(session) {
-			return false, &SessionFailure{Detail: session.Lifecycle.Message}
+			return false, errors.New("session failed: " + session.Lifecycle.Message)
 		}
 		return false, nil
 	}
 	condition := session.Condition(protocol.ConditionReady)
 	if condition.Status == "True" {
 		if len(session.Endpoints) == 0 {
-			return false, &SessionFailure{Detail: "ready session returned no endpoint"}
+			return false, errors.New("session failed: ready session returned no endpoint")
 		}
 		return true, nil
 	}
 	if terminalCondition(condition) {
-		return false, &SessionFailure{Detail: strings.TrimSuffix(condition.Reason+": "+condition.Message, ": ")}
+		return false, errors.New("session failed: " + strings.TrimSuffix(condition.Reason+": "+condition.Message, ": "))
 	}
 	return false, nil
 }
@@ -204,12 +191,8 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 		return err
 	}
 	current, err := manager.Session(ctx, protocol.ProductionName)
-	switch {
-	case HTTPStatus(err) == http.StatusNotFound:
-	case err != nil:
+	if err != nil && HTTPStatus(err) != http.StatusNotFound {
 		return err
-	case current.UID == "" || current.Revision == "" || len(current.Apps) == 0:
-		return errors.New("control API did not return complete production state")
 	}
 	manifest.retained = map[string]protocol.App{}
 	for _, app := range current.Apps {
@@ -227,9 +210,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 		return err
 	}
 	built := desired.Apps
-	if len(selection) > 0 {
-		desired.Apps = append(protocol.WritableApps(slices.Collect(maps.Values(manifest.retained))), built...)
-	}
+	desired.Apps = append(protocol.WritableApps(slices.Collect(maps.Values(manifest.retained))), built...)
 	config.output.deploying(built)
 	accepted, err := replaceExecution(ctx, manager, protocol.ProductionName, current, desired, len(selection) > 0)
 	if err != nil {
@@ -298,56 +279,28 @@ func reportSessionProgress(
 	output.status(name, phase, state)
 }
 
-func (m *Client) StreamLogs(ctx context.Context, input protocol.SessionLogsRequest, stdout io.Writer) error {
-	token, err := m.controlToken(ctx, ControlPlane(input.Session))
-	if err != nil {
-		return err
-	}
-	query := url.Values{"follow": {"true"}}
-	for key, value := range map[string]string{
-		"app": input.App, "since": input.Since, "traceId": input.TraceID, "text": input.Text,
-		"operation": input.Operation, "hook": input.Hook, "event": input.Event, "tool": input.Tool, "status": input.Status,
-	} {
-		if value != "" {
-			query.Set(key, value)
-		}
-	}
-	if input.Attempt != nil {
-		query.Set("attempt", strconv.FormatInt(*input.Attempt, 10))
-	}
-	logPath := (&url.URL{Path: sessionPath(input.Session, "logs"), RawQuery: query.Encode()}).String()
-	return m.client.Do(ctx, http.MethodGet, logPath, apiRequest{Plane: ControlPlane(input.Session), Token: token, Stream: stdout}, nil)
-}
-
 func printEndpoints(stdout io.Writer, session protocol.SessionResponse) error {
 	output := []byte("\nReady\n")
 	mode := protocol.ModeDevelopment
 	if session.Name == protocol.ProductionName {
 		mode = protocol.ModeProduction
 	}
-	var apps []byte
 	for i, endpoint := range session.Endpoints {
 		website, err := url.Parse(endpoint.URL)
 		if err != nil {
 			return err
 		}
-		name, ok := protocol.ParseAppPath(website.Path)
-		if !ok || name != endpoint.Name {
-			return errors.New("control API returned an invalid MCP endpoint")
-		}
 		if i == 0 {
 			website.Path = protocol.MCPPath
 			output = fmt.Appendf(output, "  MCP tools (all apps)  %s\n", website.String())
 		}
-		website.Path = protocol.WebPath(name)
-		for _, app := range session.Apps {
-			if app.Name == name {
-				website.Path = strings.TrimSuffix(protocol.AppBrowserMount(app, mode), "/") + "/"
-			}
+		app := protocol.App{Name: endpoint.Name}
+		if index := slices.IndexFunc(session.Apps, func(candidate protocol.App) bool { return candidate.Name == endpoint.Name }); index >= 0 {
+			app = session.Apps[index]
 		}
-		apps = fmt.Appendf(apps, "\n  %s\n    Browser  %s\n    MCP      %s\n", name, website.String(), endpoint.URL)
+		website.Path = strings.TrimSuffix(protocol.AppBrowserMount(app, mode), "/") + "/"
+		output = fmt.Appendf(output, "\n  %s\n    Browser  %s\n    MCP      %s\n", endpoint.Name, website.String(), endpoint.URL)
 	}
-	output = append(output, apps...)
 	_, err := stdout.Write(append(output, '\n'))
 	return err
 }

@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-const ManagedOrigin = "https://holon.localhost"
-
 func Value(env []string, key string) string {
 	for _, entry := range slices.Backward(env) {
 		if value, ok := strings.CutPrefix(entry, key+"="); ok {
