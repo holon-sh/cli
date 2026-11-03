@@ -202,7 +202,8 @@ const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the wor
 
 // NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string) *cobra.Command {
-	root := &cobra.Command{Use: "holon", Short: "Generate and check typed MCP clients", Version: version + " (standalone types CLI)", SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "holon", Short: "MCP developer client", Version: version, SilenceUsage: true, SilenceErrors: true}
+	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetVersionTemplate("holon {{.Version}}\n")
 	root.AddCommand(NewTypesCommand(), newCheck("Shortcut for holon types check"))
 	return root
