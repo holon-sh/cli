@@ -1,8 +1,6 @@
 package cloud
 
 import (
-	"io"
-
 	"k8s.io/utils/clock"
 
 	"github.com/holon-sh/cli/pkg/protocol"
@@ -12,7 +10,6 @@ type commandConfig struct {
 	Auth  ClientConfig
 	Env   []string
 	Clock clock.WithTicker
-	Input io.Reader
 }
 
 func ControlPlane(name string) protocol.Plane {

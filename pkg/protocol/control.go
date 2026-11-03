@@ -11,10 +11,8 @@ const (
 	ToolUploadGrant        = "issue_upload_grant"
 	ToolSetValue           = "set_value"
 	ToolDeleteValue        = "delete_value"
-	ToolListValues         = "list_values"
 )
 
-// MCPCallEvent is the event.name of the completion record holon-api logs for each MCP call, sampled or not.
 const MCPCallEvent = "holon.mcp.call"
 
 type SessionRequest struct {
@@ -47,7 +45,6 @@ type RetryLifecycleRequest struct {
 	ExpectedRevision string `json:"expectedRevision"`
 }
 
-// AppRequest selects a deployment and optionally one of its apps.
 type AppRequest struct {
 	SessionRequest
 
@@ -55,32 +52,27 @@ type AppRequest struct {
 	App         string `json:"app,omitempty"`
 }
 
-// SessionLogsRequest selects collected records: app stdout and stderr, lifecycle hook output and MCP completion
-// records. An empty App means every app.
 type SessionLogsRequest struct {
 	AppRequest
 
-	Operation string `json:"operation,omitempty"` // lifecycle operation ID
-	Hook      string `json:"hook,omitempty"`      // lifecycle hook key
-	Attempt   *int64 `json:"attempt,omitempty"`   // lifecycle attempt, from 1
-	Event     string `json:"event,omitempty"`     // record event name, such as MCPCallEvent
-	Tool      string `json:"tool,omitempty"`      // a completion record's MCP tool
-	Status    string `json:"status,omitempty"`    // a completion record's outcome: ok or error
-	Since     string `json:"since,omitempty"`     // duration or RFC 3339; default 15m
-	TraceID   string `json:"traceId,omitempty"`   // records for one trace
-	Text      string `json:"text,omitempty"`      // substring filter
+	Operation string `json:"operation,omitempty"`
+	Hook      string `json:"hook,omitempty"`
+	Attempt   *int64 `json:"attempt,omitempty"`
+	Event     string `json:"event,omitempty"`
+	Tool      string `json:"tool,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Since     string `json:"since,omitempty"`
+	TraceID   string `json:"traceId,omitempty"`
+	Text      string `json:"text,omitempty"`
 }
 
-// ErrorResponse is the control-plane error envelope.
 type ErrorResponse struct {
 	Error Error `json:"error"`
 }
 
-// Error contains a stable machine-readable code and a human-readable message.
 type Error struct {
-	LoginURL string `json:"loginUrl,omitempty"`
-	Code     string `json:"code"`
-	Message  string `json:"message"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -118,29 +110,12 @@ type SetValueRequest struct {
 	VariableRequest
 
 	Value string `json:"value"`
-	Note  string `json:"note,omitempty" maxLength:"256"`
 }
 
-type ConfigValue struct {
-	Session   string  `json:"session,omitempty"`
-	Kind      string  `json:"kind"`
-	Variable  string  `json:"variable"`
-	Value     *string `json:"value,omitempty"`
-	Note      string  `json:"note,omitempty"`
-	UpdatedAt string  `json:"updatedAt"`
-	UpdatedBy string  `json:"updatedBy,omitempty"`
-}
-
-type ConfigValues struct {
-	Values []ConfigValue `json:"values" nullable:"false" required:"true"`
-}
-
-// UploadRequest asks for repository upload authority for named apps.
 type UploadRequest struct {
 	Apps []string `json:"apps" minItems:"1" nullable:"false" required:"true"`
 }
 
-// UploadGrant authorizes image uploads. Treat the grant as a credential until expiry.
 type UploadGrant struct {
 	Grant        string            `json:"grant"`
 	Registry     string            `json:"registry"`

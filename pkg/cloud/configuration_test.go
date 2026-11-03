@@ -13,8 +13,6 @@ import (
 )
 
 func TestConfigurationCommands(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
 	h := newRunHarness(t)
 	var sent []string
 	h.control.Handle([]string{protocol.ToolSetValue, protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {

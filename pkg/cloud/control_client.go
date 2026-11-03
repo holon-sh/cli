@@ -71,9 +71,7 @@ func (t *controlTransport) RoundTrip(request *http.Request) (*http.Response, err
 	if t.token != "" {
 		request.Header.Set(protocol.HeaderAuthorization, protocol.BearerPrefix+t.token)
 	}
-	if t.installation != "" {
-		request.Header.Set(protocol.HeaderInstallationUID, t.installation)
-	}
+	request.Header.Set(protocol.HeaderInstallationUID, t.installation)
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
 		return nil, err

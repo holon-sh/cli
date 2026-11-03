@@ -25,7 +25,6 @@ func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	command := sharedcli.NewCommand("dev")
 	command.AddCommand(newCommands(config)...)
 	command.SetArgs(args)
-	command.SetIn(config.Input)
 	command.SetOut(cmp.Or(stdout, io.Discard))
 	command.SetErr(cmp.Or(stderr, io.Discard))
 	return command.ExecuteContext(ctx)
@@ -36,7 +35,6 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 	for want, args := range map[string][]string{
 		"--env must be dev or prod":                {"config", "set", "--env", "staging", "API_URL", "value"},
 		"--session requires a development session": {"config", "set", "--session", "production", "API_URL", "value"},
-		"none of the others can be":                {"config", "set", "--env", "dev", "--session", "s-one", "API_URL", "value"},
 		`invalid variable name "not-valid"`:        {"config", "set", "not-valid", "value"},
 	} {
 		config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir()}}
@@ -78,17 +76,15 @@ func (h *runHarness) start(t *testing.T) {
 		HTTPClient: cloudtest.OriginClient(h.server), now: clock.Now, RequestTimeout: time.Second,
 	}
 	manager := newManager(t, h.server, clock, stateDir)
-	if manager.info.OAuth != nil {
-		seedAdminCredentials(t, manager, oauth2.Token{
-			AccessToken: "access-token", RefreshToken: "refresh-token",
-			TokenType: "Bearer", ExpiresIn: 3600, Expiry: clock.Now().Add(time.Hour),
-		})
-		adminKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.AdminPlane), protocol.SystemScopes())
-		devKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.DevPlane), protocol.ControlScopes(protocol.DevPlane))
-		manager.state.Tokens[devKey] = manager.state.Tokens[adminKey]
-		if err := manager.writeState(manager.state); err != nil {
-			t.Fatal(err)
-		}
+	seedAdminCredentials(t, manager, oauth2.Token{
+		AccessToken: "access-token", RefreshToken: "refresh-token",
+		TokenType: "Bearer", ExpiresIn: 3600, Expiry: clock.Now().Add(time.Hour),
+	})
+	adminKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.AdminPlane), protocol.SystemScopes())
+	devKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.DevPlane), protocol.ControlScopes(protocol.DevPlane))
+	manager.state.Tokens[devKey] = manager.state.Tokens[adminKey]
+	if err := manager.writeState(manager.state); err != nil {
+		t.Fatal(err)
 	}
 	sourceFiles(t, stateDir, map[string]string{"config.json": fmt.Sprintf(`{"origin":%q}`, h.server.URL)})
 	h.run = commandConfig{Auth: auth}

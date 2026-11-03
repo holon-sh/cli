@@ -56,9 +56,6 @@ func readCredentialFile(path string) ([]byte, error) {
 }
 
 func (m *Client) writeState(state authState) error {
-	if m.machine != nil {
-		return nil
-	}
 	data, _ := json.Marshal(state)
 	if len(data) > maxCredentialBytes {
 		return errCredentialUnavailable

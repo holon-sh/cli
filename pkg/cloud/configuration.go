@@ -1,10 +1,8 @@
 package cloud
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 
 	"github.com/spf13/cobra"
@@ -84,8 +82,7 @@ func newConfigurationActionCommand(kind, action string, config *commandConfig) *
 			if err != nil {
 				return err
 			}
-			config.Input = cmd.InOrStdin()
-			return runConfiguration(cmd.Context(), kind, action, scope, variable, value, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
+			return runConfiguration(cmd, kind, action, scope, variable, value, config.Auth)
 		},
 	}
 	cmd.Flags().StringVar(&environment, "env", environment, "Target environment: dev or prod")
@@ -94,15 +91,9 @@ func newConfigurationActionCommand(kind, action string, config *commandConfig) *
 	return cmd
 }
 
-func runConfiguration(
-	ctx context.Context,
-	kind, action string,
-	scope configurationScope,
-	variable, value string,
-	stdout, stderr io.Writer,
-	config commandConfig,
-) error {
-	manager, err := NewClient(ctx, config.Auth)
+func runConfiguration(cmd *cobra.Command, kind, action string, scope configurationScope, variable, value string, auth ClientConfig) error {
+	ctx := cmd.Context()
+	manager, err := NewClient(ctx, auth)
 	if err != nil {
 		return err
 	}
@@ -112,10 +103,11 @@ func runConfiguration(
 	if action == "set" {
 		tool, verb = protocol.ToolSetValue, "Stored"
 		if kind == "secret" {
-			input, ok := terminalFile(config.Input)
+			input, ok := terminalFile(cmd.InOrStdin())
 			if !ok {
 				return errors.New("secret input requires a terminal")
 			}
+			stderr := cmd.ErrOrStderr()
 			if _, err := fmt.Fprintf(stderr, "Paste %s: ", variable); err != nil {
 				return err
 			}
@@ -134,7 +126,7 @@ func runConfiguration(
 	if err := manager.Call(ctx, ControlPlane(string(scope)), tool, input, &struct{}{}); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "%s %s %s in %s on %s. Deployments pick this up on their next deploy.\n",
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s in %s on %s. Deployments pick this up on their next deploy.\n",
 		verb, kind, variable, scope.label(), manager.client.baseURL)
 	return err
 }
