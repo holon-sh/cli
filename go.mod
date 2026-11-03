@@ -9,7 +9,7 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
-	github.com/holon-sh/cli/pkg/oauthscope v0.0.0
+	github.com/holon-sh/cli/pkg/oauthscope v0.0.1
 	github.com/holon-sh/mcp-bridge v0.0.4
 	github.com/klauspost/compress v1.19.2
 	github.com/moby/patternmatcher v0.6.1
