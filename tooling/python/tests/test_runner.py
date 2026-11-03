@@ -24,14 +24,14 @@ REGION = """
         US = "us"
 """
 
-# Startup that needs the deployment's environment, as opening a database does.
+# A startup, which listing the catalog must not run.
 LIFESPAN = """
-    import os
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
     async def lifespan(server):
-        yield os.environ["DATABASE_URL"]
+        raise RuntimeError("startup ran")
+        yield
 """
 
 # A src entry imports from the application root, and reads files there.
