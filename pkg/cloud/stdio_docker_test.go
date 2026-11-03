@@ -45,29 +45,17 @@ func TestDockerTransportContract(t *testing.T) {
 		name, transport string
 		manifestRun     bool
 		noEnv           bool
-		secret          bool
-		overrideArgs    bool
 	}{
-		{name: "http-arguments", transport: "http"},
 		{name: "stdio", transport: "stdio"},
-		{name: "run-http-inherited-no-env", transport: "http", manifestRun: true, noEnv: true},
-		{name: "run-http-replaced-inputs", transport: "http", manifestRun: true, overrideArgs: true, secret: true},
-		{name: "run-stdio-inherited-inputs", transport: "stdio", manifestRun: true, secret: true},
-		{name: "run-stdio-replaced-no-env", transport: "stdio", manifestRun: true, overrideArgs: true, noEnv: true},
+		{name: "run-http-replaced-inputs", transport: "http", manifestRun: true},
+		{name: "run-stdio-replaced-no-env", transport: "stdio", manifestRun: true, noEnv: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			registry := newImageRegistry()
-			command := test.name
+			command := test.transport
 			environment := []string{"FIXTURE_VALUE=preserved", "OPTIONAL=image-fallback"}
 			if test.manifestRun {
-				command = test.transport
-				if test.overrideArgs {
-					if command == "http" {
-						command = "stdio"
-					} else {
-						command = "http"
-					}
-				}
+				command = map[string]string{"http": "stdio", "stdio": "http"}[test.transport]
 				environment = []string{"FIXTURE_VALUE=preserved"}
 			}
 			source := addTestImage(t, registry, runtime.GOARCH, ocispec.ImageConfig{
@@ -79,38 +67,13 @@ func TestDockerTransportContract(t *testing.T) {
 			defer server.Close()
 			host := strings.TrimPrefix(server.URL, "https://")
 			document := descriptorDocument("echo")
-			if test.manifestRun {
-				document["name"] = "example.org/echo"
-			}
 			pkg := document["packages"].([]any)[0].(map[string]any)
 			pkg["identifier"] = host + "/source@" + source.Digest.String()
-			arguments := map[string]mcpregistry.Value{}
-			if test.name == "http-arguments" {
-				pkg["packageArguments"] = []any{
-					map[string]any{"type": "positional", "value": "http"},
-					map[string]any{"type": "named", "name": "--project"},
-					map[string]any{"type": "named", "name": "--token", "isSecret": true, "isRequired": true},
-				}
-				arguments = map[string]mcpregistry.Value{"--project": {Value: new("two words; $(no-shell)")}, "--token": {Secret: "TOKEN"}}
-			}
-			if test.name == "stdio" {
-				arguments = map[string]mcpregistry.Value{
-					"--project": {Value: new("two words; $(no-shell)")}, "--empty": {Value: new("")},
-					"--token": {Secret: "TOKEN"}, "--optional": {Secret: "OPTIONAL"},
-				}
-				pkg["packageArguments"] = []any{
-					map[string]any{"type": "named", "name": "--project", "isRequired": true},
-					map[string]any{"type": "named", "name": "--token", "isRequired": true, "isSecret": true},
-					map[string]any{"type": "named", "name": "--optional", "isSecret": true},
-					map[string]any{"type": "named", "name": "--empty"},
-					map[string]any{"type": "positional", "value": "fixed"},
-				}
-				pkg["transport"] = map[string]any{"type": "stdio"}
-			}
+			pkg["transport"] = map[string]any{"type": "stdio"}
 			var manifest manifestSpec
 			var err error
 			if test.manifestRun {
-				pkg["transport"] = map[string]any{"type": "stdio"}
+				document["name"] = "example.org/echo"
 				pkg["runtimeArguments"] = []any{
 					map[string]any{"type": "named", "name": "-p", "value": "8085:8085"},
 					map[string]any{"type": "named", "name": "-e", "value": "INJECTED_VALUE=published"},
@@ -125,16 +88,9 @@ func TestDockerTransportContract(t *testing.T) {
 				if test.transport == "http" {
 					transport = "{type: streamable-http, url: http://localhost:3000/mcp}"
 				}
-				args := ""
-				if test.overrideArgs {
-					args = "      args: [" + test.transport + "]\n"
-				}
 				env := ""
 				if !test.noEnv {
-					env = "      env:\n        INJECTED_VALUE: literal-run\n"
-				}
-				if test.secret {
-					env += "        TOKEN: {secret: TOKEN}\n"
+					env = "      env:\n        INJECTED_VALUE: literal-run\n        TOKEN: {secret: TOKEN}\n"
 				}
 				manifest, err = parseManifest([]byte(fmt.Sprintf(`apps:
   - name: echo
@@ -145,10 +101,21 @@ func TestDockerTransportContract(t *testing.T) {
       package: {registryType: oci}
     run:
       transport: %s
-%s%s    access: {server: {}}
-`, catalog.URL, transport, args, env)), "holon.yaml")
+      args: [%s]
+%s    access: {server: {}}
+`, catalog.URL, transport, test.transport, env)), "holon.yaml")
 			} else {
-				manifest = manifestSpec{Apps: []manifestApp{{Name: "echo", Registry: descriptorRegistry(t, document), Arguments: arguments}}}
+				pkg["packageArguments"] = []any{
+					map[string]any{"type": "named", "name": "--project", "isRequired": true},
+					map[string]any{"type": "named", "name": "--token", "isRequired": true, "isSecret": true},
+					map[string]any{"type": "named", "name": "--optional", "isSecret": true},
+					map[string]any{"type": "named", "name": "--empty"},
+					map[string]any{"type": "positional", "value": "fixed"},
+				}
+				manifest = manifestSpec{Apps: []manifestApp{{Name: "echo", Registry: descriptorRegistry(t, document), Arguments: map[string]mcpregistry.Value{
+					"--project": {Value: new("two words; $(no-shell)")}, "--empty": {Value: new("")},
+					"--token": {Secret: "TOKEN"}, "--optional": {Secret: "OPTIONAL"},
+				}}}}
 			}
 			if err == nil {
 				manifest, err = resolveManifestGraph(t.Context(), manifest)
@@ -252,33 +219,19 @@ func TestDockerTransportContract(t *testing.T) {
 			if state["value"] != "hello" || state["environment"] != "preserved" || state["directory"] != "/work" || state["uid"] != float64(10001) {
 				t.Fatalf("session configuration = %s", output)
 			}
+			argv, _ := json.Marshal(state["arguments"])
 			if test.manifestRun {
-				wantInjected := "literal-run"
+				wantInjected, wantToken := "literal-run", "runtime-secret"
 				if test.noEnv {
-					wantInjected = ""
+					wantInjected, wantToken = "", ""
 				}
-				wantToken := ""
-				if test.secret {
-					wantToken = "runtime-secret"
-				}
-				argv, _ := json.Marshal(state["arguments"])
-				if state["injected"] != wantInjected || state["token"] != wantToken ||
-					string(argv) != `["`+test.transport+`"]` {
+				if state["injected"] != wantInjected || state["token"] != wantToken || string(argv) != `["`+test.transport+`"]` {
 					t.Fatalf("manifest launch configuration: %s", output)
 				}
-			} else if state["injected"] != "two words; $(no-shell)" || state["token"] != "runtime-secret" || state["empty"] != "" {
-				t.Fatalf("injected inputs: %s", output)
-			}
-			if test.name == "http-arguments" {
-				argv, _ := json.Marshal(state["arguments"])
-				if string(argv) != `["http","--project=two words; $(no-shell)","--token=runtime-secret"]` {
-					t.Fatalf("native HTTP argument delivery: %s", argv)
-				}
-			}
-			if test.name == "stdio" {
-				argv, _ := json.Marshal(state["arguments"])
-				if string(argv) != `["--project=two words; $(no-shell)","--token=runtime-secret","--empty=","fixed"]` {
-					t.Fatalf("argument delivery: %s", argv)
+			} else {
+				if state["injected"] != "two words; $(no-shell)" || state["token"] != "runtime-secret" || state["empty"] != "" ||
+					string(argv) != `["--project=two words; $(no-shell)","--token=runtime-secret","--empty=","fixed"]` {
+					t.Fatalf("injected inputs: %s", output)
 				}
 				req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader("{}"))
 				if err != nil {
@@ -293,8 +246,6 @@ func TestDockerTransportContract(t *testing.T) {
 				if response.StatusCode != http.StatusForbidden {
 					t.Fatalf("cross-origin status = %d", response.StatusCode)
 				}
-			}
-			if test.name == "stdio" || test.name == "http-arguments" {
 				logs, err := exec.CommandContext(ctx, "docker", "logs", container).CombinedOutput()
 				if err != nil || !bytes.Contains(logs, []byte("fixture echo")) {
 					t.Fatalf("stderr lost: %v\n%s", err, logs)

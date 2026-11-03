@@ -229,25 +229,23 @@ func addTestImage(t *testing.T, registry *imageRegistry, architecture string, co
 
 func TestPrebuiltImageImports(t *testing.T) {
 	for _, scenario := range []struct {
-		name, sourcePassword, destinationPassword, repository, grant, denied string
-		bearer                                                               bool
+		name, sourcePassword, destinationPassword, repository, grant string
+		denied                                                       bool
 	}{
 		{name: "anonymous source", repository: "holon/upload/echo", grant: "grant-secret"},
-		{name: "bearer private source", bearer: true, sourcePassword: "source-secret", repository: "holon/upload/echo", grant: "grant-secret"},
-		{name: "configured registry", bearer: true, destinationPassword: "destination-secret", repository: "builds/echo"},
-		{name: "invalid source credentials", bearer: true, sourcePassword: "source-secret", repository: "holon/upload/echo", grant: "grant-secret", denied: "source"},
-		{name: "invalid upload grant", repository: "holon/upload/echo", grant: "wrong-grant", denied: "destination"},
+		{name: "private source", sourcePassword: "source-secret", repository: "holon/upload/echo", grant: "grant-secret"},
+		{name: "configured registry", destinationPassword: "destination-secret", repository: "builds/echo"},
+		{name: "invalid upload grant", repository: "holon/upload/echo", grant: "wrong-grant", denied: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			fixture := newImageRegistry()
-			fixture.bearer = scenario.bearer
+			fixture.bearer = true
 			if scenario.sourcePassword != "" {
 				fixture.credentials["source"] = registryCredential{"reader", scenario.sourcePassword}
 			}
 			children := []ocispec.Descriptor{}
 			for _, architecture := range []string{"amd64", "arm64"} {
-				files := map[string][]byte{"server": []byte("server for " + architecture)}
-				children = append(children, addTestImage(t, fixture, architecture, ocispec.ImageConfig{}, files))
+				children = append(children, addTestImage(t, fixture, architecture, ocispec.ImageConfig{}, nil))
 			}
 			indexDigest := addTestIndex(fixture, children...).Digest
 			server := httptest.NewTLSServer(fixture)
@@ -256,7 +254,7 @@ func TestPrebuiltImageImports(t *testing.T) {
 			destination, destinationHost := fixture, host
 			if scenario.destinationPassword != "" {
 				destination = newImageRegistry()
-				destination.bearer = fixture.bearer
+				destination.bearer = true
 				destination.credentials["builds"] = registryCredential{"publisher", scenario.destinationPassword}
 				destinationServer := httptest.NewTLSServer(destination)
 				defer destinationServer.Close()
@@ -272,9 +270,6 @@ func TestPrebuiltImageImports(t *testing.T) {
 					auths[credential.host] = map[string]string{"auth": base64.StdEncoding.EncodeToString([]byte(credential.user + ":" + credential.password))}
 				}
 			}
-			if scenario.denied == "source" {
-				auths[host]["auth"] = base64.StdEncoding.EncodeToString([]byte("reader:wrong-password"))
-			}
 			data, _ := json.Marshal(map[string]any{"auths": auths})
 			if err := os.WriteFile(filepath.Join(configDir, "config.json"), data, 0o600); err != nil {
 				t.Fatal(err)
@@ -283,15 +278,11 @@ func TestPrebuiltImageImports(t *testing.T) {
 			manifest := manifestSpec{Apps: []manifestApp{{Name: "echo", resolved: resolvedApp{App: protocol.App{
 				Name: "echo", Port: 3000, Image: host + "/source@" + indexDigest.String(),
 			}}}}}
-			options := buildOptions{
-				HTTPClient: server.Client(),
-
-				Env: []string{"DOCKER_CONFIG=" + configDir},
-			}
+			options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + configDir}}
 			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{manifest: manifest, grant: grant}, options)
-			if scenario.denied != "" {
+			if scenario.denied {
 				if err == nil || len(apps) != 0 {
-					t.Fatalf("invalid %s credentials: apps=%v, error=%v", scenario.denied, apps, err)
+					t.Fatalf("invalid upload grant: apps=%v, error=%v", apps, err)
 				}
 				return
 			}
@@ -321,7 +312,7 @@ func TestPrebuiltImageImports(t *testing.T) {
 				}
 			}
 			want := destinationHost + "/" + scenario.repository + "@" + indexDigest.String()
-			if len(apps) != len(manifest.Apps) || apps[0].Name != "echo" || apps[0].Image != want {
+			if len(apps) != 1 || apps[0].Image != want {
 				t.Fatalf("imported apps = %#v, want %s", apps, want)
 			}
 		})

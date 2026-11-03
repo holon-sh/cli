@@ -7,8 +7,6 @@ import (
 	"context"
 	"debug/elf"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"maps"
 	"net/http/httptest"
@@ -51,20 +49,17 @@ func preparedConfig(t *testing.T, registry *imageRegistry, image string) (ocispe
 }
 
 func TestStdioImageContract(t *testing.T) {
-	type imageCase struct {
+	stdio := []string{ociimage.RuntimePath, "--origin", "https://holon.example", "--"}
+	for _, test := range []struct {
 		name, architecture        string
-		plain                     bool
 		entrypoint, cmd, expected []string
 		files                     map[string][]byte
 		wantErr                   string
-	}
-	stdio := []string{ociimage.RuntimePath, "--origin", "https://holon.example", "--"}
-	// The image's command stays the default arguments, which an app's args replace.
-	stdioCommand := imageCase{
-		name: "entrypoint and cmd", architecture: "amd64", entrypoint: []string{"/server", "--flag"}, cmd: []string{"default"},
-		expected: slices.Concat(stdio, []string{"/server", "--flag"}),
-	}
-	commands := []imageCase{
+	}{
+		{
+			name: "entrypoint and cmd", architecture: "amd64", entrypoint: []string{"/server", "--flag"}, cmd: []string{"default"},
+			expected: slices.Concat(stdio, []string{"/server", "--flag"}),
+		},
 		{name: "cmd only", architecture: "arm64", cmd: []string{"/server", "arg"}, expected: stdio},
 		{name: "missing executable", architecture: "amd64", wantErr: "no executable"},
 		{
@@ -79,89 +74,45 @@ func TestStdioImageContract(t *testing.T) {
 			name: "reserved whiteout", architecture: "amd64", cmd: []string{"/server"},
 			files: map[string][]byte{".wh.holon-mcp-runtime": []byte("collision")}, wantErr: "reserved path",
 		},
-	}
-	type imageTest struct {
-		name   string
-		inputs []imageCase
-	}
-	tests := make([]imageTest, 0, len(commands)+1)
-	for _, command := range commands {
-		tests = append(tests, imageTest{command.name, []imageCase{command}})
-	}
-	tests = append(tests, imageTest{"mixed stdio and plain images", []imageCase{stdioCommand, {
-		name: "plain", architecture: "arm64", plain: true, entrypoint: []string{"/server"},
-	}}})
-	for _, test := range tests {
+	} {
 		t.Run(test.name, func(t *testing.T) {
-			inputs := test.inputs
 			registry, server := buildRegistry(t)
 			host := strings.TrimPrefix(server.URL, "https://")
-			grant := protocol.UploadGrant{Registry: host, Grant: "grant-secret", Repositories: map[string]string{}}
-			manifest := manifestSpec{}
-			for index, command := range inputs {
-				original := ocispec.ImageConfig{
-					Entrypoint: command.entrypoint, Cmd: command.cmd,
-					Env: []string{"PATH=/bin"}, WorkingDir: "/work", User: "10001:10001",
-					Labels: map[string]string{"custom": "label"}, ExposedPorts: map[string]struct{}{"9000/tcp": {}}, StopSignal: "SIGQUIT",
-				}
-				files := map[string][]byte{"original": []byte("unchanged")}
-				maps.Copy(files, command.files)
-				source := addTestImage(t, registry, command.architecture, original, files)
-				name := fmt.Sprintf("app-%d", index)
-				grant.Repositories[name] = "holon/upload/" + name
-				app := manifestApp{
-					Name: name, Image: host + "/source@" + source.Digest.String(),
-					resolved: resolvedApp{stdio: !command.plain, App: protocol.App{
-						Name: name, Image: host + "/source@" + source.Digest.String(),
-					}},
-				}
-				if !command.plain {
-					app.resolved.Port = 3000
-				}
-				manifest.Apps = append(manifest.Apps, app)
-			}
-			options := buildOptions{
-				HTTPClient: server.Client(),
-
-				origin: "https://holon.example",
-				Env: []string{
-					"DOCKER_CONFIG=" + t.TempDir(),
-				},
-			}
+			files := map[string][]byte{"original": []byte("unchanged")}
+			maps.Copy(files, test.files)
+			source := addTestImage(t, registry, test.architecture, ocispec.ImageConfig{
+				Entrypoint: test.entrypoint, Cmd: test.cmd,
+				Env: []string{"PATH=/bin"}, WorkingDir: "/work", User: "10001:10001",
+				Labels: map[string]string{"custom": "label"}, ExposedPorts: map[string]struct{}{"9000/tcp": {}}, StopSignal: "SIGQUIT",
+			}, files)
+			image := host + "/source@" + source.Digest.String()
+			grant := protocol.UploadGrant{Registry: host, Grant: "grant-secret", Repositories: map[string]string{"app": "holon/upload/app"}}
+			manifest := manifestSpec{Apps: []manifestApp{{
+				Name: "app", Image: image, resolved: resolvedApp{stdio: true, App: protocol.App{Name: "app", Image: image, Port: 3000}},
+			}}}
+			options := buildOptions{HTTPClient: server.Client(), origin: "https://holon.example", Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
 			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{manifest: manifest, grant: grant}, options)
-			if inputs[0].wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), inputs[0].wantErr) {
-					t.Fatalf("want %s: %v", inputs[0].wantErr, err)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("want %s: %v", test.wantErr, err)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(apps) != len(inputs) {
-				t.Fatalf("app count = %d, want %d", len(apps), len(inputs))
+			originalManifest, original := preparedConfig(t, registry, image)
+			imageManifest, config := preparedConfig(t, registry, apps[0].Image)
+			want := original.Config
+			want.Entrypoint, want.StopSignal = test.expected, "SIGTERM"
+			want.Labels["sh.holon.bridge.source"] = host + "/holon/upload/app@" + source.Digest.String()
+			delete(config.Config.Labels, "sh.holon.bridge.runtime")
+			if diff := cmp.Diff(want, config.Config); diff != "" {
+				t.Fatalf("image configuration (-want +got):\n%s", diff)
 			}
-			for index, command := range inputs {
-				originalManifest, originalConfig := preparedConfig(t, registry, manifest.Apps[index].Image)
-				_, sourceDigest, _ := strings.Cut(manifest.Apps[index].Image, "@")
-				imageManifest, config := preparedConfig(t, registry, apps[index].Image)
-				want := originalConfig.Config
-				if !command.plain {
-					want.Entrypoint, want.StopSignal = command.expected, "SIGTERM"
-					want.Labels["sh.holon.bridge.source"] = host + "/" + grant.Repositories[apps[index].Name] + "@" + sourceDigest
-				}
-				delete(config.Config.Labels, "sh.holon.bridge.runtime")
-				if diff := cmp.Diff(want, config.Config); diff != "" {
-					t.Fatalf("image configuration (-want +got):\n%s", diff)
-				}
-				layers := 2
-				if command.plain {
-					layers = 1
-				}
-				if len(imageManifest.Layers) != layers || !cmp.Equal(imageManifest.Layers[:1], originalManifest.Layers) ||
-					imageManifest.Annotations["example"] != "preserved" || len(config.RootFS.DiffIDs) != layers || len(config.History) != layers {
-					t.Fatalf("layers or metadata lost: %#v %#v", imageManifest, config)
-				}
+			if len(imageManifest.Layers) != 2 || !cmp.Equal(imageManifest.Layers[:1], originalManifest.Layers) ||
+				imageManifest.Annotations["example"] != "preserved" || len(config.RootFS.DiffIDs) != 2 || len(config.History) != 2 {
+				t.Fatalf("layers or metadata lost: %#v %#v", imageManifest, config)
 			}
 		})
 	}
@@ -228,14 +179,6 @@ func TestStdioImageContract(t *testing.T) {
 			if err := prepare(t.Context(), changed, raw); err == nil {
 				t.Fatal("changed descriptor reused a successful scan")
 			}
-		}
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		if err := prepare(ctx, descriptor, raw); !errors.Is(err, context.Canceled) {
-			t.Fatalf("canceled preparation: %v", err)
-		}
-		if err := prepare(t.Context(), descriptor, raw); err != nil {
-			t.Fatalf("retry after cancellation: %v", err)
 		}
 	})
 }

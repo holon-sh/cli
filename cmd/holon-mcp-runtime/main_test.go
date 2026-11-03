@@ -28,30 +28,15 @@ func TestInvalidLaunchInputs(t *testing.T) {
 }
 
 func TestNativeHTTPExec(t *testing.T) {
-	switch os.Getenv("HOLON_EXEC_TEST") {
-	case "launcher":
-		if len(os.Args) > 2 && os.Args[2] == "--" {
-			t.Setenv("HOLON_EXEC_TEST", "child")
-			TestNativeHTTPExec(t)
-			return
-		}
-		args := []string{"--transport=streamable-http", "--", os.Args[0], "-test.run=TestNativeHTTPExec", "--", "--project=two words;$(not-a-shell)", "from-snapshot"}
-		if err := run(context.Background(), args); err != nil {
-			os.Exit(90)
-		}
-	case "child":
+	if len(os.Args) > 2 && os.Args[2] == "--" {
 		data, _ := json.Marshal(map[string]any{"args": os.Args[3:], "value": os.Getenv("RUNTIME_VALUE")})
 		_, _ = os.Stdout.Write(data)
 		os.Exit(7)
 	}
-	if os.Getenv("HOLON_EXEC_TEST") != "" {
-		return
+	if os.Getenv("HOLON_EXEC_TEST") == "launcher" {
+		t.Fatal(run(context.Background(), []string{"--transport=streamable-http", "--", os.Args[0], "-test.run=TestNativeHTTPExec", "--", "--project=two words;$(not-a-shell)", "from-snapshot"}))
 	}
-	binary, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := exec.CommandContext(t.Context(), binary, "-test.run=TestNativeHTTPExec")
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestNativeHTTPExec")
 	command.Env = append(os.Environ(), "HOLON_EXEC_TEST=launcher", "RUNTIME_VALUE=from-snapshot")
 	output, err := command.CombinedOutput()
 	var exited *exec.ExitError

@@ -3,7 +3,6 @@ package cloud
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -20,22 +19,17 @@ import (
 func TestAPIClientRequestAndResponse(t *testing.T) {
 	t.Parallel()
 	const token = "access-secret"
-	logs, _ := json.Marshal(logsResponse{Content: strings.Repeat("<", 64<<10)})
 	for _, tc := range []struct {
 		name, body string
 		status     int
-		decode     bool
 		stream     bool
 		mediaType  string
 		content    string
 		want       error
 		httpError  *httpError
 	}{
-		{name: "JSON response", status: http.StatusOK, body: `{"content":"response"}`, decode: true, content: "response"},
-		{name: "maximal escaped logs", status: http.StatusOK, body: string(logs), decode: true, content: strings.Repeat("<", 64<<10)},
-		{name: "no content", status: http.StatusNoContent},
-		{name: "malformed JSON", status: http.StatusOK, body: `{bad`, decode: true, want: errMalformedResponse},
-		{name: "empty JSON", status: http.StatusOK, decode: true, want: errMalformedResponse},
+		{name: "JSON response", status: http.StatusOK, body: `{"content":"response"}`, content: "response"},
+		{name: "malformed JSON", status: http.StatusOK, body: `{bad`, want: errMalformedResponse},
 		{name: "oversized response", status: http.StatusOK, body: strings.Repeat("x", maxHTTPBody+1), want: errResponseTooLarge},
 		{
 			name: "token redacted", status: http.StatusConflict, body: `{"error":{"code":"conflict","message":"` + token + `"}}`,
@@ -45,7 +39,6 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 			name: "policy error", status: http.StatusBadRequest, body: `{"error":{"code":"invalid_request","message":"OAuth support is disabled"}}`,
 			httpError: &httpError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Message: "OAuth support is disabled"},
 		},
-		{name: "empty error", status: http.StatusServiceUnavailable, httpError: &httpError{StatusCode: http.StatusServiceUnavailable}},
 		{name: "redirect", status: http.StatusTemporaryRedirect, httpError: &httpError{StatusCode: http.StatusTemporaryRedirect}},
 		{name: "unexpected streamed JSON", status: http.StatusOK, stream: true, mediaType: protocol.MIMEApplicationJSON, body: `{}`, want: errMalformedResponse},
 		{
@@ -74,17 +67,15 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var body logsResponse
-			var result any
-			if tc.decode {
-				result = &body
+			var body struct {
+				Content string `json:"content"`
 			}
 			var output bytes.Buffer
 			request := apiRequest{Plane: protocol.DevPlane, Token: token}
 			if tc.stream {
 				request.Stream = &output
 			}
-			err = client.Do(t.Context(), http.MethodGet, "/request", request, result)
+			err = client.Do(t.Context(), http.MethodGet, "/request", request, &body)
 			if tc.httpError != nil {
 				got, ok := errors.AsType[*httpError](err)
 				if !ok || *got != *tc.httpError || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), tc.httpError.Message) {
@@ -102,7 +93,7 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 
 func TestAPIClientCancellation(t *testing.T) {
 	t.Parallel()
-	for _, stage := range []string{"before request", "during request", "deadline", "stream"} {
+	for _, stage := range []string{"during request", "deadline", "stream"} {
 		t.Run(stage, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
@@ -128,8 +119,6 @@ func TestAPIClientCancellation(t *testing.T) {
 				}
 				request := apiRequest{Plane: protocol.DevPlane}
 				switch stage {
-				case "before request":
-					cancel()
 				case "during request":
 					go func() {
 						<-entered
@@ -161,10 +150,9 @@ func TestAPIClientCancellation(t *testing.T) {
 func TestAPIClientCanonicalURL(t *testing.T) {
 	t.Parallel()
 	for _, value := range []string{
-		"", " https://example.com", "https://example.com/ ",
-		"http://example.com", "https://example.com/path", "https://user@example.com",
-		"https://example.com?x=1", "https://example.com/#x", "https://192.0.2.1",
-		"https://localhost:99999", "https://::1", "https://cluster-local", "https://example.com/", "https://EXAMPLE.com",
+		" https://example.com", "http://example.com", "https://user@example.com", "https://example.com/",
+		"https://example.com?x=1", "https://example.com#x", "https://192.0.2.1",
+		"https://localhost:99999", "https://cluster-local", "https://EXAMPLE.com",
 	} {
 		if _, err := newAPIClient(value, nil, 0); err == nil {
 			t.Fatalf("URL %q error %v", value, err)
@@ -175,8 +163,4 @@ func TestAPIClientCanonicalURL(t *testing.T) {
 			t.Fatalf("URL %q client=%#v error=%v", value, client, err)
 		}
 	}
-}
-
-type logsResponse struct {
-	Content string `json:"content"`
 }

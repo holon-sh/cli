@@ -41,32 +41,29 @@ func TestStartSelectsReadyInstallation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				transport := &installationTransport{version: tc.version}
-				config := commandConfig{Auth: ClientConfig{
-					ConfigDir: t.TempDir(), HTTPClient: &http.Client{Transport: transport},
-				}}
+				dir := t.TempDir()
 				if tc.writeFailure {
-					if err := os.Mkdir(filepath.Join(config.Auth.ConfigDir, "config.json"), 0o700); err != nil {
+					if err := os.Mkdir(filepath.Join(dir, "config.json"), 0o700); err != nil {
 						t.Fatal(err)
 					}
 				} else {
-					sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://previous.example"}`})
+					sourceFiles(t, dir, map[string]string{"config.json": `{"origin":"https://previous.example"}`})
 				}
 				var output bytes.Buffer
 				ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 				defer cancel()
-				err := SelectInstallation(ctx, "https://holon.localhost", "dev", &output, config.Auth.ConfigDir, config.Auth.HTTPClient)
+				err := SelectInstallation(ctx, "https://holon.localhost", "dev", &output, dir, &http.Client{Transport: &installationTransport{version: tc.version}})
 				if tc.wantError == "" {
 					if err != nil || !strings.Contains(output.String(), "Selected Holon installation https://holon.localhost") {
 						t.Fatalf("selection: %s, %v", output.String(), err)
 					}
-					assertSavedOrigin(t, config.Auth.ConfigDir, "https://holon.localhost")
+					assertSavedOrigin(t, dir, "https://holon.localhost")
 				} else {
 					if err == nil || !strings.Contains(err.Error(), tc.wantError) || strings.Contains(output.String(), "Selected Holon installation") {
 						t.Fatalf("failed selection: %s, %v", output.String(), err)
 					}
 					if !tc.writeFailure {
-						assertSavedOrigin(t, config.Auth.ConfigDir, "https://previous.example")
+						assertSavedOrigin(t, dir, "https://previous.example")
 					}
 				}
 			})
