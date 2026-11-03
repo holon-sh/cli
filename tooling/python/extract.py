@@ -121,7 +121,7 @@ class EmptyApps(importlib.abc.Loader):
             # Registering tools never calls the clients, so without the runtime stubs stand in.
             vars(module).update(
                 apps=Unused("holon.apps apps"),
-                create_apps=unavailable("holon.apps create_apps", "generated clients"),
+                create_apps=Unused("holon.apps create_apps"),
             )
             return
         vars(module).update(

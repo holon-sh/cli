@@ -41,6 +41,10 @@ function application(root, files) {
 
 test("a server with only schema imports and its own clients extracts with nothing installed and records every file served", t => {
   const { root, run, extract } = unpackTooling(t);
+  // Every name the generator's node target exports, so a new export the sandbox does not stub fails here.
+  const golden = readFileSync(new URL("../../../pkg/mcptype/testdata/golden/slot-node/index.js", import.meta.url), "utf8");
+  const clients = [...golden.matchAll(/^export (?:\{([^}]*)\}|(?:function|const|let|class) (\w+))/gm)].flatMap(([, list, name]) => name ? [name] : list.split(",").map(n => n.trim()));
+  assert.ok(clients.includes("apps"), clients);
   const app = application(root, {
     "package.json": '{"type":"module"}',
     "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@schemas/*": ["./schemas/*"] } } }),
@@ -52,8 +56,10 @@ import meta from "./meta.json" with { type: "json" };
 export const read = { description: meta.description, inputSchema: z.object({ id: z.string() }), outputSchema: order };
 export const list = { inputSchema: z.object({ status }) };`,
     "server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
-import { apps } from "holon-sh";
+import { ${clients.join(", ")} } from "holon-sh";
 import { list, read } from "./tools.js";
+// Naming each import keeps it, as TypeScript drops imports used only in types or not at all.
+export const generated = [${clients.join(", ")}];
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "orders", version: "1" });
   server.registerTool("read", read, () => apps.inventory.tools.read({}));
