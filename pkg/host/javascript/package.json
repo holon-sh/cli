@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "go build -o .host-test ../../../cmd/holon-mcp-runtime && node --test host.test.mjs"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/server": "2.3.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/node": "2.1.1"
+  }
+}
