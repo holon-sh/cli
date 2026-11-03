@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -51,6 +52,7 @@ type resolvedApp struct {
 	protocol.App
 
 	registryPackage *mcpregistry.Package
+	types           *preparedTypes
 	descriptor      *serverDescriptor
 	stdio           bool
 	catalogEnv      map[string]protocol.Input
@@ -70,6 +72,7 @@ type manifestApp struct {
 
 	Port *int `description:"HTTP port for image apps only; defaults to 3000." json:"port,omitempty" maximum:"65535" minimum:"1"`
 
+	Path      string                       `description:"Relative source directory."                                              json:"path,omitempty"`
 	Registry  *registrySource              `description:"Registry server reference; package or remote selection may be inferred." json:"registry,omitempty"`
 	Run       *packageRun                  `description:"Registry runtime arguments; cannot combine with arguments or headers."   json:"run,omitempty"`
 	Arguments map[string]mcpregistry.Value `description:"Argument literals, or secrets named for the input (--api-key: API_KEY)." json:"arguments,omitempty"`
@@ -130,13 +133,13 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 			errs = append(errs, label+": "+err.Error())
 		}
 		sources := 0
-		for _, present := range []bool{a.Image != "", a.Registry != nil, a.Remote != nil} {
+		for _, present := range []bool{a.Path != "", a.Image != "", a.Registry != nil, a.Remote != nil} {
 			if present {
 				sources++
 			}
 		}
 		if sources != 1 {
-			errs = append(errs, label+": declare exactly one of image, registry, or remote")
+			errs = append(errs, label+": declare exactly one of path, image, registry, or remote")
 		}
 		if a.Remote != nil {
 			if _, err := protocol.RemoteURL(a.Remote.URL); err != nil {
@@ -166,6 +169,9 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 			errs = append(errs, fmt.Sprintf("%s.name duplicates '%s'", label, a.Name))
 		}
 		names.Insert(a.Name)
+		if filepath.IsAbs(a.Path) {
+			errs = append(errs, label+".path must be a relative directory")
+		}
 	}
 	if len(errs) > 0 {
 		slices.Sort(errs)

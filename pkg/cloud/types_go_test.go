@@ -1,0 +1,85 @@
+package cloud
+
+import (
+	"encoding/json"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/holon-sh/cli/pkg/mcpcontract"
+
+	"github.com/holon-sh/cli/pkg/protocol"
+)
+
+func TestGoDependencyPreparation(t *testing.T) {
+	fixture, registry := buildRegistry(t)
+	name := strings.TrimPrefix(registry.URL, "https://") + "/orders"
+	options := buildOptions{HTTPClient: registry.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}, Stderr: io.Discard}
+	metadata := &mcpcontract.Metadata{
+		Identity: mcpcontract.Identity{Name: "example.org/orders", Version: "1.0.0"},
+		Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{
+			Name:   "get_order",
+			Input:  json.RawMessage(`{"type":"object","properties":{"id":{"type":"string","minLength":1}},"required":["id"],"additionalProperties":false}`),
+			Output: json.RawMessage(`{"type":"object","properties":{"total":{"type":"number"}},"required":["total"],"additionalProperties":false}`),
+		}}},
+	}
+	image := publishTypeMetadata(t, fixture, name, metadata, options, nil)
+	root := t.TempDir()
+	const module = "module example.org/caller\n\ngo 1.27.0\n\n" +
+		"require github.com/holon-sh/sdk/go v0.0.0-20261025144240-b6f8fd7fc600\n"
+	sourceFiles(t, root, map[string]string{
+		"go.mod": module, dockerignoreFile: "holon\nholon/**\n",
+		"go.sum": `github.com/holon-sh/sdk/go v0.0.0-20261025144240-b6f8fd7fc600 h1:CDh+Zy49HGXql2mniMAGSeCPYjprpTMkb0IDBecbc8s=
+github.com/holon-sh/sdk/go v0.0.0-20261025144240-b6f8fd7fc600/go.mod h1:zsXadl0w8BLTHKVfvXHPdA/sKZpSulThNQo9uCOIyxM=
+`,
+		"server.go": `package main
+import (
+ "context"
+ apps "example.org/caller/holon"
+)
+func main() {
+ var _ func(context.Context, apps.OrdersGetOrderInput) (apps.OrdersGetOrderOutput, error) = apps.Orders.GetOrder
+}
+`,
+	})
+	descriptor := &serverDescriptor{Name: "example.org/caller", Version: "1.0.0", Requires: map[string]serverReference{
+		"orders": {Name: metadata.Identity.Name, Version: metadata.Identity.Version},
+	}}
+	manifest := typedManifest(t,
+		manifestApp{Name: "orders", resolved: resolvedApp{App: protocol.App{Name: "orders", Image: image}}},
+		manifestApp{Name: "caller", Path: root, resolved: resolvedApp{App: protocol.App{Name: "caller", Requires: []string{"orders"}}, descriptor: descriptor}},
+	)
+	workspace := new(typeWorkspace)
+	if err := workspace.acquire(manifest); err != nil {
+		t.Fatal(err)
+	}
+	defer workspace.close()
+	options.types = workspace
+	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	p := prepared.Apps[1].resolved.types
+	if _, err := os.Stat(filepath.Join(root, "holon", "clients.go")); err != nil {
+		t.Fatal("the Go client package was not written into the app for its editor")
+	}
+	if _, err := stageTypes(p, options); err != nil {
+		t.Fatal(err)
+	}
+	// Compile against the pinned SDK, resolving dependencies only in the disposable build copy.
+	command := exec.CommandContext(t.Context(), "go", "build", "-mod=mod", ".")
+	command.Dir = p.root
+	command.Env = append(os.Environ(), "GOWORK=off", "GOTOOLCHAIN=local")
+	got, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated caller: %s %v", got, err)
+	}
+	unchanged, _ := os.ReadFile(filepath.Join(root, "go.mod"))
+	if string(unchanged) != module {
+		t.Fatal("generation or import changed module dependencies")
+	}
+}

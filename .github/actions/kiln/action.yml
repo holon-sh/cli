@@ -1,0 +1,92 @@
+name: Build OCaml Kiln SDK
+description: Fetch pinned public source and compile the native builder.
+inputs:
+  target:
+    required: true
+    description: Native host target (GOOS_GOARCH)
+  static:
+    default: "false"
+    description: Build a static musl SDK and configure Go for release linking on Linux
+runs:
+  using: composite
+  steps:
+    - name: Check out Kiln
+      uses: actions/checkout@v7
+      id: source
+      with:
+        repository: hughhan1/kiln
+        # Unreleased Python dependency stage and install commands (hughhan1/kiln#3); retag after it merges.
+        ref: 0fa146c47583f45d7f4af3c2ed2332e3a6b6ce7b
+        path: .kiln
+        persist-credentials: false
+    - name: Identify runner image
+      id: runner
+      shell: bash
+      run: echo "image=$RUNNER_OS-$RUNNER_ARCH-$ImageVersion" >> "$GITHUB_OUTPUT"
+    - name: Cache compiled SDK
+      uses: actions/cache@v6
+      id: sdk
+      with:
+        path: dist/kiln/${{ inputs.target }}
+        key: kiln-${{ steps.runner.outputs.image }}-${{ inputs.target }}-${{ inputs.static }}-${{ steps.source.outputs.commit }}-${{ hashFiles('.github/actions/kiln/action.yml') }}
+    - name: Install Linux dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y musl-tools pkg-config libcurl4-openssl-dev libssl-dev \
+          libpsl-dev libssh-dev libkrb5-dev libldap2-dev librtmp-dev libnghttp2-dev \
+          libidn2-dev libbrotli-dev libzstd-dev zlib1g-dev
+    - uses: ocaml/setup-ocaml@v3
+      if: steps.sdk.outputs.cache-hit != 'true' && (runner.os != 'Linux' || inputs.static != 'true')
+      env:
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+      with:
+        ocaml-compiler: '5.5.1'
+        opam-repositories: |
+          default: git+https://github.com/ocaml/opam-repository.git#74bf8da7ffea3971801da0d3540eb43f26d60fbd
+    - name: Build SDK
+      if: steps.sdk.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: .kiln
+      env:
+        KILN_TARGET: ${{ inputs.target }}
+        KILN_STATIC: ${{ inputs.static }}
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+      run: |
+        destination="$GITHUB_WORKSPACE/dist/kiln/$KILN_TARGET"
+        if [ "$RUNNER_OS" = Linux ] && [ "$KILN_STATIC" = true ]; then
+          docker buildx build --file packaging/Dockerfile --output "type=local,dest=$destination" .
+        else
+          if [ "$RUNNER_OS" = Linux ]; then
+            libdir="/usr/lib/$(gcc -dumpmachine)"
+            export PKG_CONFIG_LIBDIR="$libdir/pkgconfig:/usr/share/pkgconfig"
+            export CURLCFLAGS="$(pkg-config --cflags libcurl)"
+            export CURLLIBS="-L$libdir -lcurl"
+            export DUNE_WORKSPACE="$RUNNER_TEMP/dune-workspace"
+            printf '(lang dune 3.18)\n(env (_ (link_flags (:standard -runtime-variant _pic))))\n' > "$DUNE_WORKSPACE"
+          fi
+          OPAMSWITCH="$GITHUB_WORKSPACE" scripts/package "$destination"
+          if [ "$RUNNER_OS" = Linux ]; then
+            sed -i "/^Libs:/ s|$| $(pkg-config --static --libs libcurl)|" "$destination/lib/pkgconfig/kiln.pc"
+          fi
+        fi
+    - name: Configure Go linking
+      shell: bash
+      env:
+        KILN_TARGET: ${{ inputs.target }}
+        KILN_STATIC: ${{ inputs.static }}
+      run: |
+        destination="$GITHUB_WORKSPACE/dist/kiln/$KILN_TARGET"
+        {
+          echo 'CGO_ENABLED=1'
+          echo 'MACOSX_DEPLOYMENT_TARGET=15.0'
+          echo "PKG_CONFIG_PATH=$destination/lib/pkgconfig"
+          if [ "$RUNNER_OS" = Linux ] && [ "$KILN_STATIC" = true ]; then
+            echo 'CC=musl-gcc'
+            echo 'CGO_LDFLAGS=-static'
+          elif [ "$RUNNER_OS" = macOS ]; then
+            echo 'CGO_CFLAGS=-O2 -g -mmacosx-version-min=15.0'
+            echo 'CGO_LDFLAGS=-mmacosx-version-min=15.0'
+          fi
+        } >> "$GITHUB_ENV"

@@ -95,7 +95,7 @@ func TestRegistryPackagesImportOnTheServerAndBindArguments(t *testing.T) {
 					}}, UnsupportedReasons: []string{},
 				}})
 			})
-			h.start(t)
+			h.start(t, nil)
 			manager, err := NewClient(t.Context(), h.run.Auth)
 			if err != nil {
 				t.Fatal(err)
@@ -137,7 +137,7 @@ func TestRegistryPackageImportFailureAndCancellation(t *testing.T) {
 					cancel()
 				}
 			})
-			h.start(t)
+			h.start(t, nil)
 			manager, err := NewClient(t.Context(), h.run.Auth)
 			if err != nil {
 				t.Fatal(err)

@@ -27,7 +27,7 @@ func TestConfigurationSetSendsValuesAsGiven(t *testing.T) {
 		sent[body["variable"]] = value
 		cloudtest.WriteJSON(w, struct{}{})
 	})
-	h.start(t)
+	h.start(t, nil)
 	var out bytes.Buffer
 	for _, args := range [][]string{{"config", "set", "API_URL", "https://example.test"}, {"config", "set", "REGION", ""}} {
 		if err := executeCommand(t.Context(), args, &out, &bytes.Buffer{}, h.run); err != nil {
@@ -91,7 +91,7 @@ func TestConfigurationScopes(t *testing.T) {
 				}
 				cloudtest.WriteJSON(w, struct{}{})
 			})
-			h.start(t)
+			h.start(t, nil)
 			if err := executeCommand(t.Context(), test.args, &bytes.Buffer{}, &bytes.Buffer{}, h.run); err != nil {
 				t.Fatal(err)
 			}

@@ -35,6 +35,7 @@ const (
 type commandConfig struct {
 	manifest           manifestSpec
 	file               string
+	builder            buildApplication
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
 	Env                []string
@@ -71,6 +72,12 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 		return manifestSpec{}, err
 	}
 	manifest.file = absolute
+	for i := range manifest.Apps {
+		app := &manifest.Apps[i]
+		if app.Path != "" {
+			app.Path = filepath.Join(filepath.Dir(absolute), app.Path)
+		}
+	}
 	return manifest, nil
 }
 
@@ -94,6 +101,17 @@ func uploadManifest(
 	if err := protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
+	if len(manifest.retained) != 0 {
+		options.metadataGrant, err = imageDestination(ctx, manager, name, resolved)
+		if err != nil {
+			return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		}
+	}
+	resolved, cleanup, err := prepareManifestTypes(ctx, resolved, options)
+	if err != nil {
+		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+	}
+	defer cleanup()
 	prepared := resolved
 	prepared.Apps = slices.DeleteFunc(slices.Clone(resolved.Apps), func(app manifestApp) bool {
 		_, retained := manifest.retained[app.Name]
@@ -101,6 +119,9 @@ func uploadManifest(
 	})
 	built, err := buildManifestImages(ctx, manager, name, prepared, options)
 	if err != nil {
+		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+	}
+	if err := currentTypeSources(prepared); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
 	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, resolved, nil
@@ -196,8 +217,11 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 			manifest.retained[app.Name] = app
 		}
 	}
+	builders := new(builderConnections)
+	defer builders.close()
 	desired, _, err := uploadManifest(ctx, manager, protocol.ProductionName, manifest, buildOptions{
-		HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env, output: config.output,
+		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env,
+		output: config.output, builders: builders, architectures: manager.info.BuildArchitectures, check: true,
 	}, selection...)
 	if err != nil {
 		return err

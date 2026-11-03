@@ -47,14 +47,18 @@ jobs:
       fail-fast: false
       matrix:
         # Pull requests run Linux only; main pushes and releases add macOS.
-        runner: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04","macos-15"]') }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+        target: ${{ fromJSON(github.event_name == 'pull_request' && '["linux_amd64"]' || '["linux_amd64","darwin_arm64"]') }}
+    runs-on: ${{ fromJSON('{"linux_amd64":"ubuntu-24.04","darwin_arm64":"macos-15"}')[matrix.target] }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - uses: ./.github/actions/kiln
+        with:
+          target: ${{ matrix.target }}
+      - run: scripts/build-mcp-runtime
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -71,7 +75,6 @@ jobs:
       - run: go test ./...
       - run: go vet ./... && go test ./...
         working-directory: pkg/oauthscope
-      - run: uv run --with-requirements packaging/requirements.txt python -m unittest discover -s scripts
   test-package:
     name: test-package (${{ matrix.target }})
     needs: [tooling, package-launcher]
@@ -81,7 +84,7 @@ jobs:
         # Pull requests run Linux only; main pushes and releases add macOS.
         target: ${{ fromJSON(github.event_name == 'pull_request' && '["linux_amd64","linux_arm64"]' || '["linux_amd64","linux_arm64","darwin_arm64","darwin_amd64"]') }}
     runs-on: ${{ fromJSON('{"linux_amd64":"ubuntu-24.04","linux_arm64":"ubuntu-24.04-arm","darwin_arm64":"macos-15","darwin_amd64":"macos-15-intel"}')[matrix.target] }}
-    timeout-minutes: 30
+    timeout-minutes: 90
     env:
       VERSION: ${{ inputs.version || '0.0.1' }}
     steps:
@@ -89,6 +92,11 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - uses: ./.github/actions/kiln
+        with:
+          target: ${{ matrix.target }}
+          static: "true"
+      - run: scripts/build-mcp-runtime
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -96,6 +104,7 @@ jobs:
         with:
           python-version: '3.11'
           enable-cache: false
+      - run: uv run --with-requirements packaging/requirements.txt python -m unittest discover -s scripts
       - run: uv run --with-requirements packaging/requirements.txt python scripts/package_cli.py --target '${{ matrix.target }}' --version "$VERSION" --format tarball --format wheel --format npm-platform
       - uses: actions/download-artifact@v4
         with:

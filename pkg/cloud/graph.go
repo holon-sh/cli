@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -45,7 +47,19 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 			OAuth: (*protocol.OAuthClient)(app.OAuth),
 		}}
 		var err error
-		if app.Registry != nil {
+		if app.Path != "" {
+			info, statErr := os.Stat(app.Path)
+			if statErr != nil {
+				return nil, fmt.Errorf("%s path: %w", app.Name, statErr)
+			}
+			if !info.IsDir() {
+				return nil, fmt.Errorf("%s path must be a directory", app.Name)
+			}
+			app.resolved.descriptor, err = readServerDescriptor(filepath.Join(app.Path, "server.json"))
+			if errors.Is(err, os.ErrNotExist) {
+				err = nil
+			}
+		} else if app.Registry != nil {
 			app.resolved.descriptor, err = fetchServerDescriptor(ctx, app.Registry.RegistryRef)
 		}
 		if err != nil {

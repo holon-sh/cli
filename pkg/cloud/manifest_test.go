@@ -10,10 +10,10 @@ const manifestFixture = `
 apps:
   - name: alpha
     access: {server: {}}
-    remote: {url: https://alpha.example/mcp}
+    path: ./alpha
   - name: beta
     access: {server: {}}
-    remote: {url: https://beta.example/mcp}
+    path: ./beta
 `
 
 func TestManifestRegistryURLs(t *testing.T) {
@@ -46,8 +46,9 @@ func TestManifestRegistryURLs(t *testing.T) {
 func TestManifestRejectsInvalidDeclarations(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct{ name, fields, wantError string }{
-		{name: "missing source", fields: "image: ''"},
-		{name: "multiple sources", fields: "image: ghcr.io/acme/alpha@sha256:" + strings.Repeat("a", 64) + "\nremote: {url: https://mcp.example/mcp}"},
+		{name: "missing source", fields: "path: ''"},
+		{name: "multiple sources", fields: "path: .\nremote: {url: https://mcp.example/mcp}"},
+		{name: "absolute path", fields: "path: /app"},
 		{name: "null source", fields: "remote: null"},
 		{name: "unknown field", fields: "unsupported: true"},
 		{name: "per-app origin", fields: "origin: https://browser.example"},
@@ -78,8 +79,9 @@ run: {transport: {type: stdio}}`, wantError: "run requires a registry OCI packag
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fields := test.fields
-			if !strings.Contains(fields, "image:") && !strings.Contains(fields, "registry:") && !strings.Contains(fields, "remote:") {
-				fields += "\nremote: {url: https://mcp.example/mcp}"
+			if !strings.Contains(fields, "path:") && !strings.Contains(fields, "image:") &&
+				!strings.Contains(fields, "registry:") && !strings.Contains(fields, "remote:") {
+				fields += "\npath: ."
 			}
 			manifest := "apps:\n  - name: alpha\n    access: {server: {}}\n    " +
 				strings.ReplaceAll(fields, "\n", "\n    ")
