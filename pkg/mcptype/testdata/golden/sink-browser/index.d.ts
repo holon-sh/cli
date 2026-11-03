@@ -1,6 +1,7 @@
 // holon-generated-apps-v1 app=chéck"out
 import type { Outputs as Resources } from "./resources.js";
 type AuthProvider = { token(): Promise<string> };
+type ClientCapabilities = { elicitation?: { form?: object } };
 type ToolClient<I, O, R> = { tools: { [K in keyof I]: (input: I[K]) => Promise<K extends keyof O ? O[K] : unknown> }; resources: { [U in keyof R]: { read(): Promise<R[U]> } }; callTool<K extends keyof I & string>(request: { name: K; arguments: I[K] }): Promise<unknown> };
 export type { Resources };
 export interface Inputs {
@@ -107,7 +108,7 @@ export interface OutputTypes {
 }
 
 export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };
-export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
+export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean; capabilities?: ClientCapabilities }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 export interface ExposeOptions { signal?: AbortSignal; execute?: (name: string, args: Record<string, unknown>) => Promise<unknown> }
