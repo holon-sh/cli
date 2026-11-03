@@ -1,15 +1,21 @@
 package host
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 	"time"
+)
 
-	"github.com/holon-sh/cli/pkg/protocol"
-	"github.com/holon-sh/cli/pkg/runtimecontract"
+const (
+	contextHeader = "X-Holon-Context"
+	callerHeader  = "X-Holon-Caller"
+	scopeHeader   = "X-Holon-Scope"
 )
 
 type identity struct {
@@ -21,25 +27,38 @@ type identity struct {
 	Extra     map[string]any `json:"extra"`
 }
 
-// admit accepts a platform request context, or a context-free discovery request from one of the control-plane callers.
-func admit(r *http.Request, now time.Time, callers []string) (*identity, bool) {
-	token, caller := r.Header.Get(runtimecontract.ContextHeader), r.Header.Get(runtimecontract.CallerHeader)
-	if len(r.Header.Values(runtimecontract.CallerHeader)) != 1 {
+func decodeContextClaims(token string, claims any) error {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return errors.New("invalid platform token")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(payload, claims)
+}
+
+func admit(r *http.Request, callers []string) (*identity, bool) {
+	token, caller := r.Header.Get(contextHeader), r.Header.Get(callerHeader)
+	if len(r.Header.Values(callerHeader)) != 1 {
 		return nil, false
 	}
-	if token == "" && runtimecontract.AppDiscoveryRequest(r.Method, r.URL.Path, r.Header.Get("Mcp-Method")) && slices.Contains(callers, caller) {
+	discovery := r.Method == http.MethodHead && r.URL.Path == "/" || r.Method == http.MethodPost && r.URL.Path == "/mcp" &&
+		slices.Contains([]string{"server/discover", "tools/list"}, r.Header.Get("Mcp-Method"))
+	if token == "" && discovery && slices.Contains(callers, caller) {
 		return nil, true
 	}
-	if len(r.Header.Values(runtimecontract.ContextHeader)) != 1 || len(token) > 16384 || !strings.HasPrefix(caller, "spiffe://") {
+	if len(r.Header.Values(contextHeader)) != 1 || len(token) > 16384 || !strings.HasPrefix(caller, "spiffe://") {
 		return nil, false
 	}
 	var claims struct {
-		Expires   float64                  `json:"exp"`
-		Audience  []string                 `json:"aud"`
-		Principal map[string]any           `json:"principal"`
-		Hook      *protocol.HookInvocation `json:"hook"`
+		Expires   float64        `json:"exp"`
+		Audience  []string       `json:"aud"`
+		Principal map[string]any `json:"principal"`
+		Hook      map[string]any `json:"hook"`
 	}
-	if runtimecontract.DecodeContextClaims(token, &claims) != nil || claims.Expires <= float64(now.UnixNano())/1e9 || len(claims.Audience) != 1 {
+	if decodeContextClaims(token, &claims) != nil || claims.Expires <= float64(time.Now().UnixNano())/1e9 || len(claims.Audience) != 1 {
 		return nil, false
 	}
 	resource, err := url.Parse(claims.Audience[0])
@@ -69,16 +88,15 @@ func admit(r *http.Request, now time.Time, callers []string) (*identity, bool) {
 		}
 		admitted.Scopes = strings.FieldsFunc(scope, func(char rune) bool { return char == ' ' })
 	}
-	extra := admitted.Extra
-	extra["iss"], extra["sub"] = claims.Principal["iss"], claims.Principal["sub"]
+	admitted.Extra["iss"], admitted.Extra["sub"] = claims.Principal["iss"], claims.Principal["sub"]
 	if profile, present := claims.Principal["claims"]; present {
 		if _, ok := profile.(map[string]any); !ok {
 			return nil, false
 		}
-		extra["claims"] = profile
+		admitted.Extra["claims"] = profile
 	}
 	if actor, present := claims.Principal["act"]; present {
-		extra["act"] = actor
+		admitted.Extra["act"] = actor
 	}
 	admitted.ClientID = claims.Principal["client_id"].(string)
 	return admitted, true
