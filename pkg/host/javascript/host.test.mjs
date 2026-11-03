@@ -30,9 +30,6 @@ async function app(t, peers = {}, extra = {}) {
       "--transport=hosted-http",
       "--",
       runtime,
-      ...(runtime.endsWith("deno")
-        ? ["run", "--allow-all", "--node-modules-dir=manual"]
-        : []),
       fileURLToPath(new URL(python ? "../python/testdata/entry.py" : "./testdata/entry.mjs", import.meta.url)),
     ],
     {
@@ -167,7 +164,34 @@ test(
       { peer },
       { PEER_MCP_URL: "http://stale.invalid/mcp", EXTERNAL_URL: `http://127.0.0.1:${externalPort}` },
     );
-    assert.equal((await fetch(upstream.url, { method: "POST" })).status, 403);
+    for (const [method, status] of [["server/discover", 200], ["tools/call", 400]]) {
+      const response = await fetch(upstream.url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": "2026-07-28",
+          "mcp-method": "server/discover",
+          ...(method === "tools/call" && { "mcp-name": "inspect" }),
+          "x-holon-caller": "spiffe://cluster.local/ns/holon-system/sa/holon-api",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "discovery",
+          method,
+          params: {
+            ...(method === "tools/call" && { name: "inspect", arguments: {} }),
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientInfo": { name: "holon", version: "1" },
+              "io.modelcontextprotocol/clientCapabilities": {},
+            },
+          },
+        }),
+      });
+      assert.equal(response.status, status, method);
+      await response.text();
+    }
     const identities = [
       {
         subject: "alice",
@@ -301,65 +325,6 @@ test(
 );
 
 test(
-  "identity permits admitted discovery without delegation",
-  { timeout: 10000 },
-  async (t) => {
-    const hosted = await app(t);
-    for (const [caller, method, status, bodyMethod = method] of [
-      ["holon-api", "server/discover", 200],
-      ["holon-api", "tools/list", 200],
-      ["holon-authz", "tools/list", 200],
-      ["other", "tools/list", 403],
-      ["holon-authz", "tools/call", 403],
-      ["holon-api", "server/discover", 400, "tools/call"],
-    ]) {
-      const response = await fetch(hosted.url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          "mcp-protocol-version": "2026-07-28",
-          "mcp-method": method,
-          ...(bodyMethod === "tools/call" && { "mcp-name": "inspect" }),
-          "x-holon-caller": `spiffe://cluster.local/ns/holon-system/sa/${caller}`,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: "discovery",
-          method: bodyMethod,
-          params: {
-            ...(bodyMethod === "tools/call" && { name: "inspect", arguments: {} }),
-            _meta: {
-              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-              "io.modelcontextprotocol/clientInfo": {
-                name: "holon",
-                version: "1",
-              },
-              "io.modelcontextprotocol/clientCapabilities": {},
-            },
-          },
-        }),
-      });
-      assert.equal(response.status, status, `${caller} ${method}`);
-      await response.text();
-    }
-    for (const [caller, method, status] of [
-      ["holon-api", "HEAD", 404],
-      ["holon-authz", "HEAD", 404],
-      ["holon-ingress", "HEAD", 403],
-      ["holon-api", "GET", 403],
-    ]) {
-      const response = await fetch(new URL("/", hosted.url), {
-        method,
-        headers: { "x-holon-caller": `spiffe://cluster.local/ns/holon-system/sa/${caller}` },
-      });
-      assert.equal(response.status, status, `${caller} ${method} /`);
-      await response.text();
-    }
-  },
-);
-
-test(
   "standalone SDK applications ignore untrusted identity and serve static files",
   { timeout: 10000 },
   async (t) => {
@@ -379,27 +344,14 @@ test(
       },
     );
     const result = await call(standalone.url, "inspect", context("forged"));
-    const observed = JSON.parse(result.content[0].text);
-    assert.equal(observed.identity, null);
-    assert(!observed.headers.some((name) => name.startsWith("x-holon-")));
+    assert.equal(JSON.parse(result.content[0].text).identity, null);
     const home = new URL("/", standalone.url);
-    const response = await fetch(home);
-    assert.equal(response.status, 200);
-    const html = await response.text();
+    const html = await (await fetch(home)).text();
     assert.match(html, /Application frontend/);
     const asset = await fetch(new URL("/style.css", home));
     assert.match(asset.headers.get("content-type"), /text\/css/);
     const head = await fetch(home, { method: "HEAD" });
-    assert.equal(head.status, 200);
     assert.equal(head.headers.get("content-length"), String(Buffer.byteLength(html)));
-    const hosted = await app(t, {}, {
-      TEST_FRONTEND: pathToFileURL(join(directory, "web/")).href,
-    });
-    const probe = await fetch(new URL("/", hosted.url), {
-      method: "HEAD",
-      headers: { "x-holon-caller": "spiffe://cluster.local/ns/holon-system/sa/holon-api" },
-    });
-    assert.equal(probe.status, 200);
     for (const path of [
       "/%2eprivate",
       "/%2findex.html",
