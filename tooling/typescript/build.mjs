@@ -1,7 +1,7 @@
 // Bundle the standalone extractor and check runner into the archive pkg/tooling embeds.
 // Type checking uses the consumer's installed compiler and standard declarations.
 // The output is byte-for-byte reproducible from package-lock.json.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -41,7 +41,6 @@ for (const directory of vendored) {
 }
 const bytes = zipSync(Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)).map(([name, data]) => [name, [new Uint8Array(data), { mtime: new Date(1980, 0, 1) }]])), { level: 9 });
 mkdirSync(destination, { recursive: true });
-for (const name of readdirSync(destination)) if (/^cli-tooling-ts-.*\.zip$/.test(name)) rmSync(join(destination, name));
-const archive = join(destination, `cli-tooling-ts-${version}.zip`);
+const archive = join(destination, "cli-tooling-ts.zip");
 writeFileSync(archive, bytes);
 console.log(relative(process.cwd(), archive));

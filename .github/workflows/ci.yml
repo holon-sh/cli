@@ -37,7 +37,7 @@ jobs:
           uv run --no-sync ruff check . && uv run --no-sync ruff format --check .
           uv run --no-sync pytest
           uv run --no-sync mypy --strict
-      - name: Embedded tooling archives are up to date
+      - name: Embedded TypeScript archive is up to date
         run: |
           scripts/build-tooling
           git diff --exit-code pkg/tooling
