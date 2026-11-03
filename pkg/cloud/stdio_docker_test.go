@@ -135,7 +135,7 @@ func TestDockerTransportContract(t *testing.T) {
 			if test.transport == "http" && apps[0].Image != host+"/holon/upload/echo@"+source.Digest.String() {
 				t.Fatal("native HTTP image changed")
 			}
-			repository, err := imageRepository(host+"/holon/upload/echo", grant.Grant, nil, server.Client())
+			repository, err := imageRepository(host+"/holon/upload/echo", grant.Grant, server.Client())
 			if err != nil {
 				t.Fatal(err)
 			}

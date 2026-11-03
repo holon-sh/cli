@@ -23,14 +23,11 @@ import (
 	"oras.land/oras-go/v2/content"
 )
 
-const RuntimePath = "/holon-mcp-runtime"
-
 type runtimePayload struct {
 	layer          []byte
 	diffID, binary digest.Digest
 }
 
-// Bridges holds each architecture's bridge layer, built once from linux-<arch> files.
 type Bridges map[string]runtimePayload
 
 func LoadBridges(payloads fs.FS) (Bridges, error) {
@@ -82,7 +79,6 @@ func AdaptRuntime(ctx context.Context, repository oras.Target, image *Image, opt
 		launcher = append(launcher, "--transport=streamable-http")
 	}
 	launcher = append(launcher, "--origin", options.Origin)
-	// The image's command stays the default arguments, which an app's args replace.
 	if child := slices.Concat(image.Config.Entrypoint, image.Config.Cmd); len(child) == 0 || child[0] == "" {
 		return errors.New("stdio image has no executable entrypoint or command")
 	}

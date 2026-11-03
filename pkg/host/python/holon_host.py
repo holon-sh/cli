@@ -22,7 +22,7 @@ _scope: ContextVar[str] = ContextVar("holon_scope", default="")
 
 
 def http_client() -> httpx2.AsyncClient:
-    peer = re.compile(re.escape(os.environ["HOLON_HOST_URL"]) + r"/peer/[^/?#]+$")
+    peer = re.compile(re.escape(os.environ["HOLON_HOST_URL"]) + r"/peer/[^/?#]+")
 
     async def prepare(request: httpx2.Request) -> None:
         if not peer.fullmatch(str(request.url)):
@@ -50,7 +50,6 @@ def http_client() -> httpx2.AsyncClient:
 
 
 def binding(app: str) -> dict[str, object] | None:
-    """Bind a generated client to its dependency through the host's peer proxy."""
     endpoint = os.environ.get(app.upper().replace("-", "_") + "_MCP_URL")
     return {"endpoint": endpoint, "http_client": http_client} if endpoint else None
 
@@ -61,7 +60,6 @@ async def start(entry: str) -> None:
     try:
         from holon.binding import set_default_binding
     except ModuleNotFoundError as error:
-        # The generated holon package is optional; broken dependencies are not.
         if error.name not in {"holon", "holon.binding"}:
             raise
     else:
@@ -136,7 +134,6 @@ async def start(entry: str) -> None:
             await uvicorn.Server(
                 uvicorn.Config(
                     dispatch,
-                    interface="asgi3",
                     lifespan="on",
                     access_log=False,
                     log_level="warning",

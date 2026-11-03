@@ -2,11 +2,13 @@ package cloud
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/cli/pkg/protocol"
 )
 
 func TestRegistryDeploymentSelection(t *testing.T) {
@@ -17,7 +19,7 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 "transport":{"type":"streamable-http","url":"http://localhost:8082/mcp?tenant=west"}}`)
 	invalidOCI := json.RawMessage(`{"registryType":"oci","identifier":"ghcr.io/acme/example:1.0.0","transport":{"type":"sse"}}`)
 	secondOCI := json.RawMessage(`{"registryType":"oci","identifier":"ghcr.io/acme/second:1.0.0","transport":{"type":"stdio"}}`)
-	remote := serverTransport{Type: "streamable-http", URL: "https://mcp.example/mcp"}
+	remote := mcpregistry.Transport{Type: "streamable-http", URL: "https://mcp.example/mcp"}
 	type deployment struct {
 		image, remote string
 		port          int32
@@ -26,63 +28,66 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		packages []json.RawMessage
-		remotes  []serverTransport
-		selector registrySource
+		remotes  []mcpregistry.Transport
+		selector protocol.RegistrySource
 		run      *packageRun
 		want     *deployment
+		rejected string
 	}{
-		{name: "ambiguous", packages: []json.RawMessage{oci}, remotes: []serverTransport{remote}},
+		{name: "ambiguous", packages: []json.RawMessage{oci}, remotes: []mcpregistry.Transport{remote}, rejected: "ambiguous"},
 		{
-			name: "OCI", packages: []json.RawMessage{oci}, remotes: []serverTransport{remote},
-			selector: registrySource{Package: &packageSelection{RegistryType: "oci"}}, want: stdio,
+			name: "OCI", packages: []json.RawMessage{oci}, remotes: []mcpregistry.Transport{remote},
+			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}}, want: stdio,
 		},
-		{name: "remote", packages: []json.RawMessage{oci}, remotes: []serverTransport{remote}, selector: registrySource{Remote: &struct{}{}}, want: hosted},
+		{name: "remote", packages: []json.RawMessage{oci}, remotes: []mcpregistry.Transport{remote}, selector: protocol.RegistrySource{Remote: &struct{}{}}, want: hosted},
 		{
-			name: "both selectors", packages: []json.RawMessage{oci}, remotes: []serverTransport{remote},
-			selector: registrySource{Package: &packageSelection{RegistryType: "oci"}, Remote: &struct{}{}},
+			name: "both selectors", packages: []json.RawMessage{oci}, remotes: []mcpregistry.Transport{remote},
+			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}, Remote: &struct{}{}},
+			rejected: "mutually exclusive",
 		},
-		{name: "npm", packages: []json.RawMessage{oci}, selector: registrySource{Package: &packageSelection{RegistryType: "npm"}}},
+		{name: "npm", packages: []json.RawMessage{oci}, selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "npm"}}, rejected: "server requires"},
 		{
-			name: "no package fallback", packages: []json.RawMessage{invalidOCI}, remotes: []serverTransport{remote},
-			selector: registrySource{Package: &packageSelection{RegistryType: "oci"}},
+			name: "no package fallback", packages: []json.RawMessage{invalidOCI}, remotes: []mcpregistry.Transport{remote},
+			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}}, rejected: "transport.type must be",
 		},
 		{name: "infer OCI", packages: []json.RawMessage{oci}, want: stdio},
 		{name: "infer HTTP OCI", packages: []json.RawMessage{httpOCI}, want: &deployment{image: "ghcr.io/acme/example:1.0.0", port: 8082}},
-		{name: "HTTP endpoint Holon cannot reach", packages: []json.RawMessage{invalidHTTP}},
-		{name: "ambiguous transports", packages: []json.RawMessage{oci, httpOCI}},
-		{name: "invalid HTTP package is still a candidate", packages: []json.RawMessage{invalidHTTP, oci}},
-		{name: "infer remote", remotes: []serverTransport{remote}, want: hosted},
+		{name: "HTTP endpoint Holon cannot reach", packages: []json.RawMessage{invalidHTTP}, rejected: "transport.url must be"},
+		{name: "invalid HTTP package is still a candidate", packages: []json.RawMessage{invalidHTTP, oci}, rejected: "ambiguous"},
+		{name: "infer remote", remotes: []mcpregistry.Transport{remote}, want: hosted},
 		{
 			name: "published identifier with replacement run", packages: []json.RawMessage{oci, secondOCI},
-			selector: registrySource{Package: &packageSelection{RegistryType: "oci", Identifier: "ghcr.io/acme/second:1.0.0"}},
+			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci", Identifier: "ghcr.io/acme/second:1.0.0"}},
 			run:      &packageRun{Transport: manifestTransport{Type: "stdio"}}, want: &deployment{image: "ghcr.io/acme/second:1.0.0", port: 3000},
 		},
 		{
 			name: "invalid run environment", packages: []json.RawMessage{oci},
-			selector: registrySource{Package: &packageSelection{RegistryType: "oci"}},
+			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}},
 			run: &packageRun{Transport: manifestTransport{Type: "stdio"}, Env: map[string]mcpregistry.Value{
 				"INVALID-NAME": {Value: new("value")},
 			}},
+			rejected: "invalid environment name",
 		},
 		{
 			name: "mismatched run secret", packages: []json.RawMessage{oci},
-			selector: registrySource{Package: &packageSelection{RegistryType: "oci"}},
+			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}},
 			run: &packageRun{Transport: manifestTransport{Type: "stdio"}, Env: map[string]mcpregistry.Value{
 				"TOKEN": {Secret: "OTHER_TOKEN"},
 			}},
+			rejected: "secret key must match",
 		},
 		{
 			name: "invalid run argument", packages: []json.RawMessage{oci},
-			selector: registrySource{Package: &packageSelection{RegistryType: "oci"}},
-			run:      &packageRun{Transport: manifestTransport{Type: "stdio"}, Args: []string{"line\nfeed"}},
+			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}},
+			run:      &packageRun{Transport: manifestTransport{Type: "stdio"}, Args: []string{"line\nfeed"}}, rejected: "single-line",
 		},
 		{
 			name: "invalid run transport", packages: []json.RawMessage{oci},
-			selector: registrySource{Package: &packageSelection{RegistryType: "oci"}},
-			run:      &packageRun{Transport: manifestTransport{Type: "sse", URL: "http://localhost:3000/mcp"}},
+			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}},
+			run:      &packageRun{Transport: manifestTransport{Type: "sse", URL: "http://localhost:3000/mcp"}}, rejected: "transport.type must be",
 		},
-		{name: "ambiguous remotes", remotes: []serverTransport{remote, remote}, selector: registrySource{Remote: &struct{}{}}},
-		{name: "remote stdio", remotes: []serverTransport{{Type: "stdio", URL: remote.URL}}},
+		{name: "ambiguous remotes", remotes: []mcpregistry.Transport{remote, remote}, selector: protocol.RegistrySource{Remote: &struct{}{}}, rejected: "ambiguous"},
+		{name: "remote stdio", remotes: []mcpregistry.Transport{{Type: "stdio", URL: remote.URL}}, rejected: "server requires"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			document := descriptorDocument("example")
@@ -91,8 +96,8 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 			source.RegistryRef = descriptorRegistry(t, document).RegistryRef
 			manifest, err := resolveManifestGraph(t.Context(), manifestSpec{Apps: []manifestApp{{Name: "example", Registry: &source, Run: test.run}}})
 			if test.want == nil {
-				if err == nil {
-					t.Fatal("unsupported deployment accepted")
+				if err == nil || !strings.Contains(err.Error(), test.rejected) {
+					t.Fatalf("want %q, got %v", test.rejected, err)
 				}
 				return
 			}

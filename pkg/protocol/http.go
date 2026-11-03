@@ -1,9 +1,7 @@
 package protocol
 
 const (
-	SchemeHTTP          = "http"
-	SchemeHTTPS         = "https"
-	HTTPSPrefix         = SchemeHTTPS + "://"
+	HTTPSPrefix         = "https://"
 	APIPathSessions     = "/sessions"
 	MCPPathPrefix       = "/mcp/"
 	MCPPath             = "/mcp"
@@ -11,7 +9,6 @@ const (
 	HeaderContentType   = "Content-Type"
 	MIMEApplicationJSON = "application/json"
 	MIMETextPlain       = "text/plain; charset=utf-8"
-	BearerScheme        = "Bearer"
-	BearerPrefix        = BearerScheme + " "
+	BearerPrefix        = "Bearer "
 	UploadUsername      = "holon-upload"
 )

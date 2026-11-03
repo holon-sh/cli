@@ -576,15 +576,7 @@ func TestConcurrentAuthenticationProcesses(t *testing.T) {
 
 func TestAuthenticationWaitCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		client := cloudtest.HTTPClient(func(request *http.Request) (*http.Response, error) {
-			response := httptest.NewRecorder()
-			cloudtest.WriteJSON(response, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + request.Host, UID: "test-installation"}})
-			return response.Result(), nil
-		})
-		config := ClientConfig{
-			Origin:    "https://one.example",
-			ConfigDir: t.TempDir(), HTTPClient: client,
-		}
+		config := ClientConfig{Origin: "https://one.example", ConfigDir: t.TempDir()}
 		manager, err := newLocalAuthManager(config)
 		if err != nil {
 			t.Fatal(err)

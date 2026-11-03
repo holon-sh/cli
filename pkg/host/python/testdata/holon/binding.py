@@ -1,4 +1,3 @@
-# Stands in for the generated holon package's binding module (holon-sh/sdk python/holon/binding.py).
 from collections.abc import Callable
 from typing import Any
 

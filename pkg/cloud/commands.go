@@ -104,18 +104,13 @@ func withProgress(cmd *cobra.Command, config *commandConfig, message string) *co
 	cmd.Flags().BoolVarP(&config.verbose, "verbose", "v", false, "Show detailed Docker build output")
 	run := cmd.RunE
 	cmd.RunE = func(cmd *cobra.Command, args []string) (result error) {
-		stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
-		output, renderedOut, renderedErr := newProgressOutput(stdout, stderr, config.verbose, config.clock())
+		output, renderedOut, renderedErr := newProgressOutput(cmd.OutOrStdout(), cmd.ErrOrStderr(), config.verbose, config.clock())
 		config.output = output
 		config.Auth.Output = renderedErr
 		cmd.SetOut(renderedOut)
 		cmd.SetErr(renderedErr)
 		defer func() {
 			result = errors.Join(result, output.finish(errors.Join(result, cmd.Context().Err()), message))
-			cmd.SetOut(stdout)
-			cmd.SetErr(stderr)
-			config.Auth.Output = stderr
-			config.output = nil
 		}()
 		return run(cmd, args)
 	}

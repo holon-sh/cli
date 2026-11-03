@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,7 +14,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,12 +33,10 @@ func Run(ctx context.Context, command []string) error {
 			return errors.New("invalid application port")
 		}
 	}
-	raw, configured := os.LookupEnv(protocol.RuntimeConfigEnv)
-	h, err := New(raw, configured)
+	h, err := newHost()
 	if err != nil {
 		return err
 	}
-	defer h.Close()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	private, err := new(net.ListenConfig).Listen(ctx, "tcp", "127.0.0.1:0")
@@ -52,7 +48,6 @@ func Run(ctx context.Context, command []string) error {
 		Handler: h, ReadHeaderTimeout: 10 * time.Second,
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
-	var registered atomic.Bool
 	prefix := "/" + rand.Text()
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+prefix+"/ready", func(w http.ResponseWriter, r *http.Request) {
@@ -60,10 +55,6 @@ func Run(ctx context.Context, command []string) error {
 		data, err := io.ReadAll(io.LimitReader(r.Body, 16<<10))
 		if err != nil || protocol.DecodeJSONNonNull(data, &app) != nil || app.Port == 0 {
 			http.Error(w, "Invalid application startup", http.StatusBadRequest)
-			return
-		}
-		if !registered.CompareAndSwap(false, true) {
-			http.Error(w, "Application already started", http.StatusConflict)
 			return
 		}
 		h.frontend, err = frontend(app.Frontend)
@@ -88,11 +79,16 @@ func Run(ctx context.Context, command []string) error {
 		Handler: mux, ReadHeaderTimeout: 10 * time.Second,
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
-	defer broker.Close()
 	go func() { servers <- broker.Serve(private) }()
 	child := exec.CommandContext(ctx, command[0], command[1:]...)
 	brokerURL := "http://" + private.Addr().String() + prefix
-	child.Env = append(h.Environment(brokerURL+"/peer/", protocol.RuntimeConfigEnv), "HOLON_HOST_URL="+brokerURL)
+	child.Env = slices.DeleteFunc(os.Environ(), func(entry string) bool {
+		return strings.HasPrefix(entry, protocol.RuntimeConfigEnv+"=")
+	})
+	for name := range h.peers {
+		child.Env = append(child.Env, protocol.DependencyEnvName(name)+"="+brokerURL+"/peer/"+url.PathEscape(name))
+	}
+	child.Env = append(child.Env, "HOLON_HOST_URL="+brokerURL)
 	child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
 	child.Cancel = func() error { return child.Process.Signal(syscall.SIGTERM) }
 	child.WaitDelay = 5 * time.Second
@@ -118,14 +114,4 @@ func Run(ctx context.Context, command []string) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-func (h *Host) Environment(peerURL string, removed ...string) []string {
-	env := slices.DeleteFunc(os.Environ(), func(entry string) bool {
-		return slices.ContainsFunc(removed, func(name string) bool { return strings.HasPrefix(entry, name+"=") })
-	})
-	for _, name := range slices.Sorted(maps.Keys(h.peers)) {
-		env = append(env, protocol.DependencyEnvName(name)+"="+peerURL+url.PathEscape(name))
-	}
-	return env
 }

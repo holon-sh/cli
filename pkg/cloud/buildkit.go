@@ -42,9 +42,9 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	registryauth "oras.land/oras-go/v2/registry/remote/auth"
 
-	"github.com/holon-sh/cli/pkg/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/cli/pkg/clientutil"
+	"github.com/holon-sh/cli/pkg/commandenv"
 	"github.com/holon-sh/cli/pkg/ociimage"
 	"github.com/holon-sh/cli/pkg/protocol"
 )
@@ -91,7 +91,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 	err = request.publish(ctx, func(repository *remote.Repository) error {
 		entries := slices.Clone(manifests)
 		var annotations map[string]string
-		if p := request.app.resolved.types; p != nil && p.metadata != nil {
+		if p := request.app.resolved.types; p.metadata != nil {
 			metadata, ownDigest, err := pushTypeMetadata(ctx, repository, p.metadata, p.documents)
 			if err != nil {
 				return err
@@ -181,7 +181,7 @@ func publishPlatform(
 		request.builders.clients.CompareAndDelete(platform, c)
 		return ocispec.Descriptor{}, err
 	}
-	credentials, err := imageRepository("registry-1.docker.io/library/unused", "", request.Env, request.httpClient)
+	credentials, err := imageRepository("registry-1.docker.io/library/unused", "", request.httpClient)
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
@@ -311,7 +311,7 @@ func publishPlatform(
 
 func (r buildRequest) publish(ctx context.Context, operation func(*remote.Repository) error) error {
 	return r.upload.run(ctx, func(grant protocol.UploadGrant) error {
-		repository, err := imageRepository(grant.Registry+"/"+grant.Repositories[r.app.Name], grant.Grant, r.Env, r.httpClient)
+		repository, err := imageRepository(grant.Registry+"/"+grant.Repositories[r.app.Name], grant.Grant, r.httpClient)
 		if err != nil {
 			return err
 		}

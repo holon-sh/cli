@@ -34,31 +34,21 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	command := flags.Args()
-	if len(command) == 0 || command[0] == "" {
+	if len(command) == 0 {
 		return errors.New("missing MCP executable")
 	}
 	if *transport == "hosted-http" {
 		return host.Run(ctx, command)
 	}
-	if *transport == "streamable-http" {
-		executable, err := exec.LookPath(command[0])
-		if err != nil {
-			return errors.New("could not find MCP executable")
-		}
-		_ = syscall.Exec(executable, command, os.Environ())
-		return errors.New("could not start MCP server")
-	}
 	if *transport != "stdio" {
 		return errors.New("unsupported MCP transport")
 	}
 	protection := http.NewCrossOriginProtection()
-	if *origin != "" {
-		if err := protection.AddTrustedOrigin(*origin); err != nil {
-			return err
-		}
+	if err := protection.AddTrustedOrigin(*origin); err != nil {
+		return err
 	}
 	bridge, err := mcpbridge.Start(ctx, func() *exec.Cmd {
-		cmd := exec.CommandContext(context.WithoutCancel(ctx), command[0], command[1:]...)
+		cmd := exec.Command(command[0], command[1:]...)
 		cmd.Stderr = os.Stderr
 		return cmd
 	}, mcpbridge.Options{ProtocolVersion: mcpbridge.ProtocolVersion})
@@ -79,8 +69,6 @@ func run(ctx context.Context, args []string) error {
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if server.Shutdown(shutdown) != nil {
-		_ = server.Close()
-	}
+	_ = server.Shutdown(shutdown)
 	return err
 }

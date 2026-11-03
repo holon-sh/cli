@@ -43,7 +43,6 @@ async def lifespan(server: MCPServer[Any]) -> AsyncIterator[None]:
 
     task = asyncio.create_task(commands())
     try:
-        # Reuse one client across concurrent requests, as an ordinary application can.
         factory = peer_binding["http_client"] if peer_binding else http_client
         async with factory() as http:
             yield
@@ -174,14 +173,12 @@ def make_app(**options: Any) -> ASGIApp:
             async def read_peer() -> None:
                 try:
                     await peer.aread()
-                    emit("peer-stream-completed")
                 except httpx2.HTTPError:
-                    emit("peer-stream-aborted")
+                    pass
                 finally:
                     await peer.aclose()
                 try:
                     await http.get(os.environ["PEER_MCP_URL"])
-                    emit("stream-late-allowed")
                 except RuntimeError as error:
                     assert str(error) == "Holon peer call rejected or cancelled", error
                     emit("stream-late-denied")

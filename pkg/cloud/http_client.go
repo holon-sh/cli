@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"k8s.io/utils/ptr"
 
 	"github.com/holon-sh/cli/pkg/clientutil"
-	"github.com/holon-sh/cli/pkg/oauthclient"
 	"github.com/holon-sh/cli/pkg/protocol"
 )
 
@@ -85,12 +85,11 @@ func (c *apiClient) Do(ctx context.Context, method, path string, request apiRequ
 		parsed.Path != pathpkg.Clean(parsed.Path) {
 		return errInvalidRequestPath
 	}
-	timeout := c.timeout
 	client := *c.client
 	reqCtx := ctx
 	if request.Stream == nil {
 		var cancel context.CancelFunc
-		reqCtx, cancel = context.WithTimeout(ctx, timeout)
+		reqCtx, cancel = context.WithTimeout(ctx, c.timeout)
 		defer cancel()
 	} else {
 		client.Timeout = 0
@@ -116,7 +115,6 @@ func (c *apiClient) Do(ctx context.Context, method, path string, request apiRequ
 		if err != nil || mediaType != "text/plain" {
 			return errMalformedResponse
 		}
-		// A log stream only ends while the command runs when the store's stream fails.
 		if _, err = io.Copy(request.Stream, response.Body); err == nil {
 			err = errStreamEnded
 		}
@@ -167,16 +165,9 @@ func HTTPStatus(err error) int {
 }
 
 func responseError(data []byte, token string, status int) (string, string) {
-	var value struct {
-		Error   protocol.Error `json:"error"`
-		Code    string         `json:"code"`
-		Message string         `json:"message"`
-	}
+	var value protocol.ErrorResponse
 	if json.Unmarshal(data, &value) != nil {
 		return "", ""
-	}
-	if value.Error.Code == "" {
-		value.Error = protocol.Error{Code: value.Code, Message: value.Message}
 	}
 	if value.Error.Code == "" || len(value.Error.Code) > 128 || strings.Trim(value.Error.Code, "abcdefghijklmnopqrstuvwxyz0123456789_-") != "" {
 		return "", ""
@@ -204,9 +195,6 @@ func (c *apiClient) Info(ctx context.Context) (protocol.Info, error) {
 	if info.OAuth != nil && info.OAuth.AdminAudience != expectedAdmin {
 		return protocol.Info{}, errMalformedResponse
 	}
-	if c.installationUID != "" && info.Installation.UID != c.installationUID {
-		return protocol.Info{}, errors.New("installation identity changed")
-	}
 	return info, nil
 }
 
@@ -220,16 +208,26 @@ func validateInfo(info protocol.Info) error {
 	}
 	oauth := info.OAuth
 	audience, err := url.Parse(oauth.AdminAudience)
-	if !oauthclient.ValidClientID(oauth.CLIClientID) || len(oauth.AdminAudience) > maxInfoField ||
+	if !validClientID(oauth.CLIClientID) || len(oauth.AdminAudience) > maxInfoField ||
 		err != nil || !audience.IsAbs() || strings.Contains(oauth.AdminAudience, "#") {
 		return errMalformedResponse
 	}
 	issuer, _ := url.Parse(oauth.Issuer)
-	if !oauthclient.HTTPSURL(oauth.Issuer) || strings.TrimSpace(oauth.Issuer) != oauth.Issuer ||
+	if !httpsURL(oauth.Issuer) || strings.TrimSpace(oauth.Issuer) != oauth.Issuer ||
 		issuer.RawQuery != "" || issuer.RawPath != "" {
 		return errInvalidIssuer
 	}
 	return nil
+}
+
+func httpsURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.Fragment == ""
+}
+
+func validClientID(value string) bool {
+	return len(value) <= 1024 && utf8.ValidString(value) && strings.TrimSpace(value) != "" &&
+		!strings.ContainsFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }
 
 var errStreamEnded = errors.New("the log stream ended")

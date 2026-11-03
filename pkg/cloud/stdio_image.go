@@ -25,7 +25,7 @@ var checkedLayers sync.Map
 
 func prepareStdioImage(ctx context.Context, image, token string, options buildOptions) (string, error) {
 	name, _, _ := strings.Cut(image, "@")
-	repository, err := imageRepository(name, token, options.Env, options.HTTPClient)
+	repository, err := imageRepository(name, token, options.HTTPClient)
 	if err != nil {
 		return "", err
 	}

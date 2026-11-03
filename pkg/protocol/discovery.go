@@ -9,7 +9,6 @@ import (
 	"unicode"
 )
 
-// Info describes installation capabilities. OAuth is present and null when identity is disabled.
 type Info struct {
 	Installation          InstallationReference `json:"installation"`
 	OAuth                 *OAuthInfo            `json:"oauth"`
@@ -18,7 +17,6 @@ type Info struct {
 	BuildArchitectures    []string              `json:"buildArchitectures,omitempty"`
 }
 
-// OAuthInfo supplies the issuer, audience and client settings for control-plane authentication.
 type OAuthInfo struct {
 	Issuer            string             `json:"issuer"`
 	AdminAudience     string             `json:"adminAudience"`
@@ -26,13 +24,10 @@ type OAuthInfo struct {
 	AccountManagement *AccountManagement `json:"accountManagement,omitempty"`
 }
 
-// AccountManagement contains provider-owned self-service pages. Omitted links
-// mean that the provider does not advertise that capability.
 type AccountManagement struct {
-	ProfileURL        string `json:"profileURL,omitempty"`
-	SecurityURL       string `json:"securityURL,omitempty"`
-	SessionsURL       string `json:"sessionsURL,omitempty"`
-	LinkedAccountsURL string `json:"linkedAccountsURL,omitempty"`
+	ProfileURL  string `json:"profileURL,omitempty"`
+	SecurityURL string `json:"securityURL,omitempty"`
+	SessionsURL string `json:"sessionsURL,omitempty"`
 }
 
 func (info *Info) UnmarshalJSON(data []byte) error {

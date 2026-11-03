@@ -1,8 +1,6 @@
 package hookartifact
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/opencontainers/go-digest"
 
 	"github.com/holon-sh/cli/pkg/protocol"
 )
@@ -95,11 +94,8 @@ func ValidateDirectory(name string) error {
 }
 
 func Checksum(r io.Reader) (string, error) {
-	h := sha256.New()
-	if _, err := io.Copy(h, r); err != nil {
-		return "", err
-	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	sum, err := digest.FromReader(r)
+	return sum.String(), err
 }
 
 func Validate(found []protocol.Hook) ([]protocol.Hook, error) {

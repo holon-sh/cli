@@ -47,22 +47,10 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	if !protocol.ValidBuildArchitectures(options.architectures) {
 		return "", errors.New("invalid build architectures")
 	}
-	workDir, err := os.MkdirTemp("", "holon-build-")
+	p := app.resolved.types
+	snapshot := p.root
+	config, err := stageTypes(p, options.check)
 	if err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(workDir)
-	if pathInsideContext(workDir, app.Path) {
-		return "", errors.New("build metadata must be outside application source")
-	}
-	snapshot := filepath.Join(workDir, "source")
-	var config string
-	if p := app.resolved.types; p != nil {
-		snapshot = p.root
-		if config, err = stageTypes(p, options); err != nil {
-			return "", err
-		}
-	} else if _, err := snapshotSource(app, snapshot); err != nil {
 		return "", err
 	}
 	if _, err := hookartifact.Discover(os.DirFS(snapshot)); err != nil {
@@ -116,7 +104,6 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	options.resolutions = cmp.Or(options.resolutions, new(sync.Map))
 	previous, _ := options.resolutions.Load(app.Name)
 	request.Resolution, _ = previous.(json.RawMessage)
-	options.Stderr = &buildLog{writer: cmp.Or(options.Stderr, io.Discard)}
 	build := options.builder
 	if build == nil {
 		build = publishSource

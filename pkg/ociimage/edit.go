@@ -42,7 +42,7 @@ func rewrite(
 	ctx context.Context, repository oras.Target, descriptor ocispec.Descriptor, platform *ocispec.Platform, transform func(*Image) error,
 ) (ocispec.Descriptor, error) {
 	var document map[string]json.RawMessage
-	if err := FetchJSON(ctx, repository, descriptor, "metadata", &document); err != nil {
+	if err := fetchJSON(ctx, repository, descriptor, &document); err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	switch descriptor.MediaType {
@@ -64,7 +64,7 @@ func rewrite(
 			if child.ArtifactType != "" || child.Annotations["vnd.docker.reference.type"] == "attestation-manifest" {
 				continue
 			}
-			if child.Platform == nil || !SupportedPlatform(*child.Platform) {
+			if child.Platform == nil || !supportedPlatform(*child.Platform) {
 				return ocispec.Descriptor{}, errors.New("prepared images must contain only Linux amd64 or arm64 executable manifests")
 			}
 			prepared, err := rewrite(ctx, repository, child, child.Platform, transform)
@@ -90,7 +90,7 @@ func rewrite(
 			return ocispec.Descriptor{}, err
 		}
 		var data json.RawMessage
-		if err := FetchJSON(ctx, repository, configDescriptor, "metadata", &data); err != nil {
+		if err := fetchJSON(ctx, repository, configDescriptor, &data); err != nil {
 			return ocispec.Descriptor{}, err
 		}
 		var config map[string]json.RawMessage
