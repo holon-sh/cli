@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -54,6 +55,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 				return manager.logout(cmd.Context())
 			},
 		},
+		newDevCommand(&config),
 		newDeployCommand(&config),
 		newConfigurationCommand("secret", &config),
 		newConfigurationCommand("config", &config),
@@ -69,6 +71,35 @@ func newCommands(config commandConfig) []*cobra.Command {
 		}
 	}
 	return installationCommands
+}
+
+func newDevCommand(config *commandConfig) *cobra.Command {
+	var detached bool
+	var ttl time.Duration
+	cmd := &cobra.Command{
+		Use:   "dev [APP...]",
+		Short: "Run a development session",
+		Long: "Run all apps in the manifest, or the named apps and their required dependencies. Each app uses /<app-name>/ on the session host.\n\n" +
+			"Use --project (-p) to select a configuration file.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if detached {
+				if ttl < time.Second || ttl > 24*time.Hour || ttl%time.Second != 0 {
+					return errors.New("--ttl must be whole seconds between 1s and 24h")
+				}
+				config.devTTLSeconds = new(int64(ttl / time.Second))
+			} else if config.jsonOutput {
+				return errors.New("--json requires --detach")
+			} else if cmd.Flags().Changed("ttl") {
+				return errors.New("--ttl requires --detach")
+			}
+			return runDev(cmd.Context(), args, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
+		},
+	}
+	cmd.Flags().BoolVar(&detached, "detach", false, "Exit after readiness and retain the session until its fixed expiry")
+	cmd.Flags().BoolVar(&config.check, "check", false, "Type-check apps before starting or updating the session")
+	cmd.Flags().BoolVar(&config.jsonOutput, "json", false, "Write the ready API session as JSON (requires --detach)")
+	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "Detached session lifetime (whole seconds, at most 24h)")
+	return withProject(withProgress(cmd, config, "Done"), config)
 }
 
 func newDeployCommand(config *commandConfig) *cobra.Command {
@@ -106,6 +137,9 @@ func withProgress(cmd *cobra.Command, config *commandConfig, message string) *co
 	cmd.RunE = func(cmd *cobra.Command, args []string) (result error) {
 		stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
 		output, renderedOut, renderedErr := newProgressOutput(stdout, stderr, config.verbose, config.clock())
+		if config.jsonOutput {
+			renderedOut = stdout
+		}
 		config.output = output
 		config.Auth.Output = renderedErr
 		cmd.SetOut(renderedOut)

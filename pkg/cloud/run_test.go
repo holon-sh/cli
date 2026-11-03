@@ -17,12 +17,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
+	"github.com/holon-sh/cli/pkg/typegen"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/oauth2"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/protocol"
@@ -45,7 +49,7 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 	root := t.TempDir()
 	sourceFiles(t, root, map[string]string{manifestFileName: manifestFixture})
 	for want, args := range map[string][]string{
-		`unknown app "missing"`:                    {"deploy", "alpha", "missing", "--project", filepath.Join(root, manifestFileName)},
+		`unknown app "missing"`:                    {"dev", "alpha", "missing", "--project", filepath.Join(root, manifestFileName)},
 		"--env must be dev or prod":                {"config", "set", "--env", "staging", "API_URL", "value"},
 		"--session requires a development session": {"config", "set", "--session", "production", "API_URL", "value"},
 		"none of the others can be":                {"config", "set", "--env", "dev", "--session", "s-one", "API_URL", "value"},
@@ -60,7 +64,7 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
-	for _, command := range []string{"deploy"} {
+	for _, command := range []string{"dev", "deploy"} {
 		for _, tc := range []struct {
 			name, access, want string
 			oauth              *protocol.OAuthInfo
@@ -111,6 +115,19 @@ func TestRunPreparationFailures(t *testing.T) {
 	}
 }
 
+func stepUntil(t *testing.T, fc *testingclock.FakeClock, step time.Duration, observed func() bool) {
+	t.Helper()
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Millisecond, 10*time.Second, true, func(context.Context) (bool, error) {
+		if observed() {
+			return true, nil
+		}
+		fc.Step(step)
+		return false, nil
+	}); err != nil {
+		t.Fatalf("condition was not observed: %v", err)
+	}
+}
+
 type runHarness struct {
 	mux      *http.ServeMux
 	control  *cloudtest.ControlFixtures
@@ -133,6 +150,13 @@ func newRunHarness(t *testing.T) *runHarness {
 
 func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
+	// Development tails completion records; exact-path fixtures take precedence.
+	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
+		w.WriteHeader(http.StatusOK)
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	})
 	h.server = httptest.NewTLSServer(h.mux)
 	t.Cleanup(h.server.Close)
 	h.baseHost = strings.TrimPrefix(h.server.URL, "https://")
@@ -180,6 +204,876 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 		}),
 		Auth: auth,
 		Env:  []string{"DOCKER_HOST=unix:///tmp/holon-test.sock"},
+	}
+}
+
+func TestRunDevLifecycle(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for _, name := range []string{"alpha", "beta"} {
+		directory := filepath.Join(root, name)
+		if err := os.Mkdir(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		sourceFiles(t, directory, map[string]string{"server.js": "export default {}"})
+		if err := os.WriteFile(filepath.Join(directory, "package.json"), []byte(sourcePackage), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, input := range map[string]map[string]any{
+		"alpha": {"name": "API_URL", "isRequired": true},
+		"beta":  {"name": "API_KEY", "isRequired": true, "isSecret": true},
+	} {
+		document := descriptorDocument(name)
+		document["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{input}
+		if name == "alpha" {
+			document["_meta"] = map[string]any{publisherMetadata: map[string]any{"sh.holon": map[string]any{
+				"requires": map[string]serverReference{"beta": {Name: "io.github.acme/beta", Version: "1.4.2"}},
+			}}}
+		}
+		writeDescriptor(t, filepath.Join(root, name, "server.json"), document)
+	}
+	sourceFiles(t, filepath.Join(root, "beta"), map[string]string{
+		"node_modules/package/index.js": "", ".git/config": "",
+	})
+	manifestPath := filepath.Join(root, "holon.yaml")
+	manifest := `apps:
+  - name: alpha
+    access: {server: {}}
+    path: ./alpha
+  - name: beta
+    access: {server: {}}
+    path: ./beta
+`
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	firstBuild := buildImage(t, "first")
+	nextBuild := buildImage(t, "next")
+	build := func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+		if !slices.Equal(request.Platforms, []string{"linux/arm64"}) {
+			t.Errorf("session platforms = %v", request.Platforms)
+		}
+		if _, err := os.Stat(filepath.Join(root, "alpha", "logic.ts")); err == nil {
+			return nextBuild(ctx, request, progress)
+		}
+		return firstBuild(ctx, request, progress)
+	}
+	var mu sync.Mutex
+	var grantRequests, createRequests, deleteRequests int
+	var ambiguousCreate bool
+	var expireFirstGrant bool
+	var deniedTool string
+	var retryRequests int
+	var waitingReason string
+	var sessionBody, servedState protocol.AppsRequestFor[protocol.App]
+	var updateBodies []protocol.AppsRequestFor[protocol.App]
+	var provisioningSignal chan struct{}
+	h := newRunHarness(t)
+	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
+		cloudtest.WriteJSON(w, protocol.Info{
+			Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"},
+			Version:      "test", BuildArchitectures: []string{"arm64"}, OAuth: &protocol.OAuthInfo{
+				Issuer: h.server.URL + "/", AdminAudience: cloudtest.AdminAudience(h.server.URL), CLIClientID: "cli-test",
+			},
+		})
+	})
+	devSession := func() map[string]any {
+		response := apiSession(h, "alpha", "beta")
+		response["buildArchitectures"] = []string{"arm64"}
+		mu.Lock()
+		response["apps"] = servedState.Apps
+		mu.Unlock()
+		return response
+	}
+	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
+		cloudtest.AssertOrigin(t, r, "dev."+h.baseHost)
+		if r.Header.Get(protocol.HeaderAuthorization) != protocol.BearerPrefix+"access-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var upload protocol.UploadRequest
+		if err := json.NewDecoder(r.Body).Decode(&upload); err != nil {
+			t.Error(err)
+			return
+		}
+		repositories := map[string]string{}
+		for _, name := range upload.Apps {
+			repositories[name] = "holon/upload/" + name
+		}
+		mu.Lock()
+		grantRequests++
+		grant := "grant-secret"
+		if expireFirstGrant && grantRequests == 1 {
+			grant = "expired-grant"
+		}
+		mu.Unlock()
+		cloudtest.WriteJSON(
+			w,
+			map[string]any{
+				"grant":        grant,
+				"registry":     "registry.example",
+				"repositories": repositories,
+				"expiresAt":    time.Now().Add(time.Hour).Format(time.RFC3339),
+			},
+		)
+	})
+	h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+		cloudtest.AssertOrigin(t, r, "dev."+h.baseHost)
+		if r.Header.Get(protocol.HeaderAuthorization) != protocol.BearerPrefix+"access-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mu.Lock()
+		createRequests++
+		decodeErr := json.NewDecoder(r.Body).Decode(&sessionBody)
+		servedState = protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(sessionBody.Apps)}
+		ambiguous := ambiguousCreate
+		mu.Unlock()
+		if decodeErr != nil {
+			t.Error(decodeErr)
+			return
+		}
+		if ambiguous {
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_ = connection.Close()
+			return
+		}
+		cloudtest.WriteJSON(w, devSession())
+	})
+	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolDeleteSession, protocol.ToolUpdateSession, protocol.ToolRenewSession},
+		map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
+			cloudtest.AssertOrigin(t, r, "dev."+h.baseHost)
+			if cloudtest.ToolName(r) == protocol.ToolDeleteSession {
+				mu.Lock()
+				deleteRequests++
+				mu.Unlock()
+				cloudtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+				return
+			}
+			if cloudtest.ToolName(r) == protocol.ToolUpdateSession {
+				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
+				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+					t.Error(err)
+					return
+				}
+				if input.ExpectedRevision != "1" {
+					http.Error(w, "precondition", http.StatusPreconditionFailed)
+					return
+				}
+				mu.Lock()
+				updateBodies = append(updateBodies, input.Desired)
+				generation := len(updateBodies) + 1
+				servedState = protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(input.Desired.Apps)}
+				mu.Unlock()
+				cloudtest.WriteJSON(w, map[string]any{
+					"name": "gentle-otter-482", "generation": generation, "buildArchitectures": []string{"arm64"},
+					"conditions": []map[string]any{{"type": "Available", "status": "True", "reason": "Serving"}}, "revision": "2",
+				})
+				return
+			}
+			mu.Lock()
+			reason := waitingReason
+			signal := provisioningSignal
+			denied := deniedTool == cloudtest.ToolName(r)
+			if denied {
+				retryRequests++
+			}
+			mu.Unlock()
+			if denied {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			if reason != "" && cloudtest.ToolName(r) == protocol.ToolGetSession {
+				cloudtest.WriteJSON(
+					w,
+					map[string]any{
+						"name":               "gentle-otter-482",
+						"buildArchitectures": []string{"arm64"},
+						"conditions": []map[string]any{{
+							"type": "Ready", "status": "False", "reason": reason, "message": "Configure API_URL and API_KEY to start the session.",
+						}},
+						"revision": "1",
+					},
+				)
+				select {
+				case signal <- struct{}{}:
+				default:
+				}
+				return
+			}
+			cloudtest.WriteJSON(w, devSession())
+		})
+	// The request stream stays open; with callLogs set it delivers them and ends, as a failed store stream does.
+	callLogs, streamRequests := "", 0
+	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		streamRequests++
+		content := callLogs
+		mu.Unlock()
+		if r.URL.Query().Get("event") != "holon.mcp.call" || r.URL.Query().Get("follow") != "true" {
+			t.Errorf("request stream query = %s", r.URL.RawQuery)
+		}
+		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
+		_, _ = io.WriteString(w, content)
+		_ = http.NewResponseController(w).Flush()
+		if content == "" {
+			<-r.Context().Done()
+		}
+	})
+	h.start(t, build)
+	runConfig := func() commandConfig {
+		config := h.run
+		config.Clock = testingclock.NewFakeClock(time.Now())
+		return config
+	}
+	reset := func() {
+		sourceFiles(t, h.run.Auth.ConfigDir, map[string]string{"config.json": fmt.Sprintf(`{"origin":%q}`, h.server.URL)})
+		mu.Lock()
+		grantRequests, createRequests, deleteRequests = 0, 0, 0
+		ambiguousCreate, expireFirstGrant = false, false
+		deniedTool = ""
+		retryRequests = 0
+		waitingReason = ""
+		sessionBody, servedState = protocol.AppsRequestFor[protocol.App]{}, protocol.AppsRequestFor[protocol.App]{}
+		updateBodies = nil
+		provisioningSignal = nil
+		callLogs, streamRequests = "", 0
+		mu.Unlock()
+		_ = os.Remove(filepath.Join(root, "alpha", "logic.ts"))
+		_ = os.Remove(filepath.Join(root, "beta", "logic.ts"))
+	}
+	t.Run("failed rebuild retains pending deployment", func(t *testing.T) {
+		reset()
+		mu.Lock()
+		waitingReason, provisioningSignal = "Progressing", make(chan struct{}, 1)
+		signal := provisioningSignal
+		mu.Unlock()
+		config := runConfig()
+		config.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+			if _, err := os.Stat(filepath.Join(root, "alpha", "logic.ts")); err == nil {
+				return buildResult{}, errors.New("rebuild failed")
+			}
+			return firstBuild(ctx, request, progress)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		stdout := &cloudtest.ObservedOutput{OnWrite: func(string) {}}
+		stderr := &cloudtest.ObservedOutput{OnWrite: func(text string) {
+			if strings.Contains(text, "remote image preparation failed") {
+				mu.Lock()
+				waitingReason = ""
+				mu.Unlock()
+			}
+		}}
+		done := make(chan error, 1)
+		go func() {
+			done <- executeCommand(ctx, []string{"dev", "--project", manifestPath}, stdout, stderr, config)
+		}()
+		select {
+		case <-signal:
+		case err := <-done:
+			t.Fatalf("session did not start: %v", err)
+		case <-t.Context().Done():
+			t.Fatal("session did not start")
+		}
+		if err := os.WriteFile(filepath.Join(root, "alpha", "logic.ts"), []byte("changed"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		stepUntil(t, config.Clock.(*testingclock.FakeClock), devDebounce, func() bool {
+			return strings.Contains(stdout.String(), "Watching for changes.")
+		})
+		cancel()
+		if err := <-done; err != nil || !strings.Contains(stderr.String(), "alpha ready") {
+			t.Fatalf("previous deployment lost after rebuild failure: %v, %s", err, stderr.String())
+		}
+	})
+	t.Run("expired grant reuses builds and cleans up the session", func(t *testing.T) {
+		reset()
+		mu.Lock()
+		expireFirstGrant = true
+		mu.Unlock()
+		config := runConfig()
+		var builds atomic.Int32
+		config.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+			builds.Add(1)
+			return firstBuild(ctx, request, progress)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		stdout := &cloudtest.ObservedOutput{OnWrite: func(value string) {
+			if strings.Contains(value, "Watching for changes.") {
+				cancel()
+			}
+		}}
+		var stderr bytes.Buffer
+		if err := executeCommand(ctx, []string{"dev", "--project", manifestPath}, stdout, &stderr, config); err != nil {
+			t.Fatalf("run: %v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+		}
+		mu.Lock()
+		grants, creates, deletes := grantRequests, createRequests, deleteRequests
+		body := sessionBody
+		mu.Unlock()
+		if grants != 2 || builds.Load() != 2 {
+			t.Fatalf("grants=%d, builds=%d", grants, builds.Load())
+		}
+		if creates != 1 || deletes != 1 {
+			t.Fatalf("session lifecycle creates=%d deletes=%d", creates, deletes)
+		}
+
+		if len(body.Apps) != 2 || !strings.HasPrefix(body.Apps[0].Image, "registry.example/holon/upload/alpha@sha256:") ||
+			body.Apps[0].Env["API_URL"].Kind() != "config" || body.Apps[1].Env["API_KEY"].Kind() != "secret" ||
+			!slices.Equal(body.Apps[0].Requires, []string{"beta"}) {
+			t.Fatalf("session images = %#v", body.Apps)
+		}
+		origin := "https://gentle-otter-482." + h.baseHost
+		for _, endpoint := range []string{"/mcp", "/alpha/", "/mcp/alpha", "/beta/", "/mcp/beta"} {
+			if !slices.Contains(strings.Fields(stdout.String()), origin+endpoint) {
+				t.Errorf("missing endpoint %s in %q", endpoint, stdout.String())
+			}
+		}
+		if strings.Contains(stderr.String(), "fixture build output") ||
+			!strings.Contains(stderr.String(), "alpha building") || !strings.Contains(stderr.String(), "alpha ready") ||
+			strings.ContainsAny(stdout.String()+stderr.String(), "\x1b\r") {
+			t.Fatalf("compact build output: stdout=%q stderr=%q", stdout.String(), stderr.String())
+		}
+		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
+			t.Fatalf("output leaked credentials: stdout=%q stderr=%q", stdout.String(), stderr.String())
+		}
+	})
+	descriptorPath := filepath.Join(root, "alpha", "server.json")
+	descriptor, err := os.ReadFile(descriptorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edit := range []struct {
+		name, file, contents, progress, nextFile string
+		apps                                     []string
+	}{
+		{
+			name: "source edits retain the session target after selection changes", file: filepath.Join(root, "alpha", "logic.ts"),
+			contents: "export const revision = 2\n", progress: "remote update requested (generation ",
+			nextFile: filepath.Join(root, "beta", "logic.ts"), apps: []string{"alpha", "beta"},
+		},
+		{
+			name: "OAuth edit", file: manifestPath,
+			contents: strings.Replace(manifest, "name: alpha", "name: alpha\n    oauth: {clientID: registered}", 1), progress: "restart holon dev",
+		},
+		{
+			name: "port edit", file: descriptorPath, contents: strings.Replace(string(descriptor), "localhost:3000", "localhost:8080", 1),
+			progress: "restart holon dev",
+		},
+	} {
+		t.Run(edit.name, func(t *testing.T) {
+			reset()
+			t.Cleanup(func() {
+				_ = os.WriteFile(manifestPath, []byte(manifest), 0o644)
+				_ = os.WriteFile(descriptorPath, descriptor, 0o600)
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			fc := testingclock.NewFakeClock(time.Now())
+			config := runConfig()
+			config.Clock = fc
+			write := func(file string) {
+				if err := os.WriteFile(file, []byte(edit.contents), 0o644); err != nil {
+					t.Error(err)
+				}
+			}
+			var once sync.Once
+			stdout := &cloudtest.ObservedOutput{OnWrite: func(value string) {
+				if strings.Contains(value, "Watching for changes.") {
+					once.Do(func() {
+						if len(edit.apps) != 0 {
+							selection := filepath.Join(config.Auth.ConfigDir, "config.json")
+							if err := os.WriteFile(selection, []byte(`{"origin":"https://other.example"}`), 0o600); err != nil {
+								t.Error(err)
+							}
+							for _, file := range []string{"node_modules/package/index.js", ".git/config"} {
+								if err := os.WriteFile(filepath.Join(root, "beta", file), []byte("changed"), 0o644); err != nil {
+									t.Error(err)
+								}
+							}
+						}
+						write(edit.file)
+					})
+				}
+			}}
+			var observed atomic.Bool
+			var next sync.Once
+			stderr := &cloudtest.ObservedOutput{OnWrite: func(value string) {
+				count := strings.Count(value, edit.progress)
+				if count == 1 && edit.nextFile != "" {
+					next.Do(func() { write(edit.nextFile) })
+				}
+				if count >= max(1, len(edit.apps)) {
+					observed.Store(true)
+				}
+			}}
+			done := make(chan error, 1)
+			go func() {
+				done <- executeCommand(ctx, []string{"dev", "--project", manifestPath}, stdout, stderr, config)
+			}()
+			stepUntil(t, fc, devDebounce, observed.Load)
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatalf("run: %v stderr=%q", err, stderr.String())
+			}
+			mu.Lock()
+			deletes := deleteRequests
+			bodies := slices.Clone(updateBodies)
+			mu.Unlock()
+			if len(bodies) != len(edit.apps) || deletes != 1 {
+				t.Fatalf("updates=%v delete=%d stderr=%q", bodies, deletes, stderr.String())
+			}
+			for i, body := range bodies {
+				if len(body.Apps) != 2 || !slices.ContainsFunc(body.Apps, func(app protocol.App) bool { return app.Name == edit.apps[i] }) {
+					t.Fatalf("image update = %#v", body)
+				}
+			}
+		})
+	}
+	t.Run("cancel while waiting for configuration", func(t *testing.T) {
+		reset()
+		mu.Lock()
+		waitingReason = "WaitingForConfiguration"
+		mu.Unlock()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		stderr := &cloudtest.ObservedOutput{OnWrite: func(text string) {
+			if strings.Contains(text, "Configure API_URL and API_KEY") {
+				cancel()
+			}
+		}}
+		var stdout bytes.Buffer
+		if err := executeCommand(ctx, []string{"dev", "--project", manifestPath}, &stdout, stderr, runConfig()); err != nil {
+			t.Fatalf("cancellation = %v", err)
+		}
+		if strings.Count(stderr.String(), "Configure API_URL and API_KEY to start the session.") != 1 {
+			t.Fatalf("configuration prompt = %q", stderr.String())
+		}
+		if stdout.String() != "Session  gentle-otter-482\n" {
+			t.Fatalf("output before ready = %q", stdout.String())
+		}
+		mu.Lock()
+		creates, deletes := createRequests, deleteRequests
+		mu.Unlock()
+		if creates != 1 || deletes != 1 {
+			t.Fatalf("cancellation cleanup: creates=%d deletes=%d", creates, deletes)
+		}
+	})
+	t.Run("session status and renewal recover from retries", func(t *testing.T) {
+		reset()
+		config := runConfig()
+		fc := config.Clock.(*testingclock.FakeClock)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		stdout := &cloudtest.ObservedOutput{OnWrite: func(string) {}}
+		stderr := &cloudtest.ObservedOutput{OnWrite: func(string) {}}
+		done := make(chan error, 1)
+		go func() {
+			done <- executeCommand(ctx, []string{"dev", "--project", manifestPath}, stdout, stderr, config)
+		}()
+		stepUntil(t, fc, workflowPoll, func() bool {
+			return strings.Contains(stdout.String(), "Watching for changes.")
+		})
+		for _, operation := range []struct{ name, tool string }{
+			{"session status", protocol.ToolGetSession},
+			{"session renewal", protocol.ToolRenewSession},
+		} {
+			mu.Lock()
+			deniedTool = operation.tool
+			retryRequests = 0
+			mu.Unlock()
+			stepUntil(t, fc, renewalInterval, func() bool {
+				mu.Lock()
+				requests := retryRequests
+				mu.Unlock()
+				return requests >= 3 && strings.Contains(stderr.String(), operation.name+" retrying:")
+			})
+			if count := strings.Count(stderr.String(), operation.name+" retrying:"); count != 1 {
+				t.Fatalf("repeated failure printed %d times: %s", count, stderr.String())
+			}
+			recoveries := strings.Count(stderr.String(), operation.name+" ok")
+			mu.Lock()
+			deniedTool = ""
+			mu.Unlock()
+			stepUntil(t, fc, renewalInterval, func() bool {
+				return strings.Count(stderr.String(), operation.name+" ok") > recoveries
+			})
+		}
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("retry = %v stderr=%q", err, stderr.String())
+		}
+		mu.Lock()
+		creates, deletes := createRequests, deleteRequests
+		mu.Unlock()
+		if creates != 1 || deletes != 1 {
+			t.Fatalf("retry cleanup: creates=%d deletes=%d", creates, deletes)
+		}
+	})
+	t.Run("request stream failure does not stop development", func(t *testing.T) {
+		reset()
+		mu.Lock()
+		callLogs = "2030-01-01T12:00:01Z INFO alpha tools/call echo ok 1ms trace_id=aaaa\n"
+		mu.Unlock()
+		config := runConfig()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		stdout := &cloudtest.ObservedOutput{OnWrite: func(string) {}}
+		stderr := &cloudtest.ObservedOutput{OnWrite: func(string) {}}
+		done := make(chan error, 1)
+		go func() {
+			done <- executeCommand(ctx, []string{"dev", "--project", manifestPath}, stdout, stderr, config)
+		}()
+		stepUntil(t, config.Clock.(*testingclock.FakeClock), workflowPoll, func() bool {
+			return strings.Contains(stdout.String(), "trace_id=aaaa") && strings.Contains(stdout.String(), "Ready") &&
+				strings.Contains(stderr.String(), "request stream stopped")
+		})
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		count := streamRequests
+		mu.Unlock()
+		if strings.Count(stdout.String(), "aaaa") != 1 || count != 1 {
+			t.Fatalf("request stream =\n%s", stdout.String())
+		}
+	})
+	t.Run("ambiguous creation is not retried or deleted", func(t *testing.T) {
+		reset()
+		mu.Lock()
+		ambiguousCreate = true
+		mu.Unlock()
+		var stdout, stderr bytes.Buffer
+		err := executeCommand(t.Context(), []string{"dev", "--project", manifestPath}, &stdout, &stderr, runConfig())
+		if err == nil || !strings.Contains(err.Error(), "outcome is unknown") ||
+			!strings.Contains(err.Error(), "https://dev."+h.baseHost+" before retrying") {
+			t.Fatalf("ambiguous create error = %v", err)
+		}
+		mu.Lock()
+		creates, deletes := createRequests, deleteRequests
+		mu.Unlock()
+		if creates != 1 || deletes != 0 {
+			t.Fatalf("ambiguous creation was lost or deleted: creates=%d deletes=%d", creates, deletes)
+		}
+	})
+}
+
+func TestDevDeploymentStatusTransitions(t *testing.T) {
+	h := newRunHarness(t)
+	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
+		cloudtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}})
+	})
+	responses := make(chan protocol.SessionResponse, 1)
+	h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		cloudtest.WriteJSON(w, <-responses)
+	})
+	h.start(t, nil)
+	manager, err := NewClient(t.Context(), h.run.Auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	output, _, _ := newProgressOutput(io.Discard, &stream, false, h.run.clock())
+	dev := devLoop{
+		manager: manager, name: "gentle-otter-482", clock: h.run.clock(),
+		options: buildOptions{output: output, types: &typeWorkspace{prepared: new(typegen.Prepared)}},
+	}
+	for _, step := range []struct {
+		generation int64
+		ready      string
+	}{
+		{1, "False"},
+		{1, "False"},
+		{2, "False"},
+		{2, "True"},
+		{2, "True"},
+		{2, "False"},
+	} {
+		responses <- protocol.SessionResponse{Generation: step.generation, Conditions: []protocol.Condition{
+			{Type: protocol.ConditionReady, Status: step.ready, Reason: protocol.ReasonProgressDeadline, Message: "rollout failed"},
+			{Type: protocol.ConditionAvailable, Status: "True"},
+		}}
+		if err := dev.poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "editor imports ok\nsession status ok\n" +
+		"remote deployment remote update failed; existing service remains available (generation 1): ProgressDeadlineExceeded: rollout failed\n" +
+		"remote deployment remote update failed; existing service remains available (generation 2): ProgressDeadlineExceeded: rollout failed\n" +
+		"remote deployment ready (generation 2)\n" +
+		"remote deployment remote update failed; existing service remains available (generation 2): ProgressDeadlineExceeded: rollout failed\n"
+	if stream.String() != want {
+		t.Fatalf("deployment reports = %q, want %q", stream.String(), want)
+	}
+}
+
+func apiSession(h *runHarness, names ...string) map[string]any {
+	response := cloudtest.SessionResponse("gentle-otter-482", "")
+	endpoints := make([]protocol.SessionEndpoint, 0, len(names))
+	for _, name := range names {
+		endpoints = append(endpoints, protocol.SessionEndpoint{Name: name, URL: "https://gentle-otter-482." + h.baseHost + protocol.AppPath(name)})
+	}
+	response["endpoints"] = endpoints
+	return response
+}
+
+func TestRunDevImportsImageEditsAndRecoversFromFailedImport(t *testing.T) {
+	fixture := newImageRegistry()
+	first := addTestImage(t, fixture, "amd64", ocispec.ImageConfig{}, nil).Digest.String()
+	second := addTestImage(t, fixture, "arm64", ocispec.ImageConfig{}, nil).Digest.String()
+	registryServer := httptest.NewTLSServer(fixture)
+	defer registryServer.Close()
+	registryHost := strings.TrimPrefix(registryServer.URL, "https://")
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, manifestFileName)
+	editPath := manifestPath
+	manifest := func(imageDigest string) string {
+		return "apps:\n  - name: alpha\n    access: {server: {}}\n    port: 9090\n" +
+			"    image: " + registryHost + "/source@" + imageDigest + "\n" +
+			"  - name: beta\n    remote: {url: https://upstream.example/mcp}\n    access: {server: {}}\n" +
+			"  - name: unused\n    path: ./not-checked-out\n    access: {server: {}}\n"
+	}
+	if err := os.WriteFile(editPath, []byte(manifest(first)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := newRunHarness(t)
+	var creates, patches, deletes atomic.Int32
+	var stateMu sync.Mutex
+	var state protocol.AppsRequestFor[protocol.App]
+	currentResponse := func() map[string]any {
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		result := apiSession(h, "alpha", "beta")
+		result["apps"] = state.Apps
+		return result
+	}
+	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
+		cloudtest.WriteJSON(w, protocol.UploadGrant{
+			Registry: registryHost, Grant: "grant-secret", Repositories: map[string]string{"alpha": "holon/upload/echo", "beta": "unused"},
+			ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339),
+		})
+	})
+	h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+		creates.Add(1)
+		var created protocol.AppsRequestFor[protocol.App]
+		err := json.NewDecoder(r.Body).Decode(&created)
+		stateMu.Lock()
+		state = created
+		stateMu.Unlock()
+		alpha := slices.IndexFunc(created.Apps, func(app protocol.App) bool { return app.Name == "alpha" })
+		beta := slices.ContainsFunc(created.Apps, func(app protocol.App) bool { return app.Name == "beta" })
+		if err != nil || len(created.Apps) != 2 || alpha < 0 || !beta || created.Apps[alpha].Port != 9090 ||
+			created.Apps[alpha].Image != registryHost+"/holon/upload/echo@"+first {
+			t.Errorf("session creation: %#v (%v)", created, err)
+		}
+		cloudtest.WriteJSON(w, currentResponse())
+	})
+	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolDeleteSession, protocol.ToolUpdateSession},
+		map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
+			switch cloudtest.ToolName(r) {
+			case protocol.ToolGetSession:
+				cloudtest.WriteJSON(w, currentResponse())
+			case protocol.ToolUpdateSession:
+				patches.Add(1)
+				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
+				err := json.NewDecoder(r.Body).Decode(&input)
+				if input.ExpectedRevision != "1" {
+					http.Error(w, "precondition", http.StatusPreconditionFailed)
+					return
+				}
+				patched := input.Desired
+				if err != nil || len(patched.Apps) != 2 || patched.Apps[0].Image != registryHost+"/holon/upload/echo@"+second {
+					t.Errorf("session update: %#v (%v)", patched, err)
+				}
+				cloudtest.WriteJSON(w, map[string]any{"name": "gentle-otter-482", "generation": 2, "revision": "2"})
+			case protocol.ToolDeleteSession:
+				deletes.Add(1)
+				cloudtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		})
+	h.control.Handle([]string{protocol.ToolRenewSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+		cloudtest.WriteJSON(w, currentResponse())
+	})
+	h.start(t, nil)
+	h.run.Env = append(h.run.Env, "DOCKER_CONFIG="+t.TempDir())
+	fc := testingclock.NewFakeClock(time.Now())
+	h.run.Clock = fc
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var started, failed sync.Once
+	stdout := &cloudtest.ObservedOutput{OnWrite: func(text string) {
+		if strings.Contains(text, "/mcp/alpha") {
+			started.Do(func() {
+				if err := os.WriteFile(editPath, []byte(manifest("sha256:"+strings.Repeat("f", 64))), 0o644); err != nil {
+					t.Error(err)
+				}
+			})
+		}
+	}}
+	var updated atomic.Bool
+	stderr := &cloudtest.ObservedOutput{OnWrite: func(text string) {
+		if strings.Contains(text, "remote image preparation failed") {
+			failed.Do(func() {
+				if err := os.WriteFile(editPath, []byte(manifest(second)), 0o644); err != nil {
+					t.Error(err)
+				}
+			})
+		}
+		if strings.Contains(text, "remote update requested") {
+			updated.Store(true)
+		}
+	}}
+	done := make(chan error, 1)
+	go func() {
+		done <- executeCommand(ctx, []string{"dev", "alpha", "beta", "--project", manifestPath}, stdout, stderr, h.run)
+	}()
+	stepUntil(t, fc, devDebounce, updated.Load)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("image dev run: %v, stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+	if creates.Load() != 1 || patches.Load() != 1 || deletes.Load() != 1 {
+		t.Fatalf("creates=%d patches=%d deletes=%d stderr=%q", creates.Load(), patches.Load(), deletes.Load(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "remote image preparation failed") || !strings.Contains(stderr.String(), "remote update requested") {
+		t.Fatalf("failure and recovery not reported: %q", stderr.String())
+	}
+}
+
+func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
+	for _, tc := range []struct {
+		name, oauth    string
+		manifest       string
+		extraFiles     map[string]string
+		apps, wantApps []string
+		want           *protocol.OAuthClient
+	}{
+		{name: "automatic", extraFiles: map[string]string{"holon.yml": "invalid manifest"}},
+		{name: "yml fallback", manifest: "holon.yml"},
+		{name: "selected app and dependencies", apps: []string{"alpha"}, wantApps: []string{"alpha", "beta", "gamma"}},
+		{name: "multiple apps and repeated names", apps: []string{"delta", "alpha", "delta"}, wantApps: []string{"alpha", "beta", "delta", "gamma"}},
+		{name: "public", oauth: "  oauth: {clientID: registered}\n", want: &protocol.OAuthClient{ClientID: "registered"}},
+		{
+			name: "confidential", oauth: "  oauth: {clientID: '{CLIENT_ID}', clientSecret: {secret: CLIENT_SECRET}}\n",
+			want: &protocol.OAuthClient{ClientID: "{CLIENT_ID}", ClientSecret: "CLIENT_SECRET"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			args := []string{"dev"}
+			wantApps := []string{"alpha"}
+			manifest := "apps:\n- name: alpha\n" +
+				"  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n" + tc.oauth
+			if len(tc.apps) > 0 {
+				args = append([]string{"dev", "--project", filepath.Join(root, manifestFileName)}, tc.apps...)
+				wantApps = tc.wantApps
+				manifest = "apps:\n" +
+					"- name: unused\n  path: ./not-checked-out\n  access: {server: {}}\n" +
+					"- name: delta\n  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n"
+				var dependency *registrySource
+				var dependencyName string
+				var declarations []string
+				for _, name := range []string{"gamma", "beta", "alpha"} {
+					document := descriptorDocument(name)
+					delete(document, "packages")
+					document["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://upstream.example/mcp"}}
+					if dependency != nil {
+						document["_meta"] = map[string]any{publisherMetadata: map[string]any{"sh.holon": map[string]any{
+							"requires": map[string]serverReference{dependencyName: dependency.RegistryRef},
+						}}}
+					}
+					dependency, dependencyName = descriptorRegistry(t, document), name
+					data, _ := json.Marshal(dependency)
+					declarations = append(declarations, fmt.Sprintf("- name: %s\n  registry: %s\n  access: {server: {}}\n", name, data))
+				}
+				manifest += strings.Join(declarations, "")
+			}
+			file := tc.manifest
+			if file == "" {
+				file = manifestFileName
+			}
+			sourceFiles(t, root, tc.extraFiles)
+			if err := os.WriteFile(filepath.Join(root, file), []byte(manifest), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h := newRunHarness(t)
+			h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
+				repositories := map[string]string{}
+				for _, name := range wantApps {
+					repositories[name] = "unused"
+				}
+				cloudtest.WriteJSON(w, protocol.UploadGrant{
+					Registry: "registry.example", Grant: "unused", Repositories: repositories,
+					ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339),
+				})
+			})
+			h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+				var input protocol.AppsRequestFor[protocol.App]
+				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+					t.Error(err)
+					return
+				}
+				var names []string
+				for _, app := range input.Apps {
+					names = append(names, app.Name)
+				}
+				slices.Sort(names)
+				if !slices.Equal(names, wantApps) ||
+					input.Apps[0].Remote == nil || input.Apps[0].Remote.URL != "https://upstream.example/mcp" ||
+					input.Apps[0].Image != "" || input.Apps[0].Port != 0 {
+					t.Errorf("unexpected remote session: %#v", input)
+					return
+				}
+				app := input.Apps[0]
+				if (app.OAuth == nil) != (tc.want == nil) || app.OAuth != nil && *app.OAuth != *tc.want {
+					t.Error("OAuth declaration was not preserved in the session request")
+				}
+				for name := range app.OAuth.Inputs() {
+					if _, injected := app.Env[name]; injected {
+						t.Error("OAuth input injected into the application environment")
+					}
+				}
+				cloudtest.WriteJSON(w, apiSession(h, wantApps...))
+			})
+			var deleted atomic.Bool
+			h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolDeleteSession}, map[string]string{"session": "gentle-otter-482"},
+				func(w http.ResponseWriter, r *http.Request) {
+					if cloudtest.ToolName(r) == protocol.ToolDeleteSession {
+						deleted.Store(true)
+						cloudtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+						return
+					}
+					cloudtest.WriteJSON(w, apiSession(h, wantApps...))
+				})
+			h.start(t, nil)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			var started atomic.Bool
+			output := &cloudtest.ObservedOutput{OnWrite: func(text string) {
+				if strings.Contains(text, "/mcp/alpha") {
+					started.Store(true)
+					cancel()
+				}
+			}}
+			err := executeCommand(ctx, args, output, io.Discard, h.run)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+			if !started.Load() || !deleted.Load() {
+				t.Fatal("remote development did not start and clean up")
+			}
+		})
 	}
 }
 

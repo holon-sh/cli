@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -35,6 +37,8 @@ const (
 type commandConfig struct {
 	manifest           manifestSpec
 	file               string
+	devTTLSeconds      *int64
+	check              bool
 	builder            buildApplication
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
@@ -42,6 +46,7 @@ type commandConfig struct {
 	Clock              clock.WithTicker
 	Input              io.Reader
 	verbose            bool
+	jsonOutput         bool
 	output             *progressOutput
 }
 
@@ -101,6 +106,11 @@ func uploadManifest(
 	if err := protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
+	if options.types != nil {
+		if err := options.types.acquire(resolved); err != nil {
+			return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		}
+	}
 	if len(manifest.retained) != 0 {
 		options.metadataGrant, err = imageDestination(ctx, manager, name, resolved)
 		if err != nil {
@@ -124,6 +134,9 @@ func uploadManifest(
 	if err := currentTypeSources(prepared); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
+	if options.types != nil {
+		options.types.accept(prepared)
+	}
 	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, resolved, nil
 }
 
@@ -144,6 +157,76 @@ func imageDestination(ctx context.Context, manager *Client, name string, manifes
 	upload := protocol.UploadRequest{Apps: names}
 	err := manager.Call(ctx, ControlPlane(name), protocol.ToolUploadGrant, upload, &grant)
 	return grant, err
+}
+
+func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config commandConfig) error {
+	resultWriter := stdout
+	if config.jsonOutput {
+		stdout = stderr
+	}
+	config.output.status("", "Authenticating", progressWorking)
+	manifest := config.manifest
+	manager, err := NewClient(ctx, config.Auth)
+	if err != nil {
+		return err
+	}
+	options := buildOptions{
+		types:       new(typeWorkspace),
+		resolutions: new(sync.Map), builder: config.builder, HTTPClient: config.RegistryHTTPClient,
+		Stderr: stderr, Env: config.Env, architectures: manager.info.BuildArchitectures, output: config.output,
+		builders: new(builderConnections), check: config.check,
+	}
+	defer options.types.close()
+	defer options.builders.close()
+	request, resolvedManifest, err := uploadManifest(ctx, manager, "", manifest, options, apps...)
+	if err != nil {
+		return err
+	}
+	request.TTLSeconds = config.devTTLSeconds
+	token, err := manager.controlToken(ctx, protocol.DevPlane)
+	if err != nil {
+		return err
+	}
+	config.output.deploying(request.Apps)
+	var session protocol.SessionResponse
+	if err := manager.client.Call(ctx, protocol.DevPlane, token, protocol.ToolCreateSession, request, &session); err != nil {
+		if status := HTTPStatus(err); status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+			return err
+		}
+		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
+		return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
+	}
+	if !protocol.ValidDNSLabel(session.Name) || session.Name == protocol.ProductionName {
+		return errors.New("control API returned an invalid session name")
+	}
+	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
+		return err
+	}
+	if request.TTLSeconds != nil {
+		if !session.Detached {
+			return errors.Join(errors.New("server did not accept a detached session; upgrade the platform"),
+				deleteWithFreshContext(manager, session.Name, session.UID))
+		}
+		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
+		if err != nil {
+			return errors.Join(err, deleteWithFreshContext(manager, session.Name, session.UID))
+		}
+		if config.jsonOutput {
+			return json.NewEncoder(resultWriter).Encode(ready)
+		}
+		if err := printEndpoints(stdout, ready); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
+		return err
+	}
+	dev := &devLoop{manager: manager, name: session.Name, manifest: resolvedManifest, apps: apps, clock: config.clock(), options: options}
+	primaryErr := dev.run(ctx, request.Apps, stdout)
+	cleanupErr := deleteWithFreshContext(manager, session.Name, session.UID)
+	if primaryErr != nil && cleanupErr != nil {
+		cleanupErr = fmt.Errorf("cleanup failed: %w", cleanupErr)
+	}
+	return errors.Join(primaryErr, cleanupErr)
 }
 
 func sessionPath(name, suffix string) string {
@@ -192,6 +275,12 @@ func terminalCondition(condition protocol.Condition) bool {
 		protocol.ReasonInvalidIdentity, protocol.ReasonInvalidExpiry, protocol.ReasonInvalidSpec,
 		protocol.ReasonLeaseExpired, protocol.ReasonDeleting, protocol.ReasonProgressDeadline,
 	}, condition.Reason)
+}
+
+func deleteWithFreshContext(manager *Client, name, uid string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	return manager.DeleteSession(cleanupCtx, name, uid, true)
 }
 
 func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer, config commandConfig) error {
