@@ -87,7 +87,7 @@ export default createMcpHandler(() => {
   }
 });
 
-test("installed packages resolve from the application: its own Zod and CommonJS packages", t => {
+test("installed packages resolve from the application: its own Zod, clients and CommonJS packages", t => {
   const { root, run, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
@@ -100,13 +100,17 @@ export const z = { object: shape => schema({ type: "object", description: "zod 9
     "node_modules/legacy-units/names.js": 'exports.names = ["cm", "in"];',
     // A TypeScript decoy beside the published JavaScript: the running server uses names.js.
     "node_modules/legacy-units/names.ts": 'export const names = ["cm", "in", "ft"];',
+    // An installed holon-sh resolves from the application, never the stub.
+    "node_modules/holon-sh/package.json": '{"name":"holon-sh","type":"module","exports":{".":"./index.js"}}',
+    "node_modules/holon-sh/index.js": "export const apps = { ready: true };",
     "server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import units from "legacy-units";
 import { names } from "legacy-units/names";
+import { apps } from "holon-sh";
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "units", version: "1" });
-  if (units.metric) server.registerTool("convert", { inputSchema: z.object({ unit: z.enum(names) }) }, () => ({ content: [] }));
+  if (units.metric && apps.ready) server.registerTool("convert", { inputSchema: z.object({ unit: z.enum(names) }) }, () => ({ content: [] }));
   return server;
 });`,
   });

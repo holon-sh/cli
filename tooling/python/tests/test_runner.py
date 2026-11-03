@@ -68,6 +68,18 @@ LOW_LEVEL = """
     app = Server("low", on_list_tools=tools)
 """
 
+# With the runtime installed, the generated module's real clients stand in.
+INSTALLED = """
+    from mcp.server import MCPServer
+    from holon.apps import apps
+
+    server = MCPServer("installed")
+
+    @server.tool()
+    def ready(ready: str = str(apps.ready)) -> str:
+        raise RuntimeError("must not be called")
+"""
+
 
 def write(directory: Path, files: dict[str, str]) -> Path:
     for name, source in files.items():
@@ -108,9 +120,20 @@ def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
     files["order.json"] = '{"type": "object", "properties": {"id": {"type": "string"}}}'
     orders = write(tmp_path / "orders", files)
     low = write(tmp_path / "low", {"server.py": LOW_LEVEL})
+    installed = write(
+        tmp_path / "installed",
+        {
+            "server.py": INSTALLED,
+            "holon/client.py": "class Apps:\n    ready = True\n    def __init__(self, *args):\n        pass\n",
+        },
+    )
     result = extract(
         tmp_path,
-        {"orders": (orders, "src/server.py"), "low": (low, "server.py")},
+        {
+            "orders": (orders, "src/server.py"),
+            "low": (low, "server.py"),
+            "installed": (installed, "server.py"),
+        },
     )
 
     contract = result["orders"]
@@ -134,6 +157,11 @@ def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
         "src/server.py",
     ]
     assert [tool["name"] for tool in result["low"]["tools"]] == ["lookup"]
+    assert [tool["name"] for tool in result["installed"]["tools"]] == ["ready"]
+    assert list(result["installed"]["sources"]) == [
+        "holon/client.py",
+        "server.py",
+    ]
 
     config = tmp_path / "verify.json"
     recorded = {str(orders / name): d for name, d in contract["sources"].items()}
@@ -192,6 +220,17 @@ def test_effects_and_missing_packages_fail_naming_them(tmp_path):
         name: (write(tmp_path / name, {"server.py": source}), "server.py")
         for name, source in sources.items()
     }
+    # A missing import inside the installed clients names that package, not a stub.
+    apps["vendored"] = (
+        write(
+            tmp_path / "vendored",
+            {
+                "server.py": "from holon.apps import apps\n",
+                "holon/client.py": "import vendored\n",
+            },
+        ),
+        "server.py",
+    )
     result = extract(tmp_path, apps)
     for name, capability in (
         ("socket", "network"),
@@ -202,4 +241,5 @@ def test_effects_and_missing_packages_fail_naming_them(tmp_path):
         assert f'{name}/server.py", line 3' in diagnostic, diagnostic
         assert f"contract evaluation has no {capability}" in diagnostic, diagnostic
     assert result["missing"]["missing"] == "requests"
+    assert result["vendored"]["missing"] == "vendored"
     assert result["typed"]["tools"] == []
