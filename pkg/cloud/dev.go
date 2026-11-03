@@ -33,7 +33,7 @@ type devWatcher struct {
 	watcher  *fsnotify.Watcher
 	metadata sets.Set[string]
 	contexts sets.Set[string]
-	changes  <-chan devChange
+	changes  chan devChange
 	output   *progressOutput
 	done     chan struct{}
 	clock    clock.WithTicker
@@ -44,10 +44,9 @@ func newDevWatcher(manifest manifestSpec, clk clock.WithTicker, output *progress
 	if err != nil {
 		return nil, err
 	}
-	changes := make(chan devChange)
 	result := &devWatcher{
 		watcher: watcher, metadata: sets.New(manifest.file), contexts: sets.New[string](),
-		changes: changes, output: output, done: make(chan struct{}), clock: clk,
+		changes: make(chan devChange), output: output, done: make(chan struct{}), clock: clk,
 	}
 	for _, app := range manifest.Apps {
 		if app.Path == "" {
@@ -67,7 +66,7 @@ func newDevWatcher(manifest manifestSpec, clk clock.WithTicker, output *progress
 		}
 	}
 
-	go result.run(changes)
+	go result.run()
 	return result, nil
 }
 
@@ -109,7 +108,7 @@ func (w *devWatcher) observe(root, path string, op fsnotify.Op) (bool, error) {
 	return !ignored, err
 }
 
-func (w *devWatcher) run(changes chan<- devChange) {
+func (w *devWatcher) run() {
 	defer close(w.done)
 	pending := devChange{contexts: sets.New[string]()}
 	var debounce <-chan time.Time
@@ -142,7 +141,7 @@ func (w *devWatcher) run(changes chan<- devChange) {
 			debounce = w.clock.After(devDebounce)
 		case <-debounce:
 			if pending.contexts.Len() != 0 || pending.manifest {
-				output = changes
+				output = w.changes
 			}
 		case output <- pending:
 			pending = devChange{contexts: sets.New[string]()}
@@ -151,7 +150,6 @@ func (w *devWatcher) run(changes chan<- devChange) {
 			if !ok {
 				return
 			}
-			// A later file event doesn't establish recovery from a watcher error.
 			w.output.status("file watcher", fmt.Sprintf("continuing after error: %v", err), progressError)
 		}
 	}
@@ -204,7 +202,6 @@ type devLoop struct {
 	clock                  clock.WithTicker
 	options                buildOptions
 	session                protocol.SessionResponse
-	images                 map[string]string
 	changedImages, pending sets.Set[string]
 }
 
@@ -224,7 +221,7 @@ func (d *devLoop) renew(ctx context.Context) {
 	}
 }
 
-func (d *devLoop) run(ctx context.Context, currentApps []protocol.App, stdout io.Writer) error {
+func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	watcher, err := newDevWatcher(d.manifest, d.clock, d.options.output)
 	if err != nil {
 		return fmt.Errorf("watch build contexts: %w", err)
@@ -247,17 +244,9 @@ func (d *devLoop) run(ctx context.Context, currentApps []protocol.App, stdout io
 	}()
 	pollTicker := d.clock.NewTicker(workflowPoll)
 	defer pollTicker.Stop()
-	d.session, err = d.manager.Session(ctx, d.name)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		return err
-	}
 	d.options.architectures = d.session.BuildArchitectures
-	d.images, d.changedImages, d.pending = map[string]string{}, sets.New[string](), sets.New[string]()
-	for _, app := range currentApps {
-		d.images[app.Name] = app.Image
+	d.changedImages, d.pending = sets.New[string](), sets.New[string]()
+	for _, app := range d.session.Apps {
 		d.pending.Insert(app.Name)
 	}
 	announce := sync.OnceValue(func() error {
@@ -291,7 +280,9 @@ func (d *devLoop) run(ctx context.Context, currentApps []protocol.App, stdout io
 				return err
 			}
 		case change := <-changes:
-			d.rebuild(ctx, change)
+			if err := d.rebuild(ctx, change); err != nil && ctx.Err() == nil {
+				d.options.output.status("app rebuild", fmt.Sprintf("%v; existing service remains available", err), progressError)
+			}
 		}
 	}
 	return nil
@@ -350,32 +341,25 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 	d.pending.Clear()
 }
 
-func (d *devLoop) rebuild(ctx context.Context, change devChange) {
+func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 	if change.manifest {
 		reloaded, err := resolveManifestFile(d.manifest.file)
 		if err == nil {
 			reloaded, err = resolveManifestGraph(ctx, reloaded, d.apps...)
 		}
 		if err != nil {
-			d.options.output.status("app metadata", fmt.Sprintf("metadata resolution failed; existing service remains available: %v", err), progressError)
-			return
+			return fmt.Errorf("metadata resolution failed: %w", err)
 		}
 		if !d.updateManifest(reloaded, &change) {
-			return
+			return nil
 		}
 	}
-	if change.contexts.Len() == 0 && d.changedImages.Len() == 0 {
-		d.options.output.status("app rebuild", "remote image is unchanged; continuing to watch", progressDone)
-		return
-	}
 	if _, err := d.manager.controlToken(ctx, protocol.DevPlane); err != nil {
-		d.options.output.status("app rebuild", fmt.Sprintf("authentication failed; existing service remains available: %v", err), progressError)
-		return
+		return fmt.Errorf("authentication failed: %w", err)
 	}
 	prepared, cleanup, err := prepareManifestTypes(ctx, d.manifest, d.options)
 	if err != nil {
-		d.options.output.status("app rebuild", fmt.Sprintf("remote image preparation failed; existing service remains available: %v", err), progressError)
-		return
+		return fmt.Errorf("remote image preparation failed: %w", err)
 	}
 	dirty := prepared
 	dirty.Apps = slices.DeleteFunc(slices.Clone(prepared.Apps), func(app manifestApp) bool {
@@ -391,13 +375,12 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) {
 	}
 	cleanup()
 	if err != nil {
-		if ctx.Err() == nil {
-			d.options.output.status("app rebuild", fmt.Sprintf("remote image preparation failed; existing service remains available: %v", err), progressError)
-		}
-		return
+		return fmt.Errorf("remote image preparation failed: %w", err)
 	}
 	apps = slices.DeleteFunc(apps, func(app protocol.App) bool {
-		if d.images[app.Name] != app.Image {
+		if !slices.ContainsFunc(d.session.Apps, func(current protocol.App) bool {
+			return current.Name == app.Name && current.Image == app.Image
+		}) {
 			return false
 		}
 		d.changedImages.Delete(app.Name)
@@ -410,23 +393,22 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) {
 	})
 	if len(apps) == 0 {
 		d.options.output.status("app rebuild", "remote image is unchanged; continuing to watch", progressDone)
-		return
+		return nil
 	}
 	d.options.output.deploying(apps)
 	updated, err := patchSessionImages(ctx, d.manager, d.name, apps)
 	if err != nil {
-		d.options.output.status("app rebuild", fmt.Sprintf("remote update failed; existing service remains available: %v", err), progressError)
 		d.options.output.apps(apps, "deployment failed", progressError)
-		return
+		return fmt.Errorf("remote update failed: %w", err)
 	}
 	for _, app := range apps {
 		d.pending.Insert(app.Name)
-		d.images[app.Name] = app.Image
 		d.changedImages.Delete(app.Name)
 	}
 	d.options.types.accept(dirty)
 	d.session = updated
 	d.options.output.status("app rebuild", fmt.Sprintf("remote update requested (generation %d)", updated.Generation), progressDone)
+	return nil
 }
 
 func (d *devLoop) updateManifest(reloaded manifestSpec, change *devChange) bool {

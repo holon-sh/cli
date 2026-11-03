@@ -10,38 +10,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/fsnotify/fsnotify"
 	"k8s.io/utils/clock"
 )
-
-func TestDevWatcherReportsWithoutChangeConsumer(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var stream bytes.Buffer
-		output, _, _ := newProgressOutput(io.Discard, &stream, false, clock.RealClock{})
-		events := make(chan fsnotify.Event)
-		watcher := devWatcher{
-			watcher: &fsnotify.Watcher{Events: events, Errors: make(chan error)},
-			output:  output, done: make(chan struct{}),
-		}
-		go watcher.run(make(chan devChange))
-		// A build can leave changes unread. Diagnostics must still arrive, without
-		// buffering or dropping a later error behind the first one.
-		for _, err := range []error{fsnotify.ErrEventOverflow, io.ErrUnexpectedEOF} {
-			watcher.watcher.Errors <- err
-		}
-		close(events)
-		<-watcher.done
-		want := "file watcher continuing after error: " + fsnotify.ErrEventOverflow.Error() + "\n" +
-			"file watcher continuing after error: unexpected EOF\n"
-		if stream.String() != want {
-			t.Fatalf("watcher diagnostics = %q, want %q", stream.String(), want)
-		}
-	})
-}
 
 func TestProgressTransitions(t *testing.T) {
 	for _, tc := range []struct {

@@ -4,15 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
-	"github.com/holon-sh/cli/pkg/protocol"
 	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
+	"github.com/holon-sh/cli/pkg/protocol"
 )
 
 func TestDetachedDevLifecycle(t *testing.T) {
@@ -26,7 +25,6 @@ func TestDetachedDevLifecycle(t *testing.T) {
 		{name: "JSON", flags: []string{"--json", "--ttl", "1s"}, seconds: 1},
 		{name: "failed hook", seconds: 86400, wantError: "install hook failed"},
 		{name: "cancelled startup", seconds: 86400, wantError: "context canceled"},
-		{name: "older server", seconds: 86400, wantError: "server did not accept a detached session"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -40,8 +38,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 			defer cancel()
 			var deleted atomic.Bool
 			created := protocol.SessionResponse{
-				Name: "gentle-otter-482", UID: "preview-uid", Revision: "1", Generation: 1,
-				Detached: tc.name != "older server", ExpiresAt: "2030-01-02T00:00:00Z",
+				Name: "gentle-otter-482", UID: "preview-uid", Revision: "1", Generation: 1, ExpiresAt: "2030-01-02T00:00:00Z",
 			}
 			h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
 				cloudtest.AssertOrigin(t, r, "dev."+h.baseHost)
@@ -82,10 +79,6 @@ func TestDetachedDevLifecycle(t *testing.T) {
 			var output bytes.Buffer
 			err := executeCommand(ctx, args, &output, nil, h.run)
 			switch {
-			case tc.name == "cancelled startup":
-				if !errors.Is(err, context.Canceled) {
-					t.Fatalf("startup cancellation = %v", err)
-				}
 			case tc.wantError != "":
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 					t.Fatalf("failed startup = %v", err)
@@ -98,7 +91,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				if err := json.Unmarshal(output.Bytes(), &result); err != nil {
 					t.Fatalf("stdout must contain only JSON: %v, output=%s", err, output.String())
 				}
-				if result.Name != created.Name || result.ExpiresAt != created.ExpiresAt || !result.Detached ||
+				if result.Name != created.Name || result.ExpiresAt != created.ExpiresAt ||
 					len(result.Endpoints) != 1 || result.Endpoints[0].URL != "https://preview.example/mcp/echo" {
 					t.Fatalf("detached JSON = %+v", result)
 				}

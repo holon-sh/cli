@@ -117,7 +117,7 @@ func TestDevelopmentAuthenticationBeforeBuild(t *testing.T) {
 			var authorized atomic.Bool
 			var server *httptest.Server
 			mux := http.NewServeMux()
-			cloudtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.DevPlane, nil, 120, 0,
+			cloudtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.DevPlane, nil, 120, 1,
 				func(w http.ResponseWriter, _ *http.Request) {
 					if test.name == "denied" {
 						w.Header().Set("Content-Type", "application/json")

@@ -150,7 +150,6 @@ func newRunHarness(t *testing.T) *runHarness {
 
 func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
-	// Development tails completion records; exact-path fixtures take precedence.
 	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
 		w.WriteHeader(http.StatusOK)
@@ -247,7 +246,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		return nextBuild(ctx, request, progress)
 	}
 	var mu sync.Mutex
-	var ambiguous, expireGrant, unavailable bool
+	var ambiguous, unavailable bool
 	var waiting string
 	var creates, deletes int
 	var created, served []protocol.App
@@ -273,14 +272,8 @@ func TestRunDevLifecycle(t *testing.T) {
 	}
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
 		cloudtest.AssertOrigin(t, r, "dev."+h.baseHost)
-		mu.Lock()
-		grant := "grant-secret"
-		if expireGrant {
-			grant, expireGrant = "expired-grant", false
-		}
-		mu.Unlock()
 		cloudtest.WriteJSON(w, protocol.UploadGrant{
-			Grant: grant, Registry: "registry.example", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339),
+			Grant: "grant-secret", Registry: "registry.example", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339),
 			Repositories: map[string]string{"alpha": "holon/upload/alpha", "beta": "holon/upload/beta"},
 		})
 	})
@@ -351,7 +344,7 @@ func TestRunDevLifecycle(t *testing.T) {
 	})
 	t.Run("session survives configuration, failed rebuilds, edits and outages", func(t *testing.T) {
 		mu.Lock()
-		expireGrant, waiting = true, "WaitingForConfiguration"
+		waiting = "WaitingForConfiguration"
 		mu.Unlock()
 		builds.Store(0)
 		fc := testingclock.NewFakeClock(time.Now())
@@ -469,10 +462,12 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 func apiSession(h *runHarness, names ...string) map[string]any {
 	response := cloudtest.SessionResponse("gentle-otter-482", "")
 	endpoints := make([]protocol.SessionEndpoint, 0, len(names))
+	apps := make([]protocol.App, 0, len(names))
 	for _, name := range names {
+		apps = append(apps, protocol.App{Name: name})
 		endpoints = append(endpoints, protocol.SessionEndpoint{Name: name, URL: "https://gentle-otter-482." + h.baseHost + protocol.AppPath(name)})
 	}
-	response["endpoints"] = endpoints
+	response["endpoints"], response["apps"] = endpoints, apps
 	return response
 }
 

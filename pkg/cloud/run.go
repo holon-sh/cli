@@ -134,9 +134,6 @@ func uploadManifest(
 	if err := currentTypeSources(prepared); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
-	if options.types != nil {
-		options.types.accept(prepared)
-	}
 	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, resolved, nil
 }
 
@@ -165,7 +162,6 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		stdout = stderr
 	}
 	config.output.status("", "Authenticating", progressWorking)
-	manifest := config.manifest
 	manager, err := NewClient(ctx, config.Auth)
 	if err != nil {
 		return err
@@ -178,10 +174,11 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	}
 	defer options.types.close()
 	defer options.builders.close()
-	request, resolvedManifest, err := uploadManifest(ctx, manager, "", manifest, options, apps...)
+	request, resolvedManifest, err := uploadManifest(ctx, manager, "", config.manifest, options, apps...)
 	if err != nil {
 		return err
 	}
+	options.types.accept(resolvedManifest)
 	request.TTLSeconds = config.devTTLSeconds
 	token, err := manager.controlToken(ctx, protocol.DevPlane)
 	if err != nil {
@@ -196,17 +193,10 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
 		return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
 	}
-	if !protocol.ValidDNSLabel(session.Name) || session.Name == protocol.ProductionName {
-		return errors.New("control API returned an invalid session name")
-	}
 	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
 		return err
 	}
 	if request.TTLSeconds != nil {
-		if !session.Detached {
-			return errors.Join(errors.New("server did not accept a detached session; upgrade the platform"),
-				deleteWithFreshContext(manager, session.Name, session.UID))
-		}
 		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
 		if err != nil {
 			return errors.Join(err, deleteWithFreshContext(manager, session.Name, session.UID))
@@ -220,13 +210,8 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
 		return err
 	}
-	dev := &devLoop{manager: manager, name: session.Name, manifest: resolvedManifest, apps: apps, clock: config.clock(), options: options}
-	primaryErr := dev.run(ctx, request.Apps, stdout)
-	cleanupErr := deleteWithFreshContext(manager, session.Name, session.UID)
-	if primaryErr != nil && cleanupErr != nil {
-		cleanupErr = fmt.Errorf("cleanup failed: %w", cleanupErr)
-	}
-	return errors.Join(primaryErr, cleanupErr)
+	dev := &devLoop{manager: manager, name: session.Name, manifest: resolvedManifest, apps: apps, clock: config.clock(), options: options, session: session}
+	return errors.Join(dev.run(ctx, stdout), deleteWithFreshContext(manager, session.Name, session.UID))
 }
 
 func sessionPath(name, suffix string) string {
