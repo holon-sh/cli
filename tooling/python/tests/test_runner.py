@@ -24,15 +24,26 @@ REGION = """
         US = "us"
 """
 
+# A startup, which listing the catalog must not run.
+LIFESPAN = """
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(server):
+        raise RuntimeError("startup ran")
+        yield
+"""
+
 # A src entry imports from the application root, and reads files there.
 SERVER = """
     import json
 
     from mcp.server import MCPServer
     from catalog.region import Region
+    from src.lifespan import lifespan
     from src.models import Order
 
-    server = MCPServer("orders")
+    server = MCPServer("orders", lifespan=lifespan)
 
     @server.tool()
     def read(id: str, region: Region = Region.EU) -> Order:
@@ -59,12 +70,13 @@ SERVER = """
 LOW_LEVEL = """
     from mcp import types
     from mcp.server import Server
+    from lifespan import lifespan
 
     async def tools(context, params):
         tool = types.Tool(name="lookup", input_schema={"type": "object"})
         return types.ListToolsResult(tools=[tool])
 
-    app = Server("low", on_list_tools=tools)
+    app = Server("low", on_list_tools=tools, lifespan=lifespan)
 """
 
 
@@ -95,11 +107,15 @@ def extract(apps: dict[str, tuple[Path, str]]) -> dict[str, dict]:
 def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
     tmp_path,
 ):
-    files = {"src/server.py": SERVER, "src/models.py": MODELS}
+    files = {
+        "src/server.py": SERVER,
+        "src/models.py": MODELS,
+        "src/lifespan.py": LIFESPAN,
+    }
     files |= {"catalog/__init__.py": "", "catalog/region.py": REGION}
     files["order.json"] = '{"type": "object", "properties": {"id": {"type": "string"}}}'
     orders = write(tmp_path / "orders", files)
-    low = write(tmp_path / "low", {"server.py": LOW_LEVEL})
+    low = write(tmp_path / "low", {"server.py": LOW_LEVEL, "lifespan.py": LIFESPAN})
     result = extract(
         {"orders": (orders, "src/server.py"), "low": (low, "server.py")},
     )
@@ -121,6 +137,7 @@ def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
         "catalog/__init__.py",
         "catalog/region.py",
         "order.json",
+        "src/lifespan.py",
         "src/models.py",
         "src/server.py",
     ]
