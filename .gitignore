@@ -6,3 +6,4 @@ node_modules/
 .mypy_cache/
 .ruff_cache/
 tooling/python/uv.lock
+/pkg/host/javascript/.host-test
