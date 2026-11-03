@@ -16,6 +16,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const schemaPackages = new Set(["zod", "@modelcontextprotocol/server", "@modelcontextprotocol/core"]);
+// The exports of the generated clients a server imports from its own holon-sh package
+// (pkg/mcptype/generate_typescript.go, node target). Registering tools never calls them, so where the
+// package is not installed, stubs stand in for them.
+const clientExports = { "holon-sh": ["apps", "createApps", "ToolCallError"] };
 const capabilities = { fs: "filesystem", "fs/promises": "filesystem", net: "network", http: "network", https: "network", http2: "network", dns: "network", "dns/promises": "network", tls: "network", dgram: "network", child_process: "child processes", cluster: "child processes", worker_threads: "child processes", timers: "timers", "timers/promises": "timers", os: "host information" };
 const globalCapabilities = { fetch: "network", XMLHttpRequest: "network", WebSocket: "network", setTimeout: "timers", setInterval: "timers", setImmediate: "timers", Buffer: "Node.js buffers", require: "require", __dirname: "filesystem", __filename: "filesystem" };
 const extensions = ["", ".ts", ".tsx", ".mts", ".js", ".mjs", ".cjs", ".json", "/index.ts", "/index.tsx", "/index.js", "/index.mjs"];
@@ -73,6 +77,7 @@ export function createSandbox(root, vendor) {
       if (dirname(directory) === directory) break;
     }
     if (schemaPackages.has(name) && existsSync(join(vendor, name, "package.json"))) return { file: packageFile(join(vendor, name), `.${subpath ?? ""}`, conditions) };
+    if (subpath === undefined && conditions.includes("import") && Object.hasOwn(clientExports, name)) return { clients: name };
     throw new MissingPackage(`Cannot find package ${name} imported from ${referrer}; install the application's dependencies or commit holon-contract.json`, { cause: name });
   }
 
@@ -103,7 +108,7 @@ export function createSandbox(root, vendor) {
         initializeImportMeta: meta => Object.assign(meta, { url, filename: file, dirname: dirname(file) }),
         importModuleDynamically: specifier => {
           const target = resolveSpecifier(specifier, file, ["import", "node"]);
-          return evaluate(target.builtin ? builtin(target.builtin) : load(target.file));
+          return evaluate(target.builtin ? builtin(target.builtin) : target.clients ? clients(target.clients) : load(target.file));
         },
       });
     }
@@ -130,6 +135,14 @@ export function createSandbox(root, vendor) {
       builtins.set(name, Object.fromEntries(Object.keys(real).filter(n => n !== "default").map(n => [n, stub(`node:${name} ${n}`, capability)])));
     }
     return builtins.get(name);
+  }
+
+  function clients(name) {
+    if (!modules.has(name)) {
+      const names = clientExports[name];
+      modules.set(name, new vm.SyntheticModule(names, function () { for (const n of names) this.setExport(n, stub(`${name} ${n}`, "generated clients")); }, { identifier: name, context }));
+    }
+    return modules.get(name);
   }
 
   function builtin(name) {
@@ -165,6 +178,7 @@ export function createSandbox(root, vendor) {
   async function linker(specifier, referencing, { attributes } = {}) {
     const target = resolveSpecifier(specifier, files.get(referencing), ["import", "node"]);
     if (target.builtin) return builtin(target.builtin);
+    if (target.clients) return clients(target.clients);
     if (attributes?.type === "json" && formatOf(target.file) !== "json") throw new Error(`${specifier} is not JSON`);
     return load(target.file);
   }

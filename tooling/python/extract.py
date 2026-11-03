@@ -92,7 +92,11 @@ class Finder(importlib.abc.MetaPathFinder):
         spec = importlib.machinery.PathFinder.find_spec(name, search, target)
         if name == "holon.apps" and (spec is None or spec.origin is None):
             return importlib.machinery.ModuleSpec(name, EmptyApps())
-        if spec is None and path is None:
+        if spec is None and name == "holon" and path is None:
+            # The generated clients' package without its runtime: holon.apps resolves above, and
+            # any other holon module is missing.
+            return importlib.machinery.ModuleSpec(name, None, is_package=True)
+        if spec is None and (path is None or name.startswith("holon.") and not path):
             raise MissingModule(
                 f"No module named {name!r}; install the application's dependencies "
                 "or commit holon-contract.json",
@@ -109,11 +113,29 @@ class Finder(importlib.abc.MetaPathFinder):
 
 class EmptyApps(importlib.abc.Loader):
     def exec_module(self, module: ModuleType) -> None:
-        apps = importlib.import_module("holon.client").Apps
+        try:
+            apps = importlib.import_module("holon.client").Apps
+        except MissingModule:
+            # Registering tools never calls the clients, so without the runtime stubs stand in.
+            vars(module).update(
+                apps=Unused("holon.apps apps"),
+                create_apps=unavailable("holon.apps create_apps", "generated clients"),
+            )
+            return
         vars(module).update(
             apps=apps({"requires": {}}, {}),
             create_apps=lambda bindings: apps({"requires": {}}, {}, bindings),
         )
+
+
+class Unused:
+    """A generated client whose every use fails, naming it."""
+
+    def __init__(self, name: str) -> None:
+        self.fail = unavailable(name, "generated clients")
+
+    def __getattr__(self, name: str) -> NoReturn:
+        self.fail()
 
 
 def installed() -> list[str]:

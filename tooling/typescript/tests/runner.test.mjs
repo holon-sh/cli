@@ -39,7 +39,7 @@ function application(root, files) {
   return app;
 }
 
-test("a server with only schema imports extracts with nothing installed and records every file served", t => {
+test("a server with only schema imports and its own clients extracts with nothing installed and records every file served", t => {
   const { root, run, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
@@ -52,10 +52,11 @@ import meta from "./meta.json" with { type: "json" };
 export const read = { description: meta.description, inputSchema: z.object({ id: z.string() }), outputSchema: order };
 export const list = { inputSchema: z.object({ status }) };`,
     "server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { apps } from "holon-sh";
 import { list, read } from "./tools.js";
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "orders", version: "1" });
-  server.registerTool("read", read, () => { throw new Error("not called"); });
+  server.registerTool("read", read, () => apps.inventory.tools.read({}));
   server.registerTool("list", list, () => ({ content: [] }));
   server.registerResource("Order", "orders://latest", { mimeType: "application/json", _meta: { "sh.holon/outputSchema": { type: "object" } } }, () => ({ contents: [] }));
   server.registerResource("Page", "ui://orders/app.html", { mimeType: "text/html" }, () => ({ contents: [] }));
@@ -133,11 +134,13 @@ test("module-scope effects fail with the capability, file and line; missing pack
     "fetch.ts": 'const response: unknown = null;\nawait fetch("https://example.com/schema.json");\nexport default response;\n',
     "fs.ts": 'import { readFileSync } from "node:fs";\nexport default readFileSync("schema.json", "utf8");\n',
     "missing.ts": 'import pad from "left-pad";\nexport default pad;\n',
+    "clients.ts": 'import { apps } from "holon-sh";\nexport default apps.inventory;\n',
   });
-  const extracted = extract(["fetch.ts", "fs.ts", "missing.ts"].map(entry => ({ name: entry.slice(0, -3), path: app, entry })));
+  const extracted = extract(["fetch.ts", "fs.ts", "missing.ts", "clients.ts"].map(entry => ({ name: entry.slice(0, -3), path: app, entry })));
   assert.match(extracted.fetch.diagnostic, /no network[\s\S]*\/fetch\.ts:2:/);
   assert.match(extracted.fs.diagnostic, /no filesystem[\s\S]*\/fs\.ts:2:/);
   assert.equal(extracted.missing.missing, "left-pad");
+  assert.match(extracted.clients.diagnostic, /holon-sh apps is unavailable: contract evaluation has no generated clients[\s\S]*\/clients\.ts:2:/);
 });
 
 test("check uses the application's compiler CLI and honors project file selection", t => {

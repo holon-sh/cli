@@ -30,13 +30,14 @@ SERVER = """
 
     from mcp.server import MCPServer
     from catalog.region import Region
+    from holon.apps import apps
     from src.models import Order
 
     server = MCPServer("orders")
 
     @server.tool()
     def read(id: str, region: Region = Region.EU) -> Order:
-        raise RuntimeError("must not be called")
+        return apps.inventory.tools.read()
 
     ORDER = json.load(open("order.json"))
 
@@ -182,6 +183,7 @@ def test_effects_and_missing_packages_fail_naming_them(tmp_path):
         "socket": "import socket\n\nsocket.create_connection(('example.com', 443))\n",
         "write": "import json\n\njson.dump({}, open('cache.json', 'w'))\n",
         "missing": "import requests\n",
+        "clients": "from holon.apps import apps\n\napps.inventory\n",
         # Naming a forbidden class is not using it, as eagerly evaluated annotations do.
         "typed": "import subprocess\nfrom mcp.server import MCPServer\n"
         "Runner = subprocess.Popen[bytes]\nserver = MCPServer('typed')\n",
@@ -191,7 +193,11 @@ def test_effects_and_missing_packages_fail_naming_them(tmp_path):
         for name, source in sources.items()
     }
     result = extract(tmp_path, apps)
-    for name, capability in (("socket", "network"), ("write", "file writes")):
+    for name, capability in (
+        ("socket", "network"),
+        ("write", "file writes"),
+        ("clients", "generated clients"),
+    ):
         diagnostic = result[name]["diagnostic"]
         assert f'{name}/server.py", line 3' in diagnostic, diagnostic
         assert f"contract evaluation has no {capability}" in diagnostic, diagnostic
