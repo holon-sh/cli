@@ -225,13 +225,13 @@ def test_static_contract_preserves_imported_types_without_running_sources(tmp_pa
             from typing import Annotated
             from pathlib import Path
             from mcp.server import MCPServer
-            from mcp.types import CallToolResult
+            from mcp.types import CallToolResult, ToolAnnotations
             from pydantic import Field
             from models import Order
             from tools import lines
             Path(__file__).with_name("executed").write_text("")
             server = MCPServer("orders")
-            server.add_tool(lines.add_line)
+            server.add_tool(lines.add_line, name="add_order_line", annotations=ToolAnnotations(read_only_hint=True))
             @server.tool("lookup")
             async def read(id: Annotated[str, Field(pattern="^ord_")], limit: int = 5) -> Annotated[CallToolResult, Order]:
                 raise RuntimeError("handler not called")
@@ -250,7 +250,7 @@ def test_static_contract_preserves_imported_types_without_running_sources(tmp_pa
     }
     assert not (tmp_path / "executed").exists()
     assert sorted(tool["name"] for tool in extracted["tools"]) == [
-        "add_line",
+        "add_order_line",
         "lookup",
         "unknown",
     ]

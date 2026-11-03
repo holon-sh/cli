@@ -525,10 +525,24 @@ class Analyzer:
 
     def added(self, path: Path, call: ast.Call) -> list[dict[str, Any]]:
         match call:
-            case ast.Call(args=[argument], keywords=[]):
+            case ast.Call(args=[argument, *_]):
                 source, value = self.resolve(path, argument)
                 if isinstance(value, FUNCTIONS) and not value.decorator_list:
-                    return [self.tool(source, value, {})]
+                    # Like a decorator's, the options that shape the contract apply and the
+                    # rest, such as annotations, do not change it.
+                    options = (
+                        inspect.signature(MCPServer.add_tool)
+                        .bind(
+                            None,
+                            *call.args,
+                            **{
+                                cast(str, item.arg): item.value
+                                for item in call.keywords
+                            },
+                        )
+                        .arguments
+                    )
+                    return [self.tool(source, value, options)]
         return self.fail(
             path,
             call,
