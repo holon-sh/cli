@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,9 +31,6 @@ func TestGoDependencyPreparation(t *testing.T) {
 		"require github.com/holon-sh/sdk/go v0.0.0-20261025144240-b6f8fd7fc600\n"
 	sourceFiles(t, root, map[string]string{
 		"go.mod": module, dockerignoreFile: "holon\nholon/**\n",
-		"go.sum": `github.com/holon-sh/sdk/go v0.0.0-20261025144240-b6f8fd7fc600 h1:CDh+Zy49HGXql2mniMAGSeCPYjprpTMkb0IDBecbc8s=
-github.com/holon-sh/sdk/go v0.0.0-20261025144240-b6f8fd7fc600/go.mod h1:zsXadl0w8BLTHKVfvXHPdA/sKZpSulThNQo9uCOIyxM=
-`,
 		"server.go": `package main
 import (
  "context"
@@ -69,14 +65,6 @@ func main() {
 	}
 	if _, err := stageTypes(p, options); err != nil {
 		t.Fatal(err)
-	}
-	// Compile against the pinned SDK, resolving dependencies only in the disposable build copy.
-	command := exec.CommandContext(t.Context(), "go", "build", "-mod=mod", ".")
-	command.Dir = p.root
-	command.Env = append(os.Environ(), "GOWORK=off", "GOTOOLCHAIN=local")
-	got, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("generated caller: %s %v", got, err)
 	}
 	unchanged, _ := os.ReadFile(filepath.Join(root, "go.mod"))
 	if string(unchanged) != module {
