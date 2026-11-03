@@ -25,10 +25,9 @@ type OAuthInfo struct {
 }
 
 type AccountManagement struct {
-	ProfileURL        string `json:"profileURL,omitempty"`
-	SecurityURL       string `json:"securityURL,omitempty"`
-	SessionsURL       string `json:"sessionsURL,omitempty"`
-	LinkedAccountsURL string `json:"linkedAccountsURL,omitempty"`
+	ProfileURL  string `json:"profileURL,omitempty"`
+	SecurityURL string `json:"securityURL,omitempty"`
+	SessionsURL string `json:"sessionsURL,omitempty"`
 }
 
 func (info *Info) UnmarshalJSON(data []byte) error {

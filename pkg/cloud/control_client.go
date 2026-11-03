@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -54,8 +55,11 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 		}
 		return &protocol.Error{Code: code, Message: message}
 	}
-	if output != nil && json.Unmarshal(encoded, output) != nil {
-		return errMalformedResponse
+	if output == nil {
+		return nil
+	}
+	if err := json.Unmarshal(encoded, output); err != nil {
+		return fmt.Errorf("%w: %w", errMalformedResponse, err)
 	}
 	return nil
 }

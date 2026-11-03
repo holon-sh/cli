@@ -2,7 +2,9 @@ package protocol
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -120,6 +122,18 @@ func (i Input) Validate() error {
 
 func ValidInputValue(value string) bool {
 	return !strings.ContainsAny(value, "\x00\r\n")
+}
+
+func (app *App) UnmarshalJSON(data []byte) error {
+	type plainApp App
+	if err := DecodeJSONStrict(data, (*plainApp)(app)); err != nil {
+		var named struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(data, &named)
+		return fmt.Errorf("app %s: %w", named.Name, err)
+	}
+	return nil
 }
 
 func (access *AppAccess) UnmarshalJSON(data []byte) error {
