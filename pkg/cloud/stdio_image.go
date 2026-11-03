@@ -4,9 +4,8 @@ import (
 	"context"
 	"embed"
 	"io/fs"
+	"strings"
 	"sync"
-
-	"github.com/distribution/reference"
 
 	"github.com/holon-sh/cli/pkg/ociimage"
 )
@@ -22,16 +21,15 @@ var loadBridges = sync.OnceValues(func() (ociimage.Bridges, error) {
 	return ociimage.LoadBridges(payloads)
 })
 
+var checkedLayers sync.Map
+
 func prepareStdioImage(ctx context.Context, image, token string, options buildOptions) (string, error) {
-	named, err := reference.ParseNamed(image)
+	name, _, _ := strings.Cut(image, "@")
+	repository, err := imageRepository(name, token, options.Env, options.HTTPClient)
 	if err != nil {
 		return "", err
 	}
-	repository, err := imageRepository(named.Name(), token, options.Env, options.HTTPClient)
-	if err != nil {
-		return "", err
-	}
-	descriptor, err := repository.Resolve(ctx, named.(reference.Digested).Digest().String())
+	descriptor, err := repository.Resolve(ctx, image)
 	if err != nil {
 		return "", err
 	}
@@ -41,10 +39,10 @@ func prepareStdioImage(ctx context.Context, image, token string, options buildOp
 	}
 	prepared, err := ociimage.AdaptImage(ctx, repository, descriptor, ociimage.AdaptOptions{
 		Stdio: true, Origin: options.origin,
-		Source: image, CheckedLayers: options.checkedLayers, Bridges: bridges,
+		Source: image, CheckedLayers: &checkedLayers, Bridges: bridges,
 	})
 	if err != nil {
 		return "", err
 	}
-	return reference.TrimNamed(named).String() + "@" + prepared.Digest.String(), nil
+	return name + "@" + prepared.Digest.String(), nil
 }

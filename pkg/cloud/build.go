@@ -26,7 +26,6 @@ type buildOptions struct {
 	catalogTag    string
 	types         *typeWorkspace
 	metadataGrant protocol.UploadGrant
-	checkedLayers *sync.Map
 	resolutions   *sync.Map
 	architectures []string
 	builder       buildApplication
@@ -40,7 +39,6 @@ type buildOptions struct {
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
-	options.checkedLayers = cmp.Or(options.checkedLayers, new(sync.Map))
 	stderr := &buildLog{writer: cmp.Or(options.Stderr, io.Discard)}
 	apps := make([]protocol.App, len(manifest.Apps))
 	group, ctx := errgroup.WithContext(ctx)

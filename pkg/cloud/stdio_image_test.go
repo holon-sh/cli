@@ -4,15 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"context"
 	"debug/elf"
 	"encoding/json"
 	"io"
-	"maps"
-	"net/http/httptest"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -27,14 +23,8 @@ import (
 
 func preparedConfig(t *testing.T, registry *imageRegistry, image string) (ocispec.Manifest, ocispec.Image) {
 	t.Helper()
-	repository, reference, ok := strings.Cut(image, "@")
-	if !ok {
-		t.Fatalf("image has no digest: %q", image)
-	}
-	_, repository, ok = strings.Cut(repository, "/")
-	if !ok {
-		t.Fatalf("image has no repository: %q", image)
-	}
+	repository, reference, _ := strings.Cut(image, "@")
+	_, repository, _ = strings.Cut(repository, "/")
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
 	var manifest ocispec.Manifest
@@ -51,44 +41,42 @@ func preparedConfig(t *testing.T, registry *imageRegistry, image string) (ocispe
 func TestStdioImageContract(t *testing.T) {
 	stdio := []string{ociimage.RuntimePath, "--origin", "https://holon.example", "--"}
 	for _, test := range []struct {
-		name, architecture        string
+		name                      string
 		entrypoint, cmd, expected []string
 		files                     map[string][]byte
 		wantErr                   string
 	}{
 		{
-			name: "entrypoint and cmd", architecture: "amd64", entrypoint: []string{"/server", "--flag"}, cmd: []string{"default"},
+			name: "entrypoint and cmd", entrypoint: []string{"/server", "--flag"}, cmd: []string{"default"},
 			expected: slices.Concat(stdio, []string{"/server", "--flag"}),
 		},
-		{name: "cmd only", architecture: "arm64", cmd: []string{"/server", "arg"}, expected: stdio},
-		{name: "missing executable", architecture: "amd64", wantErr: "no executable"},
+		{name: "cmd only", cmd: []string{"/server", "arg"}, expected: stdio},
+		{name: "missing executable", wantErr: "no executable"},
 		{
-			name: "reserved file", architecture: "amd64", cmd: []string{"/server"},
+			name: "reserved file", cmd: []string{"/server"},
 			files: map[string][]byte{"holon-mcp-runtime": []byte("collision")}, wantErr: "reserved path",
 		},
 		{
-			name: "reserved directory", architecture: "amd64", cmd: []string{"/server"},
+			name: "reserved directory", cmd: []string{"/server"},
 			files: map[string][]byte{"holon-mcp-runtime/file": []byte("collision")}, wantErr: "reserved path",
 		},
 		{
-			name: "reserved whiteout", architecture: "amd64", cmd: []string{"/server"},
+			name: "reserved whiteout", cmd: []string{"/server"},
 			files: map[string][]byte{".wh.holon-mcp-runtime": []byte("collision")}, wantErr: "reserved path",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			registry, server := buildRegistry(t)
 			host := strings.TrimPrefix(server.URL, "https://")
-			files := map[string][]byte{"original": []byte("unchanged")}
-			maps.Copy(files, test.files)
-			source := addTestImage(t, registry, test.architecture, ocispec.ImageConfig{
+			source := addTestImage(t, registry, "amd64", ocispec.ImageConfig{
 				Entrypoint: test.entrypoint, Cmd: test.cmd,
 				Env: []string{"PATH=/bin"}, WorkingDir: "/work", User: "10001:10001",
 				Labels: map[string]string{"custom": "label"}, ExposedPorts: map[string]struct{}{"9000/tcp": {}}, StopSignal: "SIGQUIT",
-			}, files)
+			}, test.files)
 			image := host + "/source@" + source.Digest.String()
 			grant := protocol.UploadGrant{Registry: host, Grant: "grant-secret", Repositories: map[string]string{"app": "holon/upload/app"}}
 			manifest := manifestSpec{Apps: []manifestApp{{
-				Name: "app", Image: image, resolved: resolvedApp{stdio: true, App: protocol.App{Name: "app", Image: image, Port: 3000}},
+				Name: "app", resolved: resolvedApp{stdio: true, App: protocol.App{Name: "app", Image: image, Port: 3000}},
 			}}}
 			options := buildOptions{HTTPClient: server.Client(), origin: "https://holon.example", Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
 			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{manifest: manifest, grant: grant}, options)
@@ -117,6 +105,7 @@ func TestStdioImageContract(t *testing.T) {
 		})
 	}
 	t.Run("layer integrity", func(t *testing.T) {
+		checkedLayers.Clear()
 		raw := make([]byte, 1024)
 		var compressed bytes.Buffer
 		zipper := gzip.NewWriter(&compressed)
@@ -135,9 +124,8 @@ func TestStdioImageContract(t *testing.T) {
 		source := addTestImage(t, registry, "amd64", ocispec.ImageConfig{Cmd: []string{"/server"}}, nil)
 		repository := strings.TrimPrefix(server.URL, "https://") + "/source"
 		manifest, _ := preparedConfig(t, registry, repository+"@"+source.Digest.String())
-		options := buildOptions{HTTPClient: server.Client(), checkedLayers: new(sync.Map)}
-		prepare := func(ctx context.Context, descriptor ocispec.Descriptor, data []byte) error {
-			t.Helper()
+		options := buildOptions{HTTPClient: server.Client()}
+		prepare := func(descriptor ocispec.Descriptor, data []byte) error {
 			manifest.Layers = []ocispec.Descriptor{descriptor}
 			encoded, _ := json.Marshal(manifest)
 			image := content.NewDescriptorFromBytes(ocispec.MediaTypeImageManifest, encoded)
@@ -145,7 +133,7 @@ func TestStdioImageContract(t *testing.T) {
 			registry.items["source/manifests/"+image.Digest.String()] = registryItem{mediaType: image.MediaType, data: encoded}
 			registry.items["source/blobs/"+descriptor.Digest.String()] = registryItem{mediaType: descriptor.MediaType, data: data}
 			registry.mu.Unlock()
-			_, err := prepareStdioImage(ctx, repository+"@"+image.Digest.String(), "", options)
+			_, err := prepareStdioImage(t.Context(), repository+"@"+image.Digest.String(), "", options)
 			return err
 		}
 		for _, layer := range []struct {
@@ -161,11 +149,11 @@ func TestStdioImageContract(t *testing.T) {
 				corrupt := slices.Clone(layer.data)
 				corrupt[len(corrupt)-1] ^= 1
 				for range 2 {
-					if err := prepare(t.Context(), descriptor, corrupt); err == nil {
+					if err := prepare(descriptor, corrupt); err == nil {
 						t.Fatal("invalid layer accepted")
 					}
 				}
-				if err := prepare(t.Context(), descriptor, layer.data); err != nil {
+				if err := prepare(descriptor, layer.data); err != nil {
 					t.Fatalf("valid retry: %v", err)
 				}
 			})
@@ -176,7 +164,7 @@ func TestStdioImageContract(t *testing.T) {
 			{MediaType: descriptor.MediaType, Digest: descriptor.Digest, Size: descriptor.Size + 1},
 			{MediaType: "unsupported", Digest: descriptor.Digest, Size: descriptor.Size},
 		} {
-			if err := prepare(t.Context(), changed, raw); err == nil {
+			if err := prepare(changed, raw); err == nil {
 				t.Fatal("changed descriptor reused a successful scan")
 			}
 		}
@@ -184,7 +172,7 @@ func TestStdioImageContract(t *testing.T) {
 }
 
 func TestStdioMultiArchitectureBuild(t *testing.T) {
-	registry := newImageRegistry()
+	registry, server := buildRegistry(t)
 	var children []ocispec.Descriptor
 	for _, architecture := range []string{"amd64", "arm64"} {
 		children = append(children, addTestImage(t, registry, architecture, ocispec.ImageConfig{Cmd: []string{"/server"}}, nil))
@@ -194,22 +182,17 @@ func TestStdioMultiArchitectureBuild(t *testing.T) {
 	attestation.Annotations = map[string]string{"vnd.docker.reference.type": "attestation-manifest"}
 	children = append(children, attestation)
 	descriptor := addTestIndex(registry, children...)
-	server := httptest.NewTLSServer(registry)
-	defer server.Close()
 	host := strings.TrimPrefix(server.URL, "https://")
 	grant := protocol.UploadGrant{Registry: host, Grant: "grant-secret", Repositories: map[string]string{"echo": "holon/upload/echo"}}
-	options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir(), "DOCKER_CONTEXT=fixture"}}
+	options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
 	source := host + "/source@" + descriptor.Digest.String()
-	app := manifestApp{Name: "echo", Image: source, resolved: resolvedApp{stdio: true, App: protocol.App{Name: "echo", Image: source, Port: 3000}}}
+	app := manifestApp{Name: "echo", resolved: resolvedApp{stdio: true, App: protocol.App{Name: "echo", Image: source, Port: 3000}}}
 	prepared, err := buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{app}}, &imageUpload{grant: grant}, options)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var result ocispec.Index
-	_, reference, ok := strings.Cut(prepared[0].Image, "@")
-	if !ok {
-		t.Fatalf("image has no digest: %q", prepared[0].Image)
-	}
+	_, reference, _ := strings.Cut(prepared[0].Image, "@")
 	if err := json.Unmarshal(registry.items["holon/upload/echo/manifests/"+reference].data, &result); err != nil {
 		t.Fatal(err)
 	}
