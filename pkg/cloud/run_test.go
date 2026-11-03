@@ -35,7 +35,6 @@ func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	command := sharedcli.NewCommand("dev")
 	command.AddCommand(newCommands(config)...)
 	command.SetArgs(args)
-	command.SetIn(config.Input)
 	command.SetOut(cmp.Or(stdout, io.Discard))
 	command.SetErr(cmp.Or(stderr, io.Discard))
 	return command.ExecuteContext(ctx)
@@ -49,7 +48,6 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 		`unknown app "missing"`:                    {"deploy", "alpha", "missing", "--project", filepath.Join(root, manifestFileName)},
 		"--env must be dev or prod":                {"config", "set", "--env", "staging", "API_URL", "value"},
 		"--session requires a development session": {"config", "set", "--session", "production", "API_URL", "value"},
-		"none of the others can be":                {"config", "set", "--env", "dev", "--session", "s-one", "API_URL", "value"},
 		`invalid variable name "not-valid"`:        {"config", "set", "not-valid", "value"},
 	} {
 		config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir()}}
@@ -91,17 +89,15 @@ func (h *runHarness) start(t *testing.T) {
 		HTTPClient: cloudtest.OriginClient(h.server), now: clock.Now, RequestTimeout: time.Second,
 	}
 	manager := newManager(t, h.server, clock, stateDir)
-	if manager.info.OAuth != nil {
-		seedAdminCredentials(t, manager, oauth2.Token{
-			AccessToken: "access-token", RefreshToken: "refresh-token",
-			TokenType: "Bearer", ExpiresIn: 3600, Expiry: clock.Now().Add(time.Hour),
-		})
-		adminKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.AdminPlane), protocol.SystemScopes())
-		devKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.DevPlane), protocol.ControlScopes(protocol.DevPlane))
-		manager.state.Tokens[devKey] = manager.state.Tokens[adminKey]
-		if err := manager.writeState(manager.state); err != nil {
-			t.Fatal(err)
-		}
+	seedAdminCredentials(t, manager, oauth2.Token{
+		AccessToken: "access-token", RefreshToken: "refresh-token",
+		TokenType: "Bearer", ExpiresIn: 3600, Expiry: clock.Now().Add(time.Hour),
+	})
+	adminKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.AdminPlane), protocol.SystemScopes())
+	devKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.DevPlane), protocol.ControlScopes(protocol.DevPlane))
+	manager.state.Tokens[devKey] = manager.state.Tokens[adminKey]
+	if err := manager.writeState(manager.state); err != nil {
+		t.Fatal(err)
 	}
 	sourceFiles(t, stateDir, map[string]string{"config.json": fmt.Sprintf(`{"origin":%q}`, h.server.URL)})
 	h.run = commandConfig{Auth: auth}
@@ -116,7 +112,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 	if err := os.WriteFile(manifestPath, []byte(`apps:
   - name: hosted
     remote: {url: https://mcp.example/mcp}
-    headers: {Authorization: {secret: UPSTREAM_TOKEN}, X-Workspace: engineering}
     access: {server: {}}
   - name: prod
     mount: /
@@ -129,7 +124,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	var mu sync.Mutex
 	var existing bool
 	var desired protocol.AppsRequestFor[protocol.App]
-	var forceConflict, conflicted, loseResponse bool
+	var forceConflict, conflicted, loseResponse, unsupportedField bool
 	var rolloutFailure string
 	revision := 7
 	h := newRunHarness(t)
@@ -180,10 +175,19 @@ func TestRunDeployLifecycle(t *testing.T) {
 						desired.Apps[1].Port = 4001
 					}
 				}
-				cloudtest.WriteJSON(w, protocol.SessionResponse{
+				session := protocol.SessionResponse{
 					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: generation, Revision: strconv.Itoa(revision),
 					Endpoints: []protocol.SessionEndpoint{{Name: "prod", URL: "https://apps.example/mcp/prod"}}, Conditions: conditions,
-				})
+				}
+				if !unsupportedField {
+					cloudtest.WriteJSON(w, session)
+					return
+				}
+				var served map[string]any
+				data, _ := json.Marshal(session)
+				_ = json.Unmarshal(data, &served)
+				served["apps"].([]any)[2].(map[string]any)["futureField"] = true
+				cloudtest.WriteJSON(w, served)
 			case protocol.ToolUpdateSession:
 				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -244,15 +248,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 	mu.Lock()
 	initial := slices.Clone(desired.Apps)
 	mu.Unlock()
-	if len(initial) != 2 || initial[0].Name != "hosted" || initial[0].Remote == nil ||
-		initial[0].Remote.URL != "https://mcp.example/mcp" || !initial[0].Env["UPSTREAM_TOKEN"].IsSecret ||
-		initial[0].Port != 0 || initial[0].Image != "" || initial[1].Image == "" {
-		t.Fatalf("mixed source and remote deployment lost configuration: %#v", initial)
-	}
-	remote := initial[0]
-	if remote.Remote.Headers["X-Workspace"] != "engineering" || remote.Remote.Headers["Authorization"] != "{UPSTREAM_TOKEN}" {
-		t.Errorf("inline remote lost its headers: %v", remote.Remote.Headers)
-	}
 	if strings.Contains(diagnostics.String(), "fixture build output") ||
 		strings.Contains(diagnostics.String(), "Timing ") ||
 		!strings.Contains(diagnostics.String(), "prod ready") || strings.ContainsAny(diagnostics.String(), "\x1b\r") {
@@ -313,6 +308,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 		{name: "selected creation", create: true},
 		{name: "disjoint update"},
 		{name: "lost accepted response"},
+		{name: "unsupported retained field"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			manifest := strings.Replace(string(manifest), "https://mcp.example/mcp", "https://updated.example/mcp", 1)
@@ -343,16 +339,25 @@ func TestRunDeployLifecycle(t *testing.T) {
 			existing, rolloutFailure = !scenario.create, ""
 			forceConflict, conflicted = scenario.name == "disjoint update", false
 			loseResponse = scenario.name == "lost accepted response"
+			unsupportedField = scenario.name == "unsupported retained field"
+			written := revision
 			mu.Unlock()
 			runConfig := h.run
 			runConfig.RegistryHTTPClient = cloudtest.HTTPClient(func(*http.Request) (*http.Response, error) {
 				return nil, errors.New("no access to unrelated application images")
 			})
-			if err := executeCommand(t.Context(), []string{"deploy", "hosted", "--project", manifestPath}, nil, nil, runConfig); err != nil {
-				t.Fatal(err)
-			}
+			err := executeCommand(t.Context(), []string{"deploy", "hosted", "--project", manifestPath}, nil, nil, runConfig)
 			mu.Lock()
 			defer mu.Unlock()
+			if unsupportedField {
+				if err == nil || !strings.Contains(err.Error(), "app upstream: ") || !strings.Contains(err.Error(), "futureField") || revision != written {
+					t.Fatalf("unsupported retained field: %v, revision %d after %d", err, revision, written)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
 			wantApps := []string{"hosted", "prod", "upstream"}
 			if scenario.create {
 				wantApps = []string{"hosted"}

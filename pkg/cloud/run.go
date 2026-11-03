@@ -35,7 +35,6 @@ type commandConfig struct {
 	Auth               ClientConfig
 	Env                []string
 	Clock              clock.WithTicker
-	Input              io.Reader
 	verbose            bool
 	output             *progressOutput
 }

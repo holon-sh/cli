@@ -1,10 +1,10 @@
 package cloud
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -24,8 +24,8 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 	"k8s.io/utils/ptr"
 
+	"github.com/holon-sh/cli/pkg/clientutil"
 	"github.com/holon-sh/cli/pkg/commandenv"
-	"github.com/holon-sh/cli/pkg/oauthclient"
 	"github.com/holon-sh/cli/pkg/protocol"
 )
 
@@ -33,6 +33,9 @@ const (
 	maxOAuthToken = 16 << 10
 	maxStateBytes = 16 << 10
 	accessSafety  = 30 * time.Second
+
+	discoveryTimeout  = 10 * time.Second
+	maxDiscoveryBytes = 64 << 10
 
 	maxTokenLifetimeSeconds = int64(24 * time.Hour / time.Second)
 	maxPollIntervalSeconds  = int64(time.Hour / time.Second)
@@ -151,9 +154,8 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	account := fmt.Sprintf("%x", sha256.Sum256([]byte(manager.client.baseURL)))
-	manager.statePath = filepath.Join(dir, "remotes", account+".tokens.json")
-	return manager, err
+	manager.statePath = filepath.Join(dir, "remotes", clientutil.HashBytes([]byte(manager.client.baseURL))+".tokens.json")
+	return manager, nil
 }
 
 func (m *Client) loginInteractive(ctx context.Context) error {
@@ -214,8 +216,8 @@ func (m *Client) token(ctx context.Context, audience string, scopes []string) (*
 		return nil, err
 	}
 	var token *oauth2.Token
-	if m.machine != nil || cached.RefreshToken != "" {
-		token, err = m.renewToken(ctx, config, audience, cached.RefreshToken)
+	if cached.RefreshToken != "" {
+		token, err = m.renewToken(ctx, config, cached.RefreshToken)
 	} else {
 		token, err = m.deviceToken(ctx, config, audience)
 	}
@@ -228,9 +230,6 @@ func (m *Client) token(ctx context.Context, audience string, scopes []string) (*
 }
 
 func (m *Client) loadCredentials() error {
-	if m.machine != nil {
-		return nil
-	}
 	data, err := readCredentialFile(m.statePath)
 	if err != nil {
 		return err
@@ -268,22 +267,8 @@ func (m *Client) loadCredentials() error {
 	return nil
 }
 
-func (m *Client) renewToken(ctx context.Context, config *oauth2.Config, audience, refreshToken string) (*oauth2.Token, error) {
+func (m *Client) renewToken(ctx context.Context, config *oauth2.Config, refreshToken string) (*oauth2.Token, error) {
 	ctx = m.oauthContext(ctx)
-	if m.machine != nil {
-		credentials := *m.machine
-		credentials.Scopes, credentials.TokenURL = config.Scopes, config.Endpoint.TokenURL
-		credentials.EndpointParams = url.Values{"resource": {audience}}
-		token, err := credentials.Token(ctx)
-		if err != nil {
-			return nil, cmp.Or(ctx.Err(), errOAuthFailed)
-		}
-		token.ExpiresIn = int64((time.Until(token.Expiry) + time.Second - 1) / time.Second)
-		if !validOAuthToken(token) {
-			return nil, errMalformedResponse
-		}
-		return token, nil
-	}
 	// TokenSource retains an omitted refresh token per [RFC 6749 §6].
 	//
 	// [RFC 6749 §6]: https://www.rfc-editor.org/rfc/rfc6749.html#section-6
@@ -306,25 +291,42 @@ func (m *Client) logout(ctx context.Context) error {
 }
 
 func (m *Client) oauthConfig(ctx context.Context, scopes []string) (*oauth2.Config, error) {
-	client, _ := oauthclient.HTTPClient("", m.client.client)
+	client := *m.client.client
+	client.Timeout = discoveryTimeout
+	client.Transport = boundedTransport{base: cmp.Or(client.Transport, http.DefaultTransport)}
 	// This library uses [OIDC Discovery §4], whose well-known path differs from RFC 8414 for path issuers.
 	//
 	// [OIDC Discovery §4]: https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfig
-	metadata, err := oidcclient.Discover(ctx, m.info.OAuth.Issuer, client)
+	metadata, err := oidcclient.Discover(ctx, m.info.OAuth.Issuer, &client)
 	if err != nil {
 		return nil, cmp.Or(ctx.Err(), fmt.Errorf("OIDC discovery: %w", errOAuthFailed))
 	}
-	if !oauthclient.HTTPSURL(metadata.TokenEndpoint) ||
-		metadata.DeviceAuthorizationEndpoint != "" && !oauthclient.HTTPSURL(metadata.DeviceAuthorizationEndpoint) {
+	if !httpsURL(metadata.TokenEndpoint) ||
+		metadata.DeviceAuthorizationEndpoint != "" && !httpsURL(metadata.DeviceAuthorizationEndpoint) {
 		return nil, errMalformedResponse
 	}
-	if m.machine == nil {
-		scopes = append([]string{"openid", "offline_access"}, scopes...)
-	}
 	return &oauth2.Config{
-		ClientID: m.info.OAuth.CLIClientID, Scopes: scopes,
+		ClientID: m.info.OAuth.CLIClientID, Scopes: append([]string{"openid", "offline_access"}, scopes...),
 		Endpoint: oauth2.Endpoint{TokenURL: metadata.TokenEndpoint, DeviceAuthURL: metadata.DeviceAuthorizationEndpoint, AuthStyle: oauth2.AuthStyleInParams},
 	}, nil
+}
+
+type boundedTransport struct {
+	base http.RoundTripper
+}
+
+func (t boundedTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := t.base.RoundTrip(request)
+	if err != nil {
+		return nil, err
+	}
+	body, err := clientutil.ReadLimited(response.Body, maxDiscoveryBytes)
+	_ = response.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	response.Body = io.NopCloser(bytes.NewReader(body))
+	return response, nil
 }
 
 func (m *Client) oauthContext(ctx context.Context) context.Context {
@@ -376,9 +378,6 @@ func (m *Client) withLock(ctx context.Context, fn func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if m.machine != nil {
-		return fn()
-	}
 	if err := os.MkdirAll(filepath.Dir(m.statePath), privateDirPerm); err != nil {
 		return errCredentialUnavailable
 	}
@@ -399,7 +398,7 @@ func readPrivateFile(path string) ([]byte, error) {
 		return nil, errCredentialUnavailable
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || len(data) > maxStateBytes {
+	if err != nil {
 		return nil, errCredentialUnavailable
 	}
 	return data, nil
@@ -407,9 +406,6 @@ func readPrivateFile(path string) ([]byte, error) {
 
 func writePrivateFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if len(data) > maxStateBytes {
-		return errCredentialUnavailable
-	}
 	if err := os.MkdirAll(dir, privateDirPerm); err != nil {
 		return errCredentialUnavailable
 	}
@@ -432,7 +428,7 @@ func (m *Client) deviceToken(ctx context.Context, config *oauth2.Config, audienc
 	}
 	validUserCode := device.UserCode != "" && len(device.UserCode) <= 512 &&
 		!strings.ContainsFunc(device.UserCode, func(r rune) bool { return r < 0x20 || r == 0x7f })
-	if !oauthclient.HTTPSURL(device.VerificationURI) || !validUserCode || !validToken(device.DeviceCode) ||
+	if !httpsURL(device.VerificationURI) || !validUserCode || !validToken(device.DeviceCode) ||
 		time.Until(device.Expiry) <= 0 || time.Until(device.Expiry) > 24*time.Hour ||
 		device.Interval < 0 || device.Interval > maxPollIntervalSeconds {
 		return nil, errMalformedResponse
@@ -454,9 +450,6 @@ func (m *Client) deviceToken(ctx context.Context, config *oauth2.Config, audienc
 }
 
 func (m *Client) controlToken(ctx context.Context, plane protocol.Plane) (string, error) {
-	if plane != protocol.AdminPlane && plane != protocol.DevPlane {
-		return "", errInvalidRequestPath
-	}
 	token, err := m.resourceToken(ctx, m.audience(plane), protocol.ControlScopes(plane))
 	if err != nil || token == nil {
 		return "", err
@@ -468,12 +461,15 @@ func (m *Client) resourceToken(ctx context.Context, audience string, scopes []st
 	if m.info.OAuth == nil {
 		return nil, nil
 	}
+	if m.machine != nil {
+		return m.machineToken(ctx, audience, scopes)
+	}
 	var result *oauth2.Token
 	err := m.withLock(ctx, func() error {
 		initial := m.state.Version == ""
 		var err error
 		result, err = m.token(ctx, audience, scopes)
-		if initial && m.machine == nil &&
+		if initial &&
 			(errors.Is(err, errNotAuthenticated) || errors.Is(err, errEndpointChanged) || errors.Is(err, errReauthenticationRequired)) {
 			err = m.login(ctx, audience, scopes)
 			result = m.state.Tokens[tokenKey(m.info.OAuth.Issuer, audience, scopes)]
@@ -483,14 +479,37 @@ func (m *Client) resourceToken(ctx context.Context, audience string, scopes []st
 	return result, err
 }
 
+func (m *Client) machineToken(ctx context.Context, audience string, scopes []string) (*oauth2.Token, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := tokenKey(m.info.OAuth.Issuer, audience, scopes)
+	if cached := m.state.Tokens[key]; cached != nil && cached.Expiry.After(m.now().Add(accessSafety)) {
+		return cached, nil
+	}
+	config, err := m.oauthConfig(ctx, scopes)
+	if err != nil {
+		return nil, err
+	}
+	credentials := *m.machine
+	credentials.Scopes, credentials.TokenURL = scopes, config.Endpoint.TokenURL
+	credentials.EndpointParams = url.Values{"resource": {audience}}
+	token, err := credentials.Token(m.oauthContext(ctx))
+	if err != nil {
+		return nil, cmp.Or(ctx.Err(), errOAuthFailed)
+	}
+	token.ExpiresIn = int64((time.Until(token.Expiry) + time.Second - 1) / time.Second)
+	if !validOAuthToken(token) {
+		return nil, errMalformedResponse
+	}
+	token.Expiry = m.now().Add(time.Duration(token.ExpiresIn) * time.Second)
+	m.state.Tokens[key] = token
+	return token, nil
+}
+
 func (m *Client) Call(ctx context.Context, plane protocol.Plane, tool string, input, output any) error {
 	token, err := m.controlToken(ctx, plane)
 	if err != nil {
 		return err
 	}
 	return m.client.Call(ctx, plane, token, tool, input, output)
-}
-
-func (m *Client) Issuer() string {
-	return ptr.Deref(m.info.OAuth, protocol.OAuthInfo{}).Issuer
 }
