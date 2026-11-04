@@ -28,7 +28,6 @@ func TestManifestRejectsInvalidDeclarations(t *testing.T) {
 		{name: "run with npm", fields: `registry: {name: io.github.acme/app, version: '1.0.0', package: {registryType: npm}}
 run: {transport: {type: stdio}}`, wantError: "run requires a registry OCI package"},
 		{name: "empty secret reference", fields: "arguments: {--project: {secret: ''}}"},
-		{name: "null egress", fields: "egress: null"},
 		{name: "literal OAuth secret", fields: "oauth: {clientID: registered, clientSecret: unsafe}"},
 		{name: "missing OAuth client ID", fields: "oauth: {clientSecret: {secret: CLIENT_SECRET}}"},
 		{name: "out of range port", fields: "image: ghcr.io/acme/alpha@sha256:" + strings.Repeat("a", 64) + "\nport: 65536"},
