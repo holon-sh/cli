@@ -11,10 +11,10 @@ github.com/google/jsonschema-go v0.4.3 h1:/DBOLZTfDow7pe2GmaJNhltueGTtDKICi8V8p+
 github.com/google/jsonschema-go v0.4.3/go.mod h1:r5quNTdLOYEz95Ru18zA0ydNbBuYoo9tgaYcxEYhJVE=
 github.com/holon-sh/mcp-bridge v0.0.4 h1:0RSEvt9u0y6YMo2zuPsi6VFj4q52+hKy6DuUTnOIBuA=
 github.com/holon-sh/mcp-bridge v0.0.4/go.mod h1:4Zj3W5TYQhZ4kENbZhXMZmspaqnXmQYYxaLw9GHIYVM=
-github.com/hughhan1/protocol-private v0.0.0-20261104024740-e6be7e8561be h1:zZJAmX38HxJzMwOVZhMjpFBZszSBDOWmksZG68HL0k8=
-github.com/hughhan1/protocol-private v0.0.0-20261104024740-e6be7e8561be/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
-github.com/hughhan1/runtime-private v0.0.0-20261104025022-3926d2564c82 h1:MCK5W5Td+3zOcRKScXCXelCnWzzK62oshjcMHPRoNhg=
-github.com/hughhan1/runtime-private v0.0.0-20261104025022-3926d2564c82/go.mod h1:viFKKfPLqc4cpVW1lEB4u5n8eo1mJT5BWL8fKMVYu5w=
+github.com/holon-sh/protocol v0.0.1-dev.3 h1:GzeO+Co6379eMGhFePjHZRoOn+cq0blO+CdqY8wX3aE=
+github.com/holon-sh/protocol v0.0.1-dev.3/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
+github.com/holon-sh/runtime v0.0.1-dev.1 h1:nDTNmScIpR357EmRt1+UHkXzVD4ulfZHrJu93Jvqfjo=
+github.com/holon-sh/runtime v0.0.1-dev.1/go.mod h1:kr98Sn0Mr544NNAc+ZdeVLeKXyzLHiBjsPUIR+66iME=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/moby/patternmatcher v0.6.1 h1:qlhtafmr6kgMIJjKJMDmMWq7WLkKIo23hsrpR3x084U=

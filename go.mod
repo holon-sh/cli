@@ -16,7 +16,7 @@ require (
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/holon-sh/mcp-bridge v0.0.4 // indirect
-	github.com/holon-sh/protocol v0.0.1-dev.1 // indirect
+	github.com/holon-sh/protocol v0.0.1-dev.3 // indirect
 	github.com/holon-sh/runtime v0.0.1-dev.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
@@ -28,9 +28,5 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
-
-replace github.com/holon-sh/protocol => github.com/hughhan1/protocol-private v0.0.0-20261104024740-e6be7e8561be
-
-replace github.com/holon-sh/runtime => github.com/hughhan1/runtime-private v0.0.0-20261104025022-3926d2564c82
 
 tool github.com/holon-sh/runtime/cmd/holon-mcp-runtime
