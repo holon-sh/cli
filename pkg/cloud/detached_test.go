@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func TestDetachedDevLifecycle(t *testing.T) {

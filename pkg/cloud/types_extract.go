@@ -17,7 +17,7 @@ import (
 
 	"github.com/holon-sh/cli/pkg/typegen"
 
-	"github.com/holon-sh/cli/pkg/commandenv"
+	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
 )
 

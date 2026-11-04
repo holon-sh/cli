@@ -18,8 +18,8 @@ import (
 
 	"k8s.io/utils/ptr"
 
-	"github.com/holon-sh/cli/pkg/clientutil"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/cli/internal/clientutil"
+	"github.com/holon-sh/protocol"
 )
 
 const (

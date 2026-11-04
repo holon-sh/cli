@@ -42,11 +42,11 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	registryauth "oras.land/oras-go/v2/registry/remote/auth"
 
+	"github.com/holon-sh/cli/internal/clientutil"
+	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
-	"github.com/holon-sh/cli/pkg/clientutil"
-	"github.com/holon-sh/cli/pkg/commandenv"
 	"github.com/holon-sh/cli/pkg/ociimage"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func publishSource(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/holon-sh/cli/pkg/appartifact"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func publishAppBuild(ctx context.Context, app manifestApp, image string, grant protocol.UploadGrant, options buildOptions) error {

@@ -19,7 +19,7 @@ import (
 	"golang.org/x/term"
 	"k8s.io/utils/clock"
 
-	"github.com/holon-sh/cli/pkg/clientutil"
+	"github.com/holon-sh/cli/internal/clientutil"
 )
 
 type progressState = tea.ProgramState

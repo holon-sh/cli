@@ -3,7 +3,7 @@ package cloud
 import (
 	"os"
 
-	"github.com/holon-sh/cli/pkg/clientutil"
+	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 )
 

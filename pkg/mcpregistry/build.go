@@ -3,7 +3,7 @@ package mcpregistry
 import (
 	"maps"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func BuildRecord(app protocol.App, catalogEnv map[string]protocol.Input, descriptor *Descriptor) protocol.BuildRecord {

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func TestDockerSourceBuildFailures(t *testing.T) {

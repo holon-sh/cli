@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/holon-sh/cli/pkg/commandenv"
+	"github.com/holon-sh/cli/internal/commandenv"
 )
 
 func dockerTest(t *testing.T, args ...string) string {

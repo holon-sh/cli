@@ -31,7 +31,7 @@ import (
 	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer, config commandConfig) error {

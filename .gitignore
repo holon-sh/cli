@@ -7,4 +7,3 @@ node_modules/
 .ruff_cache/
 tooling/python/uv.lock
 /pkg/cloud/bridge-payloads/linux-*
-/pkg/host/javascript/.host-test

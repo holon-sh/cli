@@ -5,7 +5,6 @@ go 1.27.0
 require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.0
-	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/containerd/containerd/v2 v2.3.6
 	github.com/containerd/errdefs v1.0.0
@@ -15,8 +14,9 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
-	github.com/holon-sh/cli/pkg/oauthscope v0.0.1
 	github.com/holon-sh/mcp-bridge v0.0.4
+	github.com/holon-sh/protocol v0.0.1-dev.1
+	github.com/holon-sh/runtime v0.0.1-dev.1
 	github.com/moby/buildkit v0.33.1
 	github.com/moby/patternmatcher v0.6.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
@@ -29,7 +29,6 @@ require (
 	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd
 	github.com/tonistiigi/fsutil v0.0.0-20260819142231-83cac42c1c52
 	github.com/zitadel/oidc/v3 v3.51.11
-	golang.org/x/net v0.59.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/term v0.46.0
@@ -110,6 +109,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
@@ -120,3 +120,9 @@ require (
 	gotest.tools/v3 v3.5.2 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 )
+
+replace github.com/holon-sh/protocol => github.com/hughhan1/protocol-private v0.0.0-20261104024740-e6be7e8561be
+
+replace github.com/holon-sh/runtime => github.com/hughhan1/runtime-private v0.0.0-20261104025022-3926d2564c82
+
+tool github.com/holon-sh/runtime/cmd/holon-mcp-runtime
