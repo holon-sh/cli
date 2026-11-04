@@ -29,7 +29,6 @@ type manifestSpec struct {
 	sources  []manifestApp
 	access   *protocol.AppAccess
 	deployed map[string]*protocol.AppAccess
-	retained map[string]protocol.App
 }
 
 type packageRun struct {

@@ -259,7 +259,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		creates++
-		created, served = input.Apps, input.Apps
+		created, served = input.Apps, slices.Clone(input.Apps)
 		if !ambiguous {
 			installationtest.WriteJSON(w, session())
 			return
@@ -286,8 +286,10 @@ func TestRunDevLifecycle(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 					t.Error(err)
 				}
-				served = input.Desired.Apps
-				updates = append(updates, served)
+				for _, app := range input.Desired.Apps {
+					served[slices.IndexFunc(served, func(old protocol.App) bool { return old.Name == app.Name })] = app
+				}
+				updates = append(updates, input.Desired.Apps)
 			case unavailable:
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return
@@ -368,7 +370,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(created) != 2 || !strings.HasPrefix(created[0].Image, "registry.example/holon/upload/alpha@sha256:") || deletes != 1 {
 			t.Fatalf("session apps = %#v, deletes = %d", created, deletes)
 		}
-		if len(updates) != 1 || updates[0][0].Image == created[0].Image || updates[0][1].Image != created[1].Image {
+		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
 		if strings.Count(stdout.String(), "trace_id=aaaa") != 1 || strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
@@ -618,7 +620,8 @@ func TestRunDeployLifecycle(t *testing.T) {
 	var mu sync.Mutex
 	var existing bool
 	var desired protocol.AppsRequestFor[protocol.App]
-	var forceConflict, loseResponse, unsupportedField bool
+	var written []protocol.App
+	var forceConflict, loseResponse bool
 	var rolloutFailure string
 	revision := 7
 	h := newRunHarness(t)
@@ -636,17 +639,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || len(input.Apps) == 0 {
 			t.Fatalf("production upload = %#v, %v", input, err)
 		}
-
-		mu.Lock()
-		if forceConflict {
-			for i := range desired.Apps {
-				if desired.Apps[i].Name == "prod" {
-					desired.Apps[i].Port = 4000
-				}
-			}
-			revision++
-		}
-		mu.Unlock()
 		installationtest.WriteJSON(
 			w,
 			map[string]any{
@@ -680,24 +672,24 @@ func TestRunDeployLifecycle(t *testing.T) {
 						desired.Apps[1].Port = 4001
 					}
 				}
-				session := protocol.SessionResponse{
+				installationtest.WriteJSON(w, protocol.SessionResponse{
 					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: generation, Revision: strconv.Itoa(revision),
 					Endpoints: []protocol.SessionEndpoint{{Name: "prod", URL: "https://apps.example/mcp/prod"}}, Conditions: conditions,
-				}
-				if !unsupportedField {
-					installationtest.WriteJSON(w, session)
-					return
-				}
-				var served map[string]any
-				data, _ := json.Marshal(session)
-				_ = json.Unmarshal(data, &served)
-				served["apps"].([]any)[2].(map[string]any)["futureField"] = true
-				installationtest.WriteJSON(w, served)
+				})
 			case protocol.ToolUpdateSession:
 				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 					t.Error(err)
 					return
+				}
+				if forceConflict {
+					forceConflict = false
+					for i := range desired.Apps {
+						if desired.Apps[i].Name == "prod" {
+							desired.Apps[i].Port = 4000
+						}
+					}
+					revision++
 				}
 				if existing && input.ExpectedRevision != strconv.Itoa(revision) {
 					w.WriteHeader(http.StatusPreconditionFailed)
@@ -707,7 +699,10 @@ func TestRunDeployLifecycle(t *testing.T) {
 					w.WriteHeader(http.StatusPreconditionFailed)
 					return
 				}
-				desired = input.Desired
+				written = input.Desired.Apps
+				desired.Apps = append(slices.DeleteFunc(desired.Apps, func(app protocol.App) bool {
+					return slices.ContainsFunc(written, func(update protocol.App) bool { return update.Name == app.Name })
+				}), written...)
 				existing = true
 				revision++
 				if loseResponse {
@@ -790,107 +785,27 @@ func TestRunDeployLifecycle(t *testing.T) {
 		{name: "selected creation", args: []string{updated, "--public"}, create: true},
 		{name: "disjoint update", args: []string{updated}},
 		{name: "lost accepted response", args: []string{updated}},
-		{name: "retain dependency without checkout", args: []string{"hosted", "--project", manifestPath}},
-		{name: "unsupported retained field", args: []string{updated}},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			if scenario.name == "retain dependency without checkout" {
-				doc := descriptorDocument("hosted")
-				delete(doc, "packages")
-				doc["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://updated.example/mcp"}}
-				doc["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
-					"requires": map[string]protocol.RegistryRef{"prod": {Name: "io.github.acme/prod", Version: "1.4.2"}},
-				}}}
-				source := descriptorRegistry(t, doc)
-				source.Remote = &struct{}{}
-				declarations := manifestSpec{
-					Apps: []manifestApp{
-						{Name: "hosted", Registry: source, Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}},
-						{Name: "prod", Path: "./not-checked-out", Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}},
-					},
-				}
-				data, _ := json.Marshal(declarations)
-				if err := os.WriteFile(manifestPath, data, 0o600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			var retainedApps []protocol.App
-			if err := json.Unmarshal(fmt.Appendf(nil, `[
-				{"name":"prod","image":%q,"port":3000,"mount":"/",
-				 "icons":[{"src":"https://example.com/icon.png","mimeType":"image/png","sizes":["48x48"]}],
-				 "oauth":{"clientID":"{CLIENT_ID}","clientSecret":"CLIENT_SECRET"},
-				 "access":{"server":{"oauth":{"scopes":["read"]}},"callers":[],"tools":{"ping":{"oauth":{"scopes":["ping"]}}}},
-				 "args":["--label={LABEL}","--empty={EMPTY}"],"requires":["upstream"],"egress":[],
-				 "env":{"CLIENT_ID":{"isRequired":true},"CLIENT_SECRET":{"isSecret":true},
-				        "LABEL":{"default":"retained"},"EMPTY":{"value":""},"EMPTY_DEFAULT":{"default":""}},
-				 "envTemplates":{"APP_LABEL":"{LABEL}"}},
-				{"name":"upstream","remote":{"url":"https://upstream.example/mcp","headers":{"Authorization":"Bearer {TOKEN}"}},
-				 "access":{"server":{}},"env":{"TOKEN":{"isRequired":true,"isSecret":true}},
-				 "egress":[{"host":"api.example","ports":[443]}]}
-			]`, initial[1].Image), &retainedApps); err != nil {
-				t.Fatal(err)
-			}
-			if scenario.name == "lost accepted response" {
-				retainedApps[1].Egress = nil
-			}
 			mu.Lock()
-			desired = protocol.AppsRequestFor[protocol.App]{Apps: append([]protocol.App{initial[0]}, retainedApps...)}
+			desired = protocol.AppsRequestFor[protocol.App]{Apps: slices.Clone(initial)}
 			existing, rolloutFailure = !scenario.create, ""
 			forceConflict = scenario.name == "disjoint update"
 			loseResponse = scenario.name == "lost accepted response"
-			unsupportedField = scenario.name == "unsupported retained field"
-			written := revision
 			mu.Unlock()
 			runConfig := h.run
-			if scenario.name != "retain dependency without checkout" {
-				runConfig.RegistryHTTPClient = installationtest.HTTPClient(func(*http.Request) (*http.Response, error) {
-					return nil, errors.New("no access to unrelated application images")
-				})
-			}
+			runConfig.RegistryHTTPClient = installationtest.HTTPClient(func(*http.Request) (*http.Response, error) {
+				return nil, errors.New("no access to unrelated application images")
+			})
 			err := executeCommand(t.Context(), append([]string{"deploy"}, scenario.args...), nil, nil, runConfig)
 			mu.Lock()
 			defer mu.Unlock()
-			if unsupportedField {
-				if err == nil || !strings.Contains(err.Error(), "app upstream: ") || !strings.Contains(err.Error(), "futureField") || revision != written {
-					t.Fatalf("unsupported retained field: %v, revision %d after %d", err, revision, written)
-				}
-				return
-			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantApps := []string{"hosted", "prod", "upstream"}
-			if scenario.create {
-				wantApps = []string{"hosted"}
-			}
-			var gotApps []string
-			for _, app := range desired.Apps {
-				gotApps = append(gotApps, app.Name)
-			}
-			slices.Sort(gotApps)
-			if !slices.Equal(gotApps, wantApps) {
-				t.Fatalf("selected deployment changed retained topology: got %v, want %v", gotApps, wantApps)
-			}
-			for _, app := range desired.Apps {
-				for _, expected := range retainedApps {
-					if app.Name != expected.Name {
-						continue
-					}
-					if forceConflict && app.Name == "prod" {
-						expected.Port = 4000
-					}
-					if !reflect.DeepEqual(app, expected) {
-						t.Fatalf("selected deployment changed retained %s: got %#v, want %#v", app.Name, app, expected)
-					}
-				}
-				if app.Name == "hosted" {
-					if app.Remote == nil || app.Remote.URL != "https://updated.example/mcp" {
-						t.Fatal("selected app was not updated")
-					}
-					if scenario.name == "retain dependency without checkout" && !slices.Equal(app.Requires, []string{"prod"}) {
-						t.Fatal("deployed app lost its retained dependency")
-					}
-				}
+			if len(written) != 1 || written[0].Name != "hosted" || written[0].Remote == nil ||
+				written[0].Remote.URL != "https://updated.example/mcp" {
+				t.Fatalf("selected deployment wrote %#v, want only the updated hosted app", written)
 			}
 		})
 	}

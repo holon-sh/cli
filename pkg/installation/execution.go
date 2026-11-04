@@ -12,17 +12,11 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-func desiredFor(session protocol.SessionResponse) protocol.AppsRequestFor[protocol.App] {
-	return protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(session.Apps)}
-}
-
 func replaceExecution(ctx context.Context, manager *Client, name string,
-	baseline protocol.SessionResponse, desired protocol.AppsRequestFor[protocol.App], targeted bool) (protocol.SessionResponse,
-	error,
-) {
+	baseline protocol.SessionResponse, desired protocol.AppsRequestFor[protocol.App],
+) (protocol.SessionResponse, error) {
 	current := baseline
-	target := desired
-	target.RequestID = cmp.Or(target.RequestID, strings.ToLower(rand.Text()))
+	desired.RequestID = cmp.Or(desired.RequestID, strings.ToLower(rand.Text()))
 	for range 3 {
 		token, err := manager.controlToken(ctx)
 		if err != nil {
@@ -30,7 +24,7 @@ func replaceExecution(ctx context.Context, manager *Client, name string,
 		}
 		input := protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]{
 			SessionRequest:    protocol.SessionRequest{Session: name},
-			WritePrecondition: protocol.WritePrecondition{ExpectedRevision: current.Revision, CreateOnly: current.Revision == ""}, Desired: target,
+			WritePrecondition: protocol.WritePrecondition{ExpectedRevision: current.Revision, CreateOnly: current.Revision == ""}, Desired: desired,
 		}
 		var accepted protocol.SessionResponse
 		err = manager.client.Call(ctx, ControlPlane(name), token, protocol.ToolUpdateSession, input, &accepted)
@@ -49,7 +43,7 @@ func replaceExecution(ctx context.Context, manager *Client, name string,
 		if current.UID != "" && latest.UID != current.UID {
 			return protocol.SessionResponse{}, errors.New("execution identity changed")
 		}
-		if len(protocol.ChangedApps(latest.Apps, target.Apps)) == 0 {
+		if len(protocol.ChangedApps(namedApps(latest.Apps, desired.Apps), desired.Apps)) == 0 {
 			return retryOperation(ctx, manager, latest)
 		}
 		if !precondition {
@@ -58,21 +52,16 @@ func replaceExecution(ctx context.Context, manager *Client, name string,
 		if baseline.Revision == "" {
 			return protocol.SessionResponse{}, errors.New("execution was created concurrently")
 		}
-		concurrent := protocol.ChangedApps(baseline.Apps, latest.Apps)
-		if !targeted && len(concurrent) != 0 {
-			return protocol.SessionResponse{}, errors.New("execution changed concurrently")
+		if concurrent := protocol.ChangedApps(namedApps(baseline.Apps, desired.Apps), namedApps(latest.Apps, desired.Apps)); len(concurrent) != 0 {
+			return protocol.SessionResponse{}, errors.New("application " + concurrent[0] + " changed concurrently")
 		}
-		merged := desiredFor(latest)
-		for _, appName := range protocol.ChangedApps(baseline.Apps, desired.Apps) {
-			if slices.Contains(concurrent, appName) {
-				return protocol.SessionResponse{}, errors.New("application " + appName + " changed concurrently")
-			}
-			merged.Apps = slices.DeleteFunc(merged.Apps, func(app protocol.App) bool { return app.Name == appName })
-			if index := slices.IndexFunc(desired.Apps, func(app protocol.App) bool { return app.Name == appName }); index >= 0 {
-				merged.Apps = append(merged.Apps, desired.Apps[index])
-			}
-		}
-		current, target = latest, merged
+		current = latest
 	}
 	return protocol.SessionResponse{}, errors.New("execution kept changing after three write attempts")
+}
+
+func namedApps(apps, named []protocol.App) []protocol.App {
+	return slices.DeleteFunc(slices.Clone(apps), func(app protocol.App) bool {
+		return !slices.ContainsFunc(named, func(candidate protocol.App) bool { return candidate.Name == app.Name })
+	})
 }

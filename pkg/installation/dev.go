@@ -183,15 +183,17 @@ func patchSessionImages(
 	if err != nil {
 		return protocol.SessionResponse{}, err
 	}
-	desired := desiredFor(current)
+	rebuilt := make([]protocol.App, 0, len(apps))
 	for _, app := range apps {
-		index := slices.IndexFunc(desired.Apps, func(old protocol.App) bool { return old.Name == app.Name })
+		index := slices.IndexFunc(current.Apps, func(old protocol.App) bool { return old.Name == app.Name })
 		if index < 0 {
 			return protocol.SessionResponse{}, errors.New("application removed during rebuild")
 		}
-		desired.Apps[index].Image = app.Image
+		updated := current.Apps[index]
+		updated.Image = app.Image
+		rebuilt = append(rebuilt, updated)
 	}
-	return replaceExecution(ctx, manager, name, current, desired, true)
+	return replaceExecution(ctx, manager, name, current, protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(rebuilt)})
 }
 
 type devLoop struct {
