@@ -49,7 +49,7 @@ func TestManifestRejectsInvalidDeclarations(t *testing.T) {
 		{name: "multiple sources", fields: "image: ghcr.io/acme/alpha@sha256:" + strings.Repeat("a", 64) + "\nremote: {url: https://mcp.example/mcp}"},
 		{name: "unknown field", fields: "unsupported: true"},
 		{name: "insecure remote", fields: "remote: {url: http://mcp.example/mcp}"},
-		{name: "IP remote", fields: "remote: {url: 'https://10.73.0.3/mcp'}"},
+		{name: "IP remote", fields: "remote: {url: 'https://192.0.2.1/mcp'}"},
 		{name: "run with npm", fields: `registry: {name: io.github.acme/app, version: '1.0.0', package: {registryType: npm}}
 run: {transport: {type: stdio}}`, wantError: "run requires a registry OCI package"},
 		{name: "empty secret reference", fields: "arguments: {--project: {secret: ''}}"},
