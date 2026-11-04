@@ -83,6 +83,7 @@ func TestInstallationCommandErrorsBeforeNetwork(t *testing.T) {
 		},
 		{name: "malformed saved configuration", saved: `{`, want: "read Holon configuration"},
 		{name: "conflicting login targets", args: []string{"login", "https://one.example", "--origin", "https://two.example"}, want: "cannot be combined"},
+		{name: "project flag", args: []string{"config", "delete", "REGION", "--project", manifestFileName}, want: "unknown flag: --project"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

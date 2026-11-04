@@ -87,8 +87,9 @@ func targetForOAuth(info *protocol.OAuthInfo) *credentialTarget {
 }
 
 type Client struct {
-	machine *clientcredentials.Config
-	output  io.Writer
+	hookSent map[string]time.Time
+	machine  *clientcredentials.Config
+	output   io.Writer
 
 	mu        sync.Mutex
 	state     authState
@@ -127,7 +128,7 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 	}
 	manager := &Client{
 		now: config.now, state: authState{Tokens: map[string]*oauth2.Token{}},
-		output: cmp.Or(config.Output, io.Discard),
+		output: cmp.Or(config.Output, io.Discard), hookSent: map[string]time.Time{},
 	}
 	if slices.ContainsFunc(env, func(entry string) bool {
 		key, _, _ := strings.Cut(entry, "=")

@@ -3,6 +3,7 @@ package installation
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/spf13/cobra"
 )
@@ -53,6 +54,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 				return manager.logout(cmd.Context())
 			},
 		},
+		newDeployCommand(&config),
 		newConfigurationCommand("secret", &config),
 		newConfigurationCommand("config", &config),
 	}
@@ -67,4 +69,50 @@ func newCommands(config commandConfig) []*cobra.Command {
 		}
 	}
 	return installationCommands
+}
+
+func newDeployCommand(config *commandConfig) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "deploy [APP...]",
+		Short: "Replace production or update selected applications",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDeploy(cmd.Context(), args, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
+		},
+	}
+	return withProject(withProgress(cmd, config, "Deployment ready"), config)
+}
+
+func withProject(cmd *cobra.Command, config *commandConfig) *cobra.Command {
+	cmd.Flags().StringVarP(&config.file, "project", "p", config.file, "Project config file (default holon.yaml or holon.yml)")
+	cmd.PreRunE = func(_ *cobra.Command, args []string) error {
+		manifest, err := resolveManifestFile(config.file)
+		if err != nil {
+			return err
+		}
+		for _, name := range args {
+			if !slices.ContainsFunc(manifest.Apps, func(app manifestApp) bool { return app.Name == name }) {
+				return fmt.Errorf("unknown app %q in %s", name, manifest.file)
+			}
+		}
+		config.manifest = manifest
+		return nil
+	}
+	return cmd
+}
+
+func withProgress(cmd *cobra.Command, config *commandConfig, message string) *cobra.Command {
+	cmd.Flags().BoolVarP(&config.verbose, "verbose", "v", false, "Show detailed Docker build output")
+	run := cmd.RunE
+	cmd.RunE = func(cmd *cobra.Command, args []string) (result error) {
+		output, renderedOut, renderedErr := newProgressOutput(cmd.OutOrStdout(), cmd.ErrOrStderr(), config.verbose, config.clock())
+		config.output = output
+		config.Auth.Output = renderedErr
+		cmd.SetOut(renderedOut)
+		cmd.SetErr(renderedErr)
+		defer func() {
+			result = errors.Join(result, output.finish(errors.Join(result, cmd.Context().Err()), message))
+		}()
+		return run(cmd, args)
+	}
+	return cmd
 }

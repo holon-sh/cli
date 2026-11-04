@@ -1,10 +1,19 @@
 package installation
 
 import (
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func buildRegistry(t *testing.T) (*imageRegistry, *httptest.Server) {
+	t.Helper()
+	fixture := newImageRegistry()
+	server := httptest.NewTLSServer(fixture)
+	t.Cleanup(server.Close)
+	return fixture, server
+}
 
 func sourceFiles(t *testing.T, root string, files map[string]string) {
 	t.Helper()

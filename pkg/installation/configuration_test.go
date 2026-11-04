@@ -13,6 +13,9 @@ import (
 )
 
 func TestConfigurationCommands(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	sourceFiles(t, dir, map[string]string{manifestFileName: "invalid: project"})
 	h := newRunHarness(t)
 	var sent []string
 	h.control.Handle([]string{protocol.ToolSetValue, protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
