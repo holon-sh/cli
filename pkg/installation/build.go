@@ -30,6 +30,7 @@ type buildOptions struct {
 	architectures []string
 	builder       buildApplication
 	builders      *builderConnections
+	origin        string
 	Stderr        io.Writer
 	Env           []string
 	HTTPClient    *http.Client
@@ -72,9 +73,6 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 				apps[index] = declaration
 				return nil
 			}
-			if app.resolved.stdio {
-				return fmt.Errorf("%s: stdio images are not supported", app.Name)
-			}
 			var image string
 			if app.resolved.Image == "" {
 				image, err = buildSource(ctx, app, upload, options)
@@ -89,6 +87,14 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 						return fmt.Errorf("import %s: %w", app.Name, err)
 					}
 					image = imported
+				}
+				if app.resolved.stdio {
+					options.output.status(app.Name, "adapting", progressWorking)
+					prepared, err := prepareStdioImage(ctx, image, grant.Grant, options)
+					if err != nil {
+						return fmt.Errorf("adapt stdio app %s: %w", app.Name, err)
+					}
+					image = prepared
 				}
 				if options.catalogTag != "" && grant.Grant != "" {
 					return publishAppBuild(ctx, app, image, grant, options)
@@ -158,6 +164,7 @@ func buildManifestImages(
 	options.importPackage = func(ctx context.Context, app manifestApp) (protocol.ResolvedAppBuild, error) {
 		return importRegistryBuild(ctx, manager, ControlPlane(name), app, options.output)
 	}
+	options.origin = manager.client.baseURL
 	options.catalogTag = appartifact.DevelopmentTag
 	if name == protocol.ProductionName {
 		options.catalogTag = appartifact.ReleasePrefix

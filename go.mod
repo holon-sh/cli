@@ -16,6 +16,7 @@ require (
 	github.com/holon-sh/mcp-bridge v0.0.4
 	github.com/holon-sh/protocol v0.0.1-dev.3
 	github.com/holon-sh/runtime v0.0.1-dev.1
+	github.com/klauspost/compress v1.19.2
 	github.com/moby/buildkit v0.33.1
 	github.com/moby/patternmatcher v0.6.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
@@ -70,7 +71,6 @@ require (
 	github.com/in-toto/attestation v1.2.0 // indirect
 	github.com/in-toto/in-toto-golang v0.11.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/moby/locker v1.0.1 // indirect
