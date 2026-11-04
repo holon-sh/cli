@@ -208,7 +208,6 @@ export default createMcpHandler(() => {
 	if err := os.WriteFile(providerPath, []byte(provider), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Dev still rebuilds the generated clients, but a caller's type errors do not block it.
 	options.check = false
 	sourceFiles(t, filepath.Join(root, "checkout"), map[string]string{
 		"server.ts": strings.Replace(caller, "get_order({id})", "get_order({id:42})", 1),
@@ -230,7 +229,6 @@ export default createMcpHandler(() => {
 	if err := os.WriteFile(providerPath, []byte(unreadable), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A dependency whose contract cannot be extracted fails preparation instead of becoming untyped.
 	if _, _, err := prepareManifestTypes(t.Context(), manifest, options); err == nil || !strings.Contains(err.Error(), "contract evaluation has no filesystem") {
 		t.Fatalf("unsupported extraction did not fail preparation: %v", err)
 	}
@@ -291,7 +289,6 @@ async def checkout(id: str) -> float:
 			descriptor.Requires = map[string]protocol.RegistryRef{"orders": {Name: "example.org/orders", Version: "1"}}
 			app.resolved.Requires = []string{"orders"}
 		}
-		// Pin the merged keyword-call runtime until it is released on PyPI.
 		sourceFiles(t, app.Path, map[string]string{
 			"server.py": code,
 			"requirements.txt": "holon-sh @ https://github.com/holon-sh/sdk-py/archive/a27a936f197af164a4c92c593916a64c74e60ad9.tar.gz\n" +

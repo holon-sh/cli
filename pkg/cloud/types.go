@@ -65,7 +65,6 @@ func (w *typeWorkspace) affected(ctx context.Context, app manifestApp, manifest 
 			return false
 		}
 		expected := previous.documents[expectation]
-		// Accepted preparations have already fetched and verified every required document.
 		changes, err := mcptype.Changes(ctx, expected.Metadata, p.metadata)
 		return err != nil || len(changes) != 0
 	})
@@ -109,9 +108,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	manifest.Apps = slices.Clone(manifest.Apps)
 	byApp := map[string]typegen.Source{}
 	var consumers []typegen.Consumer
-	// Only remotes whose schemas a typed caller actually needs are resolved.
 	needed := map[string]bool{}
-	// Registry credentials stay with the platform, which resolves and publishes image contracts itself.
 	typeOptions := typegen.Options{
 		Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.Stderr, Run: options.extractTypes,
 	}
@@ -147,7 +144,6 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 				consumers = append(consumers, consumer)
 			}
 		case app.resolved.Image != "":
-			// Pin the deployment image and pass its already resolved contract to typegen.
 			image, document, err := resolveTypeMetadata(ctx, app.resolved.Image, options)
 			if err != nil {
 				return manifestSpec{}, nil, err
