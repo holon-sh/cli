@@ -1,4 +1,4 @@
-package cloudtest
+package installationtest
 
 import (
 	"bufio"

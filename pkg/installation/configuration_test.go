@@ -1,4 +1,4 @@
-package cloud
+package installation
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
+	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 )
 
@@ -17,8 +17,8 @@ func TestConfigurationCommands(t *testing.T) {
 	var sent []string
 	h.control.Handle([]string{protocol.ToolSetValue, protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		sent = append(sent, strings.TrimSuffix(r.Host, h.baseHost)+" "+cloudtest.ToolName(r)+" "+string(body))
-		cloudtest.WriteJSON(w, struct{}{})
+		sent = append(sent, strings.TrimSuffix(r.Host, h.baseHost)+" "+installationtest.ToolName(r)+" "+string(body))
+		installationtest.WriteJSON(w, struct{}{})
 	})
 	h.start(t)
 	var out bytes.Buffer

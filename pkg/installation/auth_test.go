@@ -1,4 +1,4 @@
-package cloud
+package installation
 
 import (
 	"context"
@@ -25,7 +25,7 @@ import (
 	"golang.org/x/oauth2"
 	testingclock "k8s.io/utils/clock/testing"
 
-	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
+	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 )
 
@@ -33,7 +33,7 @@ func newAuthTestServer(t *testing.T, tokenHandler http.HandlerFunc) *httptest.Se
 	t.Helper()
 	mux := http.NewServeMux()
 	var server *httptest.Server
-	cloudtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, nil, 120, 1, tokenHandler)
+	installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, nil, 120, 1, tokenHandler)
 	server = httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
 	return server
@@ -51,22 +51,22 @@ func TestLogin(t *testing.T) {
 			var server *httptest.Server
 			if tc.bearer == "" {
 				mux.HandleFunc(protocol.APIPathInfo, func(w http.ResponseWriter, r *http.Request) {
-					cloudtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}})
+					installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}})
 				})
 			} else {
-				cloudtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, nil, 120, 1, func(w http.ResponseWriter, _ *http.Request) {
-					cloudtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one", "expires_in": 120})
+				installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, nil, 120, 1, func(w http.ResponseWriter, _ *http.Request) {
+					installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one", "expires_in": 120})
 				})
 			}
-			cloudtest.NewControlFixtures(t, mux).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
+			installationtest.NewControlFixtures(t, mux).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
 				if got := r.Header.Get(protocol.HeaderAuthorization); got != tc.bearer {
 					t.Errorf("authorization = %q, want %q", got, tc.bearer)
 				}
-				cloudtest.WriteJSON(w, struct{}{})
+				installationtest.WriteJSON(w, struct{}{})
 			})
 			server = httptest.NewTLSServer(mux)
 			t.Cleanup(server.Close)
-			config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: cloudtest.OriginClient(server)}}
+			config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)}}
 			var output, progress strings.Builder
 			for _, args := range [][]string{{"login", server.URL}, {"login"}, {"config", "delete", "REGION", "--env", "prod"}} {
 				if err := executeCommand(t.Context(), args, &output, &progress, config); err != nil {
@@ -118,11 +118,11 @@ func TestCredentialChanges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			server := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-				cloudtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-secret", "expires_in": 120})
+				installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-secret", "expires_in": 120})
 			})
 			config := ClientConfig{
 				Origin:    server.URL,
-				ConfigDir: t.TempDir(), HTTPClient: cloudtest.OriginClient(server),
+				ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server),
 			}
 			manager, err := NewClient(t.Context(), config)
 			if err != nil {
@@ -177,13 +177,13 @@ func TestDeviceLoginFailures(t *testing.T) {
 				fail := func(w http.ResponseWriter, _ *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
-					cloudtest.WriteJSON(w, map[string]string{"error": test.code, "error_description": "refresh-secret"})
+					installationtest.WriteJSON(w, map[string]string{"error": test.code, "error_description": "refresh-secret"})
 					if test.cancel {
 						cancel()
 					}
 				}
-				cloudtest.MountDeviceAuth(t, mux, func() string { return "https://identity.example/" }, protocol.AdminPlane, nil, test.expires, 1, fail)
-				client := cloudtest.HTTPClient(func(request *http.Request) (*http.Response, error) {
+				installationtest.MountDeviceAuth(t, mux, func() string { return "https://identity.example/" }, protocol.AdminPlane, nil, test.expires, 1, fail)
+				client := installationtest.HTTPClient(func(request *http.Request) (*http.Response, error) {
 					response := httptest.NewRecorder()
 					if request.URL.Path == test.path {
 						fail(response, request)
@@ -249,10 +249,10 @@ func TestRefreshRecovery(t *testing.T) {
 					if !failed.Swap(true) || tc.code == "invalid_grant" {
 						w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
 						w.WriteHeader(tc.status)
-						cloudtest.WriteJSON(w, map[string]string{"error": tc.code})
+						installationtest.WriteJSON(w, map[string]string{"error": tc.code})
 						return
 					}
-					cloudtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "recovered-access", "expires_in": 120})
+					installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "recovered-access", "expires_in": 120})
 					return
 				}
 				access, lifetime := "access-secret", 10
@@ -264,7 +264,7 @@ func TestRefreshRecovery(t *testing.T) {
 						}
 					}
 				}
-				cloudtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": access, "refresh_token": "refresh-one", "expires_in": lifetime})
+				installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": access, "refresh_token": "refresh-one", "expires_in": lifetime})
 			})
 			first := newManager(t, server, clock, dir)
 			if err := first.loginInteractive(t.Context()); err != nil {
@@ -321,10 +321,10 @@ func TestLoginRejectsIncompatibleDiscovery(t *testing.T) {
 					return
 				}
 				origin := "https://" + r.Host
-				_, _ = io.WriteString(w, strings.NewReplacer("ORIGIN", origin, "ADMIN", cloudtest.AdminAudience(origin)).Replace(body))
+				_, _ = io.WriteString(w, strings.NewReplacer("ORIGIN", origin, "ADMIN", installationtest.AdminAudience(origin)).Replace(body))
 			}))
 			t.Cleanup(server.Close)
-			config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: cloudtest.OriginClient(server)}}
+			config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)}}
 			sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://previous.example"}`})
 			if err := executeCommand(t.Context(), []string{"login", server.URL}, nil, nil, config); !errors.Is(err, errMalformedResponse) {
 				t.Fatalf("incompatible discovery: %v", err)
@@ -355,7 +355,7 @@ func TestSavedCredentialMetadata(t *testing.T) {
 				TokenType: "Bearer", ExpiresIn: 3600, Expiry: clock.Now().Add(time.Hour),
 			})
 			tokens, _ := json.Marshal(manager.state.Tokens)
-			oauth := strings.NewReplacer("ISSUER", server.URL+"/", "urn:test", cloudtest.AdminAudience(server.URL)).Replace(tc.document)
+			oauth := strings.NewReplacer("ISSUER", server.URL+"/", "urn:test", installationtest.AdminAudience(server.URL)).Replace(tc.document)
 			data := fmt.Sprintf(`{"version":"test","tokens":%s,"oauth":%s}`, tokens, oauth)
 			if err := writePrivateFile(manager.statePath, []byte(data)); err != nil {
 				t.Fatal(err)
@@ -373,7 +373,7 @@ func machineTestConfig(t *testing.T, server *httptest.Server) commandConfig {
 	return commandConfig{
 		Env: []string{"HOLON_ORIGIN=" + server.URL, "HOLON_CLIENT_ID=ci-deployer", "HOLON_CLIENT_SECRET=ci-secret"},
 		Auth: ClientConfig{
-			HTTPClient: cloudtest.OriginClient(server), ConfigDir: t.TempDir(),
+			HTTPClient: installationtest.OriginClient(server), ConfigDir: t.TempDir(),
 		},
 	}
 }
@@ -396,19 +396,19 @@ func TestMachineCredentials(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
 			var server *httptest.Server
-			server = cloudtest.MachineAuthServer(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.FormValue("resource") != cloudtest.AdminAudience(server.URL) {
+			server = installationtest.MachineAuthServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.FormValue("resource") != installationtest.AdminAudience(server.URL) {
 					t.Error("incorrect machine token audience")
 				}
 				w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
 				w.WriteHeader(scenario.status)
 				_, _ = io.WriteString(w, scenario.body)
 			})
-			cloudtest.NewControlFixtures(t, server.Config.Handler.(*http.ServeMux)).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
+			installationtest.NewControlFixtures(t, server.Config.Handler.(*http.ServeMux)).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get(protocol.HeaderAuthorization) != "Bearer machine-token" {
 					t.Error("machine token missing")
 				}
-				cloudtest.WriteJSON(w, struct{}{})
+				installationtest.WriteJSON(w, struct{}{})
 			})
 			config := machineTestConfig(t, server)
 			var output strings.Builder
@@ -433,7 +433,7 @@ func TestMachineCredentials(t *testing.T) {
 		}
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cloudtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}})
+		installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}})
 	}))
 	defer server.Close()
 	if err := executeCommand(t.Context(), []string{"config", "delete", "REGION", "--env", "prod"}, nil, nil, machineTestConfig(t, server)); err == nil ||
@@ -500,7 +500,7 @@ func TestConcurrentAuthenticationProcesses(t *testing.T) {
 				case <-r.Context().Done():
 					return
 				}
-				cloudtest.WriteJSON(w, map[string]any{"access_token": "shared-access", "token_type": "Bearer", "refresh_token": "refresh-two", "expires_in": 3600})
+				installationtest.WriteJSON(w, map[string]any{"access_token": "shared-access", "token_type": "Bearer", "refresh_token": "refresh-two", "expires_in": 3600})
 			})
 			base := server.Config.Handler
 			server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -542,7 +542,7 @@ func TestConcurrentAuthenticationProcesses(t *testing.T) {
 			}
 			<-info
 			other := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-				cloudtest.WriteJSON(w, map[string]any{"access_token": "other-access", "token_type": "Bearer", "refresh_token": "other-refresh", "expires_in": 3600})
+				installationtest.WriteJSON(w, map[string]any{"access_token": "other-access", "token_type": "Bearer", "refresh_token": "other-refresh", "expires_in": 3600})
 			})
 			otherManager, err := NewClient(ctx, ClientConfig{
 				Origin: other.URL, ConfigDir: dir, HTTPClient: other.Client(),
@@ -581,7 +581,7 @@ func TestAuthenticationWaitCancellation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		manager.info.OAuth = &protocol.OAuthInfo{Issuer: "https://identity.example", AdminAudience: cloudtest.AdminAudience(config.Origin), CLIClientID: "cli"}
+		manager.info.OAuth = &protocol.OAuthInfo{Issuer: "https://identity.example", AdminAudience: installationtest.AdminAudience(config.Origin), CLIClientID: "cli"}
 		if err := os.MkdirAll(filepath.Dir(manager.statePath), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -604,9 +604,9 @@ func TestAuthenticationWaitCancellation(t *testing.T) {
 
 func TestControlTokenAudienceAndScopeCache(t *testing.T) {
 	var requests []string
-	server := cloudtest.MachineAuthServer(t, func(w http.ResponseWriter, r *http.Request) {
+	server := installationtest.MachineAuthServer(t, func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.FormValue("resource")+"|"+r.FormValue("scope"))
-		cloudtest.WriteJSON(w, map[string]any{"access_token": fmt.Sprintf("token-%d", len(requests)), "token_type": "Bearer", "expires_in": 3600})
+		installationtest.WriteJSON(w, map[string]any{"access_token": fmt.Sprintf("token-%d", len(requests)), "token_type": "Bearer", "expires_in": 3600})
 	})
 	config := machineTestConfig(t, server)
 	config.Auth.Env = config.Env

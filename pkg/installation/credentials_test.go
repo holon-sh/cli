@@ -1,4 +1,4 @@
-package cloud
+package installation
 
 import (
 	"errors"
@@ -13,7 +13,7 @@ import (
 	"golang.org/x/oauth2"
 	testingclock "k8s.io/utils/clock/testing"
 
-	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
+	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 )
 
@@ -27,7 +27,7 @@ func TestCredentialAudienceIsolation(t *testing.T) {
 		}
 		refresh := r.FormValue("refresh_token")
 		refreshes.Add(1)
-		cloudtest.WriteJSON(w, map[string]any{
+		installationtest.WriteJSON(w, map[string]any{
 			"access_token":  strings.TrimSuffix(refresh, "-refresh") + "-access",
 			"refresh_token": refresh + "-rotated", "token_type": "Bearer", "expires_in": 3600,
 		})

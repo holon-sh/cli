@@ -1,4 +1,4 @@
-package cloud
+package installation
 
 import (
 	"encoding/json"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
+	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 )
 
@@ -43,14 +43,14 @@ func TestClientOriginPrecedence(t *testing.T) {
 			server := httptest.NewTLSServer(mux)
 			t.Cleanup(server.Close)
 			mux.HandleFunc(protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
-				cloudtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: server.URL, UID: "installation"}})
+				installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: server.URL, UID: "installation"}})
 			})
-			cloudtest.NewControlFixtures(t, mux).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, _ *http.Request) {
-				cloudtest.WriteJSON(w, struct{}{})
+			installationtest.NewControlFixtures(t, mux).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, _ *http.Request) {
+				installationtest.WriteJSON(w, struct{}{})
 			})
 			config := commandConfig{
 				Env:  []string{"HOLON_ORIGIN=" + strings.ReplaceAll(tc.environment, "SELECTED", server.URL)},
-				Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: cloudtest.OriginClient(server)},
+				Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)},
 			}
 			sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": "invalid"})
 			args := []string{"config", "delete", "REGION", "--env", "prod"}
@@ -89,7 +89,7 @@ func TestInstallationCommandErrorsBeforeNetwork(t *testing.T) {
 			config := commandConfig{
 				Auth: ClientConfig{
 					ConfigDir: t.TempDir(),
-					HTTPClient: cloudtest.HTTPClient(func(*http.Request) (*http.Response, error) {
+					HTTPClient: installationtest.HTTPClient(func(*http.Request) (*http.Response, error) {
 						t.Error("invalid client configuration contacted a server")
 						return nil, errors.New("unexpected request")
 					}),
