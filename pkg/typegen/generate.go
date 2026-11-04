@@ -56,6 +56,7 @@ func (o Options) defaults() Options {
 type preparedSource struct {
 	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
+	server                                     Server
 	sources                                    map[string]string
 }
 
@@ -82,7 +83,7 @@ func (s *preparedSource) extract(result *extraction) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w; declare the server's name, version and description in its MCP constructor, or add a server.json", s.origin, err)
 		}
-		s.metadata.Identity = descriptor.Identity()
+		s.metadata.Identity, s.server = descriptor.Identity(), descriptor.Server
 	}
 	return nil
 }
@@ -120,6 +121,17 @@ func (p *Prepared) Metadata() map[string]*mcpcontract.Metadata {
 	return result
 }
 
+// Servers returns how each consumer's own server describes itself, by consumer name.
+func (p *Prepared) Servers() map[string]Server {
+	result := map[string]Server{}
+	for _, c := range p.consumers {
+		if c.server != nil {
+			result[c.Name] = c.server.server
+		}
+	}
+	return result
+}
+
 // Documents returns the own and dependency documents by digest, preserving fetched bytes.
 func (p *Prepared) Documents() map[string]*Document { return maps.Clone(p.documents) }
 
@@ -143,7 +155,7 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 		if err != nil {
 			return nil, fmt.Errorf("%s/server.json: %w", origin, err)
 		}
-		s.metadata.Identity = descriptor.Identity()
+		s.metadata.Identity, s.server = descriptor.Identity(), descriptor.Server
 	} else if !errors.Is(err, fs.ErrNotExist) || language == "go" {
 		return nil, fmt.Errorf("%s: %w (a Go server source needs a server.json beside its entry)", origin, err)
 	}
