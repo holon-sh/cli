@@ -45,6 +45,9 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 	if metadata.Identity.Name != "example.com/checkout" || metadata.Schema == nil || len(prepared.Documents()[metadata.Requires["orders"]].Schema.Tools) != 1 {
 		t.Fatalf("consumer metadata = %+v", metadata)
 	}
+	if server := prepared.Servers()["checkout"]; server.Name != "example.com/checkout" || server.Description != "Checkout" {
+		t.Fatalf("checkout server = %+v", server)
+	}
 	stage := t.TempDir()
 	for pkg, write := range map[string]func(string, string) error{"holon-sh": prepared.WriteNodeSlot, "holon-ui": prepared.WriteBrowserSlot} {
 		if err := os.MkdirAll(filepath.Join(stage, pkg), 0o755); err != nil {
@@ -60,6 +63,23 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 	}
 	if browser := read(t, stage, "holon-ui/generated/index.js"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `appClass(identity, contracts, "checkout")`) {
 		t.Fatalf("browser client:\n%s", browser)
+	}
+}
+
+func TestServersDescribeEachConsumersOwnServer(t *testing.T) {
+	chat := t.TempDir()
+	put(t, chat, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
+	put(t, chat, "server.ts", "export default {};\n")
+	info := json.RawMessage(`{"name":"example.com/chat","version":"2.0.0","title":"Chat","description":"Chat with Holon","websiteUrl":"https://example.com/chat"}`)
+	options := Options{Run: fakeRun(map[string]any{"": extraction{ServerInfo: info}})}
+	prepared, err := Prepare(t.Context(), []Consumer{{Name: "chat", Dir: chat, Server: &Source{Path: filepath.Join(chat, "server.ts")}}}, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	want := Server{Name: "example.com/chat", Version: "2.0.0", Title: "Chat", Description: "Chat with Holon", WebsiteURL: "https://example.com/chat"}
+	if got := prepared.Servers()["chat"]; got != want {
+		t.Fatalf("chat server = %+v, want %+v", got, want)
 	}
 }
 
