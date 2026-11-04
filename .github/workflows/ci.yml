@@ -99,6 +99,7 @@ jobs:
         with:
           python-version: '3.11'
           enable-cache: false
+      - run: scripts/third-party-notices
       - run: uv run --with-requirements packaging/requirements.txt python -m unittest discover -s scripts
       - run: uv run --with-requirements packaging/requirements.txt python scripts/package_cli.py --target '${{ matrix.target }}' --version "$VERSION" --format tarball --format wheel --format npm-platform
       - uses: actions/download-artifact@v4
@@ -123,6 +124,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: scripts/third-party-notices
       - uses: actions/setup-node@v7
         with:
           node-version: 22

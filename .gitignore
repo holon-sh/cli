@@ -7,3 +7,4 @@ node_modules/
 .ruff_cache/
 tooling/python/uv.lock
 /pkg/installation/bridge-payloads/linux-*
+THIRD-PARTY-NOTICES
