@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -36,11 +37,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				}
 				var sessions []protocol.SessionResponse
 				if scope == "" {
-					var list struct {
-						Items []protocol.SessionResponse `json:"items"`
-					}
-					err = manager.Call(cmd.Context(), protocol.DevPlane, toolListSessions, struct{}{}, &list)
-					sessions = list.Items
+					sessions, err = listDevSessions(cmd.Context(), manager)
 				} else {
 					var session protocol.SessionResponse
 					session, err = manager.Session(cmd.Context(), string(scope))
@@ -60,47 +57,63 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				return table.Flush()
 			}),
 		withScope(&cobra.Command{Use: "get APP", Short: "Print an app's declaration as YAML", Args: cobra.ExactArgs(1),
-			Example: `  # Print an app's declaration
+			Long: "Print an app's declaration. Without --env or --session, it is printed from every development session that has the app.",
+			Example: `  # Print an app's declaration from every development session
   holon app get chat
 
   # Production, or one development session
   holon app get chat --env prod
   holon app get chat --session my-session`},
 			func(cmd *cobra.Command, args []string, scope configurationScope) error {
-				_, session, index, err := sessionApp(cmd, config, scope, args[0])
+				_, targets, err := sessionApps(cmd, config, scope, args[0])
 				if err != nil {
 					return err
 				}
-				data, err := yaml.Marshal(struct {
-					protocol.App
+				for _, target := range targets {
+					data, err := yaml.Marshal(struct {
+						protocol.App
 
-					EgressRestricted string `json:"egressRestricted,omitempty"`
-				}{session.Apps[index], egressCut(session, args[0])})
-				if err != nil {
-					return err
+						EgressRestricted string `json:"egressRestricted,omitempty"`
+					}{target.session.Apps[target.index], egressCut(target.session, args[0])})
+					if err != nil {
+						return err
+					}
+					if len(targets) > 1 {
+						_, _ = fmt.Fprintf(cmd.OutOrStdout(), "---\n# %s\n", target.label())
+					}
+					if _, err := cmd.OutOrStdout().Write(data); err != nil {
+						return err
+					}
 				}
-				_, err = cmd.OutOrStdout().Write(data)
-				return err
+				return nil
 			}),
 		withScope(&cobra.Command{Use: "remove APP", Short: "Remove an app from a deployment", Args: cobra.ExactArgs(1),
-			Example: `  # Remove an app from production
+			Long: "Remove an app. Without --env or --session, it is removed from every development session that has it.",
+			Example: `  # Remove an app from every development session
+  holon app remove chat
+
+  # Remove an app from production
   holon app remove chat --env prod
 
   # Remove an app from one development session
   holon app remove chat --session my-session`},
 			func(cmd *cobra.Command, args []string, scope configurationScope) error {
-				manager, session, _, err := sessionApp(cmd, config, scope, args[0])
+				manager, targets, err := sessionApps(cmd, config, scope, args[0])
 				if err != nil {
 					return err
 				}
-				request := protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]{Remove: args}
-				request.Session, request.ExpectedRevision = session.Name, session.Revision
-				request.Desired.Apps = []protocol.App{}
-				if err := manager.Call(cmd.Context(), ControlPlane(session.Name), protocol.ToolUpdateSession, request, nil); err != nil {
-					return err
+				for _, target := range targets {
+					request := protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]{Remove: args}
+					request.Session, request.ExpectedRevision = target.session.Name, target.session.Revision
+					request.Desired.Apps = []protocol.App{}
+					if err := manager.Call(cmd.Context(), ControlPlane(target.session.Name), protocol.ToolUpdateSession, request, nil); err != nil {
+						return err
+					}
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Removed %s from %s.\n", args[0], target.label()); err != nil {
+						return err
+					}
 				}
-				_, err = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s from %s.\n", args[0], scope.label())
-				return err
+				return nil
 			}),
 	)
 }
@@ -110,9 +123,9 @@ func newAccessCommand(config *commandConfig) *cobra.Command {
 		withScope(&cobra.Command{
 			Use:   "set APP[/TOOL] public|oauth [SCOPE...]",
 			Short: "Replace an app's server rule, or one tool's rule",
-			Long:  "Replace the server rule of APP, or the rule of APP/TOOL. A tool rule replaces the server rule for that tool.",
+			Long:  "Replace the server rule of APP, or the rule of APP/TOOL. A tool rule replaces the server rule for that tool. Without --env or --session, the rule is replaced in every development session that has the app.",
 			Args:  cobra.MinimumNArgs(2),
-			Example: `  # Require sign-in for an app, with or without scopes
+			Example: `  # Require sign-in for an app in every development session, with or without scopes
   holon access set chat oauth
   holon access set chat oauth app:chat:read
 
@@ -151,7 +164,7 @@ func newAccessCommand(config *commandConfig) *cobra.Command {
 			Use:   "delete APP/TOOL",
 			Short: "Delete a tool rule so the tool follows the server rule",
 			Args:  cobra.ExactArgs(1),
-			Example: `  # Make a tool follow its app's rule again
+			Example: `  # Make a tool follow its app's rule again in every development session
   holon access delete chat/send_message
 
   # Production, or one development session
@@ -177,45 +190,79 @@ func updateAccess(
 	change func(access *protocol.AppAccess, tool string) error,
 ) error {
 	name, tool, _ := strings.Cut(target, "/")
-	manager, session, index, err := sessionApp(cmd, config, scope, name)
+	manager, targets, err := sessionApps(cmd, config, scope, name)
 	if err != nil {
 		return err
 	}
-	app := protocol.WritableApps(session.Apps[index : index+1])[0]
-	access := *app.Access
-	access.Tools = maps.Clone(access.Tools)
-	app.Access = &access
-	if err := change(app.Access, tool); err != nil {
-		return err
+	updates := make([]protocol.App, len(targets))
+	for i, target := range targets {
+		app := protocol.WritableApps(target.session.Apps[target.index : target.index+1])[0]
+		access := *app.Access
+		access.Tools = maps.Clone(access.Tools)
+		app.Access = &access
+		if err := change(app.Access, tool); err != nil {
+			return fmt.Errorf("%s: %w", target.label(), err)
+		}
+		updates[i] = app
 	}
-	if _, err := replaceExecution(cmd.Context(), manager, session.Name, session,
-		protocol.AppsRequestFor[protocol.App]{Apps: []protocol.App{app}}); err != nil {
-		return err
+	for i, target := range targets {
+		if _, err := replaceExecution(cmd.Context(), manager, target.session.Name, target.session,
+			protocol.AppsRequestFor[protocol.App]{Apps: []protocol.App{updates[i]}}); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s access in %s: %s\n", name, target.label(), accessSummary(updates[i].Access)); err != nil {
+			return err
+		}
 	}
-	_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s access in %s: %s\n", name, scope.label(), accessSummary(app.Access))
-	return err
+	return nil
 }
 
-func sessionApp(cmd *cobra.Command, config *commandConfig, scope configurationScope, name string) (*Client, protocol.SessionResponse, int, error) {
-	if scope == "" {
-		return nil, protocol.SessionResponse{}, 0, errors.New("name a development session with --session NAME, or production with --env prod")
+type sessionTarget struct {
+	session protocol.SessionResponse
+	index   int
+}
+
+func (target sessionTarget) label() string {
+	return configurationScope(target.session.Name).label()
+}
+
+func listDevSessions(ctx context.Context, manager *Client) ([]protocol.SessionResponse, error) {
+	var list struct {
+		Items []protocol.SessionResponse `json:"items"`
 	}
+	err := manager.Call(ctx, protocol.DevPlane, toolListSessions, struct{}{}, &list)
+	return list.Items, err
+}
+
+func sessionApps(cmd *cobra.Command, config *commandConfig, scope configurationScope, name string) (*Client, []sessionTarget, error) {
 	if !protocol.ValidAppName(name) {
-		return nil, protocol.SessionResponse{}, 0, fmt.Errorf("invalid app name %q", name)
+		return nil, nil, fmt.Errorf("invalid app name %q", name)
 	}
 	manager, err := NewClient(cmd.Context(), config.Auth)
 	if err != nil {
-		return nil, protocol.SessionResponse{}, 0, err
+		return nil, nil, err
 	}
-	session, err := manager.Session(cmd.Context(), string(scope))
+	var sessions []protocol.SessionResponse
+	if scope == "" {
+		sessions, err = listDevSessions(cmd.Context(), manager)
+	} else {
+		var session protocol.SessionResponse
+		session, err = manager.Session(cmd.Context(), string(scope))
+		sessions = []protocol.SessionResponse{session}
+	}
 	if err != nil {
-		return nil, protocol.SessionResponse{}, 0, err
+		return nil, nil, err
 	}
-	index := slices.IndexFunc(session.Apps, func(app protocol.App) bool { return app.Name == name })
-	if index < 0 {
-		return nil, protocol.SessionResponse{}, 0, fmt.Errorf("app %s is not in %s", name, scope.label())
+	var targets []sessionTarget
+	for _, session := range sessions {
+		if index := slices.IndexFunc(session.Apps, func(app protocol.App) bool { return app.Name == name }); index >= 0 {
+			targets = append(targets, sessionTarget{session, index})
+		}
 	}
-	return manager, session, index, nil
+	if len(targets) == 0 {
+		return nil, nil, fmt.Errorf("app %s is not in %s", name, scope.targetsLabel())
+	}
+	return manager, targets, nil
 }
 
 func appSource(app protocol.App) string {
