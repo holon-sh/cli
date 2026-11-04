@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -77,9 +78,10 @@ func newConfigurationActionCommand(kind, action string, config *commandConfig) *
 		use, argumentCount = "set VARIABLE VALUE", 2
 	}
 	return withScope(&cobra.Command{
-		Use:   use,
-		Short: action + " a " + kind + " value",
-		Args:  cobra.ExactArgs(argumentCount),
+		Use:     use,
+		Short:   action + " a " + kind + " value",
+		Example: configurationExample(kind, action),
+		Args:    cobra.ExactArgs(argumentCount),
 	}, func(cmd *cobra.Command, args []string, scope configurationScope) error {
 		variable, value := args[0], ""
 		if !protocol.ValidEnvName(variable) {
@@ -130,4 +132,24 @@ func runConfiguration(cmd *cobra.Command, kind, action string, scope configurati
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s in %s on %s. Deployments pick this up on their next deploy.\n",
 		verb, kind, variable, scope.label(), manager.client.baseURL)
 	return err
+}
+
+func configurationExample(kind, action string) string {
+	variable, command := "API_KEY", "holon "+kind+" "+action+" API_KEY"
+	if kind == "config" {
+		variable, command = "REGION", "holon config "+action+" REGION"
+		if action == "set" {
+			command += " us-east1"
+		}
+	}
+	title := fmt.Sprintf("%s the %s %s for development", strings.ToUpper(action[:1])+action[1:], kind, variable)
+	if kind == "secret" && action == "set" {
+		title += "; the value is read from the terminal"
+	}
+	return fmt.Sprintf(`  # %s
+  %s
+
+  # Production, or one development session
+  %s --env prod
+  %s --session my-session`, title, command, command, command)
 }

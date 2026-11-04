@@ -28,7 +28,13 @@ type removeAppsRequest struct {
 
 func newAppCommand(config *commandConfig) *cobra.Command {
 	return commandGroup("app", "Inspect and remove deployed apps",
-		withScope(&cobra.Command{Use: "list", Short: "List apps with their source, access and egress", Args: cobra.NoArgs},
+		withScope(&cobra.Command{Use: "list", Short: "List apps with their source, access and egress", Args: cobra.NoArgs,
+			Example: `  # List the apps of every development session
+  holon app list
+
+  # Production, or one development session
+  holon app list --env prod
+  holon app list --session my-session`},
 			func(cmd *cobra.Command, _ []string, scope configurationScope) error {
 				manager, err := NewClient(cmd.Context(), config.Auth)
 				if err != nil {
@@ -59,7 +65,13 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				}
 				return table.Flush()
 			}),
-		withScope(&cobra.Command{Use: "get APP", Short: "Print an app's declaration as YAML", Args: cobra.ExactArgs(1)},
+		withScope(&cobra.Command{Use: "get APP", Short: "Print an app's declaration as YAML", Args: cobra.ExactArgs(1),
+			Example: `  # Print an app's declaration
+  holon app get chat
+
+  # Production, or one development session
+  holon app get chat --env prod
+  holon app get chat --session my-session`},
 			func(cmd *cobra.Command, args []string, scope configurationScope) error {
 				_, session, index, err := sessionApp(cmd, config, scope, args[0])
 				if err != nil {
@@ -76,7 +88,12 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				_, err = cmd.OutOrStdout().Write(data)
 				return err
 			}),
-		withScope(&cobra.Command{Use: "remove APP", Short: "Remove an app from a deployment", Args: cobra.ExactArgs(1)},
+		withScope(&cobra.Command{Use: "remove APP", Short: "Remove an app from a deployment", Args: cobra.ExactArgs(1),
+			Example: `  # Remove an app from production
+  holon app remove chat --env prod
+
+  # Remove an app from one development session
+  holon app remove chat --session my-session`},
 			func(cmd *cobra.Command, args []string, scope configurationScope) error {
 				manager, session, _, err := sessionApp(cmd, config, scope, args[0])
 				if err != nil {
@@ -101,6 +118,19 @@ func newAccessCommand(config *commandConfig) *cobra.Command {
 			Short: "Replace an app's server rule, or one tool's rule",
 			Long:  "Replace the server rule of APP, or the rule of APP/TOOL. A tool rule replaces the server rule for that tool.",
 			Args:  cobra.MinimumNArgs(2),
+			Example: `  # Require sign-in for an app, with or without scopes
+  holon access set chat oauth
+  holon access set chat oauth app:chat:read
+
+  # Let anyone call an app
+  holon access set chat public
+
+  # Replace the rule of one tool
+  holon access set chat/send_message oauth app:chat:write
+
+  # Production, or one development session
+  holon access set chat oauth --env prod
+  holon access set chat oauth --session my-session`,
 		}, func(cmd *cobra.Command, args []string, scope configurationScope) error {
 			rule := protocol.AccessRule{}
 			switch {
@@ -127,6 +157,12 @@ func newAccessCommand(config *commandConfig) *cobra.Command {
 			Use:   "delete APP/TOOL",
 			Short: "Delete a tool rule so the tool follows the server rule",
 			Args:  cobra.ExactArgs(1),
+			Example: `  # Make a tool follow its app's rule again
+  holon access delete chat/send_message
+
+  # Production, or one development session
+  holon access delete chat/send_message --env prod
+  holon access delete chat/send_message --session my-session`,
 		}, func(cmd *cobra.Command, args []string, scope configurationScope) error {
 			return updateAccess(cmd, config, scope, args[0], func(access *protocol.AppAccess, tool string) error {
 				if tool == "" {

@@ -63,7 +63,12 @@ func newEgressCommand(config *commandConfig) *cobra.Command {
 		&cobra.Command{
 			Use:   "get APP|'*'",
 			Short: "Show an app's egress ceiling, or the installation-wide one",
-			Args:  cobra.ExactArgs(1),
+			Example: `  # An app's egress ceiling
+  holon egress get chat
+
+  # The installation-wide ceiling
+  holon egress get '*'`,
+			Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				return runEgressGet(cmd, config, args[0])
 			},
@@ -71,7 +76,15 @@ func newEgressCommand(config *commandConfig) *cobra.Command {
 		&cobra.Command{
 			Use:   "set APP|'*' [HOST:PORT...]",
 			Short: "Limit an app's egress to the destinations, or to none",
-			Args:  cobra.MinimumNArgs(1),
+			Example: `  # Limit an app to the destinations
+  holon egress set chat api.example.com:443 db.example.com:5432
+
+  # Allow no egress
+  holon egress set chat
+
+  # The installation-wide ceiling
+  holon egress set '*' api.example.com:443`,
+			Args: cobra.MinimumNArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				allow, err := parseEgressDestinations(args[1:])
 				if err != nil {
@@ -83,7 +96,12 @@ func newEgressCommand(config *commandConfig) *cobra.Command {
 		&cobra.Command{
 			Use:   "delete APP|'*'",
 			Short: "Remove an app's egress ceiling",
-			Args:  cobra.ExactArgs(1),
+			Example: `  # Remove an app's ceiling
+  holon egress delete chat
+
+  # Remove the installation-wide ceiling
+  holon egress delete '*'`,
+			Args: cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
 				return runEgressSet(cmd, config, args[0], nil)
 			},
