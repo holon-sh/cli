@@ -108,17 +108,20 @@ func uploadManifest(
 			return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 		}
 	}
-	resolved, cleanup, err := prepareManifestTypes(ctx, resolved, options)
+	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
 	defer cleanup()
-	built, err := buildManifestImages(ctx, manager, name, resolved, options)
+	built, err := buildManifestImages(ctx, manager, name, prepared, options)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
-	if err := currentTypeSources(resolved); err != nil {
+	if err := currentTypeSources(prepared); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+	}
+	if options.types != nil {
+		options.types.accept(prepared)
 	}
 	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, resolved, nil
 }
@@ -164,7 +167,6 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
-	options.types.accept(resolvedManifest)
 	request.TTLSeconds = config.devTTLSeconds
 	token, err := manager.controlToken(ctx)
 	if err != nil {

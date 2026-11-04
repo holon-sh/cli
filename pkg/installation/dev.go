@@ -356,6 +356,10 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 		if !d.updateManifest(reloaded, &change) {
 			return nil
 		}
+		if change.contexts.Len() == 0 && d.changedImages.Len() == 0 {
+			d.options.output.status("app rebuild", "no app changed; continuing to watch", progressDone)
+			return nil
+		}
 	}
 	if _, err := d.manager.controlToken(ctx); err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
@@ -423,9 +427,10 @@ func (d *devLoop) updateManifest(reloaded manifestSpec, change *devChange) bool 
 	d.options.output.status("app metadata", "ok", progressDone)
 	for i, app := range reloaded.Apps {
 		previous := d.manifest.Apps[i]
-		if app.Path != "" {
+		if app.Path != "" && !reflect.DeepEqual(app.resolved.descriptor, previous.resolved.descriptor) {
 			change.contexts.Insert(app.Path)
-		} else if app.resolved.Image != previous.resolved.Image || !reflect.DeepEqual(app.Registry, previous.Registry) {
+		}
+		if app.resolved.Image != previous.resolved.Image || !reflect.DeepEqual(app.Registry, previous.Registry) {
 			d.changedImages.Insert(app.Name)
 		}
 	}
