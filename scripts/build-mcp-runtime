@@ -3,5 +3,5 @@ set -eu
 cd "$(dirname "$0")/.."
 for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -buildvcs=false \
-    -ldflags='-s -w' -o "pkg/cloud/bridge-payloads/linux-$arch" github.com/holon-sh/runtime/cmd/holon-mcp-runtime
+    -ldflags='-s -w' -o "pkg/installation/bridge-payloads/linux-$arch" github.com/holon-sh/runtime/cmd/holon-mcp-runtime
 done

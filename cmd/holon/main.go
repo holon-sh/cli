@@ -8,7 +8,7 @@ import (
 	"syscall"
 
 	"github.com/holon-sh/cli/pkg/cli"
-	"github.com/holon-sh/cli/pkg/cloud"
+	"github.com/holon-sh/cli/pkg/installation"
 )
 
 var version = "dev"
@@ -21,7 +21,7 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	command := cli.NewCommand(version)
-	command.AddCommand(cloud.Commands()...)
+	command.AddCommand(installation.Commands()...)
 	command.SetIn(os.Stdin)
 	command.SetOut(os.Stdout)
 	command.SetErr(os.Stderr)

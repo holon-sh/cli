@@ -1,0 +1,75 @@
+package installation
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"regexp"
+	"strings"
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+	"k8s.io/utils/clock"
+)
+
+func TestProgressTransitions(t *testing.T) {
+	for _, tc := range []struct {
+		name, message string
+		state         tea.ProgramState
+		err           error
+	}{
+		{name: "terminal canceled", err: context.Canceled, state: "idle", message: "Canceled"},
+		{name: "terminal succeeded", state: "done", message: "Finished"},
+		{name: "terminal failed", err: errors.New("command failed"), state: "error", message: "command failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stream bytes.Buffer
+			output, _, _ := newProgressOutput(io.Discard, &stream, false, clock.RealClock{})
+			output.program = tea.NewProgram(newProgressModel(), tea.WithOutput(&stream), tea.WithInput(nil),
+				tea.WithoutSignalHandler(), tea.WithEnvironment([]string{"TERM=xterm-256color"}), tea.WithWindowSize(120, 40))
+			output.renderer.Go(func() error {
+				_, err := output.program.Run()
+				return err
+			})
+			for range 2 {
+				output.status("alpha", "building", progressWorking)
+				output.status("", "Watching for changes", progressIdle)
+			}
+			output.status("beta", "ready", progressDone)
+			if err := output.finish(tc.err, "Finished"); err != nil {
+				t.Fatal(err)
+			}
+			visible := strings.Join(strings.Fields(ansi.Strip(stream.String())), " ")
+			for _, want := range []string{"alpha " + tc.message, "beta ready"} {
+				if !strings.Contains(visible, want) {
+					t.Fatalf("final terminal status = %q, missing %q", visible, want)
+				}
+			}
+
+			reports := strings.Join(regexp.MustCompile("\x1b]7501;[^\x07]*\x07").FindAllString(stream.String(), -1), "")
+			ids := map[string]string{}
+			reports = regexp.MustCompile(`id=holon/items/[^:\x07]+`).ReplaceAllStringFunc(reports, func(id string) string {
+				ids[id] = cmp.Or(ids[id], fmt.Sprintf("id=holon/items/%d", len(ids)))
+				return ids[id]
+			})
+			var want strings.Builder
+			for _, status := range []tea.ProgramStatus{
+				{ID: "holon/items/0", Title: "alpha", Message: "building", State: tea.ProgramStateWorking},
+				{ID: "holon", Message: "Watching for changes", State: tea.ProgramStateIdle},
+				{ID: "holon/items/1", Title: "beta", Message: "ready", State: tea.ProgramStateDone},
+			} {
+				status.App = "holon"
+				want.WriteString(ansi.SetProgramStatus(status))
+			}
+			want.WriteString(ansi.ClearProgramStatusID("holon/items"))
+			want.WriteString(ansi.SetProgramStatus(tea.ProgramStatus{App: "holon", ID: "holon", Message: tc.message, State: tc.state}))
+			if reports != want.String() {
+				t.Fatalf("OSC reports = %q, want %q", reports, want.String())
+			}
+		})
+	}
+}
