@@ -205,7 +205,7 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	publishedJSON(t, repository, index.Manifests[1], &metadata)
 	var record protocol.BuildRecord
 	publishedJSON(t, repository, metadata.Layers[0], &record)
-	if record.AppName != "alpha" || !strings.HasSuffix(apps[0].Image, "@"+executable.Digest.String()) {
+	if record.AppName != "alpha" || record.ServerName != "io.github.acme/alpha" || !strings.HasSuffix(apps[0].Image, "@"+executable.Digest.String()) {
 		t.Fatalf("published build: %+v", record)
 	}
 	if input := record.Runtime.Env["DEPLOYMENT_VALUE"]; !input.IsRequired || input.Value != nil || input.Default != nil {
