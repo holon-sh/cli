@@ -162,24 +162,23 @@ func (m *Client) loginInteractive(ctx context.Context) error {
 	if m.machine != nil {
 		return errors.New("service-account credentials are supplied by the environment")
 	}
-	return m.withLock(ctx, func() error {
-		return m.login(ctx, m.audience(protocol.AdminPlane), protocol.SystemScopes())
-	})
+	return m.withLock(ctx, func() error { return m.login(ctx) })
 }
 
-func (m *Client) login(ctx context.Context, audience string, scopes []string) error {
+func (m *Client) login(ctx context.Context) error {
 	state := authState{OAuth: targetForOAuth(m.info.OAuth), Version: rand.Text(), Tokens: map[string]*oauth2.Token{}}
 	if m.info.OAuth != nil {
+		scopes := protocol.SystemScopes()
 		config, err := m.oauthConfig(ctx, scopes)
 		if err != nil {
 			return err
 		}
-		tokens, err := m.deviceToken(ctx, config, audience)
+		tokens, err := m.deviceToken(ctx, config, m.info.OAuth.AdminAudience)
 		if err != nil {
 			return err
 		}
 		tokens.Expiry = m.now().Add(time.Duration(tokens.ExpiresIn) * time.Second)
-		state.Tokens[tokenKey(m.info.OAuth.Issuer, audience, scopes)] = tokens
+		state.Tokens[tokenKey(m.info.OAuth.Issuer, m.info.OAuth.AdminAudience, scopes)] = tokens
 	}
 	if err := m.writeState(state); err != nil {
 		return err
@@ -195,11 +194,6 @@ func (m *Client) login(ctx context.Context, audience string, scopes []string) er
 func tokenKey(issuer, audience string, scopes []string) string {
 	scopes = slices.Compact(slices.Sorted(slices.Values(scopes)))
 	return issuer + "\x00" + audience + "\x00" + strings.Join(scopes, " ")
-}
-
-func (m *Client) audience(plane protocol.Plane) string {
-	audience, _ := protocol.PlaneOrigin(m.client.baseURL, plane, "")
-	return audience
 }
 
 func (m *Client) token(ctx context.Context, audience string, scopes []string) (*oauth2.Token, error) {
@@ -449,18 +443,18 @@ func (m *Client) deviceToken(ctx context.Context, config *oauth2.Config, audienc
 	return tokens, nil
 }
 
-func (m *Client) controlToken(ctx context.Context, plane protocol.Plane) (string, error) {
-	token, err := m.resourceToken(ctx, m.audience(plane), protocol.ControlScopes(plane))
-	if err != nil || token == nil {
+func (m *Client) controlToken(ctx context.Context) (string, error) {
+	if m.info.OAuth == nil {
+		return "", nil
+	}
+	token, err := m.resourceToken(ctx, m.info.OAuth.AdminAudience, protocol.SystemScopes())
+	if err != nil {
 		return "", err
 	}
 	return token.AccessToken, nil
 }
 
 func (m *Client) resourceToken(ctx context.Context, audience string, scopes []string) (*oauth2.Token, error) {
-	if m.info.OAuth == nil {
-		return nil, nil
-	}
 	if m.machine != nil {
 		return m.machineToken(ctx, audience, scopes)
 	}
@@ -471,7 +465,7 @@ func (m *Client) resourceToken(ctx context.Context, audience string, scopes []st
 		result, err = m.token(ctx, audience, scopes)
 		if initial &&
 			(errors.Is(err, errNotAuthenticated) || errors.Is(err, errEndpointChanged) || errors.Is(err, errReauthenticationRequired)) {
-			err = m.login(ctx, audience, scopes)
+			err = m.login(ctx)
 			result = m.state.Tokens[tokenKey(m.info.OAuth.Issuer, audience, scopes)]
 		}
 		return err
@@ -507,7 +501,7 @@ func (m *Client) machineToken(ctx context.Context, audience string, scopes []str
 }
 
 func (m *Client) Call(ctx context.Context, plane protocol.Plane, tool string, input, output any) error {
-	token, err := m.controlToken(ctx, plane)
+	token, err := m.controlToken(ctx)
 	if err != nil {
 		return err
 	}

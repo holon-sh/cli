@@ -131,13 +131,13 @@ func TestCredentialChanges(t *testing.T) {
 			if tc.remote != "" {
 				config.Origin = tc.remote
 			}
-			if _, err := manager.controlToken(t.Context(), protocol.AdminPlane); err != nil {
+			if _, err := manager.controlToken(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if err := executeCommand(t.Context(), []string{"logout"}, nil, nil, commandConfig{Auth: config}); err != nil {
 				t.Fatal(err)
 			}
-			if token, err := manager.controlToken(t.Context(), protocol.AdminPlane); !errors.Is(err, tc.want) || err == nil && token != "access-secret" {
+			if token, err := manager.controlToken(t.Context()); !errors.Is(err, tc.want) || err == nil && token != "access-secret" {
 				t.Fatalf("after credential change token=%q error=%v, want %v", token, err, tc.want)
 			}
 		})
@@ -175,7 +175,7 @@ func TestDeviceLoginFailures(t *testing.T) {
 				defer cancel()
 				mux := http.NewServeMux()
 				fail := func(w http.ResponseWriter, _ *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
+					w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
 					w.WriteHeader(http.StatusBadRequest)
 					installationtest.WriteJSON(w, map[string]string{"error": test.code, "error_description": "refresh-secret"})
 					if test.cancel {
@@ -271,19 +271,19 @@ func TestRefreshRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			clock.SetTime(clock.Now().Add(100 * time.Second))
-			if _, err := first.controlToken(t.Context(), protocol.AdminPlane); !errors.Is(err, tc.refreshErr) {
+			if _, err := first.controlToken(t.Context()); !errors.Is(err, tc.refreshErr) {
 				t.Fatalf("refresh error=%v, want %v", err, tc.refreshErr)
 			}
 
 			second := newManager(t, server, clock, dir)
-			token, err := second.controlToken(t.Context(), protocol.AdminPlane)
+			token, err := second.controlToken(t.Context())
 			if !errors.Is(err, tc.connectErr) || err == nil && token != "recovered-access" {
 				t.Fatalf("reconnect token=%q error=%v, want %v", token, err, tc.connectErr)
 			}
 			if err := os.Chmod(filepath.Join(dir, "remotes"), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if token, err := first.controlToken(t.Context(), protocol.AdminPlane); !errors.Is(err, tc.olderErr) || err == nil && token != "recovered-access" {
+			if token, err := first.controlToken(t.Context()); !errors.Is(err, tc.olderErr) || err == nil && token != "recovered-access" {
 				t.Fatalf("older command token=%q error=%v, want %v", token, err, tc.olderErr)
 			}
 		})
@@ -360,7 +360,7 @@ func TestSavedCredentialMetadata(t *testing.T) {
 			if err := writePrivateFile(manager.statePath, []byte(data)); err != nil {
 				t.Fatal(err)
 			}
-			token, err := manager.controlToken(t.Context(), protocol.AdminPlane)
+			token, err := manager.controlToken(t.Context())
 			if !errors.Is(err, tc.want) || err == nil && token != "access-token" {
 				t.Fatalf("token=%q error=%v, want %v", token, err, tc.want)
 			}
@@ -395,11 +395,7 @@ func TestMachineCredentials(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
-			var server *httptest.Server
-			server = installationtest.MachineAuthServer(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.FormValue("resource") != installationtest.AdminAudience(server.URL) {
-					t.Error("incorrect machine token audience")
-				}
+			server := installationtest.MachineAuthServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
 				w.WriteHeader(scenario.status)
 				_, _ = io.WriteString(w, scenario.body)
@@ -459,7 +455,7 @@ func TestConcurrentAuthenticationProcesses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		token, err := manager.controlToken(t.Context(), protocol.AdminPlane)
+		token, err := manager.controlToken(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -544,13 +540,8 @@ func TestConcurrentAuthenticationProcesses(t *testing.T) {
 			other := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, map[string]any{"access_token": "other-access", "token_type": "Bearer", "refresh_token": "other-refresh", "expires_in": 3600})
 			})
-			otherManager, err := NewClient(ctx, ClientConfig{
-				Origin: other.URL, ConfigDir: dir, HTTPClient: other.Client(),
-			})
-			if err == nil {
-				_, err = otherManager.controlToken(ctx, protocol.AdminPlane)
-			}
-			if err != nil {
+			otherManager := newManager(t, other, testingclock.NewFakePassiveClock(time.Unix(100, 0)), dir)
+			if _, err := otherManager.controlToken(ctx); err != nil {
 				t.Fatalf("another remote's authentication was blocked: %v", err)
 			}
 			second := start()
@@ -593,7 +584,7 @@ func TestAuthenticationWaitCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		done := make(chan error, 1)
-		go func() { _, err := manager.controlToken(ctx, protocol.AdminPlane); done <- err }()
+		go func() { _, err := manager.controlToken(ctx); done <- err }()
 		synctest.Wait()
 		cancel()
 		if err := <-done; !errors.Is(err, context.Canceled) {
@@ -614,24 +605,20 @@ func TestControlTokenAudienceAndScopeCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	devAudience, _ := protocol.PlaneOrigin(server.URL, protocol.DevPlane, "")
-	admin, err := manager.controlToken(t.Context(), protocol.AdminPlane)
+	audience := installationtest.AdminAudience(server.URL)
+	token, err := manager.controlToken(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	dev, err := manager.controlToken(t.Context(), protocol.DevPlane)
-	if err != nil || dev == admin {
-		t.Fatalf("control tokens not isolated: %v", err)
+	again, err := manager.controlToken(t.Context())
+	if err != nil || again != token || len(requests) != 1 {
+		t.Fatalf("control token cache miss: %v %v", requests, err)
 	}
-	again, err := manager.controlToken(t.Context(), protocol.DevPlane)
-	if err != nil || again != dev || len(requests) != 2 {
-		t.Fatalf("dev cache miss: %v %v", requests, err)
+	if requests[0] != audience+"|system:dev:read system:dev:write system:prod:read system:prod:write" {
+		t.Fatalf("wrong control token request: %s", requests[0])
 	}
-	if requests[1] != devAudience+"|system:dev:read system:dev:write" {
-		t.Fatalf("wrong dev request: %s", requests[1])
-	}
-	narrow, err := manager.resourceToken(t.Context(), devAudience, []string{"system:dev:read"})
-	if err != nil || narrow.AccessToken == dev || len(requests) != 3 {
+	narrow, err := manager.resourceToken(t.Context(), audience, []string{"system:dev:read"})
+	if err != nil || narrow.AccessToken == token || len(requests) != 2 {
 		t.Fatalf("scope cache collision: %v %v", requests, err)
 	}
 }
@@ -639,7 +626,7 @@ func TestControlTokenAudienceAndScopeCache(t *testing.T) {
 func seedAdminCredentials(t *testing.T, manager *Client, token oauth2.Token) {
 	t.Helper()
 	manager.state = authState{OAuth: targetForOAuth(manager.info.OAuth), Version: "test"}
-	manager.state.Tokens = map[string]*oauth2.Token{tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.AdminPlane), protocol.SystemScopes()): &token}
+	manager.state.Tokens = map[string]*oauth2.Token{tokenKey(manager.info.OAuth.Issuer, manager.info.OAuth.AdminAudience, protocol.SystemScopes()): &token}
 	if err := manager.withLock(t.Context(), func() error { return manager.writeState(manager.state) }); err != nil {
 		t.Fatal(err)
 	}

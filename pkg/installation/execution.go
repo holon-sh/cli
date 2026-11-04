@@ -24,7 +24,7 @@ func replaceExecution(ctx context.Context, manager *Client, name string,
 	target := desired
 	target.RequestID = cmp.Or(target.RequestID, strings.ToLower(rand.Text()))
 	for range 3 {
-		token, err := manager.controlToken(ctx, ControlPlane(name))
+		token, err := manager.controlToken(ctx)
 		if err != nil {
 			return protocol.SessionResponse{}, err
 		}

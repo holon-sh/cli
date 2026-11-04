@@ -354,7 +354,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 			return nil
 		}
 	}
-	if _, err := d.manager.controlToken(ctx, protocol.DevPlane); err != nil {
+	if _, err := d.manager.controlToken(ctx); err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 	prepared, cleanup, err := prepareManifestTypes(ctx, d.manifest, d.options)

@@ -87,7 +87,7 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 func uploadManifest(
 	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions, apps ...string,
 ) (protocol.AppsRequestFor[protocol.App], manifestSpec, error) {
-	if _, err := manager.controlToken(ctx, ControlPlane(name)); err != nil {
+	if _, err := manager.controlToken(ctx); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
 	options.output.status("", "Preparing apps", progressWorking)
@@ -178,7 +178,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	}
 	options.types.accept(resolvedManifest)
 	request.TTLSeconds = config.devTTLSeconds
-	token, err := manager.controlToken(ctx, protocol.DevPlane)
+	token, err := manager.controlToken(ctx)
 	if err != nil {
 		return err
 	}
@@ -387,7 +387,7 @@ func printEndpoints(stdout io.Writer, session protocol.SessionResponse) error {
 }
 
 func (m *Client) StreamLogs(ctx context.Context, input protocol.SessionLogsRequest, stdout io.Writer) error {
-	token, err := m.controlToken(ctx, ControlPlane(input.Session))
+	token, err := m.controlToken(ctx)
 	if err != nil {
 		return err
 	}

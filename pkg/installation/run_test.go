@@ -130,10 +130,7 @@ func newRunHarness(t *testing.T) *runHarness {
 	h := &runHarness{mux: http.NewServeMux()}
 	h.control = installationtest.NewControlFixtures(t, h.mux)
 	installationtest.MountDeviceAuth(t, h.mux, func() string { return h.server.URL + "/" }, protocol.AdminPlane,
-		func(r *http.Request) { installationtest.AssertOrigin(t, r, h.baseHost) }, 3600, 0,
-		func(w http.ResponseWriter, _ *http.Request) {
-			installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-token", "refresh_token": "refresh-token", "expires_in": 3600})
-		})
+		func(r *http.Request) { installationtest.AssertOrigin(t, r, h.baseHost) }, 3600, 0, nil)
 	return h
 }
 
@@ -160,12 +157,6 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 			AccessToken: "access-token", RefreshToken: "refresh-token",
 			TokenType: "Bearer", ExpiresIn: 3600, Expiry: clock.Now().Add(time.Hour),
 		})
-		adminKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.AdminPlane), protocol.SystemScopes())
-		devKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.DevPlane), protocol.ControlScopes(protocol.DevPlane))
-		manager.state.Tokens[devKey] = manager.state.Tokens[adminKey]
-		if err := manager.writeState(manager.state); err != nil {
-			t.Fatal(err)
-		}
 	}
 	sourceFiles(t, stateDir, map[string]string{"config.json": fmt.Sprintf(`{"origin":%q}`, h.server.URL)})
 	_, registry := buildRegistry(t)
