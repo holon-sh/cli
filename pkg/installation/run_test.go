@@ -17,13 +17,17 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/cli/pkg/typegen"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/oauth2"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
@@ -45,7 +49,7 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 	root := t.TempDir()
 	sourceFiles(t, root, map[string]string{manifestFileName: manifestFixture})
 	for want, args := range map[string][]string{
-		`unknown app "missing"`:                    {"deploy", "alpha", "missing", "--project", filepath.Join(root, manifestFileName)},
+		`unknown app "missing"`:                    {"dev", "alpha", "missing", "--project", filepath.Join(root, manifestFileName)},
 		"--env must be dev or prod":                {"config", "set", "--env", "staging", "API_URL", "value"},
 		"--session requires a development session": {"config", "set", "--session", "production", "API_URL", "value"},
 		`invalid variable name "not-valid"`:        {"config", "set", "not-valid", "value"},
@@ -59,7 +63,7 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
-	for _, command := range []string{"deploy"} {
+	for _, command := range []string{"dev", "deploy"} {
 		for _, tc := range []struct{ name, access, want string }{
 			{name: "build failure", access: `{"server":{}}`},
 			{name: "missing identity", access: `{"server":{},"tools":{"read":{"oauth":{}}}}`, want: "requires a configured identity provider"},
@@ -100,6 +104,19 @@ func TestRunPreparationFailures(t *testing.T) {
 	}
 }
 
+func stepUntil(t *testing.T, fc *testingclock.FakeClock, step time.Duration, observed func() bool) {
+	t.Helper()
+	if err := wait.PollUntilContextTimeout(t.Context(), 5*time.Millisecond, 10*time.Second, true, func(context.Context) (bool, error) {
+		if observed() {
+			return true, nil
+		}
+		fc.Step(step)
+		return false, nil
+	}); err != nil {
+		t.Fatalf("condition was not observed: %v", err)
+	}
+}
+
 type runHarness struct {
 	mux      *http.ServeMux
 	control  *installationtest.ControlFixtures
@@ -122,6 +139,12 @@ func newRunHarness(t *testing.T) *runHarness {
 
 func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
+	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
+		w.WriteHeader(http.StatusOK)
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	})
 	h.server = httptest.NewTLSServer(h.mux)
 	t.Cleanup(h.server.Close)
 	h.baseHost = strings.TrimPrefix(h.server.URL, "https://")
@@ -169,6 +192,415 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 		}),
 		Auth: auth,
 		Env:  []string{"DOCKER_HOST=unix:///tmp/holon-test.sock"},
+	}
+}
+
+func startDev(t *testing.T, config commandConfig, args ...string) (stdout, stderr *installationtest.ObservedOutput, stop func() error) {
+	ctx, cancel := context.WithCancel(t.Context())
+	stdout, stderr = &installationtest.ObservedOutput{OnWrite: func(string) {}}, &installationtest.ObservedOutput{OnWrite: func(string) {}}
+	done := make(chan error, 1)
+	go func() { done <- executeCommand(ctx, append([]string{"dev"}, args...), stdout, stderr, config) }()
+	return stdout, stderr, func() error {
+		cancel()
+		return <-done
+	}
+}
+
+func TestRunDevLifecycle(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	manifestPath := filepath.Join(root, manifestFileName)
+	sourceFiles(t, root, map[string]string{
+		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
+		"beta/server.js": "export default {}", "beta/package.json": sourcePackage,
+		"beta/node_modules/package/index.js": "", "beta/.git/config": "",
+		manifestFileName: "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n- name: beta\n  access: {server: {}}\n  path: ./beta\n",
+	})
+	for _, name := range []string{"alpha", "beta"} {
+		writeDescriptor(t, filepath.Join(root, name, "server.json"), descriptorDocument(name))
+	}
+	firstBuild, nextBuild := buildImage(t, "first"), buildImage(t, "next")
+	var builds atomic.Int32
+	build := func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+		builds.Add(1)
+		if !slices.Equal(request.Platforms, []string{"linux/arm64"}) {
+			t.Errorf("session platforms = %v", request.Platforms)
+		}
+		switch edit, _ := os.ReadFile(filepath.Join(root, "alpha", "logic.ts")); string(edit) {
+		case "":
+			return firstBuild(ctx, request, progress)
+		case "broken":
+			return buildResult{}, errors.New("rebuild failed")
+		}
+		return nextBuild(ctx, request, progress)
+	}
+	var mu sync.Mutex
+	var ambiguous, unavailable bool
+	var waiting string
+	var creates, deletes int
+	var created, served []protocol.App
+	var updates [][]protocol.App
+	h := newRunHarness(t)
+	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, protocol.Info{
+			Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"},
+			Version:      "test", BuildArchitectures: []string{"arm64"}, OAuth: &protocol.OAuthInfo{
+				Issuer: h.server.URL + "/", AdminAudience: installationtest.AdminAudience(h.server.URL), CLIClientID: "cli-test",
+			},
+		})
+	})
+	session := func() map[string]any {
+		response := apiSession(h, "alpha", "beta")
+		response["apps"], response["buildArchitectures"] = served, []string{"arm64"}
+		if waiting != "" {
+			response["conditions"] = []protocol.Condition{{
+				Type: protocol.ConditionReady, Status: "False", Reason: waiting, Message: "Configure API_KEY to start the session.",
+			}}
+		}
+		return response
+	}
+	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
+		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
+		installationtest.WriteJSON(w, protocol.UploadGrant{
+			Grant: "grant-secret", Registry: "registry.example", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339),
+			Repositories: map[string]string{"alpha": "holon/upload/alpha", "beta": "holon/upload/beta"},
+		})
+	})
+	h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
+		var input protocol.AppsRequestFor[protocol.App]
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		creates++
+		created, served = input.Apps, input.Apps
+		if !ambiguous {
+			installationtest.WriteJSON(w, session())
+			return
+		}
+		connection, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_ = connection.Close()
+	})
+	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession},
+		map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
+			installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
+			mu.Lock()
+			defer mu.Unlock()
+			switch tool := installationtest.ToolName(r); {
+			case tool == protocol.ToolDeleteSession:
+				deletes++
+				installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+				return
+			case tool == protocol.ToolUpdateSession:
+				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
+				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+					t.Error(err)
+				}
+				served = input.Desired.Apps
+				updates = append(updates, served)
+			case unavailable:
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			installationtest.WriteJSON(w, session())
+		})
+	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
+		if query := r.URL.Query(); query.Get("event") != "holon.mcp.call" || query.Get("follow") != "true" {
+			t.Errorf("request stream query = %s", r.URL.RawQuery)
+		}
+		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
+		_, _ = io.WriteString(w, "2030-01-01T12:00:01Z INFO alpha tools/call echo ok 1ms trace_id=aaaa\n")
+	})
+	h.start(t, build)
+	t.Run("ambiguous creation is not retried or deleted", func(t *testing.T) {
+		mu.Lock()
+		ambiguous = true
+		mu.Unlock()
+		err := executeCommand(t.Context(), []string{"dev", "--project", manifestPath}, nil, nil, h.run)
+		mu.Lock()
+		defer mu.Unlock()
+		ambiguous = false
+		if err == nil || !strings.Contains(err.Error(), "outcome is unknown; inspect sessions at https://dev."+h.baseHost+" before retrying") ||
+			creates != 1 || deletes != 0 {
+			t.Fatalf("ambiguous creation: creates=%d deletes=%d error=%v", creates, deletes, err)
+		}
+	})
+	t.Run("session survives configuration, failed rebuilds, edits and outages", func(t *testing.T) {
+		mu.Lock()
+		waiting = "WaitingForConfiguration"
+		mu.Unlock()
+		builds.Store(0)
+		fc := testingclock.NewFakeClock(time.Now())
+		config := h.run
+		config.Clock = fc
+		stdout, stderr, stop := startDev(t, config, "--project", manifestPath)
+		await := func(output *installationtest.ObservedOutput, texts ...string) {
+			t.Helper()
+			stepUntil(t, fc, devDebounce, func() bool {
+				return !slices.ContainsFunc(texts, func(text string) bool { return !strings.Contains(output.String(), text) })
+			})
+		}
+		await(stderr, "Configure API_KEY to start the session.", "request stream stopped")
+		if builds.Load() != 2 || strings.Contains(stdout.String(), "/mcp/alpha") {
+			t.Fatalf("startup: builds=%d stdout=%q", builds.Load(), stdout.String())
+		}
+		sourceFiles(t, root, map[string]string{"alpha/logic.ts": "broken"})
+		await(stderr, "remote image preparation failed")
+		mu.Lock()
+		waiting = ""
+		mu.Unlock()
+		await(stdout, "Watching for changes.")
+		document := descriptorDocument("alpha")
+		document["packages"].([]any)[0].(map[string]any)["transport"].(map[string]any)["url"] = "http://localhost:8080/mcp"
+		writeDescriptor(t, filepath.Join(root, "alpha", "server.json"), document)
+		await(stderr, "restart holon dev")
+		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
+		sourceFiles(t, root, map[string]string{"beta/node_modules/package/index.js": "changed", "beta/.git/config": "changed", "alpha/logic.ts": "fixed"})
+		await(stderr, "remote update requested")
+		mu.Lock()
+		unavailable = true
+		mu.Unlock()
+		stepUntil(t, fc, renewalInterval, func() bool {
+			return strings.Contains(stderr.String(), "session status retrying:") && strings.Contains(stderr.String(), "session renewal retrying:")
+		})
+		recovery := len(stderr.String())
+		mu.Lock()
+		unavailable = false
+		mu.Unlock()
+		stepUntil(t, fc, renewalInterval, func() bool {
+			return strings.Contains(stderr.String()[recovery:], "session status ok") && strings.Contains(stderr.String()[recovery:], "session renewal ok")
+		})
+		if err := stop(); err != nil {
+			t.Fatalf("run: %v stderr=%q", err, stderr.String())
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(created) != 2 || !strings.HasPrefix(created[0].Image, "registry.example/holon/upload/alpha@sha256:") || deletes != 1 {
+			t.Fatalf("session apps = %#v, deletes = %d", created, deletes)
+		}
+		if len(updates) != 1 || updates[0][0].Image == created[0].Image || updates[0][1].Image != created[1].Image {
+			t.Fatalf("source edit updates = %#v", updates)
+		}
+		if strings.Count(stdout.String(), "trace_id=aaaa") != 1 || strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
+			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+		}
+	})
+}
+
+func TestDevDeploymentStatusTransitions(t *testing.T) {
+	h := newRunHarness(t)
+	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}})
+	})
+	responses := make(chan protocol.SessionResponse, 1)
+	h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, <-responses)
+	})
+	h.start(t, nil)
+	manager, err := NewClient(t.Context(), h.run.Auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	output, _, _ := newProgressOutput(io.Discard, &stream, false, h.run.clock())
+	dev := devLoop{
+		manager: manager, name: "gentle-otter-482", clock: h.run.clock(),
+		options: buildOptions{output: output, types: &typeWorkspace{prepared: new(typegen.Prepared)}},
+	}
+	for _, step := range []struct {
+		generation int64
+		ready      string
+	}{
+		{1, "False"},
+		{1, "False"},
+		{2, "False"},
+		{2, "True"},
+		{2, "True"},
+		{2, "False"},
+	} {
+		responses <- protocol.SessionResponse{Generation: step.generation, Conditions: []protocol.Condition{
+			{Type: protocol.ConditionReady, Status: step.ready, Reason: protocol.ReasonProgressDeadline, Message: "rollout failed"},
+			{Type: protocol.ConditionAvailable, Status: "True"},
+		}}
+		if err := dev.poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "editor imports ok\nsession status ok\n" +
+		"remote deployment remote update failed; existing service remains available (generation 1): ProgressDeadlineExceeded: rollout failed\n" +
+		"remote deployment remote update failed; existing service remains available (generation 2): ProgressDeadlineExceeded: rollout failed\n" +
+		"remote deployment ready (generation 2)\n" +
+		"remote deployment remote update failed; existing service remains available (generation 2): ProgressDeadlineExceeded: rollout failed\n"
+	if stream.String() != want {
+		t.Fatalf("deployment reports = %q, want %q", stream.String(), want)
+	}
+}
+
+func apiSession(h *runHarness, names ...string) map[string]any {
+	response := installationtest.SessionResponse("gentle-otter-482", "")
+	endpoints := make([]protocol.SessionEndpoint, 0, len(names))
+	apps := make([]protocol.App, 0, len(names))
+	for _, name := range names {
+		apps = append(apps, protocol.App{Name: name})
+		endpoints = append(endpoints, protocol.SessionEndpoint{Name: name, URL: "https://gentle-otter-482." + h.baseHost + protocol.AppPath(name)})
+	}
+	response["endpoints"], response["apps"] = endpoints, apps
+	return response
+}
+
+func TestRunDevImportsImageEdits(t *testing.T) {
+	fixture := newImageRegistry()
+	first := addTestImage(t, fixture, "amd64", ocispec.ImageConfig{}, nil).Digest.String()
+	second := addTestImage(t, fixture, "arm64", ocispec.ImageConfig{}, nil).Digest.String()
+	registryServer := httptest.NewTLSServer(fixture)
+	defer registryServer.Close()
+	registryHost := strings.TrimPrefix(registryServer.URL, "https://")
+	root := t.TempDir()
+	manifest := func(imageDigest string) map[string]string {
+		return map[string]string{
+			manifestFileName: "apps:\n- name: alpha\n  access: {server: {}}\n  image: " + registryHost + "/source@" + imageDigest + "\n",
+		}
+	}
+	sourceFiles(t, root, manifest(first))
+	h := newRunHarness(t)
+	var mu sync.Mutex
+	var apps []protocol.App
+	var images []string
+	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, protocol.UploadGrant{
+			Registry: registryHost, Grant: "grant-secret", Repositories: map[string]string{"alpha": "holon/upload/echo"},
+			ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339),
+		})
+	})
+	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession},
+		nil, func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
+			var err error
+			switch installationtest.ToolName(r) {
+			case protocol.ToolDeleteSession:
+				installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+				return
+			case protocol.ToolCreateSession:
+				err = json.NewDecoder(r.Body).Decode(&input.Desired)
+			case protocol.ToolUpdateSession:
+				err = json.NewDecoder(r.Body).Decode(&input)
+			}
+			if err != nil {
+				t.Error(err)
+			}
+			if len(input.Desired.Apps) > 0 {
+				apps = input.Desired.Apps
+				images = append(images, apps[0].Image)
+			}
+			response := apiSession(h, "alpha")
+			response["apps"] = apps
+			installationtest.WriteJSON(w, response)
+		})
+	h.start(t, nil)
+	h.run.Env = append(h.run.Env, "DOCKER_CONFIG="+t.TempDir())
+	fc := testingclock.NewFakeClock(time.Now())
+	h.run.Clock = fc
+	stdout, stderr, stop := startDev(t, h.run, "--project", filepath.Join(root, manifestFileName))
+	stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stdout.String(), "Watching for changes.") })
+	sourceFiles(t, root, manifest(second))
+	stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String(), "remote update requested") })
+	if err := stop(); err != nil {
+		t.Fatalf("image dev run: %v, stderr=%q", err, stderr.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	upload := registryHost + "/holon/upload/echo@"
+	if !slices.Equal(images, []string{upload + first, upload + second}) {
+		t.Fatalf("session images = %v", images)
+	}
+}
+
+func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
+	remote := "apps:\n- name: alpha\n  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n"
+	selection := "apps:\n- name: unused\n  path: ./not-checked-out\n  access: {server: {}}\n" +
+		"- name: delta\n  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n"
+	var dependency *protocol.RegistrySource
+	var dependencyName string
+	for _, name := range []string{"gamma", "beta", "alpha"} {
+		document := descriptorDocument(name)
+		delete(document, "packages")
+		document["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://upstream.example/mcp"}}
+		if dependency != nil {
+			document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
+				"requires": map[string]protocol.RegistryRef{dependencyName: dependency.RegistryRef},
+			}}}
+		}
+		dependency, dependencyName = descriptorRegistry(t, document), name
+		data, _ := json.Marshal(dependency)
+		selection += fmt.Sprintf("- name: %s\n  registry: %s\n  access: {server: {}}\n", name, data)
+	}
+	for _, tc := range []struct {
+		name, file, manifest string
+		apps, want           []string
+		oauth                *protocol.OAuthClient
+	}{
+		{
+			name: "default manifest with OAuth client", file: manifestFileName, want: []string{"alpha"},
+			manifest: remote + "  oauth: {clientID: '{CLIENT_ID}', clientSecret: {secret: CLIENT_SECRET}}\n",
+			oauth:    &protocol.OAuthClient{ClientID: "{CLIENT_ID}", ClientSecret: "CLIENT_SECRET"},
+		},
+		{name: "yml fallback", file: "holon.yml", manifest: remote, want: []string{"alpha"}},
+		{
+			name: "selected apps, dependencies and repeated names", file: manifestFileName, manifest: selection,
+			apps: []string{"delta", "alpha", "delta"}, want: []string{"alpha", "beta", "delta", "gamma"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			sourceFiles(t, root, map[string]string{"holon.yml": "invalid manifest"})
+			sourceFiles(t, root, map[string]string{tc.file: tc.manifest})
+			h := newRunHarness(t)
+			h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolDeleteSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+				switch installationtest.ToolName(r) {
+				case protocol.ToolDeleteSession:
+					installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+					return
+				case protocol.ToolCreateSession:
+					var input protocol.AppsRequestFor[protocol.App]
+					if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+						t.Error(err)
+					}
+					var names []string
+					for _, app := range input.Apps {
+						names = append(names, app.Name)
+					}
+					slices.Sort(names)
+					app := input.Apps[0]
+					if !slices.Equal(names, tc.want) || app.Remote == nil || app.Remote.URL != "https://upstream.example/mcp" ||
+						app.Image != "" || app.Port != 0 || !reflect.DeepEqual(app.OAuth, tc.oauth) {
+						t.Errorf("unexpected remote session: %#v", input)
+					}
+					for name := range app.OAuth.Inputs() {
+						if _, injected := app.Env[name]; injected {
+							t.Error("OAuth input injected into the application environment")
+						}
+					}
+				}
+				installationtest.WriteJSON(w, apiSession(h, tc.want...))
+			})
+			h.start(t, nil)
+			fc := testingclock.NewFakeClock(time.Now())
+			h.run.Clock = fc
+			stdout, _, stop := startDev(t, h.run, tc.apps...)
+			stepUntil(t, fc, workflowPoll, func() bool { return strings.Contains(stdout.String(), "/mcp/alpha") })
+			if err := stop(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

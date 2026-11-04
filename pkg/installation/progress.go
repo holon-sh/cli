@@ -76,6 +76,20 @@ func (o *progressOutput) status(name, phase string, state tea.ProgramState) {
 	o.report(tea.ProgramStatus{Title: name, Message: phase, State: state})
 }
 
+func (o *progressOutput) retry(name string, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	status := tea.ProgramStatus{Title: name, Message: "ok", State: progressDone}
+	if err != nil {
+		status.Message, status.State = "retrying: "+err.Error(), progressWorking
+	}
+	if errors.Is(err, errReauthenticationRequired) {
+		status.Message, status.State, status.Kind = err.Error(), progressBlocked, tea.ProgramStatusKindAuth
+	}
+	o.report(status)
+}
+
 func (o *progressOutput) report(status tea.ProgramStatus) {
 	if o == nil {
 		return

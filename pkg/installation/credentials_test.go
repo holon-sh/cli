@@ -1,8 +1,11 @@
 package installation
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +98,62 @@ func TestPrivateCredentialFiles(t *testing.T) {
 			}
 			if _, err := manager.controlToken(t.Context(), protocol.AdminPlane); !errors.Is(err, errCredentialUnavailable) {
 				t.Fatalf("unsafe credentials: %v", err)
+			}
+		})
+	}
+}
+
+func TestDevelopmentAuthenticationBeforeBuild(t *testing.T) {
+	t.Parallel()
+	built := errors.New("build reached")
+	for _, test := range []struct {
+		name string
+		want error
+	}{
+		{"authorized", built}, {"denied", errDeviceDenied}, {"cancelled", context.Canceled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var authorized atomic.Bool
+			var server *httptest.Server
+			mux := http.NewServeMux()
+			installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.DevPlane, nil, 120, 1,
+				func(w http.ResponseWriter, _ *http.Request) {
+					if test.name == "denied" {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusBadRequest)
+						installationtest.WriteJSON(w, map[string]string{"error": "access_denied"})
+						return
+					}
+					authorized.Store(true)
+					installationtest.WriteJSON(w, map[string]any{"access_token": "dev-access", "refresh_token": "dev-refresh", "token_type": "Bearer", "expires_in": 120})
+				})
+			server = httptest.NewTLSServer(mux)
+			t.Cleanup(server.Close)
+			root := t.TempDir()
+			sourceFiles(t, root, map[string]string{
+				"package.json": sourcePackage, "server.js": "export default {}",
+				manifestFileName: "apps:\n- name: alpha\n  path: .\n  access: {server: {}}\n",
+			})
+			config := commandConfig{
+				Auth: ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)},
+				builder: func(context.Context, buildRequest, io.Writer) (buildResult, error) {
+					if !authorized.Load() || test.name != "authorized" {
+						t.Error("build started before development authorization")
+					}
+					return buildResult{}, built
+				},
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			output := &installationtest.ObservedOutput{OnWrite: func(text string) {
+				if test.name == "cancelled" && strings.Contains(text, "Code:") {
+					cancel()
+				}
+			}}
+			args := []string{"dev", "--project", filepath.Join(root, manifestFileName)}
+			if err := executeCommand(ctx, args, nil, output, config); !errors.Is(err, test.want) {
+				t.Fatalf("dev returned %v, want %v", err, test.want)
 			}
 		})
 	}

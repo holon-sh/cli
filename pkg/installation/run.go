@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,9 +12,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -25,18 +29,22 @@ import (
 
 const (
 	workflowPoll     = time.Second
+	renewalInterval  = time.Minute
 	maxCommandOutput = 64 << 10
 )
 
 type commandConfig struct {
 	manifest           manifestSpec
 	file               string
+	devTTLSeconds      *int64
+	check              bool
 	builder            buildApplication
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
 	Env                []string
 	Clock              clock.WithTicker
 	verbose            bool
+	jsonOutput         bool
 	output             *progressOutput
 }
 
@@ -96,6 +104,11 @@ func uploadManifest(
 	if err := protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
+	if options.types != nil {
+		if err := options.types.acquire(resolved); err != nil {
+			return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		}
+	}
 	if len(manifest.retained) != 0 {
 		options.metadataGrant, err = imageDestination(ctx, manager, name, resolved)
 		if err != nil {
@@ -141,6 +154,68 @@ func imageDestination(ctx context.Context, manager *Client, name string, manifes
 	return grant, err
 }
 
+func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config commandConfig) error {
+	resultWriter := stdout
+	if config.jsonOutput {
+		stdout = stderr
+	}
+	config.output.status("", "Authenticating", progressWorking)
+	manager, err := NewClient(ctx, config.Auth)
+	if err != nil {
+		return err
+	}
+	options := buildOptions{
+		types:       new(typeWorkspace),
+		resolutions: new(sync.Map), builder: config.builder, HTTPClient: config.RegistryHTTPClient,
+		Stderr: stderr, Env: config.Env, architectures: manager.info.BuildArchitectures, output: config.output,
+		builders: new(builderConnections), check: config.check,
+	}
+	defer options.types.close()
+	defer options.builders.close()
+	request, resolvedManifest, err := uploadManifest(ctx, manager, "", config.manifest, options, apps...)
+	if err != nil {
+		return err
+	}
+	options.types.accept(resolvedManifest)
+	request.TTLSeconds = config.devTTLSeconds
+	token, err := manager.controlToken(ctx, protocol.DevPlane)
+	if err != nil {
+		return err
+	}
+	config.output.deploying(request.Apps)
+	var session protocol.SessionResponse
+	if err := manager.client.Call(ctx, protocol.DevPlane, token, protocol.ToolCreateSession, request, &session); err != nil {
+		if status := HTTPStatus(err); status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+			return err
+		}
+		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
+		return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
+	}
+	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
+		return err
+	}
+	if request.TTLSeconds != nil {
+		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
+		if err != nil {
+			return errors.Join(err, deleteWithFreshContext(manager, session.Name, session.UID))
+		}
+		if config.jsonOutput {
+			return json.NewEncoder(resultWriter).Encode(ready)
+		}
+		if err := printEndpoints(stdout, ready); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
+		return err
+	}
+	dev := &devLoop{manager: manager, name: session.Name, manifest: resolvedManifest, apps: apps, clock: config.clock(), options: options, session: session}
+	return errors.Join(dev.run(ctx, stdout), deleteWithFreshContext(manager, session.Name, session.UID))
+}
+
+func sessionPath(name, suffix string) string {
+	return path.Join(protocol.APIPathSessions, name, suffix)
+}
+
 func ControlPlane(name string) protocol.Plane {
 	if name == protocol.ProductionName {
 		return protocol.AdminPlane
@@ -179,6 +254,12 @@ func terminalCondition(condition protocol.Condition) bool {
 		protocol.ReasonInvalidIdentity, protocol.ReasonInvalidExpiry, protocol.ReasonInvalidSpec,
 		protocol.ReasonLeaseExpired, protocol.ReasonDeleting, protocol.ReasonProgressDeadline,
 	}, condition.Reason)
+}
+
+func deleteWithFreshContext(manager *Client, name, uid string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	return manager.DeleteSession(cleanupCtx, name, uid, true)
 }
 
 func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer, config commandConfig) error {
@@ -303,4 +384,25 @@ func printEndpoints(stdout io.Writer, session protocol.SessionResponse) error {
 	}
 	_, err := stdout.Write(append(output, '\n'))
 	return err
+}
+
+func (m *Client) StreamLogs(ctx context.Context, input protocol.SessionLogsRequest, stdout io.Writer) error {
+	token, err := m.controlToken(ctx, ControlPlane(input.Session))
+	if err != nil {
+		return err
+	}
+	query := url.Values{"follow": {"true"}}
+	for key, value := range map[string]string{
+		"app": input.App, "since": input.Since, "traceId": input.TraceID, "text": input.Text,
+		"operation": input.Operation, "hook": input.Hook, "event": input.Event, "tool": input.Tool, "status": input.Status,
+	} {
+		if value != "" {
+			query.Set(key, value)
+		}
+	}
+	if input.Attempt != nil {
+		query.Set("attempt", strconv.FormatInt(*input.Attempt, 10))
+	}
+	logPath := (&url.URL{Path: sessionPath(input.Session, "logs"), RawQuery: query.Encode()}).String()
+	return m.client.Do(ctx, http.MethodGet, logPath, apiRequest{Plane: ControlPlane(input.Session), Token: token, Stream: stdout}, nil)
 }

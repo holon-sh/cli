@@ -11,6 +11,7 @@ require (
 	github.com/containerd/log v0.1.0
 	github.com/distribution/reference v0.6.0
 	github.com/docker/cli v29.7.2+incompatible
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
 	github.com/holon-sh/mcp-bridge v0.0.4

@@ -1,11 +1,15 @@
 package installation
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/ptr"
 
 	"github.com/holon-sh/protocol"
@@ -73,4 +77,50 @@ func retryOperation(ctx context.Context, manager *Client, s protocol.SessionResp
 		SessionRequest: protocol.SessionRequest{Session: s.Name}, Operation: s.Operation.ID, ExpectedRevision: s.Revision,
 	}, &result)
 	return result, err
+}
+
+func (m *Client) DeleteSession(ctx context.Context, name, uid string, skip bool) error {
+	for range 3 {
+		current, err := m.Session(ctx, name)
+		if HTTPStatus(err) == http.StatusNotFound {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		uid = cmp.Or(uid, current.UID)
+		if uid != current.UID {
+			return errors.New("execution identity changed; refusing deletion")
+		}
+		var result protocol.DeleteSessionResultFor[protocol.SessionResponse]
+		err = m.Call(ctx, ControlPlane(name), protocol.ToolDeleteSession, protocol.DeleteSessionRequest{
+			SessionRequest: protocol.SessionRequest{Session: name}, ExpectedRevision: current.Revision, SkipHooks: skip,
+		}, &result)
+		if HTTPStatus(err) == http.StatusPreconditionFailed {
+			continue
+		}
+		if err != nil || result.Deleted {
+			return err
+		}
+		if _, err := retryOperation(ctx, m, current); err != nil {
+			return err
+		}
+		return wait.PollUntilContextCancel(ctx, workflowPoll, true, func(ctx context.Context) (bool, error) {
+			s, err := m.Session(ctx, name)
+			if HTTPStatus(err) == http.StatusNotFound {
+				return true, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			if s.UID != uid {
+				return false, errors.New("execution identity changed")
+			}
+			if lifecycleFailed(s) {
+				return false, errors.New("session failed: " + s.Lifecycle.Message)
+			}
+			return false, m.authorizeOperation(ctx, s)
+		})
+	}
+	return errors.New("execution kept changing during deletion")
 }
