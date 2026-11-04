@@ -26,6 +26,11 @@ func newCommands(config commandConfig) []*cobra.Command {
 		{
 			Use:   "login [ORIGIN]",
 			Short: "Sign in and select a Holon installation",
+			Example: `  # Sign in and select an installation
+  holon login https://acme.cloud.holon-labs.dev
+
+  # Sign in again to the selected installation
+  holon login`,
 			Args: cobra.MatchAll(cobra.MaximumNArgs(1), func(cmd *cobra.Command, args []string) error {
 				if len(args) == 0 {
 					return nil
@@ -53,7 +58,12 @@ func newCommands(config commandConfig) []*cobra.Command {
 		{
 			Use:   "logout",
 			Short: "Remove credentials for the selected Holon installation",
-			Args:  cobra.NoArgs,
+			Example: `  # Sign out of the selected installation
+  holon logout
+
+  # Sign out of another installation
+  holon logout --origin https://acme.cloud.holon-labs.dev`,
+			Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				manager, err := newLocalAuthManager(config.Auth)
 				if err != nil {
@@ -90,6 +100,21 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 		Use:   "dev [APP[=SOURCE]...]",
 		Short: "Run a development session",
 		Long:  "Run apps and their required dependencies. Each app uses /<app-name>/ on the session host.\n\n" + appsHelp,
+		Example: `  # Run every app in holon.yaml
+  holon dev
+
+  # Run an app and the apps it requires
+  holon dev chat
+
+  # Run an app from a directory, an MCP Registry server version URL, or an https MCP endpoint
+  holon dev chat=../chat
+  holon dev docs=https://mcp.context7.com/mcp
+
+  # Type-check first
+  holon dev --check
+
+  # Keep the session after the command exits and print it as JSON
+  holon dev --detach --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if detached {
 				if ttl < time.Second || ttl > 24*time.Hour || ttl%time.Second != 0 {
@@ -117,6 +142,18 @@ func newDeployCommand(config *commandConfig) *cobra.Command {
 		Short: "Deploy apps to production",
 		Long: "Deploy every app, or the named apps and their required dependencies, to production. " +
 			"Production apps this deploy does not name keep running; holon app remove removes one.\n\n" + appsHelp,
+		Example: `  # Deploy every app in holon.yaml
+  holon deploy
+
+  # Deploy an app and the apps it requires
+  holon deploy chat
+
+  # Deploy an app outside holon.yaml that requires sign-in, with or without scopes
+  holon deploy notes --oauth
+  holon deploy notes --oauth=app:notes:read
+
+  # Deploy an app outside holon.yaml that anyone can call
+  holon deploy notes --public`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runDeploy(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
 		},
