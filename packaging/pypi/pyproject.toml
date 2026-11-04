@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["mcp>=2.3,<3", "pydantic>=2.14,<3", "typing-extensions>=4.16,<5", "mypy>=2.4,<3"]
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD-PARTY-NOTICES"]
 urls.Repository = "https://github.com/holon-sh/cli"
 scripts.holon = "holon_types:main"
 
