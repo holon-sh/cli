@@ -11,8 +11,9 @@ import (
 
 	"k8s.io/utils/ptr"
 
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ...string) (map[string]*manifestApp, error) {
@@ -90,7 +91,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 				continue
 			}
 			selected := nodes[dependency]
-			if selected.resolved.descriptor == nil || selected.resolved.descriptor.Identity() != ref.Identity() {
+			if selected.resolved.descriptor == nil || selected.resolved.descriptor.Identity() != (mcpcontract.Identity{Name: ref.Name, Version: ref.Version}) {
 				return manifestSpec{}, fmt.Errorf("%s requires %s to be %s@%s; declared app does not match", name, dependency, ref.Name, ref.Version)
 			}
 			if selected.Registry != nil && selected.Registry.RegistryURL() != ref.Registry {

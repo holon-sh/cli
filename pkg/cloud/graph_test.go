@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func descriptorDocument(name string) map[string]any {

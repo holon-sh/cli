@@ -13,8 +13,8 @@ import (
 	"golang.org/x/oauth2"
 	testingclock "k8s.io/utils/clock/testing"
 
-	"github.com/holon-sh/cli/pkg/protocol"
 	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
+	"github.com/holon-sh/protocol"
 )
 
 func TestCredentialAudienceIsolation(t *testing.T) {

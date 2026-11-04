@@ -13,7 +13,7 @@ import (
 
 	"k8s.io/utils/ptr"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 type RunConfig struct {

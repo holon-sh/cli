@@ -14,8 +14,8 @@ import (
 	bridgeproxy "github.com/holon-sh/mcp-bridge/proxy"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/holon-sh/cli/pkg/clientutil"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/cli/internal/clientutil"
+	"github.com/holon-sh/protocol"
 )
 
 func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool string, input, output any) error {

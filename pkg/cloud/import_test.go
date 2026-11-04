@@ -14,7 +14,7 @@ import (
 
 	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func registryPackageManifest(t *testing.T, registryType string) manifestSpec {

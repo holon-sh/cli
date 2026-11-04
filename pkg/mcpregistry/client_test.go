@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 const descriptorJSON = `{"$schema":"https://untrusted.invalid/schema",
