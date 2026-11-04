@@ -14,7 +14,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
 	github.com/holon-sh/mcp-bridge v0.0.4
-	github.com/holon-sh/protocol v0.0.1-dev.1
+	github.com/holon-sh/protocol v0.0.1-dev.3
 	github.com/holon-sh/runtime v0.0.1-dev.1
 	github.com/moby/buildkit v0.33.1
 	github.com/moby/patternmatcher v0.6.1
@@ -119,9 +119,5 @@ require (
 	gotest.tools/v3 v3.5.2 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 )
-
-replace github.com/holon-sh/protocol => github.com/hughhan1/protocol-private v0.0.0-20261104024740-e6be7e8561be
-
-replace github.com/holon-sh/runtime => github.com/hughhan1/runtime-private v0.0.0-20261104025022-3926d2564c82
 
 tool github.com/holon-sh/runtime/cmd/holon-mcp-runtime
