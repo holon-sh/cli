@@ -13,6 +13,9 @@ import (
 	"strings"
 	"testing"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/holon-sh/cli/pkg/appartifact"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
@@ -31,7 +34,7 @@ func TestDockerAutomaticTypes(t *testing.T) {
 "strict":true,"skipLibCheck":true,"noEmit":true},"include":["server.ts"]}`
 	provider := `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; import {z} from "zod";
 export default createMcpHandler(() => {
-  const server=new McpServer({name:"orders",version:"1"});
+  const server=new McpServer({name:"io.github.example/orders",version:"1.0.0",title:"Orders",description:"Orders by id"});
   server.registerTool("get_order", {inputSchema:z.object({id:z.string()}),outputSchema:z.object({total:z.number()})},
     ({id}) => ({content:[{type:"text",text:id}],structuredContent:{total:5}}));
   return server;
@@ -83,12 +86,11 @@ export default createMcpHandler(() => {
 		})
 		originalFiles[filepath.Join(path, "package.json")] = []byte(packageJSON)
 		originalFiles[filepath.Join(path, lockName)] = lock
-		descriptor := &mcpregistry.Descriptor{Name: "io.github.example/" + name, Version: "1.0.0"}
-		app := manifestApp{Name: name, Path: path, resolved: resolvedApp{App: protocol.App{Name: name, Port: 3000}, descriptor: descriptor}}
+		app := manifestApp{Name: name, Path: path, resolved: resolvedApp{App: protocol.App{Name: name, Port: 3000}}}
 		if name == "checkout" {
-			descriptor.Requires = map[string]protocol.RegistryRef{
+			app.resolved.descriptor = &mcpregistry.Descriptor{Name: "io.github.example/checkout", Version: "1.0.0", Requires: map[string]protocol.RegistryRef{
 				"orders": {Name: "io.github.example/orders", Version: "1.0.0", Registry: "https://private-registry.example"},
-			}
+			}}
 			app.resolved.Requires = []string{"orders"}
 		}
 		manifest.Apps = append(manifest.Apps, app)
@@ -96,6 +98,7 @@ export default createMcpHandler(() => {
 	manifest = typedManifest(t, manifest.Apps...)
 	grant, options := sourceRegistry(t)
 	options.check = true
+	options.catalogTag = appartifact.DevelopmentTag
 	var diagnostics strings.Builder
 	options.Stderr = &buildLog{writer: &diagnostics}
 	grant.Repositories = map[string]string{"orders": "apps/orders", "checkout": "apps/checkout"}
@@ -131,13 +134,37 @@ export default createMcpHandler(() => {
 		if err != nil || metadata == nil || metadata.Schema == nil {
 			t.Fatalf("published metadata %s: %v, %v", app.Name, metadata, err)
 		}
+		repository, err := contractRepository(app.Image, imageOptions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if app.Name == "orders" {
+			tagged, err := repository.Resolve(t.Context(), appartifact.DevelopmentTag)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var build, platforms ocispec.Index
+			var image, published ocispec.Manifest
+			var config ocispec.Image
+			var record protocol.BuildRecord
+			publishedJSON(t, repository, tagged, &build)
+			publishedJSON(t, repository, build.Manifests[0], &platforms)
+			publishedJSON(t, repository, platforms.Manifests[0], &image)
+			publishedJSON(t, repository, image.Config, &config)
+			publishedJSON(t, repository, build.Manifests[1], &published)
+			publishedJSON(t, repository, published.Layers[0], &record)
+			labels := config.Config.Labels
+			if labels["io.modelcontextprotocol.server.name"] != "io.github.example/orders" || labels[ocispec.AnnotationTitle] != "Orders" ||
+				labels[ocispec.AnnotationVersion] != "1.0.0" || labels[ocispec.AnnotationDescription] != "Orders by id" {
+				t.Fatalf("code-only server labels: %v", labels)
+			}
+			if record.ServerName != "io.github.example/orders" || record.ServerVersion != "1.0.0" || record.Title != "Orders" || record.Description != "Orders by id" {
+				t.Fatalf("code-only server build record: %+v", record)
+			}
+		}
 		if app.Name == "checkout" {
 			if len(metadata.Requires) != 1 {
 				t.Fatal("caller expectations not published")
-			}
-			repository, err := contractRepository(app.Image, imageOptions)
-			if err != nil {
-				t.Fatal(err)
 			}
 			expected, err := typegen.FetchDocument(t.Context(), repository.Blobs(), metadata.Requires["orders"])
 			if err != nil || expected.Identity.Name != "io.github.example/orders" || len(expected.Schema.Tools) != 1 {
