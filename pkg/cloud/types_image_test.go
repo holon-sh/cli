@@ -25,7 +25,6 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	fixture, server := buildRegistry(t)
 	host := strings.TrimPrefix(server.URL, "https://")
 	options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}, Stderr: io.Discard}
-	// A provider's encoding may differ from the consumer's writer.
 	raw := []byte(` { "schema":{"tools":[{"name":"lookup",
 "inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}]},
 "identity":{"version":"1","name":"example/orders"} } `)
@@ -40,7 +39,6 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Expected contracts must still be readable after the source repository is gone.
 	fixture.mu.Lock()
 	for key := range fixture.items {
 		if strings.HasPrefix(key, "checkout/") {

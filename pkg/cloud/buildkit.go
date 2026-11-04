@@ -205,8 +205,6 @@ func publishPlatform(
 		return ocispec.Descriptor{}, err
 	}
 	statuses := make(chan *client.SolveStatus)
-	// PlainMode accepts any writer and cannot fail construction. Keep draining
-	// BuildKit's status channel after cancellation so its producers can finish.
 	display, _ := progressui.NewDisplay(progressFunc(func(data []byte) (int, error) {
 		n, err := progress.Write(data)
 		if err != nil {

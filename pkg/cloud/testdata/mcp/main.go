@@ -38,7 +38,6 @@ func main() {
 		hosting := &http.Server{Addr: ":3000", Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 		err = hosting.ListenAndServe()
 	} else {
-		// Like most stdio servers, which predate MCP 2026-07-28, reject server/discover as an unknown method.
 		server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
 			return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 				if method == "server/discover" {
