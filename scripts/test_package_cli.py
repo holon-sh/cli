@@ -5,6 +5,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,3 +31,7 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(launcher["optionalDependencies"], {name: "1.2.3-rc.1" for name in (
                 "holon-types-darwin-arm64", "holon-types-darwin-x64", "holon-types-linux-arm64", "holon-types-linux-x64",
             )})
+            for package in output.iterdir():
+                with (zipfile.ZipFile if package.suffix == ".whl" else tarfile.open)(package) as archive:
+                    names = archive.namelist() if package.suffix == ".whl" else archive.getnames()
+                self.assertTrue({"LICENSE", "THIRD-PARTY-NOTICES"} <= {Path(name).name for name in names}, package.name)
