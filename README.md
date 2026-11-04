@@ -196,7 +196,7 @@ holon types check -s https://mcp.context7.com/mcp
 
 </details>
 
-## Cloud
+## Installations
 
 `holon` also builds and runs the apps in your project's `holon.yaml` on a Holon installation.
 
