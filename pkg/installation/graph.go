@@ -45,7 +45,7 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 			return nil, fmt.Errorf("app %s needs an access rule: pass --public or --oauth", name)
 		}
 		app.resolved = resolvedApp{App: protocol.App{
-			Name: app.Name, Mount: app.Mount, Image: app.Image, Egress: app.Egress, Access: access,
+			Name: app.Name, Mount: app.Mount, Image: app.Image, Access: access,
 			OAuth: (*protocol.OAuthClient)(app.OAuth),
 		}}
 		if app.Path != "" {
@@ -165,8 +165,8 @@ func resolveApp(app *manifestApp) error {
 		}
 	}
 	if remote != nil {
-		if app.Arguments != nil || app.Egress != nil {
-			return errors.New("remote apps cannot declare run, arguments, or egress")
+		if app.Arguments != nil {
+			return errors.New("remote apps cannot declare arguments")
 		}
 		var err error
 		app.resolved.Remote, app.resolved.Env, err = remote.Remote(app.Headers)
@@ -182,7 +182,7 @@ func resolveApp(app *manifestApp) error {
 			app.resolved.registryPackage = &pkg
 		}
 	}
-	if d != nil && app.Egress == nil {
+	if d != nil {
 		app.resolved.Egress = d.Egress
 	}
 	return resolveAppMetadata(app, pkg)

@@ -154,36 +154,21 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	}
 }
 
-func TestDescriptorEgressAndManifestOverride(t *testing.T) {
+func TestDescriptorEgress(t *testing.T) {
 	appEgress := []any{map[string]any{"host": "API.Example.com.", "ports": []int{8443, 443, 443}}}
-	normalized := protocol.Egress{{Host: "api.example.com", Ports: []int32{443, 8443}}}
-	manifestEgress := protocol.Egress{{Host: "manifest.example.com", Ports: []int32{443}}}
 	for _, test := range []struct {
-		name           string
-		metadata       any
-		manifestEgress string
-		remote         bool
-		want           protocol.Egress
+		name     string
+		metadata any
+		remote   bool
+		want     protocol.Egress
 	}{
-		{name: "app declaration", metadata: appEgress, want: normalized},
-		{
-			name:           "IP and templated destinations",
-			manifestEgress: "[{host: 'fd00:0::3', ports: [3307]}, {host: 'fe80::3', ports: [3307]}, {host: '{DATABASE_IP}', ports: [3307]}]",
-			want: protocol.Egress{
-				{Host: "fd00::3", Ports: []int32{3307}},
-				{Host: "fe80::3", Ports: []int32{3307}},
-				{Host: "{DATABASE_IP}", Ports: []int32{3307}},
-			},
-		},
-		{name: "manifest replacement", metadata: appEgress, manifestEgress: "[{host: manifest.example.com, ports: [443]}]", want: manifestEgress},
-		{name: "manifest deny all", metadata: appEgress, manifestEgress: "[]", want: protocol.Egress{}},
+		{name: "app declaration", metadata: appEgress, want: protocol.Egress{{Host: "api.example.com", Ports: []int32{443, 8443}}}},
 		{name: "app deny all", metadata: []any{}, want: protocol.Egress{}},
 		{name: "no declaration"},
 		{name: "remote ignores container egress", metadata: appEgress, remote: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			document := descriptorDocument("alpha")
-			document["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{map[string]any{"name": "DATABASE_IP"}}
 			if test.metadata != nil {
 				document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
 					"sh.holon": map[string]any{"egress": test.metadata},
@@ -191,11 +176,7 @@ func TestDescriptorEgressAndManifestOverride(t *testing.T) {
 			}
 			path := filepath.Join(t.TempDir(), "server.json")
 			writeDescriptor(t, path, document)
-			manifest := "apps:\n- name: alpha\n  path: .\n  access: {server: {}}\n"
-			if test.manifestEgress != "" {
-				manifest += "  egress: " + test.manifestEgress + "\n"
-			}
-			sourceFiles(t, filepath.Dir(path), map[string]string{manifestFileName: manifest})
+			sourceFiles(t, filepath.Dir(path), map[string]string{manifestFileName: "apps:\n- name: alpha\n  path: .\n  access: {server: {}}\n"})
 			parsed, err := resolveManifestFile(filepath.Join(filepath.Dir(path), manifestFileName))
 			if err != nil {
 				t.Fatal(err)
