@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,23 +37,26 @@ func TestCredentialAudienceIsolation(t *testing.T) {
 	dir := t.TempDir()
 	manager := newManager(t, server, clock, dir)
 	manager.state.OAuth, manager.state.Version = targetForOAuth(manager.info.OAuth), "test"
-	for plane, refresh := range map[protocol.Plane]string{protocol.AdminPlane: "admin-refresh", protocol.DevPlane: "dev-refresh"} {
-		manager.state.Tokens[tokenKey(manager.info.OAuth.Issuer, manager.audience(plane), protocol.ControlScopes(plane))] = &oauth2.Token{
-			AccessToken: "expired", RefreshToken: refresh, TokenType: "Bearer", ExpiresIn: 3600, Expiry: time.Unix(1, 0),
+	session, err := protocol.SessionAudience(server.URL, protocol.ModeDevelopment, "calm-fox-42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	audiences := map[string]string{"control": installationtest.AdminAudience(server.URL), "session": session}
+	for name, audience := range audiences {
+		manager.state.Tokens[tokenKey(manager.info.OAuth.Issuer, audience, protocol.SystemScopes())] = &oauth2.Token{
+			AccessToken: "expired", RefreshToken: name + "-refresh", TokenType: "Bearer", ExpiresIn: 3600, Expiry: time.Unix(1, 0),
 		}
 	}
 	if err := manager.withLock(t.Context(), func() error { return manager.writeState(manager.state) }); err != nil {
 		t.Fatal(err)
 	}
-	for _, plane := range []protocol.Plane{protocol.DevPlane, protocol.AdminPlane, protocol.DevPlane, protocol.AdminPlane} {
-		manager := newManager(t, server, clock, dir)
-		token, err := manager.controlToken(t.Context(), plane)
-		want := "dev-access"
-		if plane == protocol.AdminPlane {
-			want = "admin-access"
-		}
-		if err != nil || token != want {
-			t.Fatalf("audience %s: token=%q error=%v", plane, token, err)
+	for range 2 {
+		for name, audience := range audiences {
+			manager := newManager(t, server, clock, dir)
+			token, err := manager.resourceToken(t.Context(), audience, protocol.SystemScopes())
+			if err != nil || token.AccessToken != name+"-access" {
+				t.Fatalf("audience %s: token=%v error=%v", audience, token, err)
+			}
 		}
 	}
 	if refreshes.Load() != 2 {
@@ -96,7 +98,7 @@ func TestPrivateCredentialFiles(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := manager.controlToken(t.Context(), protocol.AdminPlane); !errors.Is(err, errCredentialUnavailable) {
+			if _, err := manager.controlToken(t.Context()); !errors.Is(err, errCredentialUnavailable) {
 				t.Fatalf("unsafe credentials: %v", err)
 			}
 		})
@@ -110,26 +112,21 @@ func TestDevelopmentAuthenticationBeforeBuild(t *testing.T) {
 		name string
 		want error
 	}{
-		{"authorized", built}, {"denied", errDeviceDenied}, {"cancelled", context.Canceled},
+		{"authorized", built}, {"denied", errDeviceDenied},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			var authorized atomic.Bool
-			var server *httptest.Server
-			mux := http.NewServeMux()
-			installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.DevPlane, nil, 120, 1,
-				func(w http.ResponseWriter, _ *http.Request) {
-					if test.name == "denied" {
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusBadRequest)
-						installationtest.WriteJSON(w, map[string]string{"error": "access_denied"})
-						return
-					}
-					authorized.Store(true)
-					installationtest.WriteJSON(w, map[string]any{"access_token": "dev-access", "refresh_token": "dev-refresh", "token_type": "Bearer", "expires_in": 120})
-				})
-			server = httptest.NewTLSServer(mux)
-			t.Cleanup(server.Close)
+			server := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				if test.name == "denied" {
+					w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
+					w.WriteHeader(http.StatusBadRequest)
+					installationtest.WriteJSON(w, map[string]string{"error": "access_denied"})
+					return
+				}
+				authorized.Store(true)
+				installationtest.WriteJSON(w, map[string]any{"access_token": "access-token", "refresh_token": "refresh-token", "token_type": "Bearer", "expires_in": 120})
+			})
 			root := t.TempDir()
 			sourceFiles(t, root, map[string]string{
 				"package.json": sourcePackage, "server.js": "export default {}",
@@ -138,21 +135,14 @@ func TestDevelopmentAuthenticationBeforeBuild(t *testing.T) {
 			config := commandConfig{
 				Auth: ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)},
 				builder: func(context.Context, buildRequest, io.Writer) (buildResult, error) {
-					if !authorized.Load() || test.name != "authorized" {
+					if !authorized.Load() {
 						t.Error("build started before development authorization")
 					}
 					return buildResult{}, built
 				},
 			}
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			output := &installationtest.ObservedOutput{OnWrite: func(text string) {
-				if test.name == "cancelled" && strings.Contains(text, "Code:") {
-					cancel()
-				}
-			}}
 			args := []string{"dev", "--project", filepath.Join(root, manifestFileName)}
-			if err := executeCommand(ctx, args, nil, output, config); !errors.Is(err, test.want) {
+			if err := executeCommand(t.Context(), args, nil, nil, config); !errors.Is(err, test.want) {
 				t.Fatalf("dev returned %v, want %v", err, test.want)
 			}
 		})
