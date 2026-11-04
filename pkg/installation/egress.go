@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -60,11 +61,11 @@ func newEgressCommand(config *commandConfig) *cobra.Command {
 	}
 	cmd.AddCommand(
 		&cobra.Command{
-			Use:   "get [APP]",
-			Short: "Show the egress ceiling of an app, or of every app",
-			Args:  cobra.MaximumNArgs(1),
+			Use:   "get APP|'*'",
+			Short: "Show an app's egress ceiling, or the installation-wide one",
+			Args:  cobra.ExactArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				return runEgressGet(cmd, config, args)
+				return runEgressGet(cmd, config, args[0])
 			},
 		},
 		&cobra.Command{
@@ -98,35 +99,26 @@ func validEgressApp(app string) error {
 	return nil
 }
 
-func runEgressGet(cmd *cobra.Command, config *commandConfig, args []string) error {
-	ctx := cmd.Context()
-	apps := args
-	if len(apps) == 1 {
-		if err := validEgressApp(apps[0]); err != nil {
-			return err
-		}
+func runEgressGet(cmd *cobra.Command, config *commandConfig, app string) error {
+	if err := validEgressApp(app); err != nil {
+		return err
 	}
+	ctx := cmd.Context()
 	client, err := NewClient(ctx, config.Auth)
 	if err != nil {
 		return err
 	}
-	if len(apps) == 0 {
-		session, err := client.Session(ctx, protocol.ProductionName)
-		if err != nil {
-			return err
-		}
-		apps = []string{egressAllApps}
-		for _, app := range session.Apps {
-			apps = append(apps, app.Name)
-		}
+	result, err := getEgress(ctx, client, app)
+	if err != nil {
+		return err
 	}
-	results := make([]egressResponse, len(apps))
-	for i, app := range apps {
-		if err := client.Call(ctx, protocol.AdminPlane, toolGetEgress, egressRequest{App: app}, &results[i]); err != nil {
-			return err
-		}
-	}
-	return writeEgress(cmd.OutOrStdout(), results)
+	return writeEgress(cmd.OutOrStdout(), result)
+}
+
+func getEgress(ctx context.Context, client *Client, app string) (egressResponse, error) {
+	var result egressResponse
+	err := client.Call(ctx, protocol.AdminPlane, toolGetEgress, egressRequest{App: app}, &result)
+	return result, err
 }
 
 func runEgressSet(cmd *cobra.Command, config *commandConfig, app string, allow *protocol.Egress) error {
@@ -138,8 +130,8 @@ func runEgressSet(cmd *cobra.Command, config *commandConfig, app string, allow *
 	if err != nil {
 		return err
 	}
-	var current egressResponse
-	if err := client.Call(ctx, protocol.AdminPlane, toolGetEgress, egressRequest{App: app}, &current); err != nil {
+	current, err := getEgress(ctx, client, app)
+	if err != nil {
 		return err
 	}
 	input := setEgressRequest{
@@ -151,7 +143,7 @@ func runEgressSet(cmd *cobra.Command, config *commandConfig, app string, allow *
 	if err := client.Call(ctx, protocol.AdminPlane, toolSetEgress, input, &result); err != nil {
 		return err
 	}
-	return writeEgress(cmd.OutOrStdout(), []egressResponse{result})
+	return writeEgress(cmd.OutOrStdout(), result)
 }
 
 func parseEgressDestinations(destinations []string) (protocol.Egress, error) {
@@ -170,12 +162,10 @@ func parseEgressDestinations(destinations []string) (protocol.Egress, error) {
 	return allow.Normalize()
 }
 
-func writeEgress(output io.Writer, results []egressResponse) error {
+func writeEgress(output io.Writer, result egressResponse) error {
 	table := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(table, "APP\tCEILING\tSTATUS")
-	for _, result := range results {
-		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\n", result.App, result.ceiling(), result.Status.summary())
-	}
+	_, _ = fmt.Fprintf(table, "%s\t%s\t%s\n", result.App, result.ceiling(), result.Status.summary())
 	return table.Flush()
 }
 
