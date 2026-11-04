@@ -202,9 +202,6 @@ export default createMcpHandler(() => {
 	if err == nil || !strings.Contains(diagnostics.String(), "error TS2322") {
 		t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, diagnostics.String())
 	}
-	if err := currentTypeSources(prepared); err == nil || !strings.Contains(err.Error(), "source changed during preparation") {
-		t.Fatalf("expected superseded source rejection: %v", err)
-	}
 	if err := os.WriteFile(providerPath, []byte(provider), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -229,9 +229,6 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		}
 		metadata[app.Name] = p.metadata
 	}
-	if err := currentTypeSources(manifest); err != nil {
-		return manifestSpec{}, nil, err
-	}
 	if w := options.types; w != nil {
 		if err := prepared.Write(); err != nil {
 			return manifestSpec{}, nil, err
