@@ -129,8 +129,8 @@ github.com/holon-sh/mcp-bridge v0.0.4 h1:0RSEvt9u0y6YMo2zuPsi6VFj4q52+hKy6DuUTnO
 github.com/holon-sh/mcp-bridge v0.0.4/go.mod h1:4Zj3W5TYQhZ4kENbZhXMZmspaqnXmQYYxaLw9GHIYVM=
 github.com/holon-sh/protocol v0.0.1-dev.5 h1:sSwE5i2aKmn9+x65cgN6M1NThGj74f2CBV8JqrIWg1o=
 github.com/holon-sh/protocol v0.0.1-dev.5/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
-github.com/holon-sh/runtime v0.0.1-dev.1 h1:nDTNmScIpR357EmRt1+UHkXzVD4ulfZHrJu93Jvqfjo=
-github.com/holon-sh/runtime v0.0.1-dev.1/go.mod h1:kr98Sn0Mr544NNAc+ZdeVLeKXyzLHiBjsPUIR+66iME=
+github.com/holon-sh/runtime v0.0.1-dev.2 h1:lOEBz/CAR01hxBujDiWFAVGDDabIhZ6+vC6Hgyxq0OU=
+github.com/holon-sh/runtime v0.0.1-dev.2/go.mod h1:kr98Sn0Mr544NNAc+ZdeVLeKXyzLHiBjsPUIR+66iME=
 github.com/iancoleman/orderedmap v0.3.0 h1:5cbR2grmZR/DiVt+VJopEhtVs9YGInGIxAoMJn+Ichc=
 github.com/iancoleman/orderedmap v0.3.0/go.mod h1:XuLcCUkdL5owUCQeF2Ue9uuw1EptkJDkXXS7VoV7XGE=
 github.com/in-toto/attestation v1.2.0 h1:aPRUZ3azbqD7yEBD5fP3TD8Dszf+YHo284SOcpahjQk=
