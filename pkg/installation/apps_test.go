@@ -30,6 +30,18 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 	h.control.Handle([]string{toolListSessions}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, map[string]any{"items": sessions})
 	})
+	h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+		var input protocol.SessionRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+			return
+		}
+		for _, session := range sessions {
+			if session.Name == input.Session {
+				installationtest.WriteJSON(w, session)
+			}
+		}
+	})
 	h.control.Handle([]string{protocol.ToolUpdateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
 		var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -64,6 +76,12 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 			args:   []string{"app", "get", "chat"},
 			output: []string{"# dev session s-one", "# dev session s-two"},
 		},
+		{
+			args:    []string{"access", "set", "chat", "public", "--session", "s-two"},
+			updates: []string{"s-two remove= chat:public"},
+			output:  []string{"chat access in dev session s-two: "},
+		},
+		{args: []string{"app", "get", "chat", "--session", "s-three"}, err: "app chat is not in dev session s-three"},
 		{args: []string{"app", "get", "missing"}, err: "app missing is not in any development session"},
 		{args: []string{"access", "delete", "chat/send_message"}, err: "dev session s-one: chat/send_message has no rule"},
 	} {
