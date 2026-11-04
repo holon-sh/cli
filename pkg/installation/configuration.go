@@ -13,17 +13,24 @@ import (
 
 type configurationScope string
 
-func parseConfigurationScope(environment, session string) (configurationScope, error) {
-	if !slices.Contains([]string{"dev", "prod"}, environment) {
-		return "", errors.New("--env must be dev or prod")
+func withScope(cmd *cobra.Command, run func(*cobra.Command, []string, configurationScope) error) *cobra.Command {
+	environment, session := "dev", ""
+	cmd.Flags().StringVar(&environment, "env", environment, "Target environment: dev or prod")
+	cmd.Flags().StringVar(&session, "session", "", "Target development session by name")
+	cmd.MarkFlagsMutuallyExclusive("env", "session")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if !slices.Contains([]string{"dev", "prod"}, environment) {
+			return errors.New("--env must be dev or prod")
+		}
+		if session != "" && (!protocol.ValidDNSLabel(session) || session == protocol.ProductionName) {
+			return errors.New("--session requires a development session name")
+		}
+		if environment == "prod" {
+			return run(cmd, args, protocol.ProductionName)
+		}
+		return run(cmd, args, configurationScope(session))
 	}
-	if session != "" && (!protocol.ValidDNSLabel(session) || session == protocol.ProductionName) {
-		return "", errors.New("--session requires a development session name")
-	}
-	if environment == "prod" {
-		return protocol.ProductionName, nil
-	}
-	return configurationScope(session), nil
+	return cmd
 }
 
 func (scope configurationScope) session() string {
@@ -44,51 +51,45 @@ func (scope configurationScope) label() string {
 	}
 }
 
-func newConfigurationCommand(kind string, config *commandConfig) *cobra.Command {
+func commandGroup(use, short string, commands ...*cobra.Command) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   kind,
-		Short: "Manage " + kind + " values",
+		Use:   use,
+		Short: short,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(
-		newConfigurationActionCommand(kind, "set", config),
-		newConfigurationActionCommand(kind, "delete", config),
-	)
+	cmd.AddCommand(commands...)
 	return cmd
 }
 
+func newConfigurationCommand(kind string, config *commandConfig) *cobra.Command {
+	return commandGroup(kind, "Manage "+kind+" values",
+		newConfigurationActionCommand(kind, "set", config),
+		newConfigurationActionCommand(kind, "delete", config),
+	)
+}
+
 func newConfigurationActionCommand(kind, action string, config *commandConfig) *cobra.Command {
-	environment, session := "dev", ""
 	use, argumentCount := action+" VARIABLE", 1
 	if action == "set" && kind == "config" {
 		use, argumentCount = "set VARIABLE VALUE", 2
 	}
-	cmd := &cobra.Command{
+	return withScope(&cobra.Command{
 		Use:   use,
 		Short: action + " a " + kind + " value",
 		Args:  cobra.ExactArgs(argumentCount),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			variable, value := args[0], ""
-			if !protocol.ValidEnvName(variable) {
-				return fmt.Errorf("invalid variable name %q", variable)
-			}
-			if argumentCount == 2 {
-				value = args[1]
-			}
-			scope, err := parseConfigurationScope(environment, session)
-			if err != nil {
-				return err
-			}
-			return runConfiguration(cmd, kind, action, scope, variable, value, config.Auth)
-		},
-	}
-	cmd.Flags().StringVar(&environment, "env", environment, "Target environment: dev or prod")
-	cmd.Flags().StringVar(&session, "session", "", "Target development session by name")
-	cmd.MarkFlagsMutuallyExclusive("env", "session")
-	return cmd
+	}, func(cmd *cobra.Command, args []string, scope configurationScope) error {
+		variable, value := args[0], ""
+		if !protocol.ValidEnvName(variable) {
+			return fmt.Errorf("invalid variable name %q", variable)
+		}
+		if argumentCount == 2 {
+			value = args[1]
+		}
+		return runConfiguration(cmd, kind, action, scope, variable, value, config.Auth)
+	})
 }
 
 func runConfiguration(cmd *cobra.Command, kind, action string, scope configurationScope, variable, value string, auth ClientConfig) error {

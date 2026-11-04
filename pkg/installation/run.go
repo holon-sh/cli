@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -97,13 +96,7 @@ func uploadManifest(
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
 	options.output.status("", "Preparing apps", progressWorking)
-	roots := slices.Clone(apps)
-	for name, app := range manifest.retained {
-		if slices.ContainsFunc(app.Requires, func(dependency string) bool { return slices.Contains(apps, dependency) }) {
-			roots = append(roots, name)
-		}
-	}
-	resolved, err := resolveManifestGraph(ctx, manifest, roots...)
+	resolved, err := resolveManifestGraph(ctx, manifest, apps...)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
@@ -115,27 +108,16 @@ func uploadManifest(
 			return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 		}
 	}
-	if len(manifest.retained) != 0 {
-		options.metadataGrant, err = imageDestination(ctx, manager, name, resolved)
-		if err != nil {
-			return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
-		}
-	}
 	resolved, cleanup, err := prepareManifestTypes(ctx, resolved, options)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
 	defer cleanup()
-	prepared := resolved
-	prepared.Apps = slices.DeleteFunc(slices.Clone(resolved.Apps), func(app manifestApp) bool {
-		_, retained := manifest.retained[app.Name]
-		return retained
-	})
-	built, err := buildManifestImages(ctx, manager, name, prepared, options)
+	built, err := buildManifestImages(ctx, manager, name, resolved, options)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
-	if err := currentTypeSources(prepared); err != nil {
+	if err := currentTypeSources(resolved); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
 	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, resolved, nil
@@ -281,12 +263,9 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	if err != nil && HTTPStatus(err) != http.StatusNotFound {
 		return err
 	}
-	manifest.retained, manifest.deployed = map[string]protocol.App{}, map[string]*protocol.AppAccess{}
+	manifest.deployed = map[string]*protocol.AppAccess{}
 	for _, app := range current.Apps {
 		manifest.deployed[app.Name] = app.Access
-		if len(selection) > 0 && !slices.Contains(selection, app.Name) {
-			manifest.retained[app.Name] = app
-		}
 	}
 	builders := new(builderConnections)
 	defer builders.close()
@@ -297,10 +276,8 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
-	built := desired.Apps
-	desired.Apps = append(protocol.WritableApps(slices.Collect(maps.Values(manifest.retained))), built...)
-	config.output.deploying(built)
-	accepted, err := replaceExecution(ctx, manager, protocol.ProductionName, current, desired, len(selection) > 0)
+	config.output.deploying(desired.Apps)
+	accepted, err := replaceExecution(ctx, manager, protocol.ProductionName, current, desired)
 	if err != nil {
 		return err
 	}
@@ -308,7 +285,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
-	config.output.apps(built, "ready", progressDone)
+	config.output.apps(desired.Apps, "ready", progressDone)
 	return printEndpoints(stdout, ready)
 }
 

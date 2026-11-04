@@ -191,7 +191,7 @@ func patchSessionImages(
 		}
 		desired.Apps[index].Image = app.Image
 	}
-	return replaceExecution(ctx, manager, name, current, desired, true)
+	return replaceExecution(ctx, manager, name, current, desired)
 }
 
 type devLoop struct {

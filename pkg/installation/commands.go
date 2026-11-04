@@ -66,6 +66,8 @@ func newCommands(config commandConfig) []*cobra.Command {
 		newDeployCommand(&config),
 		newConfigurationCommand("secret", &config),
 		newConfigurationCommand("config", &config),
+		newAppCommand(&config),
+		newAccessCommand(&config),
 	}
 	for _, cmd := range installationCommands {
 		cmd.PersistentFlags().StringVar(&config.Auth.Origin, "origin", config.Auth.Origin, "Holon installation origin (default HOLON_ORIGIN or saved selection)")
@@ -111,8 +113,9 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 func newDeployCommand(config *commandConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deploy [APP[=SOURCE]...]",
-		Short: "Replace production or update selected applications",
-		Long:  "Replace production with every app, or update the named apps and their required dependencies.\n\n" + appsHelp,
+		Short: "Deploy apps to production",
+		Long: "Deploy every app, or the named apps and their required dependencies, to production. " +
+			"Production apps this deploy does not name keep running; holon app remove removes one.\n\n" + appsHelp,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runDeploy(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
 		},
