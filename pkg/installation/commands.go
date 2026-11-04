@@ -68,6 +68,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 		newConfigurationCommand("config", &config),
 		newAppCommand(&config),
 		newAccessCommand(&config),
+		newEgressCommand(&config),
 	}
 	for _, cmd := range installationCommands {
 		cmd.PersistentFlags().StringVar(&config.Auth.Origin, "origin", config.Auth.Origin, "Holon installation origin (default HOLON_ORIGIN or saved selection)")
