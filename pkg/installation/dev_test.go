@@ -2,13 +2,26 @@ package installation
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
+	"net/http"
+	"path/filepath"
 	"reflect"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"k8s.io/apimachinery/pkg/util/sets"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"k8s.io/utils/clock"
+	testingclock "k8s.io/utils/clock/testing"
+
+	"github.com/holon-sh/cli/pkg/installation/installationtest"
+	"github.com/holon-sh/protocol"
 )
 
 func TestDevWatcherReportsWithoutChangeConsumer(t *testing.T) {
@@ -32,40 +45,104 @@ func TestDevWatcherReportsWithoutChangeConsumer(t *testing.T) {
 	}
 }
 
-func TestDevRegistryPackageEditsScheduleImports(t *testing.T) {
+func TestDevTopologyEditRequiresRestart(t *testing.T) {
+	previous, reloaded := registryPackageManifest(t, "npm"), registryPackageManifest(t, "npm")
+	reloaded.Apps[0].Registry.Version = "2.0.0"
+	reloaded.Apps[0].resolved.Port = 8080
+	dev := devLoop{manifest: previous}
+	if dev.updateManifest(reloaded, &devChange{}) || !reflect.DeepEqual(dev.manifest, previous) {
+		t.Fatalf("blocked edit applied: manifest = %+v", dev.manifest)
+	}
+}
+
+func TestRunDevRebuildsWhatASaveChanged(t *testing.T) {
+	fixture, registry := buildRegistry(t)
+	grant := buildGrant(registry)
+	grant.Repositories = map[string]string{
+		"alpha": "holon/upload/alpha", "beta": "holon/upload/beta", "gamma": "holon/upload/gamma", "delta": "holon/upload/delta",
+	}
+	first := addTestImage(t, fixture, "amd64", ocispec.ImageConfig{}, nil).Digest.String()
+	second := addTestImage(t, fixture, "arm64", ocispec.ImageConfig{}, nil).Digest.String()
+	fixture.items["source/manifests/1.0.0"] = fixture.items["source/manifests/"+first]
+	gamma := descriptorDocument("gamma")
+	gamma["packages"].([]any)[0].(map[string]any)["identifier"] = grant.Registry + "/source:1.0.0"
+	gammaSource, _ := json.Marshal(descriptorRegistry(t, gamma))
+	manifest := fmt.Sprintf("apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n"+
+		"- name: beta\n  access: {server: {}}\n  path: ./beta\n- name: gamma\n  access: {server: {}}\n  registry: %s\n"+
+		"- name: delta\n  access: {server: {}}\n  image: %s/source@%s\n", gammaSource, grant.Registry, first)
+	beta, _ := json.Marshal(descriptorDocument("beta"))
 	for _, test := range []struct {
-		name                    string
-		edit                    func(*manifestApp)
-		dirty, blocked, pending bool
+		name, done string
+		edit       map[string]string
+		rebuilt    []string
 	}{
-		{name: "unchanged"},
-		{name: "retry unchanged failed import", dirty: true, pending: true},
-		{name: "server version", dirty: true, edit: func(app *manifestApp) { app.Registry.Version = "2.0.0" }},
-		{name: "server identity", dirty: true, edit: func(app *manifestApp) { app.Registry.Name = "com.example/other" }},
-		{name: "package selection", dirty: true, edit: func(app *manifestApp) { app.Registry.Package.Identifier = "echo" }},
-		{name: "topology requires restart", blocked: true, edit: func(app *manifestApp) {
-			app.Registry.Version = "2.0.0"
-			app.resolved.Port = 8080
-		}},
+		{
+			name: "metadata saved unchanged", done: "no app changed",
+			edit: map[string]string{manifestFileName: manifest + "# comment\n", "beta/server.json": string(beta)},
+		},
+		{
+			name: "ignored server.json edited", done: "remote image is unchanged", rebuilt: []string{"beta"},
+			edit: map[string]string{"beta/server.json": strings.Replace(string(beta), "Example MCP server", "edited", 1)},
+		},
+		{
+			name: "registry selection edited", done: "remote image is unchanged", rebuilt: []string{"gamma"},
+			edit: map[string]string{manifestFileName: strings.Replace(manifest, `"version":"1.4.2"`, `"version":"1.4.2","package":{"registryType":"oci"}`, 1)},
+		},
+		{
+			name: "image digest edited", done: "remote update requested", rebuilt: []string{"delta"},
+			edit: map[string]string{manifestFileName: strings.Replace(manifest, first, second, 1)},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			previous, reloaded := registryPackageManifest(t, "npm"), registryPackageManifest(t, "npm")
-			if test.edit != nil {
-				test.edit(&reloaded.Apps[0])
+			root := t.TempDir()
+			sourceFiles(t, root, map[string]string{
+				manifestFileName:  manifest,
+				"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
+				"beta/server.js": "export default {}", "beta/package.json": sourcePackage, "beta/server.json": string(beta),
+				"beta/" + dockerignoreFile: "server.json\n",
+			})
+			h := newRunHarness(t)
+			h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
+				installationtest.WriteJSON(w, grant)
+			})
+			var mu sync.Mutex
+			var served []protocol.App
+			h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession},
+				nil, func(w http.ResponseWriter, r *http.Request) {
+					mu.Lock()
+					defer mu.Unlock()
+					switch installationtest.ToolName(r) {
+					case protocol.ToolDeleteSession:
+						installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+						return
+					case protocol.ToolCreateSession:
+						var input protocol.AppsRequestFor[protocol.App]
+						if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+							t.Error(err)
+						}
+						served = input.Apps
+					}
+					response := apiSession(h, "alpha")
+					response["apps"] = served
+					installationtest.WriteJSON(w, response)
+				})
+			h.start(t, buildImage(t, "unchanged"))
+			fc := testingclock.NewFakeClock(time.Now())
+			h.run.Clock = fc
+			stdout, stderr, stop := startDev(t, h.run, "--project", filepath.Join(root, manifestFileName))
+			stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stdout.String(), "Watching for changes.") })
+			started := len(stderr.String())
+			sourceFiles(t, root, test.edit)
+			stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[started:], test.done) })
+			if err := stop(); err != nil {
+				t.Fatalf("dev run: %v, stderr=%q", err, stderr.String())
 			}
-			dev := devLoop{manifest: previous, changedImages: sets.New[string]()}
-			if test.pending {
-				dev.changedImages.Insert("echo")
+			var rebuilt []string
+			for _, match := range regexp.MustCompile(`(?m)^(\S+) (?:building|importing)$`).FindAllStringSubmatch(stderr.String()[started:], -1) {
+				rebuilt = append(rebuilt, match[1])
 			}
-			change := devChange{manifest: true, contexts: sets.New[string]()}
-			if accepted := dev.updateManifest(reloaded, &change); accepted == test.blocked {
-				t.Fatalf("manifest accepted = %t, restart required = %t", accepted, test.blocked)
-			}
-			if dev.changedImages.Has("echo") != test.dirty || change.contexts.Len() != 0 {
-				t.Fatalf("scheduled imports = %v, build contexts = %v", dev.changedImages, change.contexts)
-			}
-			if test.blocked && !reflect.DeepEqual(dev.manifest, previous) {
-				t.Fatal("blocked edit replaced the active manifest")
+			if !slices.Equal(rebuilt, test.rebuilt) {
+				t.Fatalf("rebuilt = %v, want %v, stderr=%q", rebuilt, test.rebuilt, stderr.String()[started:])
 			}
 		})
 	}
