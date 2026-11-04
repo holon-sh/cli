@@ -16,7 +16,7 @@ import (
 	bridgeproxy "github.com/holon-sh/mcp-bridge/proxy"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 type controlFixture struct {

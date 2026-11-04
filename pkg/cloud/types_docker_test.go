@@ -20,7 +20,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func TestDockerAutomaticTypes(t *testing.T) {

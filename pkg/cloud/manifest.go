@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 const (
@@ -136,7 +136,7 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 			errs = append(errs, label+": declare exactly one of path, image, registry, or remote")
 		}
 		if a.Remote != nil {
-			if err := protocol.ValidateRemoteURL(a.Remote.URL); err != nil {
+			if _, err := protocol.RemoteURL(a.Remote.URL); err != nil {
 				errs = append(errs, label+".remote: "+err.Error())
 			}
 		}

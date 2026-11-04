@@ -6,9 +6,8 @@ import (
 	"fmt"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	wire "github.com/holon-sh/cli/pkg/protocol"
+	wire "github.com/holon-sh/protocol"
 )
 
 const (
@@ -17,12 +16,12 @@ const (
 )
 
 type Descriptor struct {
-	Icons       []mcp.Icon `json:"icons,omitempty"`
-	Name        string     `json:"name"`
-	Title       string     `json:"title"`
-	Version     string     `json:"version"`
-	Description string     `json:"description"`
-	WebsiteURL  string     `json:"websiteUrl"`
+	Icons       []wire.Icon `json:"icons,omitempty"`
+	Name        string      `json:"name"`
+	Title       string      `json:"title"`
+	Version     string      `json:"version"`
+	Description string      `json:"description"`
+	WebsiteURL  string      `json:"websiteUrl"`
 	Repository  struct {
 		URL string `json:"url"`
 	} `json:"repository"`

@@ -6,7 +6,7 @@ import (
 	"github.com/swaggest/jsonschema-go"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func ProjectJSONSchema() ([]byte, error) {

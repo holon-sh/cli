@@ -22,7 +22,7 @@ import (
 	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 
 	"oras.land/oras-go/v2/content"
 )

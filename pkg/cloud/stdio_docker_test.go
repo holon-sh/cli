@@ -25,8 +25,8 @@ import (
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/content/oci"
 
-	"github.com/holon-sh/cli/pkg/commandenv"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/cli/internal/commandenv"
+	"github.com/holon-sh/protocol"
 )
 
 func TestDockerTransportContract(t *testing.T) {

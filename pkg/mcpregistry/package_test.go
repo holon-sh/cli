@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func TestPackageTemplates(t *testing.T) {

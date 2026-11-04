@@ -18,7 +18,7 @@ import (
 	"oras.land/oras-go/v2/content"
 
 	"github.com/holon-sh/cli/pkg/ociimage"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func preparedConfig(t *testing.T, registry *imageRegistry, image string) (ocispec.Manifest, ocispec.Image) {

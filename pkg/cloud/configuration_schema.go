@@ -7,7 +7,7 @@ import (
 	"github.com/swaggest/jsonschema-go"
 	"github.com/swaggest/refl"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 var configurationSchemaNames = map[reflect.Type]string{
