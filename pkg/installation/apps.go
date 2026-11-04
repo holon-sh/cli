@@ -20,12 +20,6 @@ const (
 	conditionEgressRestricted = "EgressRestricted"
 )
 
-type removeAppsRequest struct {
-	protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
-
-	Remove []string `json:"remove"`
-}
-
 func newAppCommand(config *commandConfig) *cobra.Command {
 	return commandGroup("app", "Inspect and remove deployed apps",
 		withScope(&cobra.Command{Use: "list", Short: "List apps with their source, access and egress", Args: cobra.NoArgs,
@@ -99,7 +93,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				request := removeAppsRequest{Remove: args}
+				request := protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]{Remove: args}
 				request.Session, request.ExpectedRevision = session.Name, session.Revision
 				request.Desired.Apps = []protocol.App{}
 				if err := manager.Call(cmd.Context(), ControlPlane(session.Name), protocol.ToolUpdateSession, request, nil); err != nil {
