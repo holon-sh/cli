@@ -41,11 +41,6 @@ jobs:
         run: |
           scripts/build-tooling
           git diff --exit-code pkg/tooling
-      - name: Embedded JavaScript adapter is up to date
-        run: |
-          npm --prefix pkg/host/javascript ci --ignore-scripts
-          npm --prefix pkg/host/javascript run build
-          git diff --exit-code pkg/host/javascript/adapter.bundle.mjs
   test:
     needs: tooling
     strategy:

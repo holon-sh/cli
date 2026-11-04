@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func (t Transport) Remote(values map[string]Value) (*protocol.Remote, map[string]protocol.Input, error) {

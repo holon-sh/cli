@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func desiredFor(session protocol.SessionResponse) protocol.AppsRequestFor[protocol.App] {

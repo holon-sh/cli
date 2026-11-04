@@ -9,8 +9,9 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/holon-sh/cli/pkg/clientutil"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/cli/internal/clientutil"
+	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/protocol"
 )
 
 func Fetch(ctx context.Context, ref protocol.RegistryRef) (*Descriptor, error) {
@@ -48,7 +49,7 @@ func Fetch(ctx context.Context, ref protocol.RegistryRef) (*Descriptor, error) {
 	if err != nil {
 		return nil, err
 	}
-	if descriptor.Identity() != ref.Identity() {
+	if descriptor.Identity() != (mcpcontract.Identity{Name: ref.Name, Version: ref.Version}) {
 		return nil, errors.New("MCP registry returned a different server name or version")
 	}
 	return descriptor, nil

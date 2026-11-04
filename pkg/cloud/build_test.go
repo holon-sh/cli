@@ -22,7 +22,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/pkg/appartifact"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 func buildImage(t *testing.T, marker string) buildApplication {

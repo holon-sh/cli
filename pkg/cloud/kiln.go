@@ -17,12 +17,12 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"github.com/holon-sh/cli/pkg/commandenv"
+	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
-	"github.com/holon-sh/cli/pkg/hookartifact"
-	"github.com/holon-sh/cli/pkg/host/javascript"
-	"github.com/holon-sh/cli/pkg/host/python"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
+	"github.com/holon-sh/protocol/hookartifact"
+	"github.com/holon-sh/runtime/host/javascript"
+	"github.com/holon-sh/runtime/host/python"
 )
 
 type buildApplication func(context.Context, buildRequest, io.Writer) (buildResult, error)

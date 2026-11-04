@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/holon-sh/cli/pkg/clientutil"
+	"github.com/holon-sh/cli/internal/clientutil"
 )
 
 const maxCredentialBytes = 4 * maxOAuthToken
