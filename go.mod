@@ -6,7 +6,7 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/gofrs/flock v0.13.1
 	github.com/holon-sh/mcp-bridge v0.0.4
-	github.com/holon-sh/protocol v0.0.1-dev.1
+	github.com/holon-sh/protocol v0.0.1-dev.3
 	github.com/holon-sh/runtime v0.0.1-dev.1
 	github.com/moby/patternmatcher v0.6.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
@@ -46,7 +46,3 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 )
-
-replace github.com/holon-sh/protocol => github.com/hughhan1/protocol-private v0.0.0-20261104024740-e6be7e8561be
-
-replace github.com/holon-sh/runtime => github.com/hughhan1/runtime-private v0.0.0-20261104025022-3926d2564c82
