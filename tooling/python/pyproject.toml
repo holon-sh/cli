@@ -2,7 +2,7 @@
 name = "cli-tooling-py"
 version = "0.0.1"
 description = "Python contract runner and check runner embedded in the Holon CLI."
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = ["mcp>=2.3,<3"]
 

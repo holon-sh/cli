@@ -34,4 +34,4 @@ class PackageTests(unittest.TestCase):
             for package in output.iterdir():
                 with (zipfile.ZipFile if package.suffix == ".whl" else tarfile.open)(package) as archive:
                     names = archive.namelist() if package.suffix == ".whl" else archive.getnames()
-                self.assertTrue({"LICENSE", "THIRD-PARTY-NOTICES"} <= {Path(name).name for name in names}, package.name)
+                self.assertTrue({"LICENSE", "NOTICE", "THIRD-PARTY-NOTICES"} <= {Path(name).name for name in names}, package.name)

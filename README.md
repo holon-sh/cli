@@ -3,7 +3,7 @@
 [![CI](https://github.com/holon-sh/cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/holon-sh/cli/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go)](https://go.dev/doc/install)
 [![Downloads](https://img.shields.io/badge/releases-download-blue)](https://github.com/holon-sh/cli/releases/latest)
-[![MIT License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Apache 2.0 License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
 `holon` provides type-safety for MCP servers, e.g. invoking an MCP server as a function call your type checker understands.
 

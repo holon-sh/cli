@@ -42,7 +42,7 @@ VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc|dev)\.
 
 def write_tarball(archive: Path, binary: Path) -> None:
     with archive.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar:
-        for path, name, mode in ((binary, "holon", 0o755), (ROOT / "LICENSE", "LICENSE", 0o644), (ROOT / "THIRD-PARTY-NOTICES", "THIRD-PARTY-NOTICES", 0o644)):
+        for path, name, mode in ((binary, "holon", 0o755), (ROOT / "LICENSE", "LICENSE", 0o644), (ROOT / "NOTICE", "NOTICE", 0o644), (ROOT / "THIRD-PARTY-NOTICES", "THIRD-PARTY-NOTICES", 0o644)):
             entry = tarfile.TarInfo(name)
             entry.size, entry.mode = path.stat().st_size, mode
             with path.open("rb") as contents:
@@ -107,6 +107,7 @@ def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None
         (package / "holon_types/bin/holon").chmod(0o755)
         shutil.copyfile(ROOT / "README.md", package / "README.md")
         shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
+        shutil.copyfile(ROOT / "NOTICE", package / "NOTICE")
         shutil.copyfile(ROOT / "THIRD-PARTY-NOTICES", package / "THIRD-PARTY-NOTICES")
         shutil.copyfile(source / "pyproject.toml", package / "pyproject.toml")
         config = Config.from_pyproject(package)
@@ -124,6 +125,7 @@ def write_npm_package(dist: Path, manifest: dict, source: Path, executable: str,
         (package / "bin" / executable).chmod(0o755)
         shutil.copyfile(readme, package / "README.md")
         shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
+        shutil.copyfile(ROOT / "NOTICE", package / "NOTICE")
         shutil.copyfile(ROOT / "THIRD-PARTY-NOTICES", package / "THIRD-PARTY-NOTICES")
         (package / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
         subprocess.run(["npm", "pack", "--ignore-scripts", "--offline", "--pack-destination", str(dist)], cwd=package, check=True)
@@ -143,7 +145,7 @@ def write_npm_platform(binary: Path, dist: Path, version: str, target: Target) -
         "version": version,
         "description": f"holon CLI binary for {target.goos}-{target.npm_cpu}; install holon-types instead",
         "repository": {"type": "git", "url": "git+https://github.com/holon-sh/cli.git"},
-        "license": "MIT",
+        "license": "Apache-2.0",
         "os": [target.goos],
         "cpu": [target.npm_cpu],
     }
