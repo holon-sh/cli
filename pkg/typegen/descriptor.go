@@ -54,14 +54,24 @@ func (r Reference) Validate() error {
 	return errors.New("MCP registry must be an HTTPS URL (loopback HTTP is allowed)")
 }
 
+// Server is how a server describes itself, in its server.json or the serverInfo it answers.
+type Server struct {
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	WebsiteURL  string `json:"websiteUrl"`
+	Repository  struct {
+		URL string `json:"url"`
+	} `json:"repository"`
+}
+
 type descriptor struct {
-	Name        string                     `json:"name"`
-	Version     string                     `json:"version"`
-	Description string                     `json:"description"`
-	Packages    []registryPackage          `json:"packages"`
-	Remotes     []transport                `json:"remotes"`
-	Meta        map[string]json.RawMessage `json:"_meta"`
-	Requires    map[string]Reference       `json:"-"`
+	Server
+	Packages []registryPackage          `json:"packages"`
+	Remotes  []transport                `json:"remotes"`
+	Meta     map[string]json.RawMessage `json:"_meta"`
+	Requires map[string]Reference       `json:"-"`
 }
 type registryPackage struct {
 	RegistryType string `json:"registryType"`
