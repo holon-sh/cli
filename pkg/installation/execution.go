@@ -12,10 +12,6 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-func desiredFor(session protocol.SessionResponse) protocol.AppsRequestFor[protocol.App] {
-	return protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(session.Apps)}
-}
-
 func replaceExecution(ctx context.Context, manager *Client, name string,
 	baseline protocol.SessionResponse, desired protocol.AppsRequestFor[protocol.App],
 ) (protocol.SessionResponse, error) {

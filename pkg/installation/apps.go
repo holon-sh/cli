@@ -152,6 +152,9 @@ func updateAccess(
 		return err
 	}
 	app := protocol.WritableApps(session.Apps[index : index+1])[0]
+	access := *app.Access
+	access.Tools = maps.Clone(access.Tools)
+	app.Access = &access
 	if err := change(app.Access, tool); err != nil {
 		return err
 	}

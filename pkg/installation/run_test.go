@@ -259,7 +259,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		creates++
-		created, served = input.Apps, input.Apps
+		created, served = input.Apps, slices.Clone(input.Apps)
 		if !ambiguous {
 			installationtest.WriteJSON(w, session())
 			return
@@ -286,8 +286,10 @@ func TestRunDevLifecycle(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 					t.Error(err)
 				}
-				served = input.Desired.Apps
-				updates = append(updates, served)
+				for _, app := range input.Desired.Apps {
+					served[slices.IndexFunc(served, func(old protocol.App) bool { return old.Name == app.Name })] = app
+				}
+				updates = append(updates, input.Desired.Apps)
 			case unavailable:
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return
@@ -368,7 +370,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(created) != 2 || !strings.HasPrefix(created[0].Image, "registry.example/holon/upload/alpha@sha256:") || deletes != 1 {
 			t.Fatalf("session apps = %#v, deletes = %d", created, deletes)
 		}
-		if len(updates) != 1 || updates[0][0].Image == created[0].Image || updates[0][1].Image != created[1].Image {
+		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
 		if strings.Count(stdout.String(), "trace_id=aaaa") != 1 || strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
