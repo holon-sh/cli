@@ -14,41 +14,7 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-const (
-	toolGetEgress = "get_egress"
-	toolSetEgress = "set_egress"
-	egressAllApps = "*"
-)
-
-type egressRequest struct {
-	App string `json:"app"`
-}
-
-type egressPolicy struct {
-	Allow *protocol.Egress `json:"allow,omitempty"`
-}
-
-type setEgressRequest struct {
-	egressRequest
-	protocol.WritePrecondition
-
-	Policy egressPolicy `json:"policy"`
-}
-
-type egressStatus struct {
-	Reconciled      bool   `json:"reconciled"`
-	RolloutComplete bool   `json:"rolloutComplete"`
-	Degraded        bool   `json:"degraded"`
-	Message         string `json:"message,omitempty"`
-}
-
-type egressResponse struct {
-	egressPolicy
-
-	Revision string       `json:"revision"`
-	App      string       `json:"app"`
-	Status   egressStatus `json:"status"`
-}
+const egressAllApps = "*"
 
 func newEgressCommand(config *commandConfig) *cobra.Command {
 	cmd := &cobra.Command{
@@ -90,7 +56,7 @@ func newEgressCommand(config *commandConfig) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return runEgressSet(cmd, config, args[0], &allow)
+				return runEgressSet(cmd, config, args[0], allow)
 			},
 		},
 		&cobra.Command{
@@ -133,13 +99,13 @@ func runEgressGet(cmd *cobra.Command, config *commandConfig, app string) error {
 	return writeEgress(cmd.OutOrStdout(), result)
 }
 
-func getEgress(ctx context.Context, client *Client, app string) (egressResponse, error) {
-	var result egressResponse
-	err := client.Call(ctx, protocol.AdminPlane, toolGetEgress, egressRequest{App: app}, &result)
+func getEgress(ctx context.Context, client *Client, app string) (protocol.EgressResponse, error) {
+	var result protocol.EgressResponse
+	err := client.Call(ctx, protocol.AdminPlane, protocol.ToolGetEgress, protocol.EgressRequest{App: app}, &result)
 	return result, err
 }
 
-func runEgressSet(cmd *cobra.Command, config *commandConfig, app string, allow *protocol.Egress) error {
+func runEgressSet(cmd *cobra.Command, config *commandConfig, app string, allow protocol.Egress) error {
 	if err := validEgressApp(app); err != nil {
 		return err
 	}
@@ -152,13 +118,13 @@ func runEgressSet(cmd *cobra.Command, config *commandConfig, app string, allow *
 	if err != nil {
 		return err
 	}
-	input := setEgressRequest{
-		egressRequest:     egressRequest{App: app},
+	input := protocol.SetEgressRequest{
+		EgressRequest:     protocol.EgressRequest{App: app},
 		WritePrecondition: protocol.WritePrecondition{ExpectedRevision: current.Revision, CreateOnly: current.Revision == ""},
-		Policy:            egressPolicy{Allow: allow},
+		Policy:            protocol.AppEgressPolicy{Allow: allow},
 	}
-	var result egressResponse
-	if err := client.Call(ctx, protocol.AdminPlane, toolSetEgress, input, &result); err != nil {
+	var result protocol.EgressResponse
+	if err := client.Call(ctx, protocol.AdminPlane, protocol.ToolSetEgress, input, &result); err != nil {
 		return err
 	}
 	return writeEgress(cmd.OutOrStdout(), result)
@@ -180,22 +146,22 @@ func parseEgressDestinations(destinations []string) (protocol.Egress, error) {
 	return allow.Normalize()
 }
 
-func writeEgress(output io.Writer, result egressResponse) error {
+func writeEgress(output io.Writer, result protocol.EgressResponse) error {
 	table := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(table, "APP\tCEILING\tSTATUS")
-	_, _ = fmt.Fprintf(table, "%s\t%s\t%s\n", result.App, result.ceiling(), result.Status.summary())
+	_, _ = fmt.Fprintf(table, "%s\t%s\t%s\n", result.App, ceilingSummary(result.Allow), statusSummary(result.Status))
 	return table.Flush()
 }
 
-func (result egressResponse) ceiling() string {
+func ceilingSummary(allow protocol.Egress) string {
 	switch {
-	case result.Allow == nil:
+	case allow == nil:
 		return "none set"
-	case len(*result.Allow) == 0:
+	case len(allow) == 0:
 		return "no egress"
 	}
 	var destinations []string
-	for _, destination := range *result.Allow {
+	for _, destination := range allow {
 		for _, port := range destination.Ports {
 			destinations = append(destinations, net.JoinHostPort(destination.Host, strconv.Itoa(int(port))))
 		}
@@ -203,7 +169,7 @@ func (result egressResponse) ceiling() string {
 	return strings.Join(destinations, " ")
 }
 
-func (status egressStatus) summary() string {
+func statusSummary(status protocol.EgressStatus) string {
 	switch {
 	case status.Degraded:
 		return "degraded: " + status.Message
