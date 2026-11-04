@@ -90,7 +90,7 @@ func TestRegistryPackagesImportOnTheServerAndBindArguments(t *testing.T) {
 					Runtime: protocol.BuildRuntime{Port: 8080},
 				}})
 			})
-			h.start(t)
+			h.start(t, nil)
 			manager, err := NewClient(t.Context(), h.run.Auth)
 			if err != nil {
 				t.Fatal(err)
@@ -132,7 +132,7 @@ func TestRegistryPackageImportFailureAndCancellation(t *testing.T) {
 					cancel()
 				}
 			})
-			h.start(t)
+			h.start(t, nil)
 			manager, err := NewClient(t.Context(), h.run.Auth)
 			if err != nil {
 				t.Fatal(err)

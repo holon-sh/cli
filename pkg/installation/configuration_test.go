@@ -23,7 +23,7 @@ func TestConfigurationCommands(t *testing.T) {
 		sent = append(sent, strings.TrimSuffix(r.Host, h.baseHost)+" "+installationtest.ToolName(r)+" "+string(body))
 		installationtest.WriteJSON(w, struct{}{})
 	})
-	h.start(t)
+	h.start(t, nil)
 	var out bytes.Buffer
 	for _, args := range [][]string{
 		{"config", "set", "API_URL", "https://example.test"},

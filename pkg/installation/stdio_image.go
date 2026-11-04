@@ -1,0 +1,8 @@
+package installation
+
+import (
+	"embed"
+)
+
+//go:embed bridge-payloads/*
+var bridgePayloads embed.FS

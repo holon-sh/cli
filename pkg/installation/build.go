@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 
@@ -23,9 +24,17 @@ import (
 type buildOptions struct {
 	importPackage func(context.Context, manifestApp) (protocol.ResolvedAppBuild, error)
 	catalogTag    string
+	types         *typeWorkspace
+	metadataGrant protocol.UploadGrant
+	resolutions   *sync.Map
+	architectures []string
+	builder       buildApplication
+	builders      *builderConnections
 	Stderr        io.Writer
+	Env           []string
 	HTTPClient    *http.Client
 	output        *progressOutput
+	check         bool
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
@@ -49,7 +58,11 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			logs := options.output.logs(stderr)
 			options.Stderr = logs
 			defer func() { logs.finished(options.output, app.Name, "uploaded", err) }()
-			options.output.status(app.Name, "importing", progressWorking)
+			action := "building"
+			if app.resolved.Image != "" || app.resolved.registryPackage != nil {
+				action = "importing"
+			}
+			options.output.status(app.Name, action, progressWorking)
 			if app.resolved.registryPackage != nil {
 				build, err := options.importPackage(ctx, app)
 				if err != nil {
@@ -63,12 +76,20 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 				return fmt.Errorf("%s: stdio images are not supported", app.Name)
 			}
 			var image string
-			err = upload.run(ctx, func(grant protocol.UploadGrant) error {
-				imported, err := importImage(ctx, app.resolved.Image, grant.Registry, grant.Repositories[app.Name], grant.Grant, options.HTTPClient)
+			if app.resolved.Image == "" {
+				image, err = buildSource(ctx, app, upload, options)
 				if err != nil {
-					return fmt.Errorf("import %s: %w", app.Name, err)
+					return err
 				}
-				image = imported
+			}
+			err = upload.run(ctx, func(grant protocol.UploadGrant) error {
+				if image == "" {
+					imported, err := importImage(ctx, app.resolved.Image, grant.Registry, grant.Repositories[app.Name], grant.Grant, options.HTTPClient)
+					if err != nil {
+						return fmt.Errorf("import %s: %w", app.Name, err)
+					}
+					image = imported
+				}
 				if options.catalogTag != "" && grant.Grant != "" {
 					return publishAppBuild(ctx, app, image, grant, options)
 				}
@@ -117,6 +138,17 @@ func regularNoSymlink(path, label string) error {
 	return nil
 }
 
+func pathInsideContext(path, contextPath string) bool {
+	if realPath, err := filepath.EvalSymlinks(path); err == nil {
+		path = realPath
+	}
+	if realContext, err := filepath.EvalSymlinks(contextPath); err == nil {
+		contextPath = realContext
+	}
+	relative, _ := filepath.Rel(contextPath, path)
+	return filepath.IsLocal(relative)
+}
+
 func buildManifestImages(
 	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions,
 ) ([]protocol.App, error) {
@@ -134,11 +166,12 @@ func buildManifestImages(
 }
 
 type imageUpload struct {
-	mu       sync.Mutex
-	manifest manifestSpec
-	load     func(context.Context) (protocol.UploadGrant, error)
-	grant    protocol.UploadGrant
-	renewed  bool
+	mu           sync.Mutex
+	manifest     manifestSpec
+	load         func(context.Context) (protocol.UploadGrant, error)
+	grant        protocol.UploadGrant
+	renewed      bool
+	repositories sync.Map
 }
 
 func (u *imageUpload) destination(ctx context.Context, rejected string) (protocol.UploadGrant, error) {

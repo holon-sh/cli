@@ -232,3 +232,7 @@ func (l *buildLog) finished(output *progressOutput, app, phase string, err error
 	}
 	output.status(app, phase, state)
 }
+
+type progressFunc func([]byte) (int, error)
+
+func (f progressFunc) Write(data []byte) (int, error) { return f(data) }

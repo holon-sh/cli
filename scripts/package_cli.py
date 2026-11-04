@@ -41,10 +41,12 @@ VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc|dev)\.
 
 
 def write_tarball(archive: Path, binary: Path) -> None:
-    with archive.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar, binary.open("rb") as executable:
-        entry = tarfile.TarInfo("holon")
-        entry.size, entry.mode = binary.stat().st_size, 0o755
-        tar.addfile(entry, executable)
+    with archive.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar:
+        for path, name, mode in ((binary, "holon", 0o755), (ROOT / "LICENSE", "LICENSE", 0o644), (ROOT / "THIRD-PARTY-NOTICES", "THIRD-PARTY-NOTICES", 0o644)):
+            entry = tarfile.TarInfo(name)
+            entry.size, entry.mode = path.stat().st_size, mode
+            with path.open("rb") as contents:
+                tar.addfile(entry, contents)
 
 
 def verify_binary(binary: Path, target: Target) -> list[str]:
@@ -83,8 +85,12 @@ def verify_binary(binary: Path, target: Target) -> list[str]:
 
 
 def build_binary(binary: Path, target: Target, version: str) -> None:
-    """Cross-compile from any host: the CLI is pure Go, so the binary is static without a C toolchain."""
-    env = os.environ | {"CGO_ENABLED": "0", "GOOS": target.goos, "GOARCH": target.goarch}
+    """Build natively against the Kiln SDK on PKG_CONFIG_PATH: static musl on Linux, macOS 15.0 minimum on darwin."""
+    env = os.environ | {"CGO_ENABLED": "1", "GOOS": target.goos, "GOARCH": target.goarch}
+    if target.goos == "linux":
+        env |= {"CC": "musl-gcc", "CGO_LDFLAGS": "-static"}
+    else:
+        env |= {"MACOSX_DEPLOYMENT_TARGET": "15.0", "CGO_CFLAGS": "-O2 -g -mmacosx-version-min=15.0", "CGO_LDFLAGS": "-mmacosx-version-min=15.0"}
     subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
 
 
@@ -101,6 +107,7 @@ def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None
         (package / "holon_types/bin/holon").chmod(0o755)
         shutil.copyfile(ROOT / "README.md", package / "README.md")
         shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
+        shutil.copyfile(ROOT / "THIRD-PARTY-NOTICES", package / "THIRD-PARTY-NOTICES")
         shutil.copyfile(source / "pyproject.toml", package / "pyproject.toml")
         config = Config.from_pyproject(package)
         config.metadata["version"] = version
@@ -117,6 +124,7 @@ def write_npm_package(dist: Path, manifest: dict, source: Path, executable: str,
         (package / "bin" / executable).chmod(0o755)
         shutil.copyfile(readme, package / "README.md")
         shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
+        shutil.copyfile(ROOT / "THIRD-PARTY-NOTICES", package / "THIRD-PARTY-NOTICES")
         (package / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
         subprocess.run(["npm", "pack", "--ignore-scripts", "--offline", "--pack-destination", str(dist)], cwd=package, check=True)
 

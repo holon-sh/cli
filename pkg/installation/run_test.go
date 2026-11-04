@@ -21,7 +21,7 @@ import (
 	"time"
 
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"golang.org/x/oauth2"
 
 	testingclock "k8s.io/utils/clock/testing"
@@ -57,6 +57,49 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 	}
 }
 
+func TestRunPreparationFailures(t *testing.T) {
+	t.Parallel()
+	for _, command := range []string{"deploy"} {
+		for _, tc := range []struct{ name, access, want string }{
+			{name: "build failure", access: `{"server":{}}`},
+			{name: "missing identity", access: `{"server":{},"tools":{"read":{"oauth":{}}}}`, want: "requires a configured identity provider"},
+		} {
+			t.Run(command+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				root := t.TempDir()
+				sourceFiles(t, root, map[string]string{
+					"package.json": sourcePackage, "server.js": "export default {}",
+					manifestFileName: "apps:\n- name: alpha\n" +
+						"  path: .\n  access: " + tc.access + "\n",
+				})
+				h := newRunHarness(t)
+				h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
+					installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}})
+				})
+				h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
+					installationtest.WriteJSON(w, protocol.SessionResponse{
+						Name: "production", UID: "production-uid", Revision: "1",
+						Apps: []protocol.App{{Name: "alpha", Image: "registry.example/alpha@sha256:" + strings.Repeat("a", 64)}},
+					})
+				})
+				h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (buildResult, error) {
+					_, _ = io.WriteString(progress, "missing dependency: fixture-package\n")
+					return buildResult{}, errors.New("fixture build failed")
+				})
+				var diagnostics bytes.Buffer
+				err := executeCommand(t.Context(), []string{command, "--project", filepath.Join(root, manifestFileName)}, nil, &diagnostics, h.run)
+				if tc.want == "" {
+					if err == nil || !strings.Contains(err.Error(), "fixture build failed") || !strings.Contains(diagnostics.String(), "missing dependency: fixture-package") {
+						t.Fatalf("build failure was not reported: error=%v diagnostics=%q", err, diagnostics.String())
+					}
+				} else if !errors.Is(err, protocol.ErrInvalidAccess) || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("want %q before image preparation: error=%v", tc.want, err)
+				}
+			})
+		}
+	}
+}
+
 type runHarness struct {
 	mux      *http.ServeMux
 	control  *installationtest.ControlFixtures
@@ -77,7 +120,7 @@ func newRunHarness(t *testing.T) *runHarness {
 	return h
 }
 
-func (h *runHarness) start(t *testing.T) {
+func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
 	h.server = httptest.NewTLSServer(h.mux)
 	t.Cleanup(h.server.Close)
@@ -89,25 +132,53 @@ func (h *runHarness) start(t *testing.T) {
 		HTTPClient: installationtest.OriginClient(h.server), now: clock.Now, RequestTimeout: time.Second,
 	}
 	manager := newManager(t, h.server, clock, stateDir)
-	seedAdminCredentials(t, manager, oauth2.Token{
-		AccessToken: "access-token", RefreshToken: "refresh-token",
-		TokenType: "Bearer", ExpiresIn: 3600, Expiry: clock.Now().Add(time.Hour),
-	})
-	adminKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.AdminPlane), protocol.SystemScopes())
-	devKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.DevPlane), protocol.ControlScopes(protocol.DevPlane))
-	manager.state.Tokens[devKey] = manager.state.Tokens[adminKey]
-	if err := manager.writeState(manager.state); err != nil {
-		t.Fatal(err)
+	if manager.info.OAuth != nil {
+		seedAdminCredentials(t, manager, oauth2.Token{
+			AccessToken: "access-token", RefreshToken: "refresh-token",
+			TokenType: "Bearer", ExpiresIn: 3600, Expiry: clock.Now().Add(time.Hour),
+		})
+		adminKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.AdminPlane), protocol.SystemScopes())
+		devKey := tokenKey(manager.info.OAuth.Issuer, manager.audience(protocol.DevPlane), protocol.ControlScopes(protocol.DevPlane))
+		manager.state.Tokens[devKey] = manager.state.Tokens[adminKey]
+		if err := manager.writeState(manager.state); err != nil {
+			t.Fatal(err)
+		}
 	}
 	sourceFiles(t, stateDir, map[string]string{"config.json": fmt.Sprintf(`{"origin":%q}`, h.server.URL)})
-	h.run = commandConfig{Auth: auth}
+	_, registry := buildRegistry(t)
+	registryHost := strings.TrimPrefix(registry.URL, "https://")
+	if build == nil {
+		build = func(context.Context, buildRequest, io.Writer) (buildResult, error) {
+			return buildResult{}, errors.New("fixture build failed")
+		}
+	}
+	h.run = commandConfig{
+		builder: build,
+		RegistryHTTPClient: installationtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
+			original := r
+			r = r.Clone(r.Context())
+			if r.URL.Host == "registry.example" {
+				r.URL.Host = registryHost
+				r.Host = registryHost
+			}
+			response, err := registry.Client().Transport.RoundTrip(r)
+			if response != nil {
+				response.Request = original
+			}
+			return response, err
+		}),
+		Auth: auth,
+		Env:  []string{"DOCKER_HOST=unix:///tmp/holon-test.sock"},
+	}
 }
 
 func TestRunDeployLifecycle(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	images, registry := buildRegistry(t)
-	source := addTestImage(t, images, "amd64", ocispec.ImageConfig{}, map[string][]byte{"server": []byte("prod")})
+	sourceFiles(t, root, map[string]string{"server.js": "export default {}"})
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(sourcePackage), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	manifestPath := filepath.Join(root, "holon.yaml")
 	if err := os.WriteFile(manifestPath, []byte(`apps:
   - name: hosted
@@ -116,15 +187,22 @@ func TestRunDeployLifecycle(t *testing.T) {
   - name: prod
     mount: /
     access: {server: {}}
-    image: registry.example/source@`+source.Digest.String()+`
+    path: .
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	buildClock := testingclock.NewFakeClock(time.Unix(100, 0))
+	build := func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+		if !slices.Equal(request.Platforms, []string{"linux/amd64"}) {
+			t.Errorf("production platforms = %v", request.Platforms)
+		}
+		buildClock.Step(2 * time.Second)
+		return buildImage(t, "first")(ctx, request, progress)
+	}
 	var mu sync.Mutex
 	var existing bool
 	var desired protocol.AppsRequestFor[protocol.App]
-	var forceConflict, conflicted, loseResponse, unsupportedField bool
+	var forceConflict, loseResponse, unsupportedField bool
 	var rolloutFailure string
 	revision := 7
 	h := newRunHarness(t)
@@ -142,6 +220,17 @@ func TestRunDeployLifecycle(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || len(input.Apps) == 0 {
 			t.Fatalf("production upload = %#v, %v", input, err)
 		}
+
+		mu.Lock()
+		if forceConflict {
+			for i := range desired.Apps {
+				if desired.Apps[i].Name == "prod" {
+					desired.Apps[i].Port = 4000
+				}
+			}
+			revision++
+		}
+		mu.Unlock()
 		installationtest.WriteJSON(
 			w,
 			map[string]any{
@@ -194,15 +283,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				if forceConflict && !conflicted {
-					conflicted = true
-					for i := range desired.Apps {
-						if desired.Apps[i].Name == "prod" {
-							desired.Apps[i].Port = 4000
-						}
-					}
-					revision++
-				}
 				if existing && input.ExpectedRevision != strconv.Itoa(revision) {
 					w.WriteHeader(http.StatusPreconditionFailed)
 					return
@@ -224,23 +304,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 				})
 			}
 		})
-	h.start(t)
-	registryHost := strings.TrimPrefix(registry.URL, "https://")
+	h.start(t, build)
 	runConfig := h.run
 	runConfig.Clock = buildClock
-	runConfig.RegistryHTTPClient = installationtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
-		original := r
-		r = r.Clone(r.Context())
-		if r.URL.Host == "registry.example" {
-			r.URL.Host = registryHost
-			r.Host = registryHost
-		}
-		response, err := registry.Client().Transport.RoundTrip(r)
-		if response != nil {
-			response.Request = original
-		}
-		return response, err
-	})
 	var output, diagnostics bytes.Buffer
 	if err := executeCommand(t.Context(), []string{"deploy", "--project", manifestPath}, &output, &diagnostics, runConfig); err != nil {
 		t.Fatal(err)
@@ -266,8 +332,10 @@ func TestRunDeployLifecycle(t *testing.T) {
 	if err := executeCommand(t.Context(), []string{"deploy", "--project", manifestPath, "--verbose"}, &output, &diagnostics, runConfig); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(diagnostics.String(), "Timing prod build and upload: ") {
-		t.Fatalf("verbose deployment hid timings: %q", diagnostics.String())
+	if !strings.Contains(diagnostics.String(), "fixture build output") ||
+		!strings.Contains(diagnostics.String(), "Timing apps prepare contracts: ") ||
+		!strings.Contains(diagnostics.String(), "Timing prod build and upload: 2s") {
+		t.Fatalf("verbose deployment hid build output or timings: %q", diagnostics.String())
 	}
 	mu.Lock()
 	if desired.Apps[1].Image != initial[1].Image {
@@ -308,10 +376,29 @@ func TestRunDeployLifecycle(t *testing.T) {
 		{name: "selected creation", create: true},
 		{name: "disjoint update"},
 		{name: "lost accepted response"},
+		{name: "retain dependency without checkout"},
 		{name: "unsupported retained field"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			manifest := strings.Replace(string(manifest), "https://mcp.example/mcp", "https://updated.example/mcp", 1)
+			if scenario.name == "retain dependency without checkout" {
+				doc := descriptorDocument("hosted")
+				delete(doc, "packages")
+				doc["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://updated.example/mcp"}}
+				doc["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
+					"requires": map[string]protocol.RegistryRef{"prod": {Name: "io.github.acme/prod", Version: "1.4.2"}},
+				}}}
+				source := descriptorRegistry(t, doc)
+				source.Remote = &struct{}{}
+				declarations := manifestSpec{
+					Apps: []manifestApp{
+						{Name: "hosted", Registry: source, Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}},
+						{Name: "prod", Path: "./not-checked-out", Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}},
+					},
+				}
+				data, _ := json.Marshal(declarations)
+				manifest = string(data)
+			}
 			if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -337,15 +424,17 @@ func TestRunDeployLifecycle(t *testing.T) {
 			mu.Lock()
 			desired = protocol.AppsRequestFor[protocol.App]{Apps: append([]protocol.App{initial[0]}, retainedApps...)}
 			existing, rolloutFailure = !scenario.create, ""
-			forceConflict, conflicted = scenario.name == "disjoint update", false
+			forceConflict = scenario.name == "disjoint update"
 			loseResponse = scenario.name == "lost accepted response"
 			unsupportedField = scenario.name == "unsupported retained field"
 			written := revision
 			mu.Unlock()
 			runConfig := h.run
-			runConfig.RegistryHTTPClient = installationtest.HTTPClient(func(*http.Request) (*http.Response, error) {
-				return nil, errors.New("no access to unrelated application images")
-			})
+			if scenario.name != "retain dependency without checkout" {
+				runConfig.RegistryHTTPClient = installationtest.HTTPClient(func(*http.Request) (*http.Response, error) {
+					return nil, errors.New("no access to unrelated application images")
+				})
+			}
 			err := executeCommand(t.Context(), []string{"deploy", "hosted", "--project", manifestPath}, nil, nil, runConfig)
 			mu.Lock()
 			defer mu.Unlock()
@@ -385,6 +474,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 				if app.Name == "hosted" {
 					if app.Remote == nil || app.Remote.URL != "https://updated.example/mcp" {
 						t.Fatal("selected app was not updated")
+					}
+					if scenario.name == "retain dependency without checkout" && !slices.Equal(app.Requires, []string{"prod"}) {
+						t.Fatal("deployed app lost its retained dependency")
 					}
 				}
 			}

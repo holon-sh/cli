@@ -12,6 +12,8 @@ import (
 	"oras.land/oras-go/v2/content"
 )
 
+const RuntimePath = "/holon-mcp-runtime"
+
 func fetchJSON(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor, value any) error {
 	if descriptor.Size <= 0 || descriptor.Size > 4<<20 {
 		return errors.New("invalid image metadata size")
