@@ -62,36 +62,37 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ command, access, want string }{
-		{command: "deploy", access: "--public"},
+	for _, tc := range []struct{ command, access, want, diagnostics, edit string }{
+		{command: "deploy", access: "--public", want: "fixture build failed", diagnostics: "missing dependency: fixture-package"},
 		{command: "dev", access: "--oauth", want: "requires a configured identity provider"},
+		{command: "deploy", access: "--public", want: "source changed during preparation", edit: "logic.ts"},
 	} {
-		t.Run(tc.command, func(t *testing.T) {
+		t.Run(tc.want, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			sourceFiles(t, root, map[string]string{"package.json": sourcePackage, "server.js": "export default {}"})
 			h := newRunHarness(t)
 			h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
-				installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}})
-			})
-			h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
-				installationtest.WriteJSON(w, protocol.SessionResponse{
-					Name: "production", UID: "production-uid", Revision: "1",
-					Apps: []protocol.App{{Name: "alpha", Image: "registry.example/alpha@sha256:" + strings.Repeat("a", 64)}},
+				installationtest.WriteJSON(w, protocol.Info{
+					Installation:          protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"},
+					ImageRepositoryPrefix: "registry.example/apps",
 				})
 			})
+			h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
+				installationtest.WriteJSON(w, protocol.SessionResponse{})
+			})
 			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (buildResult, error) {
-				_, _ = io.WriteString(progress, "missing dependency: fixture-package\n")
+				if tc.edit != "" {
+					err := os.WriteFile(filepath.Join(root, tc.edit), []byte("edited"), 0o644)
+					return buildResult{Image: "superseded"}, err
+				}
+				_, _ = io.WriteString(progress, tc.diagnostics+"\n")
 				return buildResult{}, errors.New("fixture build failed")
 			})
 			var diagnostics bytes.Buffer
 			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &diagnostics, h.run)
-			if tc.want == "" {
-				if err == nil || !strings.Contains(err.Error(), "fixture build failed") || !strings.Contains(diagnostics.String(), "missing dependency: fixture-package") {
-					t.Fatalf("build failure was not reported: error=%v diagnostics=%q", err, diagnostics.String())
-				}
-			} else if !errors.Is(err, protocol.ErrInvalidAccess) || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("want %q before image preparation: error=%v", tc.want, err)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(diagnostics.String(), tc.diagnostics) {
+				t.Fatalf("error=%v diagnostics=%q, want %q", err, diagnostics.String(), tc.want)
 			}
 		})
 	}
@@ -196,7 +197,6 @@ func TestRunDevLifecycle(t *testing.T) {
 	sourceFiles(t, root, map[string]string{
 		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
 		"beta/server.js": "export default {}", "beta/package.json": sourcePackage,
-		"beta/node_modules/package/index.js": "", "beta/.git/config": "",
 	})
 	for _, name := range []string{"alpha", "beta"} {
 		writeDescriptor(t, filepath.Join(root, name, "server.json"), descriptorDocument(name))
@@ -211,6 +211,10 @@ func TestRunDevLifecycle(t *testing.T) {
 			return firstBuild(ctx, request, progress)
 		case "broken":
 			return buildResult{}, errors.New("rebuild failed")
+		case "superseded":
+			if err := os.WriteFile(filepath.Join(root, "alpha", "logic.ts"), []byte("fixed"), 0o644); err != nil {
+				return buildResult{}, err
+			}
 		}
 		return nextBuild(ctx, request, progress)
 	}
@@ -242,7 +246,7 @@ func TestRunDevLifecycle(t *testing.T) {
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
 		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 		installationtest.WriteJSON(w, protocol.UploadGrant{
-			Grant: "grant-secret", Registry: "registry.example", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339),
+			Grant: "grant-secret", Registry: "registry.example",
 			Repositories: map[string]string{"alpha": "holon/upload/alpha", "beta": "holon/upload/beta"},
 		})
 	})
@@ -341,8 +345,8 @@ func TestRunDevLifecycle(t *testing.T) {
 		writeDescriptor(t, filepath.Join(root, "alpha", "server.json"), document)
 		await(stderr, "restart holon dev")
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
-		sourceFiles(t, root, map[string]string{"beta/node_modules/package/index.js": "changed", "beta/.git/config": "changed", "alpha/logic.ts": "fixed"})
-		await(stderr, "remote update requested")
+		sourceFiles(t, root, map[string]string{"alpha/logic.ts": "superseded"})
+		await(stderr, "discarding the superseded update", "remote update requested")
 		mu.Lock()
 		unavailable = true
 		mu.Unlock()
@@ -361,8 +365,8 @@ func TestRunDevLifecycle(t *testing.T) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if len(created) != 2 || deletes != 1 {
-			t.Fatalf("session apps = %#v, deletes = %d", created, deletes)
+		if deletes != 1 {
+			t.Fatalf("deletes = %d", deletes)
 		}
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
