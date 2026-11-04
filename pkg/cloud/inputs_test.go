@@ -72,8 +72,6 @@ func TestDescriptorInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A --name argument is one entry, so an unset optional drops flag and value together. Kubernetes cannot drop a flag
-	// whose value is a separate entry, or a positional without shifting later ones, so those inputs are required.
 	wantArgs := []protocol.Template{
 		"--mode=read-only", "--project={PROJECT}", "--api-token={API_TOKEN}", "--zone={ZONE}", "--level={LEVEL}", "--unused={UNUSED}",
 		"-p", "{P}", "{REPO_ROOT}", "{SUFFIX}",

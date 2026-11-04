@@ -11,7 +11,6 @@ runs:
       uses: actions/checkout@v7
       with:
         repository: hughhan1/kiln
-        # Unreleased Python dependency stage and install commands (hughhan1/kiln#3); retag after it merges.
         ref: 0fa146c47583f45d7f4af3c2ed2332e3a6b6ce7b
         path: .kiln
         persist-credentials: false
