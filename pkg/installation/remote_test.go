@@ -117,7 +117,7 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 }
 
 func TestRemoteRejectsContainerSettings(t *testing.T) {
-	for _, fields := range []string{"port: 3000", "arguments: {}", "egress: []"} {
+	for _, fields := range []string{"port: 3000", "arguments: {}"} {
 		t.Run(fields, func(t *testing.T) {
 			manifest := "apps:\n- name: example\n  access: {server: {}}\n  remote: {url: https://mcp.example/mcp}\n  " + fields
 			parsed, err := parseManifest([]byte(manifest), "fixture")

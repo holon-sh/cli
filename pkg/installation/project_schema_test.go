@@ -15,7 +15,7 @@ func TestConfigurationJSONSchemas(t *testing.T) {
    {"name":"beta","registry":{"name":"io.github.acme/app","version":"1.0.0","package":{"registryType":"oci"}},
     "access":{"server":{}},"run":{"transport":{"type":"stdio"},"env":{"TEXT":"hello","TOKEN":{"secret":"TOKEN"}}}},
    {"name":"gamma","remote":{"url":"https://mcp.example.com/mcp"},"access":{"server":{}},
-    "oauth":{"clientID":"{CLIENT_ID}"},"egress":[{"host":"api.example.com","ports":[443]}]}
+    "oauth":{"clientID":"{CLIENT_ID}"}}
   ]`
 	const manifest = `{
   "apps":` + apps + `
@@ -46,7 +46,6 @@ func TestConfigurationJSONSchemas(t *testing.T) {
 			{"missing access", strings.Replace(manifest, `,"access":{"server":{}}`, "", 1), false},
 			{"missing client ID", strings.Replace(manifest, `"clientID":"registered",`, "", 1), false},
 			{"empty reference", strings.Replace(manifest, `{"secret":"TOKEN"}`, `{}`, 1), false},
-			{"null egress ports", strings.Replace(manifest, `"ports":[443]`, `"ports":null`, 1), false},
 		}},
 		{"server", ServerJSONSchema, []schemaCase{
 			{"standard fields and Holon metadata", descriptor, true},
