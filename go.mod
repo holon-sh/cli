@@ -65,8 +65,5 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
-	golang.org/x/tools v0.49.0 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
 )
-
-replace github.com/holon-sh/cli/pkg/oauthscope => ./pkg/oauthscope
