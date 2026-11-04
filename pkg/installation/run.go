@@ -36,6 +36,7 @@ const (
 type commandConfig struct {
 	manifest           manifestSpec
 	file               string
+	apps               []string
 	devTTLSeconds      *int64
 	check              bool
 	builder            buildApplication
@@ -54,10 +55,15 @@ func (c commandConfig) clock() clock.WithTicker {
 
 func resolveManifestFile(arg string) (manifestSpec, error) {
 	if arg == "" {
-		arg = manifestFileName
-		if _, err := os.Lstat(arg); errors.Is(err, os.ErrNotExist) {
-			arg = "holon.yml"
+		defaults := []string{manifestFileName, "holon.yml"}
+		i := slices.IndexFunc(defaults, func(name string) bool {
+			_, err := os.Lstat(name)
+			return !errors.Is(err, os.ErrNotExist)
+		})
+		if i < 0 {
+			return manifestSpec{}, nil
 		}
+		arg = defaults[i]
 	}
 	absolute, err := filepath.Abs(arg)
 	if err != nil {
@@ -275,8 +281,9 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	if err != nil && HTTPStatus(err) != http.StatusNotFound {
 		return err
 	}
-	manifest.retained = map[string]protocol.App{}
+	manifest.retained, manifest.deployed = map[string]protocol.App{}, map[string]*protocol.AppAccess{}
 	for _, app := range current.Apps {
+		manifest.deployed[app.Name] = app.Access
 		if len(selection) > 0 && !slices.Contains(selection, app.Name) {
 			manifest.retained[app.Name] = app
 		}

@@ -94,7 +94,7 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 			document["packages"], document["remotes"] = test.packages, test.remotes
 			source := test.selector
 			source.RegistryRef = descriptorRegistry(t, document).RegistryRef
-			manifest, err := resolveManifestGraph(t.Context(), manifestSpec{Apps: []manifestApp{{Name: "example", Registry: &source, Run: test.run}}})
+			manifest, err := resolveManifestGraph(t.Context(), manifestSpec{access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, Apps: []manifestApp{{Name: "example", Registry: &source, Run: test.run}}})
 			if test.want == nil {
 				if err == nil || !strings.Contains(err.Error(), test.rejected) {
 					t.Fatalf("want %q, got %v", test.rejected, err)
@@ -168,7 +168,7 @@ func TestRemoteHeaderInputs(t *testing.T) {
 			if test.inline {
 				app.Registry, app.Remote = nil, &manifestRemote{URL: "https://mcp.example/mcp"}
 			}
-			manifest, err := resolveManifestGraph(t.Context(), manifestSpec{Apps: []manifestApp{app}})
+			manifest, err := resolveManifestGraph(t.Context(), manifestSpec{access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, Apps: []manifestApp{app}})
 			if test.want == nil {
 				if err == nil {
 					t.Fatal("invalid header configuration accepted")

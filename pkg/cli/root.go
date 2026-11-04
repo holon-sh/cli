@@ -8,11 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/spf13/cobra"
@@ -35,34 +32,6 @@ const generateExamples = `  # Generate for the current project
   # Print one server's contract, or commit it beside its server.json
   holon types generate --contract ../orders
   holon types generate --contract ../orders -o ../orders/holon-contract.json`
-
-var alias = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?=`)
-var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
-
-// parseSource reads one SERVER argument. Paths are resolved against the working directory.
-func parseSource(arg string) (typegen.Source, error) {
-	var source typegen.Source
-	if match := alias.FindString(arg); match != "" {
-		source.Alias, arg = strings.TrimSuffix(match, "="), arg[len(match):]
-	}
-	if arg == "" {
-		return source, errors.New("a server path or URL is required")
-	}
-	if u, err := url.Parse(arg); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
-		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
-			// EscapedPath guarantees valid escapes in each slash-delimited segment.
-			name, _ := url.PathUnescape(m[1])
-			version, _ := url.PathUnescape(m[2])
-			source.Registry = &typegen.Reference{Name: name, Version: version, Registry: u.Scheme + "://" + u.Host}
-			return source, nil
-		}
-		source.Endpoint = arg
-		return source, nil
-	}
-	var err error
-	source.Path, err = filepath.Abs(arg)
-	return source, err
-}
 
 func oneDir(_ *cobra.Command, args []string) error {
 	if len(args) > 1 {
@@ -94,7 +63,7 @@ func consumer(dir string, servers []string) (typegen.Consumer, error) {
 	}
 	c := typegen.Consumer{Name: filepath.Base(dir), Dir: dir, Targets: targets}
 	for _, arg := range servers {
-		source, err := parseSource(arg)
+		source, err := typegen.ParseSource(arg)
 		if err != nil {
 			return c, fmt.Errorf("%s: %w", arg, err)
 		}
@@ -129,7 +98,7 @@ func insideDir(path, dir string) bool {
 
 // printContract prints one server's contract document, or writes it to output when given.
 func printContract(cmd *cobra.Command, arg, output string) error {
-	source, err := parseSource(arg)
+	source, err := typegen.ParseSource(arg)
 	if err != nil {
 		return err
 	}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -32,28 +31,6 @@ func run(t *testing.T, wantErr string, args ...string) string {
 		t.Fatalf("%v: %v", args, err)
 	}
 	return output.String()
-}
-
-func TestParseSource(t *testing.T) {
-	cwd, _ := os.Getwd()
-	for _, test := range []struct {
-		arg  string
-		want typegen.Source
-	}{
-		{arg: "../orders", want: typegen.Source{Path: filepath.Join(cwd, "../orders")}},
-		{arg: "orders=../orders/server.py", want: typegen.Source{Alias: "orders", Path: filepath.Join(cwd, "../orders/server.py")}},
-		{arg: "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4", want: typegen.Source{Registry: &typegen.Reference{Name: "io.github.upstash/context7", Version: "4.4.4", Registry: "https://registry.modelcontextprotocol.io"}}},
-		{arg: "docs=https://registry.example/v0/servers/example.com%2Fdocs/versions/1.0.0", want: typegen.Source{Alias: "docs", Registry: &typegen.Reference{Name: "example.com/docs", Version: "1.0.0", Registry: "https://registry.example"}}},
-		{arg: "https://mcp.context7.com/mcp", want: typegen.Source{Endpoint: "https://mcp.context7.com/mcp"}},
-	} {
-		got, err := parseSource(test.arg)
-		if err != nil || !reflect.DeepEqual(got, test.want) {
-			t.Errorf("parseSource(%q) = %+v, %v; want %+v", test.arg, got, err, test.want)
-		}
-	}
-	if _, err := parseSource("orders="); err == nil {
-		t.Error("parseSource accepted an alias without a server")
-	}
 }
 
 func writeCLIFile(t *testing.T, root, name, content string) {
