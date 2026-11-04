@@ -24,9 +24,9 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 	"k8s.io/utils/ptr"
 
-	"github.com/holon-sh/cli/pkg/clientutil"
-	"github.com/holon-sh/cli/pkg/commandenv"
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/cli/internal/clientutil"
+	"github.com/holon-sh/cli/internal/commandenv"
+	"github.com/holon-sh/protocol"
 )
 
 const (

@@ -3,7 +3,7 @@ package cloud
 import (
 	"k8s.io/utils/clock"
 
-	"github.com/holon-sh/cli/pkg/protocol"
+	"github.com/holon-sh/protocol"
 )
 
 type commandConfig struct {

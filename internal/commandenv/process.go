@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/holon-sh/cli/pkg/clientutil"
+	"github.com/holon-sh/cli/internal/clientutil"
 )
 
 func Run(ctx context.Context, executable string, args []string, stdin []byte, env []string) (string, error) {

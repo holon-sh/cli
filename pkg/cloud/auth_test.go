@@ -25,8 +25,8 @@ import (
 	"golang.org/x/oauth2"
 	testingclock "k8s.io/utils/clock/testing"
 
-	"github.com/holon-sh/cli/pkg/protocol"
 	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
+	"github.com/holon-sh/protocol"
 )
 
 func newAuthTestServer(t *testing.T, tokenHandler http.HandlerFunc) *httptest.Server {
