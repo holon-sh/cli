@@ -41,11 +41,6 @@ jobs:
         run: |
           scripts/build-tooling
           git diff --exit-code pkg/tooling
-      - name: Embedded JavaScript adapter is up to date
-        run: |
-          npm --prefix pkg/host/javascript ci --ignore-scripts
-          npm --prefix pkg/host/javascript run build
-          git diff --exit-code pkg/host/javascript/adapter.bundle.mjs
   test:
     needs: tooling
     strategy:
@@ -60,6 +55,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - run: scripts/build-mcp-runtime
       - uses: actions/setup-node@v7
         with:
           node-version: 22
