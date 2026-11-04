@@ -1,4 +1,4 @@
-package cloud
+package installation
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
+	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 )
 
@@ -48,7 +48,7 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			transport := cloudtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
+			transport := installationtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
 				if r.Method != http.MethodGet || r.URL.String() != "https://dev.apps.example.test/request" {
 					t.Errorf("request = %s %s", r.Method, r.URL)
 					return nil, errors.New("unexpected request")
@@ -99,7 +99,7 @@ func TestAPIClientCancellation(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				entered := make(chan struct{})
-				transport := cloudtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
+				transport := installationtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
 					close(entered)
 					if stage == "stream" {
 						reader, writer := io.Pipe()

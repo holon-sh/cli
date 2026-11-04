@@ -1,4 +1,4 @@
-package cloud
+package installation
 
 import (
 	"errors"

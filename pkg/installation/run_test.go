@@ -1,4 +1,4 @@
-package cloud
+package installation
 
 import (
 	"cmp"
@@ -16,7 +16,7 @@ import (
 
 	testingclock "k8s.io/utils/clock/testing"
 
-	"github.com/holon-sh/cli/pkg/cloud/cloudtest"
+	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 )
 
@@ -46,7 +46,7 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 
 type runHarness struct {
 	mux      *http.ServeMux
-	control  *cloudtest.ControlFixtures
+	control  *installationtest.ControlFixtures
 	server   *httptest.Server
 	baseHost string
 	run      commandConfig
@@ -55,11 +55,11 @@ type runHarness struct {
 func newRunHarness(t *testing.T) *runHarness {
 	t.Helper()
 	h := &runHarness{mux: http.NewServeMux()}
-	h.control = cloudtest.NewControlFixtures(t, h.mux)
-	cloudtest.MountDeviceAuth(t, h.mux, func() string { return h.server.URL + "/" }, protocol.AdminPlane,
-		func(r *http.Request) { cloudtest.AssertOrigin(t, r, h.baseHost) }, 3600, 0,
+	h.control = installationtest.NewControlFixtures(t, h.mux)
+	installationtest.MountDeviceAuth(t, h.mux, func() string { return h.server.URL + "/" }, protocol.AdminPlane,
+		func(r *http.Request) { installationtest.AssertOrigin(t, r, h.baseHost) }, 3600, 0,
 		func(w http.ResponseWriter, _ *http.Request) {
-			cloudtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-token", "refresh_token": "refresh-token", "expires_in": 3600})
+			installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-token", "refresh_token": "refresh-token", "expires_in": 3600})
 		})
 	return h
 }
@@ -73,7 +73,7 @@ func (h *runHarness) start(t *testing.T) {
 	stateDir := t.TempDir()
 	auth := ClientConfig{
 		ConfigDir:  stateDir,
-		HTTPClient: cloudtest.OriginClient(h.server), now: clock.Now, RequestTimeout: time.Second,
+		HTTPClient: installationtest.OriginClient(h.server), now: clock.Now, RequestTimeout: time.Second,
 	}
 	manager := newManager(t, h.server, clock, stateDir)
 	seedAdminCredentials(t, manager, oauth2.Token{
