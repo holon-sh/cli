@@ -19,6 +19,7 @@ import (
 const (
 	toolListSessions          = "list_sessions"
 	conditionEgressRestricted = "EgressRestricted"
+	everyDevelopmentSession   = "Without --env or --session, it acts on the app in every development session that has it."
 )
 
 func newAppCommand(config *commandConfig) *cobra.Command {
@@ -35,14 +36,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				var sessions []protocol.SessionResponse
-				if scope == "" {
-					sessions, err = listDevSessions(cmd.Context(), manager)
-				} else {
-					var session protocol.SessionResponse
-					session, err = manager.Session(cmd.Context(), string(scope))
-					sessions = []protocol.SessionResponse{session}
-				}
+				sessions, err := scopeSessions(cmd.Context(), manager, scope)
 				if err != nil {
 					return err
 				}
@@ -57,7 +51,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				return table.Flush()
 			}),
 		withScope(&cobra.Command{Use: "get APP", Short: "Print an app's declaration as YAML", Args: cobra.ExactArgs(1),
-			Long: "Print an app's declaration. Without --env or --session, it is printed from every development session that has the app.",
+			Long: "Print an app's declaration. " + everyDevelopmentSession,
 			Example: `  # Print an app's declaration from every development session
   holon app get chat
 
@@ -74,7 +68,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 						protocol.App
 
 						EgressRestricted string `json:"egressRestricted,omitempty"`
-					}{target.session.Apps[target.index], egressCut(target.session, args[0])})
+					}{target.app, egressCut(target.session, args[0])})
 					if err != nil {
 						return err
 					}
@@ -88,7 +82,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				return nil
 			}),
 		withScope(&cobra.Command{Use: "remove APP", Short: "Remove an app from a deployment", Args: cobra.ExactArgs(1),
-			Long: "Remove an app. Without --env or --session, it is removed from every development session that has it.",
+			Long: "Remove an app. " + everyDevelopmentSession,
 			Example: `  # Remove an app from every development session
   holon app remove chat
 
@@ -109,9 +103,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 					if err := manager.Call(cmd.Context(), ControlPlane(target.session.Name), protocol.ToolUpdateSession, request, nil); err != nil {
 						return err
 					}
-					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Removed %s from %s.\n", args[0], target.label()); err != nil {
-						return err
-					}
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed %s from %s.\n", args[0], target.label())
 				}
 				return nil
 			}),
@@ -123,7 +115,7 @@ func newAccessCommand(config *commandConfig) *cobra.Command {
 		withScope(&cobra.Command{
 			Use:   "set APP[/TOOL] public|oauth [SCOPE...]",
 			Short: "Replace an app's server rule, or one tool's rule",
-			Long:  "Replace the server rule of APP, or the rule of APP/TOOL. A tool rule replaces the server rule for that tool. Without --env or --session, the rule is replaced in every development session that has the app.",
+			Long:  "Replace the server rule of APP, or the rule of APP/TOOL. A tool rule replaces the server rule for that tool. " + everyDevelopmentSession,
 			Args:  cobra.MinimumNArgs(2),
 			Example: `  # Require sign-in for an app in every development session, with or without scopes
   holon access set chat oauth
@@ -194,39 +186,40 @@ func updateAccess(
 	if err != nil {
 		return err
 	}
-	updates := make([]protocol.App, len(targets))
 	for i, target := range targets {
-		app := protocol.WritableApps(target.session.Apps[target.index : target.index+1])[0]
+		app := protocol.WritableApps([]protocol.App{target.app})[0]
 		access := *app.Access
 		access.Tools = maps.Clone(access.Tools)
 		app.Access = &access
 		if err := change(app.Access, tool); err != nil {
 			return fmt.Errorf("%s: %w", target.label(), err)
 		}
-		updates[i] = app
+		targets[i].app = app
 	}
-	for i, target := range targets {
+	for _, target := range targets {
 		if _, err := replaceExecution(cmd.Context(), manager, target.session.Name, target.session,
-			protocol.AppsRequestFor[protocol.App]{Apps: []protocol.App{updates[i]}}); err != nil {
+			protocol.AppsRequestFor[protocol.App]{Apps: []protocol.App{target.app}}); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s access in %s: %s\n", name, target.label(), accessSummary(updates[i].Access)); err != nil {
-			return err
-		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s access in %s: %s\n", name, target.label(), accessSummary(target.app.Access))
 	}
 	return nil
 }
 
 type sessionTarget struct {
 	session protocol.SessionResponse
-	index   int
+	app     protocol.App
 }
 
 func (target sessionTarget) label() string {
 	return configurationScope(target.session.Name).label()
 }
 
-func listDevSessions(ctx context.Context, manager *Client) ([]protocol.SessionResponse, error) {
+func scopeSessions(ctx context.Context, manager *Client, scope configurationScope) ([]protocol.SessionResponse, error) {
+	if scope != "" {
+		session, err := manager.Session(ctx, string(scope))
+		return []protocol.SessionResponse{session}, err
+	}
 	var list struct {
 		Items []protocol.SessionResponse `json:"items"`
 	}
@@ -242,25 +235,22 @@ func sessionApps(cmd *cobra.Command, config *commandConfig, scope configurationS
 	if err != nil {
 		return nil, nil, err
 	}
-	var sessions []protocol.SessionResponse
-	if scope == "" {
-		sessions, err = listDevSessions(cmd.Context(), manager)
-	} else {
-		var session protocol.SessionResponse
-		session, err = manager.Session(cmd.Context(), string(scope))
-		sessions = []protocol.SessionResponse{session}
-	}
+	sessions, err := scopeSessions(cmd.Context(), manager, scope)
 	if err != nil {
 		return nil, nil, err
 	}
 	var targets []sessionTarget
 	for _, session := range sessions {
 		if index := slices.IndexFunc(session.Apps, func(app protocol.App) bool { return app.Name == name }); index >= 0 {
-			targets = append(targets, sessionTarget{session, index})
+			targets = append(targets, sessionTarget{session, session.Apps[index]})
 		}
 	}
 	if len(targets) == 0 {
-		return nil, nil, fmt.Errorf("app %s is not in %s", name, scope.targetsLabel())
+		where := "any development session"
+		if scope != "" {
+			where = scope.label()
+		}
+		return nil, nil, fmt.Errorf("app %s is not in %s", name, where)
 	}
 	return manager, targets, nil
 }

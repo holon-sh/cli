@@ -52,13 +52,6 @@ func (scope configurationScope) label() string {
 	}
 }
 
-func (scope configurationScope) targetsLabel() string {
-	if scope == "" {
-		return "any development session"
-	}
-	return scope.label()
-}
-
 func commandGroup(use, short string, commands ...*cobra.Command) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   use,

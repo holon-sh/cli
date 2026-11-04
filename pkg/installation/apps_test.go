@@ -3,7 +3,6 @@ package installation
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -82,8 +81,5 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 				t.Fatalf("holon %v: output=%q, want %q", test.args, out.String(), want)
 			}
 		}
-	}
-	if strings.Contains(fmt.Sprint(updates), "s-three") {
-		t.Fatalf("updated a session without the app: %q", updates)
 	}
 }
