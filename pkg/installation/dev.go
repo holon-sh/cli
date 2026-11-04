@@ -345,6 +345,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 	if change.manifest {
 		reloaded, err := resolveManifestFile(d.manifest.file)
 		if err == nil {
+			reloaded.sources, reloaded.access = d.manifest.sources, d.manifest.access
 			reloaded, err = resolveManifestGraph(ctx, reloaded, d.apps...)
 		}
 		if err != nil {

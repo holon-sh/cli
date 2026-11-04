@@ -19,11 +19,8 @@ import (
 )
 
 func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ...string) (map[string]*manifestApp, error) {
-	declarations := map[string]manifestApp{}
-	selected := len(apps) > 0
-	for _, app := range manifest.Apps {
-		declarations[app.Name] = app
-		if !selected {
+	if len(apps) == 0 {
+		for _, app := range slices.Concat(manifest.Apps, manifest.sources) {
 			apps = append(apps, app.Name)
 		}
 	}
@@ -39,15 +36,18 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 			apps = append(apps, app.Requires...)
 			continue
 		}
-		app, exists := declarations[name]
-		if !exists {
-			return nil, fmt.Errorf("dependency %s must be declared in apps with explicit access.server", name)
+		app, err := manifest.app(name)
+		if err != nil {
+			return nil, err
+		}
+		access := cmp.Or(app.Access, manifest.access, manifest.deployed[name])
+		if access == nil {
+			return nil, fmt.Errorf("app %s needs an access rule: pass --public or --oauth", name)
 		}
 		app.resolved = resolvedApp{App: protocol.App{
-			Name: app.Name, Mount: app.Mount, Image: app.Image, Egress: app.Egress, Access: app.Access,
+			Name: app.Name, Mount: app.Mount, Image: app.Image, Egress: app.Egress, Access: access,
 			OAuth: (*protocol.OAuthClient)(app.OAuth),
 		}}
-		var err error
 		if app.Path != "" {
 			info, statErr := os.Stat(app.Path)
 			if statErr != nil {

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,6 +50,32 @@ type Source struct {
 	Endpoint string
 	// Document is an already resolved contract document, with the exact bytes its digest names.
 	Document *Document
+}
+
+var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
+
+// ParseSource reads one [ALIAS=]PATH or URL argument. Paths are resolved against the working directory.
+func ParseSource(arg string) (Source, error) {
+	var source Source
+	if alias, rest, ok := strings.Cut(arg, "="); ok && appName.MatchString(alias) {
+		source.Alias, arg = alias, rest
+	}
+	if arg == "" {
+		return source, errors.New("a server path or URL is required")
+	}
+	if u, err := url.Parse(arg); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
+			name, _ := url.PathUnescape(m[1])
+			version, _ := url.PathUnescape(m[2])
+			source.Registry = &Reference{Name: name, Version: version, Registry: u.Scheme + "://" + u.Host}
+			return source, nil
+		}
+		source.Endpoint = arg
+		return source, nil
+	}
+	var err error
+	source.Path, err = filepath.Abs(arg)
+	return source, err
 }
 
 // key identifies a fetched source (registry or endpoint) independently of its alias, so

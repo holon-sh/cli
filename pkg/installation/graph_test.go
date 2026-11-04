@@ -53,6 +53,7 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	}))
 	defer catalog.Close()
 	root := t.TempDir()
+	t.Chdir(root)
 	ref := protocol.RegistryRef{Name: "io.github.acme/beta", Version: "1.4.2", Registry: catalog.URL}
 	alpha := descriptorDocument("alpha")
 	delete(alpha, "packages")
@@ -117,18 +118,18 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 		change     func(*manifestSpec)
 	}{
 		{name: "missing directory", change: func(p *manifestSpec) {
-			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "missing")}}
+			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "missing"), Access: policy}}
 		}},
 		{name: "file source", change: func(p *manifestSpec) {
-			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "beta/server.json")}}
+			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "beta/server.json"), Access: policy}}
 		}},
 		{name: "invalid descriptor", change: func(p *manifestSpec) {
-			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid")}}
+			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid"), Access: policy}}
 		}},
 		{name: "invalid publisher metadata", want: "sh.holon metadata", change: func(p *manifestSpec) {
-			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata")}}
+			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata"), Access: policy}}
 		}},
-		{name: "missing dependency", want: "must be declared", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
+		{name: "dependency directory without access", want: "app beta needs an access rule", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
 		{name: "different dependency descriptor", want: "does not match", change: func(p *manifestSpec) {
 			p.Apps[1] = manifestApp{Name: "beta", Path: filepath.Join(root, "alpha"), Access: policy}
 		}},

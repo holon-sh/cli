@@ -145,7 +145,7 @@ func TestDescriptorInputRejections(t *testing.T) {
 					pkg[key] = json.RawMessage(raw)
 				}
 			}
-			_, err := resolveManifestGraph(t.Context(), manifestSpec{Apps: []manifestApp{{
+			_, err := resolveManifestGraph(t.Context(), manifestSpec{access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, Apps: []manifestApp{{
 				Name: "example", Registry: descriptorRegistry(t, document), Arguments: test.values,
 			}}})
 			if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), "do-not-print") {

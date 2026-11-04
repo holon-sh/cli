@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -123,5 +124,27 @@ dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetP
 				t.Fatalf("targets = %v, %v; want %v", got, err, test.want)
 			}
 		})
+	}
+}
+
+func TestParseSource(t *testing.T) {
+	cwd, _ := os.Getwd()
+	for _, test := range []struct {
+		arg  string
+		want Source
+	}{
+		{arg: "../orders", want: Source{Path: filepath.Join(cwd, "../orders")}},
+		{arg: "orders=../orders/server.py", want: Source{Alias: "orders", Path: filepath.Join(cwd, "../orders/server.py")}},
+		{arg: "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4", want: Source{Registry: &Reference{Name: "io.github.upstash/context7", Version: "4.4.4", Registry: "https://registry.modelcontextprotocol.io"}}},
+		{arg: "docs=https://registry.example/v0/servers/example.com%2Fdocs/versions/1.0.0", want: Source{Alias: "docs", Registry: &Reference{Name: "example.com/docs", Version: "1.0.0", Registry: "https://registry.example"}}},
+		{arg: "https://mcp.context7.com/mcp", want: Source{Endpoint: "https://mcp.context7.com/mcp"}},
+	} {
+		got, err := ParseSource(test.arg)
+		if err != nil || !reflect.DeepEqual(got, test.want) {
+			t.Errorf("ParseSource(%q) = %+v, %v; want %+v", test.arg, got, err, test.want)
+		}
+	}
+	if _, err := ParseSource("orders="); err == nil {
+		t.Error("ParseSource accepted an alias without a server")
 	}
 }

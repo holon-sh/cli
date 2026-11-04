@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -63,44 +64,38 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
-	for _, command := range []string{"dev", "deploy"} {
-		for _, tc := range []struct{ name, access, want string }{
-			{name: "build failure", access: `{"server":{}}`},
-			{name: "missing identity", access: `{"server":{},"tools":{"read":{"oauth":{}}}}`, want: "requires a configured identity provider"},
-		} {
-			t.Run(command+"/"+tc.name, func(t *testing.T) {
-				t.Parallel()
-				root := t.TempDir()
-				sourceFiles(t, root, map[string]string{
-					"package.json": sourcePackage, "server.js": "export default {}",
-					manifestFileName: "apps:\n- name: alpha\n" +
-						"  path: .\n  access: " + tc.access + "\n",
-				})
-				h := newRunHarness(t)
-				h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
-					installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}})
-				})
-				h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
-					installationtest.WriteJSON(w, protocol.SessionResponse{
-						Name: "production", UID: "production-uid", Revision: "1",
-						Apps: []protocol.App{{Name: "alpha", Image: "registry.example/alpha@sha256:" + strings.Repeat("a", 64)}},
-					})
-				})
-				h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (buildResult, error) {
-					_, _ = io.WriteString(progress, "missing dependency: fixture-package\n")
-					return buildResult{}, errors.New("fixture build failed")
-				})
-				var diagnostics bytes.Buffer
-				err := executeCommand(t.Context(), []string{command, "--project", filepath.Join(root, manifestFileName)}, nil, &diagnostics, h.run)
-				if tc.want == "" {
-					if err == nil || !strings.Contains(err.Error(), "fixture build failed") || !strings.Contains(diagnostics.String(), "missing dependency: fixture-package") {
-						t.Fatalf("build failure was not reported: error=%v diagnostics=%q", err, diagnostics.String())
-					}
-				} else if !errors.Is(err, protocol.ErrInvalidAccess) || !strings.Contains(err.Error(), tc.want) {
-					t.Fatalf("want %q before image preparation: error=%v", tc.want, err)
-				}
+	for _, tc := range []struct{ command, access, want string }{
+		{command: "deploy", access: "--public"},
+		{command: "dev", access: "--oauth", want: "requires a configured identity provider"},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			sourceFiles(t, root, map[string]string{"package.json": sourcePackage, "server.js": "export default {}"})
+			h := newRunHarness(t)
+			h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
+				installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}})
 			})
-		}
+			h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
+				installationtest.WriteJSON(w, protocol.SessionResponse{
+					Name: "production", UID: "production-uid", Revision: "1",
+					Apps: []protocol.App{{Name: "alpha", Image: "registry.example/alpha@sha256:" + strings.Repeat("a", 64)}},
+				})
+			})
+			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (buildResult, error) {
+				_, _ = io.WriteString(progress, "missing dependency: fixture-package\n")
+				return buildResult{}, errors.New("fixture build failed")
+			})
+			var diagnostics bytes.Buffer
+			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &diagnostics, h.run)
+			if tc.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "fixture build failed") || !strings.Contains(diagnostics.String(), "missing dependency: fixture-package") {
+					t.Fatalf("build failure was not reported: error=%v diagnostics=%q", err, diagnostics.String())
+				}
+			} else if !errors.Is(err, protocol.ErrInvalidAccess) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %q before image preparation: error=%v", tc.want, err)
+			}
+		})
 	}
 }
 
@@ -198,14 +193,12 @@ func startDev(t *testing.T, config commandConfig, args ...string) (stdout, stder
 }
 
 func TestRunDevLifecycle(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
-	manifestPath := filepath.Join(root, manifestFileName)
+	t.Chdir(root)
 	sourceFiles(t, root, map[string]string{
 		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
 		"beta/server.js": "export default {}", "beta/package.json": sourcePackage,
 		"beta/node_modules/package/index.js": "", "beta/.git/config": "",
-		manifestFileName: "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n- name: beta\n  access: {server: {}}\n  path: ./beta\n",
 	})
 	for _, name := range []string{"alpha", "beta"} {
 		writeDescriptor(t, filepath.Join(root, name, "server.json"), descriptorDocument(name))
@@ -313,7 +306,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		mu.Lock()
 		ambiguous = true
 		mu.Unlock()
-		err := executeCommand(t.Context(), []string{"dev", "--project", manifestPath}, nil, nil, h.run)
+		err := executeCommand(t.Context(), []string{"dev", "alpha=alpha", "beta", "--public"}, nil, nil, h.run)
 		mu.Lock()
 		defer mu.Unlock()
 		ambiguous = false
@@ -330,7 +323,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		fc := testingclock.NewFakeClock(time.Now())
 		config := h.run
 		config.Clock = fc
-		stdout, stderr, stop := startDev(t, config, "--project", manifestPath)
+		stdout, stderr, stop := startDev(t, config, "--public")
 		await := func(output *installationtest.ObservedOutput, texts ...string) {
 			t.Helper()
 			stepUntil(t, fc, devDebounce, func() bool {
@@ -516,8 +509,7 @@ func TestRunDevImportsImageEdits(t *testing.T) {
 
 func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 	remote := "apps:\n- name: alpha\n  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n"
-	selection := "apps:\n- name: unused\n  path: ./not-checked-out\n  access: {server: {}}\n" +
-		"- name: delta\n  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n"
+	selection := "apps:\n- name: unused\n  path: ./not-checked-out\n  access: {server: {}}\n"
 	var dependency *protocol.RegistrySource
 	var dependencyName string
 	for _, name := range []string{"gamma", "beta", "alpha"} {
@@ -528,11 +520,12 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 			document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
 				"requires": map[string]protocol.RegistryRef{dependencyName: dependency.RegistryRef},
 			}}}
+			data, _ := json.Marshal(dependency)
+			selection += fmt.Sprintf("- name: %s\n  registry: %s\n  access: {server: {}}\n", dependencyName, data)
 		}
 		dependency, dependencyName = descriptorRegistry(t, document), name
-		data, _ := json.Marshal(dependency)
-		selection += fmt.Sprintf("- name: %s\n  registry: %s\n  access: {server: {}}\n", name, data)
 	}
+	alpha := "alpha=" + dependency.Registry + "/v0.1/servers/" + url.PathEscape(dependency.Name) + "/versions/" + dependency.Version
 	for _, tc := range []struct {
 		name, file, manifest string
 		apps, want           []string
@@ -545,8 +538,8 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 		},
 		{name: "yml fallback", file: "holon.yml", manifest: remote, want: []string{"alpha"}},
 		{
-			name: "selected apps, dependencies and repeated names", file: manifestFileName, manifest: selection,
-			apps: []string{"delta", "alpha", "delta"}, want: []string{"alpha", "beta", "delta", "gamma"},
+			name: "command-line sources, file dependencies and repeated names", file: manifestFileName, manifest: selection,
+			apps: []string{"delta=https://upstream.example/mcp", alpha, "delta", "--public"}, want: []string{"alpha", "beta", "delta", "gamma"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -788,22 +781,19 @@ func TestRunDeployLifecycle(t *testing.T) {
 			}
 		})
 	}
-	manifest, err := os.ReadFile(manifestPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	updated := "hosted=https://updated.example/mcp"
 	for _, scenario := range []struct {
 		name   string
+		args   []string
 		create bool
 	}{
-		{name: "selected creation", create: true},
-		{name: "disjoint update"},
-		{name: "lost accepted response"},
-		{name: "retain dependency without checkout"},
-		{name: "unsupported retained field"},
+		{name: "selected creation", args: []string{updated, "--public"}, create: true},
+		{name: "disjoint update", args: []string{updated}},
+		{name: "lost accepted response", args: []string{updated}},
+		{name: "retain dependency without checkout", args: []string{"hosted", "--project", manifestPath}},
+		{name: "unsupported retained field", args: []string{updated}},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			manifest := strings.Replace(string(manifest), "https://mcp.example/mcp", "https://updated.example/mcp", 1)
 			if scenario.name == "retain dependency without checkout" {
 				doc := descriptorDocument("hosted")
 				delete(doc, "packages")
@@ -820,10 +810,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 					},
 				}
 				data, _ := json.Marshal(declarations)
-				manifest = string(data)
-			}
-			if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
-				t.Fatal(err)
+				if err := os.WriteFile(manifestPath, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			var retainedApps []protocol.App
 			if err := json.Unmarshal(fmt.Appendf(nil, `[
@@ -858,7 +847,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 					return nil, errors.New("no access to unrelated application images")
 				})
 			}
-			err := executeCommand(t.Context(), []string{"deploy", "hosted", "--project", manifestPath}, nil, nil, runConfig)
+			err := executeCommand(t.Context(), append([]string{"deploy"}, scenario.args...), nil, nil, runConfig)
 			mu.Lock()
 			defer mu.Unlock()
 			if unsupportedField {

@@ -3,11 +3,18 @@ package installation
 import (
 	"errors"
 	"fmt"
-	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/holon-sh/protocol"
 )
+
+const appsHelp = "APP is an app in holon.yaml (or -p FILE), else the directory ./APP with a server.json. " +
+	"APP=SOURCE names an app's source: a directory, an MCP Registry server version URL, or an https MCP endpoint. " +
+	"Without APP arguments, every app in holon.yaml runs, or without one every ./*/server.json directory.\n\n" +
+	"Apps outside holon.yaml take --public or --oauth; one already in production keeps its access rules without them."
 
 func Commands() []*cobra.Command {
 	return newCommands(commandConfig{})
@@ -77,10 +84,9 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 	var detached bool
 	var ttl time.Duration
 	cmd := &cobra.Command{
-		Use:   "dev [APP...]",
+		Use:   "dev [APP[=SOURCE]...]",
 		Short: "Run a development session",
-		Long: "Run all apps in the manifest, or the named apps and their required dependencies. Each app uses /<app-name>/ on the session host.\n\n" +
-			"Use --project (-p) to select a configuration file.",
+		Long:  "Run apps and their required dependencies. Each app uses /<app-name>/ on the session host.\n\n" + appsHelp,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if detached {
 				if ttl < time.Second || ttl > 24*time.Hour || ttl%time.Second != 0 {
@@ -92,7 +98,7 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 			} else if cmd.Flags().Changed("ttl") {
 				return errors.New("--ttl requires --detach")
 			}
-			return runDev(cmd.Context(), args, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
+			return runDev(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
 		},
 	}
 	cmd.Flags().BoolVar(&detached, "detach", false, "Exit after readiness and retain the session until its fixed expiry")
@@ -104,29 +110,40 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 
 func newDeployCommand(config *commandConfig) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "deploy [APP...]",
+		Use:   "deploy [APP[=SOURCE]...]",
 		Short: "Replace production or update selected applications",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDeploy(cmd.Context(), args, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
+		Long:  "Replace production with every app, or update the named apps and their required dependencies.\n\n" + appsHelp,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runDeploy(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
 		},
 	}
 	return withProject(withProgress(cmd, config, "Deployment ready"), config)
 }
 
 func withProject(cmd *cobra.Command, config *commandConfig) *cobra.Command {
+	var public bool
+	var oauth *protocol.OAuthRequirement
 	cmd.Flags().StringVarP(&config.file, "project", "p", config.file, "Project config file (default holon.yaml or holon.yml)")
+	cmd.Flags().BoolVar(&public, "public", false, "Let anyone call the apps outside holon.yaml")
+	cmd.Flags().BoolFunc("oauth", "Require sign-in for the apps outside holon.yaml; --oauth=SCOPE,... also requires the scopes", func(value string) error {
+		oauth = &protocol.OAuthRequirement{}
+		if value != "true" {
+			oauth.Scopes = strings.Split(value, ",")
+		}
+		return nil
+	})
+	cmd.MarkFlagsMutuallyExclusive("public", "oauth")
 	cmd.PreRunE = func(_ *cobra.Command, args []string) error {
 		manifest, err := resolveManifestFile(config.file)
 		if err != nil {
 			return err
 		}
-		for _, name := range args {
-			if !slices.ContainsFunc(manifest.Apps, func(app manifestApp) bool { return app.Name == name }) {
-				return fmt.Errorf("unknown app %q in %s", name, manifest.file)
-			}
+		if public || oauth != nil {
+			manifest.access = &protocol.AppAccess{Server: &protocol.AccessRule{OAuth: oauth}}
 		}
+		config.apps, err = manifest.selectApps(args)
 		config.manifest = manifest
-		return nil
+		return err
 	}
 	return cmd
 }

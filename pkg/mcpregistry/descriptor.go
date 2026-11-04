@@ -33,7 +33,7 @@ type Descriptor struct {
 }
 
 type HolonMetadata struct {
-	Requires map[string]wire.RegistryRef `description:"Dependencies keyed by project app name; each app must be declared with access.server." json:"requires"`
+	Requires map[string]wire.RegistryRef `description:"Dependencies keyed by app name." json:"requires"`
 
 	Egress wire.Egress `description:"Outbound TCP destinations: DNS names or IP addresses; {NAME} is a non-secret input." json:"egress,omitzero" nullable:"false"`
 }

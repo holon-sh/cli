@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
 
@@ -24,6 +26,9 @@ const (
 type manifestSpec struct {
 	Apps     []manifestApp `description:"Applications in this project." json:"apps,omitempty"`
 	file     string
+	sources  []manifestApp
+	access   *protocol.AppAccess
+	deployed map[string]*protocol.AppAccess
 	retained map[string]protocol.App
 }
 
@@ -172,4 +177,68 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 		return manifestSpec{}, errors.New(strings.Join(errs, "\n"))
 	}
 	return p, nil
+}
+
+func (p *manifestSpec) selectApps(args []string) ([]string, error) {
+	var names []string
+	for _, arg := range args {
+		source, err := typegen.ParseSource(arg)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", arg, err)
+		}
+		if source.Alias == "" {
+			names = append(names, arg)
+			continue
+		}
+		if slices.ContainsFunc(slices.Concat(p.Apps, p.sources), func(app manifestApp) bool { return app.Name == source.Alias }) {
+			return nil, fmt.Errorf("app %s is declared twice", source.Alias)
+		}
+		app := manifestApp{Name: source.Alias, Path: source.Path}
+		switch {
+		case source.Registry != nil:
+			app.Registry = &protocol.RegistrySource{RegistryRef: protocol.RegistryRef(*source.Registry)}
+			err = app.Registry.Validate()
+		case source.Endpoint != "":
+			app.Remote = &manifestRemote{URL: source.Endpoint}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", arg, err)
+		}
+		p.sources = append(p.sources, app)
+		names = append(names, app.Name)
+	}
+	if len(args) == 0 && p.file == "" {
+		matches, _ := filepath.Glob(filepath.Join("*", "server.json"))
+		for _, match := range matches {
+			app, err := p.app(filepath.Dir(match))
+			if err != nil {
+				return nil, err
+			}
+			p.sources = append(p.sources, app)
+		}
+		if len(p.sources) == 0 {
+			return nil, errors.New("no holon.yaml and no ./*/server.json; name apps as APP=SOURCE")
+		}
+	}
+	for _, name := range names {
+		if _, err := p.app(name); err != nil {
+			return nil, err
+		}
+	}
+	return names, nil
+}
+
+func (p manifestSpec) app(name string) (manifestApp, error) {
+	if !protocol.ValidAppName(name) {
+		return manifestApp{}, fmt.Errorf("invalid app name %q", name)
+	}
+	declared := slices.Concat(p.Apps, p.sources)
+	if i := slices.IndexFunc(declared, func(app manifestApp) bool { return app.Name == name }); i >= 0 {
+		return declared[i], nil
+	}
+	path, err := filepath.Abs(name)
+	if _, statErr := os.Stat(filepath.Join(path, "server.json")); err != nil || statErr != nil {
+		return manifestApp{}, fmt.Errorf("unknown app %q", name)
+	}
+	return manifestApp{Name: name, Path: path}, nil
 }
