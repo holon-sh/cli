@@ -1,0 +1,114 @@
+package installation
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+const manifestFixture = `
+apps:
+  - name: alpha
+    access: {server: {}}
+    remote: {url: https://alpha.example/mcp}
+  - name: beta
+    access: {server: {}}
+    remote: {url: https://beta.example/mcp}
+`
+
+func TestManifestRegistryURLs(t *testing.T) {
+	for _, test := range []struct {
+		url   string
+		valid bool
+	}{
+		{"https://registry.example/base", true},
+		{"http://localhost:1234", true},
+		{"http://sub.localhost", true},
+		{"http://127.0.0.1", true},
+		{"http://[::1]", true},
+		{"http://registry.example", false},
+		{"http://[", false},
+		{"https://user@registry.example", false},
+		{"https://registry.example?query", false},
+	} {
+		t.Run(test.url, func(t *testing.T) {
+			manifest := "apps:\n- name: example\n  access: {server: {}}\n" +
+				"  registry: {name: io.github.acme/app, version: '1.0.0', registry: '" + test.url + "'}"
+			_, err := parseManifest([]byte(manifest), "fixture")
+			if (err == nil) != test.valid {
+				t.Fatalf("valid=%v: %v", test.valid, err)
+			}
+		})
+	}
+}
+
+func TestManifestRejectsInvalidDeclarations(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct{ name, fields, wantError string }{
+		{name: "missing source", fields: "image: ''"},
+		{name: "multiple sources", fields: "image: ghcr.io/acme/alpha@sha256:" + strings.Repeat("a", 64) + "\nremote: {url: https://mcp.example/mcp}"},
+		{name: "unknown field", fields: "unsupported: true"},
+		{name: "insecure remote", fields: "remote: {url: http://mcp.example/mcp}"},
+		{name: "IP remote", fields: "remote: {url: 'https://192.0.2.1/mcp'}"},
+		{name: "run with npm", fields: `registry: {name: io.github.acme/app, version: '1.0.0', package: {registryType: npm}}
+run: {transport: {type: stdio}}`, wantError: "run requires a registry OCI package"},
+		{name: "empty secret reference", fields: "arguments: {--project: {secret: ''}}"},
+		{name: "null egress", fields: "egress: null"},
+		{name: "egress port field", fields: "egress: [{host: api.example.com, port: 443}]"},
+		{name: "literal OAuth secret", fields: "oauth: {clientID: registered, clientSecret: unsafe}"},
+		{name: "missing OAuth client ID", fields: "oauth: {clientSecret: {secret: CLIENT_SECRET}}"},
+		{name: "app OAuth issuer", fields: "oauth: {clientID: registered, issuer: https://issuer.example}"},
+		{name: "zero port", fields: "image: ghcr.io/acme/alpha@sha256:" + strings.Repeat("a", 64) + "\nport: 0"},
+		{name: "out of range port", fields: "image: ghcr.io/acme/alpha@sha256:" + strings.Repeat("a", 64) + "\nport: 65536"},
+		{name: "tagged image", fields: "image: ghcr.io/acme/alpha:latest\nport: 3000"},
+		{name: "image without registry", fields: "image: acme/alpha@sha256:" + strings.Repeat("a", 64) + "\nport: 3000"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fields := test.fields
+			if !strings.Contains(fields, "image:") && !strings.Contains(fields, "registry:") && !strings.Contains(fields, "remote:") {
+				fields += "\nremote: {url: https://mcp.example/mcp}"
+			}
+			manifest := "apps:\n  - name: alpha\n    access: {server: {}}\n    " +
+				strings.ReplaceAll(fields, "\n", "\n    ")
+			if _, err := parseManifest([]byte(manifest), "fixture"); err == nil || test.wantError != "" && !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("invalid declaration: wanted %q, got %v", test.wantError, err)
+			}
+		})
+	}
+	if _, err := parseManifest([]byte(manifestFixture+"unsupported: true\n"), "fixture"); err == nil {
+		t.Fatal("accepted unknown top-level field")
+	}
+	for _, name := range []string{"a/b", "UPPER", "api", "mcp", strings.Repeat("x", 50)} {
+		t.Run("name/"+name, func(t *testing.T) {
+			manifest := strings.Replace(manifestFixture, "name: alpha", "name: '"+name+"'", 1)
+			if _, err := parseManifest([]byte(manifest), "fixture"); err == nil {
+				t.Fatal("accepted invalid or reserved name")
+			}
+		})
+	}
+}
+
+func TestManifestCallerPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name, access string
+		valid        bool
+		callers      []string
+	}{
+		{"omitted", `{server: {}}`, true, nil},
+		{"empty", `{server: {}, callers: []}`, true, []string{}},
+		{"allowlist", `{server: {oauth: {}}, callers: [beta]}`, true, []string{"beta"}},
+		{"duplicate", `{server: {}, callers: [beta, beta]}`, false, nil},
+		{"reserved name", `{server: {}, callers: [api]}`, false, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manifest := strings.Replace(manifestFixture, "{server: {}}", test.access, 1)
+			project, err := parseManifest([]byte(manifest), "fixture")
+			if (err == nil) != test.valid {
+				t.Fatalf("parse: %v", err)
+			}
+			if test.valid && !reflect.DeepEqual(project.Apps[0].Access.Callers, test.callers) {
+				t.Fatalf("parsed callers = %#v, want %#v", project.Apps[0].Access.Callers, test.callers)
+			}
+		})
+	}
+}
