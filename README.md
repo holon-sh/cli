@@ -15,11 +15,9 @@ This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk
 curl -fsSL https://holon-labs.dev/install.sh | sh
 ```
 
-Or with [Go](https://go.dev/doc/install) 1.27+:
+Or download the binary for your platform from the [latest release](https://github.com/holon-sh/cli/releases/latest).
 
-```sh
-go install github.com/holon-sh/cli/cmd/holon@latest
-```
+These are the supported routes, because CI builds the stdio bridge payloads that `holon` embeds. A plain `go install` needs the native Kiln SDK to compile, and the binary it produces has no payloads, so `holon dev` and `holon deploy` fail for stdio images and for apps built from Python, TypeScript or JavaScript source.
 
 ## Example
 
@@ -197,6 +195,21 @@ holon types check -s https://mcp.context7.com/mcp
 ```
 
 </details>
+
+## Cloud
+
+`holon` also builds and runs the apps in your project's `holon.yaml` on a Holon installation.
+
+| Command | Description |
+| --- | --- |
+| `holon login [ORIGIN]` | Sign in and select a Holon installation |
+| `holon logout` | Remove credentials for the selected installation |
+| `holon dev [APP...]` | Run a development session for all apps, or the named apps and their dependencies, and rebuild them on change |
+| `holon deploy [APP...]` | Replace production, or update the named apps |
+| `holon secret set VARIABLE`<br>`holon secret delete VARIABLE` | Set or delete a secret value |
+| `holon config set VARIABLE VALUE`<br>`holon config delete VARIABLE` | Set or delete a config value |
+
+These commands use `--origin`, then `HOLON_ORIGIN`, then the installation `holon login` selected. `secret` and `config` target `--env dev` unless you pass `--env prod`.
 
 ## Reference
 
