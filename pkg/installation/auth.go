@@ -207,7 +207,7 @@ func (m *Client) token(ctx context.Context, audience string, scopes []string) (*
 	}
 	var token *oauth2.Token
 	if cached.RefreshToken != "" {
-		token, err = m.renewToken(ctx, config, cached.RefreshToken)
+		token, err = m.renewToken(ctx, config, cached.RefreshToken, audience)
 	} else {
 		token, err = m.deviceToken(ctx, config, audience)
 	}
@@ -263,12 +263,18 @@ func (m *Client) loadCredentials() error {
 	return nil
 }
 
-func (m *Client) renewToken(ctx context.Context, config *oauth2.Config, refreshToken string) (*oauth2.Token, error) {
+func (m *Client) renewToken(ctx context.Context, config *oauth2.Config, refreshToken, audience string) (*oauth2.Token, error) {
 	ctx = m.oauthContext(ctx)
-	// TokenSource retains an omitted refresh token per [RFC 6749 §6].
+	// TokenSource cannot name the resource of [RFC 8707 §2.2], so this overrides the grant of a client credentials
+	// request, which the library allows. It still retains an omitted refresh token per [RFC 6749 §6].
 	//
+	// [RFC 8707 §2.2]: https://www.rfc-editor.org/rfc/rfc8707.html#section-2.2
 	// [RFC 6749 §6]: https://www.rfc-editor.org/rfc/rfc6749.html#section-6
-	response, err := config.TokenSource(ctx, &oauth2.Token{RefreshToken: refreshToken}).Token()
+	refresh := clientcredentials.Config{
+		ClientID: config.ClientID, TokenURL: config.Endpoint.TokenURL, AuthStyle: config.Endpoint.AuthStyle,
+		EndpointParams: url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}, "resource": {audience}},
+	}
+	response, err := refresh.Token(ctx)
 	if err != nil || !validOAuthToken(response) {
 		failure := oauthFailure(ctx, err)
 		if ctx.Err() != nil || errors.Is(failure, errReauthenticationRequired) {

@@ -28,7 +28,7 @@ func TestCredentialAudienceIsolation(t *testing.T) {
 		refresh := r.FormValue("refresh_token")
 		refreshes.Add(1)
 		installationtest.WriteJSON(w, map[string]any{
-			"access_token":  strings.TrimSuffix(refresh, "-refresh") + "-access",
+			"access_token":  strings.TrimSuffix(refresh, "-refresh") + "-access-" + r.FormValue("resource"),
 			"refresh_token": refresh + "-rotated", "token_type": "Bearer", "expires_in": 3600,
 		})
 	})
@@ -52,7 +52,7 @@ func TestCredentialAudienceIsolation(t *testing.T) {
 		for name, audience := range audiences {
 			manager := newManager(t, server, dir)
 			token, err := manager.resourceToken(t.Context(), audience, protocol.SystemScopes())
-			if err != nil || token.AccessToken != name+"-access" {
+			if err != nil || token.AccessToken != name+"-access-"+audience {
 				t.Fatalf("audience %s: token=%v error=%v", audience, token, err)
 			}
 		}
