@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
@@ -158,8 +159,12 @@ func pathInsideContext(path, contextPath string) bool {
 func buildManifestImages(
 	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions,
 ) ([]protocol.App, error) {
-	upload := &imageUpload{manifest: manifest, load: func(ctx context.Context) (protocol.UploadGrant, error) {
-		return imageDestination(ctx, manager, name, manifest)
+	upload := &imageUpload{load: func(ctx context.Context) (protocol.UploadGrant, error) {
+		grant, err := imageDestination(ctx, manager, name, manifest)
+		if err == nil {
+			err = validateUploadGrant(grant, manifest)
+		}
+		return grant, err
 	}}
 	options.importPackage = func(ctx context.Context, app manifestApp) (protocol.ResolvedAppBuild, error) {
 		return importRegistryBuild(ctx, manager, ControlPlane(name), app, options.output)
@@ -174,11 +179,12 @@ func buildManifestImages(
 
 type imageUpload struct {
 	mu           sync.Mutex
-	manifest     manifestSpec
 	load         func(context.Context) (protocol.UploadGrant, error)
 	grant        protocol.UploadGrant
 	renewed      bool
 	repositories sync.Map
+	blobs        sync.Map
+	blobUploads  singleflight.Group
 }
 
 func (u *imageUpload) destination(ctx context.Context, rejected string) (protocol.UploadGrant, error) {
@@ -187,9 +193,6 @@ func (u *imageUpload) destination(ctx context.Context, rejected string) (protoco
 	if u.grant.Registry == "" || rejected != "" && rejected == u.grant.Grant && !u.renewed {
 		grant, err := u.load(ctx)
 		if err != nil {
-			return protocol.UploadGrant{}, err
-		}
-		if err := validateUploadGrant(grant, u.manifest); err != nil {
 			return protocol.UploadGrant{}, err
 		}
 		if u.grant.Registry != "" {

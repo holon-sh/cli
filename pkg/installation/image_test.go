@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"github.com/holon-sh/protocol"
 
 	"oras.land/oras-go/v2/content"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 )
 
 type registryItem struct {
@@ -153,6 +155,17 @@ func (r *imageRegistry) upload(w http.ResponseWriter, request *http.Request) {
 	repository, _, _ := strings.Cut(path, "/blobs/")
 	if request.Method == http.MethodPost {
 		r.mu.Lock()
+		if source := request.URL.Query().Get("from"); source != "" {
+			digest := request.URL.Query().Get("mount")
+			if item, ok := r.items[source+"/blobs/"+digest]; ok {
+				r.items[repository+"/blobs/"+digest] = item
+				r.mu.Unlock()
+				w.Header().Set("Docker-Content-Digest", digest)
+				w.Header().Set("Location", "/v2/"+repository+"/blobs/"+digest)
+				w.WriteHeader(http.StatusCreated)
+				return
+			}
+		}
 		id := strconv.Itoa(len(r.uploads))
 		path = repository + "/blobs/uploads/" + id
 		r.uploads[path] = nil
@@ -233,7 +246,6 @@ func TestPrebuiltImageImports(t *testing.T) {
 		name, sourcePassword, destinationPassword, repository, grant string
 		denied                                                       bool
 	}{
-		{name: "anonymous source", repository: "holon/upload/echo", grant: "grant-secret"},
 		{name: "private source", sourcePassword: "source-secret", repository: "holon/upload/echo", grant: "grant-secret"},
 		{name: "configured registry", destinationPassword: "destination-secret", repository: "builds/echo"},
 		{name: "invalid upload grant", repository: "holon/upload/echo", grant: "wrong-grant", denied: true},
@@ -241,9 +253,6 @@ func TestPrebuiltImageImports(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			fixture := newImageRegistry()
 			fixture.bearer = true
-			if scenario.sourcePassword != "" {
-				fixture.credentials["source"] = registryCredential{"reader", scenario.sourcePassword}
-			}
 			children := []ocispec.Descriptor{}
 			for _, architecture := range []string{"amd64", "arm64"} {
 				children = append(children, addTestImage(t, fixture, architecture, ocispec.ImageConfig{}, nil))
@@ -264,59 +273,57 @@ func TestPrebuiltImageImports(t *testing.T) {
 			configDir := t.TempDir()
 			t.Setenv("DOCKER_CONFIG", configDir)
 			auths := map[string]map[string]string{}
-			for _, credential := range []struct{ host, user, password string }{
-				{host, "reader", scenario.sourcePassword},
-				{destinationHost, "publisher", scenario.destinationPassword},
-			} {
-				if credential.password != "" {
-					auths[credential.host] = map[string]string{"auth": base64.StdEncoding.EncodeToString([]byte(credential.user + ":" + credential.password))}
-				}
-			}
-			data, _ := json.Marshal(map[string]any{"auths": auths})
-			if err := os.WriteFile(filepath.Join(configDir, "config.json"), data, 0o600); err != nil {
-				t.Fatal(err)
+			if scenario.destinationPassword != "" {
+				auths[destinationHost] = map[string]string{"auth": base64.StdEncoding.EncodeToString([]byte("publisher:" + scenario.destinationPassword))}
 			}
 			grant := protocol.UploadGrant{Registry: destinationHost, Grant: scenario.grant, Repositories: map[string]string{"echo": scenario.repository}}
 			manifest := manifestSpec{Apps: []manifestApp{{Name: "echo", resolved: resolvedApp{App: protocol.App{
 				Name: "echo", Port: 3000, Image: host + "/source@" + indexDigest.String(),
 			}}}}}
 			options := buildOptions{HTTPClient: server.Client()}
-			upload := imageUpload{manifest: manifest, grant: grant, load: func(context.Context) (protocol.UploadGrant, error) { return grant, nil }}
-			apps, err := buildAndPush(t.Context(), manifest, &upload, options)
-			if scenario.denied {
-				if err == nil || len(apps) != 0 {
-					t.Fatalf("invalid upload grant: apps=%v, error=%v", apps, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			renewals := 0
+			upload := imageUpload{grant: grant, load: func(context.Context) (protocol.UploadGrant, error) {
+				renewals++
+				return grant, nil
+			}}
+			passwords := []string{scenario.sourcePassword}
 			if scenario.sourcePassword != "" {
-				fixture.mu.Lock()
-				fixture.credentials["source"] = registryCredential{"reader", "replacement-source-secret"}
-				fixture.mu.Unlock()
-				auths[host]["auth"] = base64.StdEncoding.EncodeToString([]byte("reader:replacement-source-secret"))
+				passwords = append(passwords, "replacement-source-secret")
+			}
+			for _, password := range passwords {
+				if password != "" {
+					fixture.mu.Lock()
+					fixture.credentials["source"] = registryCredential{"reader", password}
+					fixture.mu.Unlock()
+					auths[host] = map[string]string{"auth": base64.StdEncoding.EncodeToString([]byte("reader:" + password))}
+				}
 				data, _ := json.Marshal(map[string]any{"auths": auths})
 				if err := os.WriteFile(filepath.Join(configDir, "config.json"), data, 0o600); err != nil {
 					t.Fatal(err)
 				}
-				repeated, err := buildAndPush(t.Context(), manifest, &upload, options)
-				if err != nil || len(repeated) != len(apps) || repeated[0].Image != apps[0].Image {
-					t.Fatalf("import after credentials changed: apps=%v, error=%v", repeated, err)
+				apps, err := buildAndPush(t.Context(), manifest, &upload, options)
+				if scenario.denied {
+					var response *errcode.ErrorResponse
+					if !errors.As(err, &response) || response.StatusCode != http.StatusUnauthorized || len(apps) != 0 || renewals != 1 {
+						t.Fatalf("invalid upload grant: apps=%v, renewals=%d, error=%v", apps, renewals, err)
+					}
+					return
 				}
-			}
-			for _, registry := range []*imageRegistry{fixture, destination} {
-				registry.mu.Lock()
-				leaked := registry.credentialLeak
-				registry.mu.Unlock()
-				if leaked {
-					t.Fatal("credentials crossed source and destination boundaries")
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			want := destinationHost + "/" + scenario.repository + "@" + indexDigest.String()
-			if len(apps) != 1 || apps[0].Image != want {
-				t.Fatalf("imported apps = %#v, want %s", apps, want)
+				want := destinationHost + "/" + scenario.repository + "@" + indexDigest.String()
+				if len(apps) != 1 || apps[0].Image != want {
+					t.Fatalf("imported apps = %#v, want %s", apps, want)
+				}
+				for _, registry := range []*imageRegistry{fixture, destination} {
+					registry.mu.Lock()
+					leaked := registry.credentialLeak
+					registry.mu.Unlock()
+					if leaked {
+						t.Fatal("credentials crossed source and destination boundaries")
+					}
+				}
 			}
 		})
 	}

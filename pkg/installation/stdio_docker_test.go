@@ -3,7 +3,6 @@
 package installation
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
@@ -18,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/containerd/containerd/v2/core/images/archive"
+	contentlocal "github.com/containerd/containerd/v2/plugins/content/local"
 	"github.com/google/go-cmp/cmp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -124,7 +125,7 @@ func TestDockerTransportContract(t *testing.T) {
 				t.Fatal(err)
 			}
 			grant := protocol.UploadGrant{Registry: host, Grant: "grant-secret", Repositories: map[string]string{"echo": "holon/upload/echo"}}
-			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{manifest: manifest, grant: grant}, buildOptions{
+			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant}, buildOptions{
 				HTTPClient: server.Client(),
 				origin:     "https://holon.example",
 				Env:        []string{"DOCKER_CONFIG=" + t.TempDir()},
@@ -245,8 +246,8 @@ func loadDockerImage(t *testing.T, source content.ReadOnlyStorage, descriptor oc
 	if err := oras.CopyGraph(t.Context(), source, layout, descriptor, oras.DefaultCopyGraphOptions); err != nil {
 		t.Fatal(err)
 	}
-	descriptor.Annotations = map[string]string{"io.containerd.image.name": "docker.io/library/" + tag}
-	if err := layout.Tag(t.Context(), descriptor, tag); err != nil {
+	store, err := contentlocal.NewStore(root)
+	if err != nil {
 		t.Fatal(err)
 	}
 	filename := filepath.Join(t.TempDir(), "image.tar")
@@ -254,11 +255,7 @@ func loadDockerImage(t *testing.T, source content.ReadOnlyStorage, descriptor oc
 	if err != nil {
 		t.Fatal(err)
 	}
-	archive := tar.NewWriter(file)
-	if err := archive.AddFS(os.DirFS(root)); err != nil {
-		t.Fatal(err)
-	}
-	if err := archive.Close(); err != nil {
+	if err := archive.Export(t.Context(), store, file, archive.WithManifest(descriptor, "docker.io/library/"+tag)); err != nil {
 		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {

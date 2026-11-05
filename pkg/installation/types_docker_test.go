@@ -123,7 +123,7 @@ export default createMcpHandler(() => {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	apps, err := buildAndPush(t.Context(), prepared, &imageUpload{manifest: prepared, grant: grant}, options)
+	apps, err := buildAndPush(t.Context(), prepared, &imageUpload{grant: grant}, options)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, &diagnostics)
 	}
@@ -198,7 +198,7 @@ export default createMcpHandler(() => {
 		t.Fatal("editor declarations did not update")
 	}
 	diagnostics.Reset()
-	_, err = buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{changed.Apps[index]}}, &imageUpload{manifest: changed, grant: grant}, options)
+	_, err = buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{changed.Apps[index]}}, &imageUpload{grant: grant}, options)
 	if err == nil || !strings.Contains(diagnostics.String(), "error TS2322") {
 		t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, diagnostics.String())
 	}
@@ -218,7 +218,7 @@ export default createMcpHandler(() => {
 		t.Fatal("handler-only edits changed the dependency signature")
 	}
 	if _, err := buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{fixed.Apps[index]}},
-		&imageUpload{manifest: fixed, grant: grant}, options); err != nil {
+		&imageUpload{grant: grant}, options); err != nil {
 		t.Fatalf("dev caller with a type error did not build: %v", err)
 	}
 	unreadable := strings.Replace(provider, `import {z} from "zod";`,
@@ -251,7 +251,7 @@ writeFileSync("server.ts",readFileSync("server.ts","utf8").replace("id:z.string(
 	defer cleanupMutated()
 	providerIndex := slices.IndexFunc(mutated.Apps, func(app manifestApp) bool { return app.Name == "orders" })
 	diagnostics.Reset()
-	_, err = buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{mutated.Apps[providerIndex]}}, &imageUpload{manifest: mutated, grant: grant}, options)
+	_, err = buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{mutated.Apps[providerIndex]}}, &imageUpload{grant: grant}, options)
 	if err == nil || !strings.Contains(diagnostics.String(), "refusing to publish stale types") {
 		t.Fatalf("expected build-time contract mutation rejection: %v\n%s", err, diagnostics.String())
 	}
@@ -317,7 +317,7 @@ async def checkout(id: str) -> float:
 		selected := manifestSpec{Apps: []manifestApp{prepared.Apps[1]}}
 		var progress strings.Builder
 		options.Stderr = &progress
-		apps, err := buildAndPush(t.Context(), selected, &imageUpload{manifest: prepared, grant: grant}, options)
+		apps, err := buildAndPush(t.Context(), selected, &imageUpload{grant: grant}, options)
 		if !valid {
 			if err == nil || !strings.Contains(strings.ToLower(progress.String()), "incompatible type") {
 				t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, progress.String())

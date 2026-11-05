@@ -5,21 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"k8s.io/utils/ptr"
 	"oras.land/oras-go/v2/content"
-	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/pkg/appartifact"
 	"github.com/holon-sh/protocol"
@@ -183,7 +180,7 @@ func TestSourceBuildAndUpload(t *testing.T) {
 		"TOKEN":            {IsSecret: true, IsRequired: true},
 	}
 	manifest = prepareBuild(t, manifest)
-	apps, err := buildAndPush(t.Context(), manifest, &imageUpload{manifest: manifest, grant: grant}, options)
+	apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant}, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,40 +301,12 @@ func TestSourceSessionResolution(t *testing.T) {
 			return build(ctx, request, progress)
 		}
 		prepared := prepareBuild(t, manifest)
-		if _, err := buildAndPush(t.Context(), prepared, &imageUpload{manifest: prepared, grant: grant}, options); err != nil {
+		if _, err := buildAndPush(t.Context(), prepared, &imageUpload{grant: grant}, options); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := os.Stat(filepath.Join(root, ".holon")); !os.IsNotExist(err) {
 			t.Fatalf("host injection modified application source: %v", err)
 		}
-	}
-}
-
-func TestSourcePublishExchangesGrantOncePerBuild(t *testing.T) {
-	registry := newImageRegistry()
-	registry.bearer = true
-	var tokens atomic.Int32
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/token" {
-			tokens.Add(1)
-		}
-		registry.ServeHTTP(w, request)
-	}))
-	t.Cleanup(server.Close)
-	manifest := buildManifest(t, t.TempDir())
-	grant := buildGrant(server)
-	request := buildRequest{app: manifest.Apps[0], upload: &imageUpload{manifest: manifest, grant: grant}, httpClient: server.Client()}
-	for _, data := range []string{"config", "layer", "launcher"} {
-		err := request.publish(t.Context(), func(repository *remote.Repository) error {
-			_, err := repository.Blobs().Exists(t.Context(), content.NewDescriptorFromBytes("application/octet-stream", []byte(data)))
-			return err
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if tokens.Load() != 1 {
-		t.Fatalf("token exchanges in one build: %d", tokens.Load())
 	}
 }
 

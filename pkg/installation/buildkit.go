@@ -77,7 +77,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 		return strings.Compare(a.Platform.Architecture, b.Platform.Architecture)
 	})
 	var image string
-	err = request.publish(ctx, func(repository *remote.Repository) error {
+	err = request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		entries := slices.Clone(manifests)
 		var annotations map[string]string
 		if p := request.app.resolved.types; p.metadata != nil {
@@ -303,7 +303,17 @@ func publishPlatform(
 	}
 	pushed := request.output.measure(name, "push")
 	defer pushed()
-	if err := request.publish(ctx, func(repository *remote.Repository) error {
+	if err := request.publish(ctx, func(repository *remote.Repository, grant protocol.UploadGrant) error {
+		copyOptions.PreCopy = func(ctx context.Context, descriptor ocispec.Descriptor) error {
+			if len(grant.Repositories) < 2 || grant.Grant == "" ||
+				(descriptor.MediaType != ocispec.MediaTypeImageLayer && descriptor.MediaType != ocispec.MediaTypeImageLayerGzip && descriptor.MediaType != ocispec.MediaTypeImageLayerZstd) {
+				return nil
+			}
+			if err := request.upload.pushLayer(ctx, repository, descriptor, staged); err != nil {
+				return err
+			}
+			return oras.SkipNode
+		}
 		return oras.CopyGraph(ctx, staged, repository, descriptor, copyOptions)
 	}); err != nil {
 		return ocispec.Descriptor{}, err
@@ -312,14 +322,50 @@ func publishPlatform(
 	return descriptor, nil
 }
 
-func (r buildRequest) publish(ctx context.Context, operation func(*remote.Repository) error) error {
-	return r.upload.run(ctx, func(grant protocol.UploadGrant) error {
-		repository, err := imageRepository(grant.Registry+"/"+grant.Repositories[r.app.Name], grant.Grant, r.httpClient)
-		if err != nil {
-			return err
+func (u *imageUpload) pushLayer(ctx context.Context, repository *remote.Repository, descriptor ocispec.Descriptor, source orascontent.Fetcher) error {
+	var pushed bool
+	result := u.blobUploads.DoChan(descriptor.Digest.String(), func() (any, error) {
+		if source, ok := u.blobs.Load(descriptor.Digest); ok {
+			return source, nil
 		}
-		shared, _ := r.upload.repositories.LoadOrStore(repository.Reference.String()+" "+grant.Grant, repository)
-		return operation(shared.(*remote.Repository))
+		reader, err := source.Fetch(ctx, descriptor)
+		if err != nil {
+			return nil, err
+		}
+		defer reader.Close()
+		if err := repository.Push(ctx, descriptor, reader); err != nil {
+			return nil, err
+		}
+		u.blobs.Store(descriptor.Digest, repository.Reference.Repository)
+		pushed = true
+		return repository.Reference.Repository, nil
+	})
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case outcome := <-result:
+		if outcome.Err != nil || pushed {
+			return outcome.Err
+		}
+		return repository.Mount(ctx, descriptor, outcome.Val.(string), func() (io.ReadCloser, error) {
+			return source.Fetch(ctx, descriptor)
+		})
+	}
+}
+
+func (r buildRequest) publish(ctx context.Context, operation func(*remote.Repository, protocol.UploadGrant) error) error {
+	return r.upload.run(ctx, func(grant protocol.UploadGrant) error {
+		name := grant.Registry + "/" + grant.Repositories[r.app.Name]
+		key := name + " " + grant.Grant
+		repository, ok := r.upload.repositories.Load(key)
+		if !ok {
+			created, err := imageRepository(name, grant.Grant, r.httpClient)
+			if err != nil {
+				return err
+			}
+			repository, _ = r.upload.repositories.LoadOrStore(key, created)
+		}
+		return operation(repository.(*remote.Repository), grant)
 	})
 }
 
@@ -336,15 +382,15 @@ func (s *sourceExport) Writer(ctx context.Context, options ...content.WriterOpt)
 			return nil, err
 		}
 	}
-	var exists bool
-	if err := s.request.publish(ctx, func(repository *remote.Repository) (err error) {
-		exists, err = repository.Blobs().Exists(ctx, settings.Desc)
+	if err := s.request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
+		exists, err := repository.Blobs().Exists(ctx, settings.Desc)
+		if err == nil && exists {
+			s.request.upload.blobs.LoadOrStore(settings.Desc.Digest, repository.Reference.Repository)
+			return cerrdefs.ErrAlreadyExists
+		}
 		return err
 	}); err != nil {
 		return nil, err
-	}
-	if exists {
-		return nil, cerrdefs.ErrAlreadyExists
 	}
 	return s.Store.Writer(ctx, options...)
 }
