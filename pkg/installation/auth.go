@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	oidcclient "github.com/zitadel/oidc/v3/pkg/client"
+	"github.com/zitadel/oidc/v3/pkg/client/rp"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 	"k8s.io/utils/ptr"
@@ -223,24 +223,32 @@ func (m *Client) token(ctx context.Context, audience string, scopes []string) (*
 	return token, m.writeState(m.state)
 }
 
-func (m *Client) loadCredentials() error {
+func (m *Client) readState() (authState, error) {
 	data, err := readCredentialFile(m.statePath)
 	if err != nil {
-		return err
+		return authState{}, err
 	}
 	var state authState
 	if err := protocol.DecodeJSONFields(data, &state, "oauth"); err != nil {
-		return errReauthenticationRequired
+		return authState{}, errReauthenticationRequired
 	}
 	if state.Version == "" || len(state.Version) > maxInfoField {
-		return errCredentialUnavailable
+		return authState{}, errCredentialUnavailable
 	}
 	if state.OAuth != nil {
 		if err := validateInfo(protocol.Info{OAuth: &protocol.OAuthInfo{
 			Issuer: state.OAuth.Issuer, AdminAudience: state.OAuth.AdminAudience, CLIClientID: state.OAuth.CLIClientID,
 		}}); err != nil {
-			return errReauthenticationRequired
+			return authState{}, errReauthenticationRequired
 		}
+	}
+	return state, nil
+}
+
+func (m *Client) loadCredentials() error {
+	state, err := m.readState()
+	if err != nil {
+		return err
 	}
 	if m.state.Version != "" && m.state.Version != state.Version {
 		return errCredentialChanged
@@ -281,28 +289,65 @@ func (m *Client) logout(ctx context.Context) error {
 	if m.machine != nil {
 		return errors.New("service-account credentials are supplied by the environment; unset HOLON_CLIENT_ID and HOLON_CLIENT_SECRET")
 	}
-	return m.withLock(ctx, func() error { return removeCredentialFile(m.statePath) })
+	return m.withLock(ctx, func() error {
+		revokeErr := m.revokeRefreshTokens(ctx)
+		if err := removeCredentialFile(m.statePath); err != nil {
+			return errors.Join(err, revokeErr)
+		}
+		if revokeErr != nil {
+			return fmt.Errorf("credentials removed locally, but refresh tokens may still be valid at the identity provider: %w", revokeErr)
+		}
+		return nil
+	})
 }
 
-func (m *Client) oauthConfig(ctx context.Context, scopes []string) (*oauth2.Config, error) {
+// Revocation follows [RFC 7009 §2.1] with the public client's identifier.
+//
+// [RFC 7009 §2.1]: https://www.rfc-editor.org/rfc/rfc7009.html#section-2.1
+func (m *Client) revokeRefreshTokens(ctx context.Context) error {
+	state, err := m.readState()
+	if err != nil && !errors.Is(err, errNotAuthenticated) {
+		return err
+	}
+	if state.OAuth == nil {
+		return nil
+	}
+	party, err := m.relyingParty(ctx, state.OAuth.Issuer, state.OAuth.CLIClientID, nil)
+	if err != nil {
+		return err
+	}
+	for _, token := range state.Tokens {
+		err = errors.Join(err, rp.RevokeToken(ctx, party, ptr.Deref(token, oauth2.Token{}).RefreshToken, "refresh_token"))
+	}
+	return err
+}
+
+func (m *Client) relyingParty(ctx context.Context, issuer, clientID string, scopes []string) (rp.RelyingParty, error) {
 	client := *m.client.client
 	client.Timeout = discoveryTimeout
 	client.Transport = boundedTransport{base: cmp.Or(client.Transport, http.DefaultTransport)}
 	// This library uses [OIDC Discovery §4], whose well-known path differs from RFC 8414 for path issuers.
 	//
 	// [OIDC Discovery §4]: https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfig
-	metadata, err := oidcclient.Discover(ctx, m.info.OAuth.Issuer, &client)
+	party, err := rp.NewRelyingPartyOIDC(ctx, issuer, clientID, "", "", scopes, rp.WithHTTPClient(&client), rp.WithAuthStyle(oauth2.AuthStyleInParams))
 	if err != nil {
 		return nil, cmp.Or(ctx.Err(), fmt.Errorf("OIDC discovery: %w", errOAuthFailed))
 	}
-	if !httpsURL(metadata.TokenEndpoint) ||
-		metadata.DeviceAuthorizationEndpoint != "" && !httpsURL(metadata.DeviceAuthorizationEndpoint) {
+	device, revoke := party.GetDeviceAuthorizationEndpoint(), party.GetRevokeEndpoint()
+	if !httpsURL(party.OAuthConfig().Endpoint.TokenURL) || device != "" && !httpsURL(device) || revoke != "" && !httpsURL(revoke) {
 		return nil, errMalformedResponse
 	}
-	return &oauth2.Config{
-		ClientID: m.info.OAuth.CLIClientID, Scopes: append([]string{"openid", "offline_access"}, scopes...),
-		Endpoint: oauth2.Endpoint{TokenURL: metadata.TokenEndpoint, DeviceAuthURL: metadata.DeviceAuthorizationEndpoint, AuthStyle: oauth2.AuthStyleInParams},
-	}, nil
+	return party, nil
+}
+
+func (m *Client) oauthConfig(ctx context.Context, scopes []string) (*oauth2.Config, error) {
+	party, err := m.relyingParty(ctx, m.info.OAuth.Issuer, m.info.OAuth.CLIClientID, append([]string{"openid", "offline_access"}, scopes...))
+	if err != nil {
+		return nil, err
+	}
+	config := party.OAuthConfig()
+	config.Endpoint.DeviceAuthURL = party.GetDeviceAuthorizationEndpoint()
+	return config, nil
 }
 
 type boundedTransport struct {

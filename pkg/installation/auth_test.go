@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,20 +42,29 @@ func newAuthTestServer(t *testing.T, tokenHandler http.HandlerFunc) *httptest.Se
 
 func TestLogin(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, bearer string }{
+	for _, tc := range []struct {
+		name, bearer string
+		down         bool
+	}{
 		{name: "identity provider", bearer: "Bearer access-secret"},
+		{name: "identity provider unreachable at logout", bearer: "Bearer access-secret", down: true},
 		{name: "authentication disabled"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			mux := http.NewServeMux()
 			var server *httptest.Server
+			var revoked []string
 			if tc.bearer == "" {
 				mux.HandleFunc(protocol.APIPathInfo, func(w http.ResponseWriter, r *http.Request) {
 					installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}})
 				})
 			} else {
-				installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, nil, 120, 1, func(w http.ResponseWriter, _ *http.Request) {
+				installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, func(r *http.Request) {
+					if r.URL.Path == "/revoke" {
+						revoked = append(revoked, r.FormValue("token"))
+					}
+				}, 120, 1, func(w http.ResponseWriter, _ *http.Request) {
 					installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one", "expires_in": 120})
 				})
 			}
@@ -94,12 +104,18 @@ func TestLogin(t *testing.T) {
 					t.Fatalf("private storage mode for %s: %v %v", path, info, err)
 				}
 			}
-			server.Close()
-			if err := executeCommand(t.Context(), []string{"logout"}, nil, nil, config); err != nil {
-				t.Fatal(err)
+			if tc.down {
+				server.Close()
+			}
+			err = executeCommand(t.Context(), []string{"logout"}, nil, nil, config)
+			if tc.down != (err != nil) {
+				t.Fatalf("logout error = %v, want error %v", err, tc.down)
 			}
 			if _, err := os.Stat(files[0]); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("logout retained tokens: %v", err)
+			}
+			if tc.bearer != "" && !tc.down && !slices.Equal(revoked, []string{"refresh-one"}) {
+				t.Fatalf("revoked tokens = %v", revoked)
 			}
 			assertSavedOrigin(t, config.Auth.ConfigDir, server.URL)
 		})
@@ -165,6 +181,8 @@ func TestDeviceLoginFailures(t *testing.T) {
 		},
 		{name: "insecure device endpoint", discovery: `{"issuer":"https://identity.example/","token_endpoint":"https://identity.example/token",` +
 			`"device_authorization_endpoint":"http://identity.example/device"}`, want: errMalformedResponse},
+		{name: "insecure revocation endpoint", discovery: `{"issuer":"https://identity.example/","token_endpoint":"https://identity.example/token",` +
+			`"revocation_endpoint":"http://identity.example/revoke"}`, want: errMalformedResponse},
 		{name: "denied", code: "access_denied", expires: 120, want: errDeviceDenied},
 		{name: "expired", code: "authorization_pending", expires: 2, want: errDeviceExpired},
 		{name: "cancelled", code: "authorization_pending", expires: 120, cancel: true, want: context.Canceled},
