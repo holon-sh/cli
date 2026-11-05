@@ -41,7 +41,7 @@ func TestCredentialAudienceIsolation(t *testing.T) {
 	}
 	audiences := map[string]string{"control": installationtest.AdminAudience(server.URL), "session": session}
 	for name, audience := range audiences {
-		manager.state.Tokens[tokenKey(manager.info.OAuth.Issuer, audience, protocol.SystemScopes())] = &oauth2.Token{
+		manager.state.Tokens[audience] = &oauth2.Token{
 			AccessToken: "expired", RefreshToken: name + "-refresh", TokenType: "Bearer", Expiry: time.Unix(1, 0),
 		}
 	}
@@ -51,7 +51,7 @@ func TestCredentialAudienceIsolation(t *testing.T) {
 	for range 2 {
 		for name, audience := range audiences {
 			manager := newManager(t, server, dir)
-			token, err := manager.resourceToken(t.Context(), audience, protocol.SystemScopes())
+			token, err := manager.resourceToken(t.Context(), audience)
 			if err != nil || token.AccessToken != name+"-access-"+audience {
 				t.Fatalf("audience %s: token=%v error=%v", audience, token, err)
 			}

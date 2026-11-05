@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -46,14 +45,7 @@ func (m *Client) authorizeOperation(ctx context.Context, s protocol.SessionRespo
 	if err != nil {
 		return err
 	}
-	apps := slices.Clone(s.Apps)
-	for _, release := range s.Releases {
-		if release.Installed != nil {
-			apps = append(apps, *release.Installed)
-		}
-	}
-	scopes := protocol.SessionScopes(mode, apps)
-	token, err := m.resourceToken(ctx, audience, scopes)
+	token, err := m.resourceToken(ctx, audience)
 	if err != nil {
 		return fmt.Errorf("authorize lifecycle: %w", err)
 	}

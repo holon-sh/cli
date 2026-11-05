@@ -604,7 +604,7 @@ func TestAuthenticationWaitCancellation(t *testing.T) {
 	})
 }
 
-func TestControlTokenAudienceAndScopeCache(t *testing.T) {
+func TestResourceTokenCacheIsPerAudience(t *testing.T) {
 	var requests []string
 	server := installationtest.MachineAuthServer(t, func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.FormValue("resource")+"|"+r.FormValue("scope"))
@@ -625,19 +625,19 @@ func TestControlTokenAudienceAndScopeCache(t *testing.T) {
 	if err != nil || again != token || len(requests) != 1 {
 		t.Fatalf("control token cache miss: %v %v", requests, err)
 	}
-	if requests[0] != audience+"|system:dev:read system:dev:write system:prod:read system:prod:write" {
+	if requests[0] != audience+"|" {
 		t.Fatalf("wrong control token request: %s", requests[0])
 	}
-	narrow, err := manager.resourceToken(t.Context(), audience, []string{"system:dev:read"})
-	if err != nil || narrow.AccessToken == token || len(requests) != 2 {
-		t.Fatalf("scope cache collision: %v %v", requests, err)
+	other, err := manager.resourceToken(t.Context(), audience+"/other")
+	if err != nil || other.AccessToken == token || len(requests) != 2 {
+		t.Fatalf("audience cache collision: %v %v", requests, err)
 	}
 }
 
 func seedAdminCredentials(t *testing.T, manager *Client, token oauth2.Token) {
 	t.Helper()
 	manager.state = authState{OAuth: targetForOAuth(manager.info.OAuth), Version: "test"}
-	manager.state.Tokens = map[string]*oauth2.Token{tokenKey(manager.info.OAuth.Issuer, manager.info.OAuth.AdminAudience, protocol.SystemScopes()): &token}
+	manager.state.Tokens = map[string]*oauth2.Token{manager.info.OAuth.AdminAudience: &token}
 	if err := manager.withLock(t.Context(), func() error { return manager.writeState(manager.state) }); err != nil {
 		t.Fatal(err)
 	}

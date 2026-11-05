@@ -162,8 +162,7 @@ func (m *Client) loginInteractive(ctx context.Context) error {
 func (m *Client) login(ctx context.Context) error {
 	state := authState{OAuth: targetForOAuth(m.info.OAuth), Version: rand.Text(), Tokens: map[string]*oauth2.Token{}}
 	if m.info.OAuth != nil {
-		scopes := protocol.SystemScopes()
-		config, err := m.oauthConfig(ctx, scopes)
+		config, err := m.oauthConfig(ctx)
 		if err != nil {
 			return err
 		}
@@ -171,7 +170,7 @@ func (m *Client) login(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		state.Tokens[tokenKey(m.info.OAuth.Issuer, m.info.OAuth.AdminAudience, scopes)] = tokens
+		state.Tokens[m.info.OAuth.AdminAudience] = tokens
 	}
 	if err := m.writeState(state); err != nil {
 		return err
@@ -184,24 +183,18 @@ func (m *Client) login(ctx context.Context) error {
 	return nil
 }
 
-func tokenKey(issuer, audience string, scopes []string) string {
-	scopes = slices.Compact(slices.Sorted(slices.Values(scopes)))
-	return issuer + "\x00" + audience + "\x00" + strings.Join(scopes, " ")
-}
-
-func (m *Client) token(ctx context.Context, audience string, scopes []string) (*oauth2.Token, error) {
+func (m *Client) token(ctx context.Context, audience string) (*oauth2.Token, error) {
 	if err := m.loadCredentials(); err != nil {
 		return nil, err
 	}
-	key := tokenKey(m.info.OAuth.Issuer, audience, scopes)
-	cached := ptr.Deref(m.state.Tokens[key], oauth2.Token{})
+	cached := ptr.Deref(m.state.Tokens[audience], oauth2.Token{})
 	// A response may omit expires_in per [RFC 6749 §5.1]. Its zero Expiry fails this check, so the token is renewed.
 	//
 	// [RFC 6749 §5.1]: https://www.rfc-editor.org/rfc/rfc6749.html#section-5.1
 	if time.Until(cached.Expiry) > accessSafety {
 		return &cached, nil
 	}
-	config, err := m.oauthConfig(ctx, scopes)
+	config, err := m.oauthConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +207,7 @@ func (m *Client) token(ctx context.Context, audience string, scopes []string) (*
 	if err != nil {
 		return nil, err
 	}
-	m.state.Tokens[key] = token
+	m.state.Tokens[audience] = token
 	return token, m.writeState(m.state)
 }
 
@@ -254,8 +247,8 @@ func (m *Client) loadCredentials() error {
 	if len(state.Tokens) == 0 {
 		return errReauthenticationRequired
 	}
-	for key, token := range state.Tokens {
-		if !strings.HasPrefix(key, m.info.OAuth.Issuer+"\x00") || token == nil || !validOAuthToken(token) || token.RefreshToken == "" {
+	for _, token := range state.Tokens {
+		if token == nil || !validOAuthToken(token) || token.RefreshToken == "" {
 			return errReauthenticationRequired
 		}
 	}
@@ -312,7 +305,7 @@ func (m *Client) revokeRefreshTokens(ctx context.Context) error {
 	if state.OAuth == nil {
 		return nil
 	}
-	party, err := m.relyingParty(ctx, state.OAuth.Issuer, state.OAuth.CLIClientID, nil)
+	party, err := m.relyingParty(ctx, state.OAuth.Issuer, state.OAuth.CLIClientID)
 	if err != nil {
 		return err
 	}
@@ -322,14 +315,14 @@ func (m *Client) revokeRefreshTokens(ctx context.Context) error {
 	return err
 }
 
-func (m *Client) relyingParty(ctx context.Context, issuer, clientID string, scopes []string) (rp.RelyingParty, error) {
+func (m *Client) relyingParty(ctx context.Context, issuer, clientID string) (rp.RelyingParty, error) {
 	client := *m.client.client
 	client.Timeout = discoveryTimeout
 	client.Transport = boundedTransport{base: cmp.Or(client.Transport, http.DefaultTransport)}
 	// This library uses [OIDC Discovery §4], whose well-known path differs from RFC 8414 for path issuers.
 	//
 	// [OIDC Discovery §4]: https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfig
-	party, err := rp.NewRelyingPartyOIDC(ctx, issuer, clientID, "", "", scopes, rp.WithHTTPClient(&client), rp.WithAuthStyle(oauth2.AuthStyleInParams))
+	party, err := rp.NewRelyingPartyOIDC(ctx, issuer, clientID, "", "", []string{"openid", "offline_access"}, rp.WithHTTPClient(&client), rp.WithAuthStyle(oauth2.AuthStyleInParams))
 	if err != nil {
 		return nil, cmp.Or(ctx.Err(), fmt.Errorf("OIDC discovery: %w", errOAuthFailed))
 	}
@@ -340,8 +333,8 @@ func (m *Client) relyingParty(ctx context.Context, issuer, clientID string, scop
 	return party, nil
 }
 
-func (m *Client) oauthConfig(ctx context.Context, scopes []string) (*oauth2.Config, error) {
-	party, err := m.relyingParty(ctx, m.info.OAuth.Issuer, m.info.OAuth.CLIClientID, append([]string{"openid", "offline_access"}, scopes...))
+func (m *Client) oauthConfig(ctx context.Context) (*oauth2.Config, error) {
+	party, err := m.relyingParty(ctx, m.info.OAuth.Issuer, m.info.OAuth.CLIClientID)
 	if err != nil {
 		return nil, err
 	}
@@ -495,48 +488,47 @@ func (m *Client) controlToken(ctx context.Context) (string, error) {
 	if m.info.OAuth == nil {
 		return "", nil
 	}
-	token, err := m.resourceToken(ctx, m.info.OAuth.AdminAudience, protocol.SystemScopes())
+	token, err := m.resourceToken(ctx, m.info.OAuth.AdminAudience)
 	if err != nil {
 		return "", err
 	}
 	return token.AccessToken, nil
 }
 
-func (m *Client) resourceToken(ctx context.Context, audience string, scopes []string) (*oauth2.Token, error) {
+func (m *Client) resourceToken(ctx context.Context, audience string) (*oauth2.Token, error) {
 	if m.machine != nil {
-		return m.machineToken(ctx, audience, scopes)
+		return m.machineToken(ctx, audience)
 	}
 	var result *oauth2.Token
 	err := m.withLock(ctx, func() error {
 		initial := m.state.Version == ""
 		var err error
-		result, err = m.token(ctx, audience, scopes)
+		result, err = m.token(ctx, audience)
 		if initial &&
 			(errors.Is(err, errNotAuthenticated) || errors.Is(err, errEndpointChanged) || errors.Is(err, errReauthenticationRequired)) {
 			err = m.login(ctx)
-			result = m.state.Tokens[tokenKey(m.info.OAuth.Issuer, audience, scopes)]
+			result = m.state.Tokens[audience]
 		}
 		return err
 	})
 	return result, err
 }
 
-func (m *Client) machineToken(ctx context.Context, audience string, scopes []string) (*oauth2.Token, error) {
+func (m *Client) machineToken(ctx context.Context, audience string) (*oauth2.Token, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := tokenKey(m.info.OAuth.Issuer, audience, scopes)
 	// A response may omit expires_in per [RFC 6749 §5.1]. Its zero Expiry fails this check, so the token is renewed.
 	//
 	// [RFC 6749 §5.1]: https://www.rfc-editor.org/rfc/rfc6749.html#section-5.1
-	if cached := m.state.Tokens[key]; cached != nil && time.Until(cached.Expiry) > accessSafety {
+	if cached := m.state.Tokens[audience]; cached != nil && time.Until(cached.Expiry) > accessSafety {
 		return cached, nil
 	}
-	config, err := m.oauthConfig(ctx, scopes)
+	config, err := m.oauthConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
 	credentials := *m.machine
-	credentials.Scopes, credentials.TokenURL = scopes, config.Endpoint.TokenURL
+	credentials.TokenURL = config.Endpoint.TokenURL
 	credentials.EndpointParams = url.Values{"resource": {audience}}
 	token, err := credentials.Token(m.oauthContext(ctx))
 	if err != nil {
@@ -545,7 +537,7 @@ func (m *Client) machineToken(ctx context.Context, audience string, scopes []str
 	if !validOAuthToken(token) {
 		return nil, errMalformedResponse
 	}
-	m.state.Tokens[key] = token
+	m.state.Tokens[audience] = token
 	return token, nil
 }
 
