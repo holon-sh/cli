@@ -9,14 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 	"github.com/klauspost/compress/zstd"
 	"github.com/moby/buildkit/util/staticfs"
@@ -69,12 +72,59 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 	}
 }
 
-func TestDockerSourceBuildFailures(t *testing.T) {
+func TestDockerSourceBuild(t *testing.T) {
 	root := t.TempDir()
 	manifest := buildManifest(t, root)
 	grant, options := sourceRegistry(t)
 	options.architectures = []string{runtime.GOARCH}
-	upload := &imageUpload{manifest: manifest, grant: grant}
+	upload := &imageUpload{grant: grant}
+
+	t.Run("shared layers", func(t *testing.T) {
+		beta := buildManifest(t, t.TempDir()).Apps[0]
+		beta.Name, beta.resolved.App.Name = "beta", "beta"
+		shared := manifestSpec{Apps: []manifestApp{manifest.Apps[0], beta}}
+		sharedGrant := grant
+		sharedGrant.Repositories = map[string]string{"alpha": "apps/alpha", "beta": "apps/beta"}
+		var mu sync.Mutex
+		uploads := map[string]int{}
+		observed := options
+		observed.HTTPClient = installationtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
+			if r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/blobs/uploads/") {
+				mu.Lock()
+				uploads[r.URL.Query().Get("digest")]++
+				mu.Unlock()
+			}
+			return options.HTTPClient.Transport.RoundTrip(r)
+		})
+		apps, err := buildAndPush(t.Context(), prepareBuild(t, shared), &imageUpload{grant: sharedGrant}, observed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, app := range apps {
+			repository, err := imageRepository(grant.Registry+"/"+sharedGrant.Repositories[app.Name], grant.Grant, options.HTTPClient)
+			if err != nil {
+				t.Fatal(err)
+			}
+			descriptor, err := repository.Resolve(t.Context(), app.Image)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var index ocispec.Index
+			publishedJSON(t, repository, descriptor, &index)
+			for _, platform := range index.Manifests {
+				if platform.Platform == nil {
+					continue
+				}
+				var image ocispec.Manifest
+				publishedJSON(t, repository, platform, &image)
+				for _, layer := range image.Layers {
+					if count := uploads[layer.Digest.String()]; count != 1 {
+						t.Fatalf("shared layer %s uploaded %d times, want once", layer.Digest, count)
+					}
+				}
+			}
+		}
+	})
 
 	t.Run("progress failure", func(t *testing.T) {
 		want := errors.New("progress writer failed")

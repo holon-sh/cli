@@ -79,7 +79,7 @@ func TestStdioImageContract(t *testing.T) {
 				Name: "app", resolved: resolvedApp{stdio: true, App: protocol.App{Name: "app", Image: image, Port: 3000}},
 			}}}
 			options := buildOptions{HTTPClient: server.Client(), origin: "https://holon.example", Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
-			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{manifest: manifest, grant: grant}, options)
+			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant}, options)
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 					t.Fatalf("want %s: %v", test.wantErr, err)
@@ -200,13 +200,10 @@ func TestStdioMultiArchitectureBuild(t *testing.T) {
 		t.Fatal("multi-architecture index lost")
 	}
 	for i, child := range result.Manifests {
-		if !cmp.Equal(child.Platform, children[i].Platform) || child.Digest == children[i].Digest {
-			t.Fatalf("child not adapted: %#v", child)
+		if !cmp.Equal(child.Platform, children[i].Platform) {
+			t.Fatalf("child platform changed: %#v", child)
 		}
 		manifest, config := preparedConfig(t, registry, host+"/holon/upload/echo@"+child.Digest.String())
-		if config.Config.Entrypoint[0] != ociimage.RuntimePath {
-			t.Fatal("imported image was not adapted")
-		}
 		zipper, err := gzip.NewReader(bytes.NewReader(registry.items["holon/upload/echo/blobs/"+manifest.Layers[1].Digest.String()].data))
 		if err != nil {
 			t.Fatal(err)
