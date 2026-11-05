@@ -57,18 +57,6 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 	if err != nil {
 		return buildResult{}, err
 	}
-	recipe := staticfs.NewFS()
-	recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(plan.Dockerfile))
-	if len(request.Start) != 0 {
-		for _, platform := range request.Platforms {
-			arch := strings.TrimPrefix(platform, "linux/")
-			binary, err := bridgePayloads.ReadFile("bridge-payloads/linux-" + arch)
-			if err != nil {
-				return buildResult{}, err
-			}
-			recipe.Add(arch, &fstypes.Stat{Mode: 0o755}, binary)
-		}
-	}
 	source, err := fsutil.NewFS(request.Source)
 	if err != nil {
 		return buildResult{}, err
@@ -77,7 +65,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 	group, buildCtx := errgroup.WithContext(ctx)
 	for index, platform := range request.Platforms {
 		group.Go(func() error {
-			manifest, err := publishPlatform(buildCtx, platform, request, source, recipe, progress)
+			manifest, err := publishPlatform(buildCtx, platform, request, source, plan.Dockerfile, progress)
 			manifests[index] = manifest
 			return err
 		})
@@ -170,10 +158,22 @@ func (b *builderConnections) close() {
 }
 
 func publishPlatform(
-	ctx context.Context, platform string, request buildRequest, source, recipe fsutil.FS, progress io.Writer,
+	ctx context.Context, platform string, request buildRequest, source fsutil.FS, dockerfile string, progress io.Writer,
 ) (ocispec.Descriptor, error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(context.Canceled)
+	recipe := staticfs.NewFS()
+	recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(dockerfile))
+	var runtimeKey string
+	if len(request.Start) != 0 {
+		arch := strings.TrimPrefix(platform, "linux/")
+		binary, err := bridgePayloads.ReadFile("bridge-payloads/linux-" + arch)
+		if err != nil {
+			return ocispec.Descriptor{}, err
+		}
+		recipe.Add(arch, &fstypes.Stat{Mode: 0o755}, binary)
+		runtimeKey = clientutil.HashBytes(binary)
+	}
 	name := request.app.Name + " " + platform
 	connected := request.output.measure(name, "connect builder")
 	c, err := request.builders.connect(platform, request.Env)
@@ -252,12 +252,8 @@ func publishPlatform(
 			if err != nil {
 				return nil, err
 			}
-			binary, err := bridgePayloads.ReadFile("bridge-payloads/linux-" + image.Architecture)
-			if err != nil {
-				return nil, err
-			}
 			runtime := llb.Scratch().File(llb.Copy(
-				llb.Local("runtime", llb.IncludePatterns([]string{image.Architecture}), llb.SharedKeyHint(clientutil.HashBytes(binary))), image.Architecture, ociimage.RuntimePath,
+				llb.Local("runtime", llb.IncludePatterns([]string{image.Architecture}), llb.SharedKeyHint(runtimeKey)), image.Architecture, ociimage.RuntimePath,
 				llb.WithCreatedTime(time.Unix(0, 0)),
 			))
 			definition, err := llb.Merge([]llb.State{state, runtime}).Marshal(ctx, llb.Platform(image.Platform))

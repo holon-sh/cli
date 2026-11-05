@@ -31,18 +31,14 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, test := range []struct{ project, value, recipe string }{
-		{"first", "first", "one"},
-		{"other", "other", "two"},
-	} {
-		source, recipe := staticfs.NewFS(), staticfs.NewFS()
-		source.Add("value", &fstypes.Stat{Mode: 0o644}, []byte(test.value))
-		recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte("FROM scratch\nCOPY value /value\nENV RECIPE="+test.recipe+"\n"))
+	for _, value := range []string{"first", "other"} {
+		source := staticfs.NewFS()
+		source.Add("value", &fstypes.Stat{Mode: 0o644}, []byte(value))
 		request := buildRequest{
-			app: manifestApp{Name: "alpha", Path: test.project}, upload: &imageUpload{grant: grant},
+			app: manifestApp{Name: "alpha", Path: value}, upload: &imageUpload{grant: grant},
 			Env: options.Env, httpClient: options.HTTPClient, builders: options.builders,
 		}
-		descriptor, err := publishPlatform(t.Context(), "linux/"+runtime.GOARCH, request, source, recipe, io.Discard)
+		descriptor, err := publishPlatform(t.Context(), "linux/"+runtime.GOARCH, request, source, "FROM scratch\nCOPY value /value\nENV RECIPE="+value+"\n", io.Discard)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -50,7 +46,7 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 		var config ocispec.Image
 		publishedJSON(t, repository, descriptor, &manifest)
 		publishedJSON(t, repository, manifest.Config, &config)
-		if !slices.Contains(config.Config.Env, "RECIPE="+test.recipe) {
+		if !slices.Contains(config.Config.Env, "RECIPE="+value) {
 			t.Fatalf("stale Dockerfile: %v", config.Config.Env)
 		}
 		data, err := content.FetchAll(t.Context(), repository.Blobs(), manifest.Layers[0])
@@ -65,10 +61,10 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 		if _, err := archive.Next(); err != nil {
 			t.Fatal(err)
 		}
-		value, err := io.ReadAll(archive)
+		data, err = io.ReadAll(archive)
 		decoder.Close()
-		if err != nil || string(value) != test.value {
-			t.Fatalf("%s source = %q, want %q: %v", test.project, value, test.value, err)
+		if err != nil || string(data) != value {
+			t.Fatalf("%s source = %q, want %q: %v", value, data, value, err)
 		}
 	}
 }
