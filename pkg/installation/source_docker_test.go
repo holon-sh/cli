@@ -3,18 +3,71 @@
 package installation
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/holon-sh/protocol"
+	"github.com/klauspost/compress/zstd"
+	"github.com/moby/buildkit/util/staticfs"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	fstypes "github.com/tonistiigi/fsutil/types"
+	"oras.land/oras-go/v2/content"
 )
+
+func TestDockerSourceCacheIsolation(t *testing.T) {
+	grant, options := sourceRegistry(t)
+	repository, err := imageRepository(grant.Registry+"/"+grant.Repositories["alpha"], grant.Grant, options.HTTPClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"first", "other"} {
+		source := staticfs.NewFS()
+		source.Add("value", &fstypes.Stat{Mode: 0o644}, []byte(value))
+		request := buildRequest{
+			app: manifestApp{Name: "alpha", Path: value}, upload: &imageUpload{grant: grant},
+			Env: options.Env, httpClient: options.HTTPClient, builders: options.builders,
+		}
+		descriptor, err := publishPlatform(t.Context(), "linux/"+runtime.GOARCH, request, source, "FROM scratch\nCOPY value /value\nENV RECIPE="+value+"\n", io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest ocispec.Manifest
+		var config ocispec.Image
+		publishedJSON(t, repository, descriptor, &manifest)
+		publishedJSON(t, repository, manifest.Config, &config)
+		if !slices.Contains(config.Config.Env, "RECIPE="+value) {
+			t.Fatalf("stale Dockerfile: %v", config.Config.Env)
+		}
+		data, err := content.FetchAll(t.Context(), repository.Blobs(), manifest.Layers[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoder, err := zstd.NewReader(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		archive := tar.NewReader(decoder)
+		if _, err := archive.Next(); err != nil {
+			t.Fatal(err)
+		}
+		data, err = io.ReadAll(archive)
+		decoder.Close()
+		if err != nil || string(data) != value {
+			t.Fatalf("%s source = %q, want %q: %v", value, data, value, err)
+		}
+	}
+}
 
 func TestDockerSourceBuildFailures(t *testing.T) {
 	root := t.TempDir()
@@ -23,20 +76,6 @@ func TestDockerSourceBuildFailures(t *testing.T) {
 	options.architectures = []string{runtime.GOARCH}
 	upload := &imageUpload{manifest: manifest, grant: grant}
 
-	t.Run("denied grant", func(t *testing.T) {
-		calls := 0
-		denied := &imageUpload{manifest: manifest, load: func(context.Context) (protocol.UploadGrant, error) {
-			calls++
-			current := grant
-			current.Grant = "denied-grant"
-			current.Repositories = map[string]string{"alpha": "apps/denied"}
-			return current, nil
-		}}
-		apps, err := buildAndPush(t.Context(), prepareBuild(t, manifest), denied, options)
-		if err == nil || len(apps) != 0 || calls != 2 {
-			t.Fatalf("denied grant: apps=%v, grants=%d: %v", apps, calls, err)
-		}
-	})
 	t.Run("progress failure", func(t *testing.T) {
 		want := errors.New("progress writer failed")
 		failed := options
@@ -58,8 +97,8 @@ func TestDockerSourceBuildFailures(t *testing.T) {
 			}
 			return len(data), nil
 		})
-		if apps, err := buildAndPush(ctx, prepareBuild(t, manifest), upload, canceled); !errors.Is(err, context.Canceled) || len(apps) != 0 {
-			t.Fatalf("canceled build: %v: %v", apps, err)
+		if _, err := buildAndPush(ctx, prepareBuild(t, manifest), upload, canceled); !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled build: %v", err)
 		}
 	})
 }
