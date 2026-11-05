@@ -29,6 +29,7 @@ import (
 	gateway "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
+	"github.com/moby/buildkit/solver/pb"
 	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/moby/buildkit/util/staticfs"
 	"github.com/opencontainers/image-spec/specs-go"
@@ -217,16 +218,20 @@ func publishPlatform(
 	hostname, _ := os.Hostname()
 	solved := request.output.measure(name, "solve")
 	response, err := c.Build(ctx, client.SolveOpt{
-		SharedKey:   clientutil.HashBytes([]byte(hostname + "\x00" + request.app.Path + "\x00" + platform)),
+		SharedKey:   clientutil.HashBytes([]byte(hostname + "\x00" + platform)),
 		LocalMounts: map[string]fsutil.FS{"context": source, "dockerfile": recipe, "runtime": recipe},
 		Session:     []session.Attachable{authentication},
 		Exports: []client.ExportEntry{{Type: client.ExporterOCI, OutputStore: &sourceExport{Store: store, request: request}, Attrs: map[string]string{
 			"tar": "false", "source-date-epoch": "0", "oci-mediatypes": "true", "compression": "zstd", "compression-level": "1",
 		}}},
 	}, "holon", func(ctx context.Context, g gateway.Client) (*gateway.Result, error) {
+		input, err := llb.Local("context", llb.SharedKeyHint(clientutil.HashBytes([]byte(request.app.Path)))).Marshal(ctx)
+		if err != nil {
+			return nil, err
+		}
 		result, err := g.Solve(ctx, gateway.SolveRequest{Frontend: "dockerfile.v0", FrontendOpt: map[string]string{
 			"platform": platform, "build-arg:SOURCE_DATE_EPOCH": "0",
-		}, Evaluate: true})
+		}, FrontendInputs: map[string]*pb.Definition{"context": input.ToPB()}, Evaluate: true})
 		if err != nil {
 			return nil, err
 		}
@@ -247,8 +252,12 @@ func publishPlatform(
 			if err != nil {
 				return nil, err
 			}
+			binary, err := bridgePayloads.ReadFile("bridge-payloads/linux-" + image.Architecture)
+			if err != nil {
+				return nil, err
+			}
 			runtime := llb.Scratch().File(llb.Copy(
-				llb.Local("runtime", llb.IncludePatterns([]string{image.Architecture})), image.Architecture, ociimage.RuntimePath,
+				llb.Local("runtime", llb.IncludePatterns([]string{image.Architecture}), llb.SharedKeyHint(clientutil.HashBytes(binary))), image.Architecture, ociimage.RuntimePath,
 				llb.WithCreatedTime(time.Unix(0, 0)),
 			))
 			definition, err := llb.Merge([]llb.State{state, runtime}).Marshal(ctx, llb.Platform(image.Platform))

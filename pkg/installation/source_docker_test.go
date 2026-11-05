@@ -3,18 +3,80 @@
 package installation
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/holon-sh/protocol"
+	"github.com/klauspost/compress/zstd"
+	"github.com/moby/buildkit/util/staticfs"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	fstypes "github.com/tonistiigi/fsutil/types"
+	"oras.land/oras-go/v2/content"
 )
+
+func TestDockerSourceCacheIsolation(t *testing.T) {
+	grant, options := sourceRegistry(t)
+	repository, err := imageRepository(grant.Registry+"/"+grant.Repositories["alpha"], grant.Grant, options.HTTPClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct{ project, value, recipe string }{
+		{"first", "first", "one"},
+		{"other", "other", "two"},
+		{"first", "first", "two"},
+	} {
+		source, recipe := staticfs.NewFS(), staticfs.NewFS()
+		source.Add("value", &fstypes.Stat{Mode: 0o644}, []byte(test.value))
+		recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte("FROM scratch\nCOPY value /value\nENV RECIPE="+test.recipe+"\n"))
+		request := buildRequest{
+			app: manifestApp{Name: "alpha", Path: test.project}, upload: &imageUpload{grant: grant},
+			Env: options.Env, httpClient: options.HTTPClient, builders: options.builders,
+		}
+		descriptor, err := publishPlatform(t.Context(), "linux/"+runtime.GOARCH, request, source, recipe, io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest ocispec.Manifest
+		var config ocispec.Image
+		publishedJSON(t, repository, descriptor, &manifest)
+		publishedJSON(t, repository, manifest.Config, &config)
+		if !slices.Contains(config.Config.Env, "RECIPE="+test.recipe) {
+			t.Fatalf("stale Dockerfile: %v", config.Config.Env)
+		}
+		if len(manifest.Layers) != 1 {
+			t.Fatalf("expected one source layer, got %d", len(manifest.Layers))
+		}
+		data, err := content.FetchAll(t.Context(), repository.Blobs(), manifest.Layers[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoder, err := zstd.NewReader(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		archive := tar.NewReader(decoder)
+		header, err := archive.Next()
+		if err != nil || header.Name != "value" {
+			t.Fatalf("unexpected source layer: %v %v", header, err)
+		}
+		value, err := io.ReadAll(archive)
+		decoder.Close()
+		if err != nil || string(value) != test.value {
+			t.Fatalf("%s source = %q, want %q: %v", test.project, value, test.value, err)
+		}
+	}
+}
 
 func TestDockerSourceBuildFailures(t *testing.T) {
 	root := t.TempDir()
