@@ -240,7 +240,7 @@ func (w *ObservedOutput) String() string {
 }
 
 func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, plane protocol.Plane,
-	check func(*http.Request), expiresIn, interval int64, tokenHandler http.HandlerFunc, additionalPlanes ...protocol.Plane,
+	check func(*http.Request), expiresIn, interval int64, tokenHandler http.HandlerFunc,
 ) {
 	t.Helper()
 	mux.HandleFunc(protocol.APIPathInfo, func(w http.ResponseWriter, r *http.Request) {
@@ -277,12 +277,8 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, pla
 		if check != nil {
 			check(r)
 		}
-		var targets []string
-		for _, targetPlane := range append([]protocol.Plane{plane}, additionalPlanes...) {
-			target, _ := protocol.PlaneOrigin(strings.TrimSuffix(issuer(), "/"), targetPlane, "")
-			targets = append(targets, target)
-		}
-		if r.FormValue("client_id") != "cli-test" || !slices.Contains(targets, r.FormValue("resource")) || r.FormValue("audience") != "" {
+		target, _ := protocol.PlaneOrigin(strings.TrimSuffix(issuer(), "/"), plane, "")
+		if r.FormValue("client_id") != "cli-test" || r.FormValue("resource") != target || r.FormValue("audience") != "" {
 			t.Errorf("unexpected device request form: %s", r.Form.Encode())
 		}
 		WriteJSON(
@@ -300,15 +296,10 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, pla
 		if check != nil {
 			check(r)
 		}
-		resources := []string{""}
-		if r.FormValue("grant_type") == "urn:ietf:params:oauth:grant-type:device_code" {
-			resources = nil
-			for _, targetPlane := range append([]protocol.Plane{plane}, additionalPlanes...) {
-				resource, _ := protocol.PlaneOrigin(strings.TrimSuffix(issuer(), "/"), targetPlane, "")
-				resources = append(resources, resource)
-			}
-		}
-		if !slices.Contains(resources, r.FormValue("resource")) || r.FormValue("audience") != "" {
+		origin, resource := strings.TrimSuffix(issuer(), "/"), r.FormValue("resource")
+		_, control := protocol.ParseControlAudience(origin, resource)
+		_, _, session := protocol.ParseSessionAudience(origin, resource)
+		if !control && !session || len(r.Form["resource"]) != 1 || r.FormValue("audience") != "" {
 			t.Errorf("unexpected token request target: %s", r.Form.Encode())
 		}
 		tokenHandler(w, r)
