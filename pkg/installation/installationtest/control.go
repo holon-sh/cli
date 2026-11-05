@@ -261,8 +261,17 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, pla
 				"issuer":                        issuer(),
 				"token_endpoint":                strings.TrimSuffix(issuer(), "/") + "/token-exchange",
 				"device_authorization_endpoint": strings.TrimSuffix(issuer(), "/") + "/device-authorization",
+				"revocation_endpoint":           strings.TrimSuffix(issuer(), "/") + "/revoke",
 			},
 		)
+	})
+	mux.HandleFunc("/revoke", func(w http.ResponseWriter, r *http.Request) {
+		if check != nil {
+			check(r)
+		}
+		if r.FormValue("client_id") != "cli-test" || r.FormValue("token_type_hint") != "refresh_token" || r.FormValue("token") == "" {
+			t.Errorf("unexpected revocation form: %s", r.Form.Encode())
+		}
 	})
 	mux.HandleFunc("/device-authorization", func(w http.ResponseWriter, r *http.Request) {
 		if check != nil {
