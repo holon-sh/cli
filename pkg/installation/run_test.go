@@ -139,17 +139,16 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 	h.server = httptest.NewTLSServer(h.mux)
 	t.Cleanup(h.server.Close)
 	h.baseHost = strings.TrimPrefix(h.server.URL, "https://")
-	clock := testingclock.NewFakePassiveClock(time.Unix(100, 0))
 	stateDir := t.TempDir()
 	auth := ClientConfig{
 		ConfigDir:  stateDir,
-		HTTPClient: installationtest.OriginClient(h.server), now: clock.Now, RequestTimeout: time.Second,
+		HTTPClient: installationtest.OriginClient(h.server), RequestTimeout: time.Second,
 	}
-	manager := newManager(t, h.server, clock, stateDir)
+	manager := newManager(t, h.server, stateDir)
 	if manager.info.OAuth != nil {
 		seedAdminCredentials(t, manager, oauth2.Token{
 			AccessToken: "access-token", RefreshToken: "refresh-token",
-			TokenType: "Bearer", ExpiresIn: 3600, Expiry: clock.Now().Add(time.Hour),
+			TokenType: "Bearer", Expiry: time.Now().Add(time.Hour),
 		})
 	}
 	sourceFiles(t, stateDir, map[string]string{"config.json": fmt.Sprintf(`{"origin":%q}`, h.server.URL)})

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
-	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
@@ -21,7 +20,6 @@ import (
 
 func TestCredentialAudienceIsolation(t *testing.T) {
 	t.Parallel()
-	clock := testingclock.NewFakePassiveClock(time.Unix(100, 0))
 	var refreshes atomic.Int32
 	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.FormValue("grant_type") != "refresh_token" {
@@ -35,7 +33,7 @@ func TestCredentialAudienceIsolation(t *testing.T) {
 		})
 	})
 	dir := t.TempDir()
-	manager := newManager(t, server, clock, dir)
+	manager := newManager(t, server, dir)
 	manager.state.OAuth, manager.state.Version = targetForOAuth(manager.info.OAuth), "test"
 	session, err := protocol.SessionAudience(server.URL, protocol.ModeDevelopment, "calm-fox-42")
 	if err != nil {
@@ -44,7 +42,7 @@ func TestCredentialAudienceIsolation(t *testing.T) {
 	audiences := map[string]string{"control": installationtest.AdminAudience(server.URL), "session": session}
 	for name, audience := range audiences {
 		manager.state.Tokens[tokenKey(manager.info.OAuth.Issuer, audience, protocol.SystemScopes())] = &oauth2.Token{
-			AccessToken: "expired", RefreshToken: name + "-refresh", TokenType: "Bearer", ExpiresIn: 3600, Expiry: time.Unix(1, 0),
+			AccessToken: "expired", RefreshToken: name + "-refresh", TokenType: "Bearer", Expiry: time.Unix(1, 0),
 		}
 	}
 	if err := manager.withLock(t.Context(), func() error { return manager.writeState(manager.state) }); err != nil {
@@ -52,7 +50,7 @@ func TestCredentialAudienceIsolation(t *testing.T) {
 	}
 	for range 2 {
 		for name, audience := range audiences {
-			manager := newManager(t, server, clock, dir)
+			manager := newManager(t, server, dir)
 			token, err := manager.resourceToken(t.Context(), audience, protocol.SystemScopes())
 			if err != nil || token.AccessToken != name+"-access" {
 				t.Fatalf("audience %s: token=%v error=%v", audience, token, err)
@@ -70,10 +68,10 @@ func TestPrivateCredentialFiles(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			server := newAuthTestServer(t, func(http.ResponseWriter, *http.Request) { t.Error("unsafe credentials triggered authorization") })
-			manager := newManager(t, server, testingclock.NewFakePassiveClock(time.Unix(100, 0)), t.TempDir())
+			manager := newManager(t, server, t.TempDir())
 			seedAdminCredentials(t, manager, oauth2.Token{
 				AccessToken: "private-access", RefreshToken: "private-refresh",
-				TokenType: "Bearer", ExpiresIn: 3600, Expiry: time.Unix(3700, 0),
+				TokenType: "Bearer",
 			})
 			path := manager.statePath
 			switch kind {

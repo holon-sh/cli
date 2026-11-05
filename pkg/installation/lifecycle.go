@@ -35,7 +35,7 @@ func (m *Client) authorizeOperation(ctx context.Context, s protocol.SessionRespo
 		return nil
 	}
 	key := s.UID + "/" + s.Operation.ID
-	if m.hookSent[key].After(m.now()) {
+	if m.hookSent[key].After(time.Now()) {
 		return nil
 	}
 	mode := protocol.ModeDevelopment
@@ -62,8 +62,7 @@ func (m *Client) authorizeOperation(ctx context.Context, s protocol.SessionRespo
 		SessionRequest: protocol.SessionRequest{Session: s.Name}, Operation: s.Operation.ID, AccessToken: token.AccessToken,
 	}, nil)
 	if err == nil {
-		now := m.now()
-		m.hookSent[key] = now.Add(min(time.Minute, token.Expiry.Add(-accessSafety).Sub(now)))
+		m.hookSent[key] = time.Now().Add(min(time.Minute, time.Until(token.Expiry.Add(-accessSafety))))
 	}
 	return err
 }
