@@ -37,8 +37,7 @@ const (
 	discoveryTimeout  = 10 * time.Second
 	maxDiscoveryBytes = 64 << 10
 
-	maxTokenLifetimeSeconds = int64(24 * time.Hour / time.Second)
-	maxPollIntervalSeconds  = int64(time.Hour / time.Second)
+	maxPollIntervalSeconds = int64(time.Hour / time.Second)
 
 	privateDirPerm  = 0o700
 	privateFilePerm = 0o600
@@ -64,7 +63,6 @@ type ClientConfig struct {
 	Output         io.Writer
 	HTTPClient     *http.Client
 	RequestTimeout time.Duration
-	now            func() time.Time
 }
 
 type authState struct {
@@ -96,7 +94,6 @@ type Client struct {
 	statePath string
 	client    *apiClient
 	info      protocol.Info
-	now       func() time.Time
 }
 
 func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
@@ -123,11 +120,8 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if config.now == nil {
-		config.now = time.Now
-	}
 	manager := &Client{
-		now: config.now, state: authState{Tokens: map[string]*oauth2.Token{}},
+		state:  authState{Tokens: map[string]*oauth2.Token{}},
 		output: cmp.Or(config.Output, io.Discard), hookSent: map[string]time.Time{},
 	}
 	if slices.ContainsFunc(env, func(entry string) bool {
@@ -177,7 +171,6 @@ func (m *Client) login(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		tokens.Expiry = m.now().Add(time.Duration(tokens.ExpiresIn) * time.Second)
 		state.Tokens[tokenKey(m.info.OAuth.Issuer, m.info.OAuth.AdminAudience, scopes)] = tokens
 	}
 	if err := m.writeState(state); err != nil {
@@ -202,7 +195,10 @@ func (m *Client) token(ctx context.Context, audience string, scopes []string) (*
 	}
 	key := tokenKey(m.info.OAuth.Issuer, audience, scopes)
 	cached := ptr.Deref(m.state.Tokens[key], oauth2.Token{})
-	if cached.Expiry.After(m.now().Add(accessSafety)) {
+	// A response may omit expires_in per [RFC 6749 §5.1]. Its zero Expiry fails this check, so the token is renewed.
+	//
+	// [RFC 6749 §5.1]: https://www.rfc-editor.org/rfc/rfc6749.html#section-5.1
+	if time.Until(cached.Expiry) > accessSafety {
 		return &cached, nil
 	}
 	config, err := m.oauthConfig(ctx, scopes)
@@ -218,7 +214,6 @@ func (m *Client) token(ctx context.Context, audience string, scopes []string) (*
 	if err != nil {
 		return nil, err
 	}
-	token.Expiry = m.now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	m.state.Tokens[key] = token
 	return token, m.writeState(m.state)
 }
@@ -260,8 +255,7 @@ func (m *Client) loadCredentials() error {
 		return errReauthenticationRequired
 	}
 	for key, token := range state.Tokens {
-		if !strings.HasPrefix(key, m.info.OAuth.Issuer+"\x00") || token == nil || !validOAuthToken(token) ||
-			token.RefreshToken == "" || token.Expiry.IsZero() {
+		if !strings.HasPrefix(key, m.info.OAuth.Issuer+"\x00") || token == nil || !validOAuthToken(token) || token.RefreshToken == "" {
 			return errReauthenticationRequired
 		}
 	}
@@ -374,9 +368,13 @@ func (m *Client) oauthContext(ctx context.Context) context.Context {
 	return context.WithValue(ctx, oauth2.HTTPClient, &client)
 }
 
+// validOAuthToken checks the parameters of a successful response per [RFC 6749 §5.1]: access_token and a
+// case-insensitive token_type are required, refresh_token is optional, and expires_in is only recommended.
+//
+// [RFC 6749 §5.1]: https://www.rfc-editor.org/rfc/rfc6749.html#section-5.1
 func validOAuthToken(token *oauth2.Token) bool {
 	return validToken(token.AccessToken) && strings.EqualFold(token.TokenType, "Bearer") &&
-		token.ExpiresIn > 0 && token.ExpiresIn <= maxTokenLifetimeSeconds && (token.RefreshToken == "" || validToken(token.RefreshToken))
+		(token.RefreshToken == "" || validToken(token.RefreshToken))
 }
 
 func oauthFailure(ctx context.Context, err error) error {
@@ -468,7 +466,6 @@ func (m *Client) deviceToken(ctx context.Context, config *oauth2.Config, audienc
 	validUserCode := device.UserCode != "" && len(device.UserCode) <= 512 &&
 		!strings.ContainsFunc(device.UserCode, func(r rune) bool { return r < 0x20 || r == 0x7f })
 	if !httpsURL(device.VerificationURI) || !validUserCode || !validToken(device.DeviceCode) ||
-		time.Until(device.Expiry) <= 0 || time.Until(device.Expiry) > 24*time.Hour ||
 		device.Interval < 0 || device.Interval > maxPollIntervalSeconds {
 		return nil, errMalformedResponse
 	}
@@ -522,7 +519,10 @@ func (m *Client) machineToken(ctx context.Context, audience string, scopes []str
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := tokenKey(m.info.OAuth.Issuer, audience, scopes)
-	if cached := m.state.Tokens[key]; cached != nil && cached.Expiry.After(m.now().Add(accessSafety)) {
+	// A response may omit expires_in per [RFC 6749 §5.1]. Its zero Expiry fails this check, so the token is renewed.
+	//
+	// [RFC 6749 §5.1]: https://www.rfc-editor.org/rfc/rfc6749.html#section-5.1
+	if cached := m.state.Tokens[key]; cached != nil && time.Until(cached.Expiry) > accessSafety {
 		return cached, nil
 	}
 	config, err := m.oauthConfig(ctx, scopes)
@@ -536,11 +536,9 @@ func (m *Client) machineToken(ctx context.Context, audience string, scopes []str
 	if err != nil {
 		return nil, cmp.Or(ctx.Err(), errOAuthFailed)
 	}
-	token.ExpiresIn = int64((time.Until(token.Expiry) + time.Second - 1) / time.Second)
 	if !validOAuthToken(token) {
 		return nil, errMalformedResponse
 	}
-	token.Expiry = m.now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	m.state.Tokens[key] = token
 	return token, nil
 }

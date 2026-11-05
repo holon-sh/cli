@@ -24,7 +24,6 @@ import (
 
 	"github.com/gofrs/flock"
 	"golang.org/x/oauth2"
-	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
@@ -168,9 +167,9 @@ func TestDeviceLoginFailures(t *testing.T) {
 		cancel                      bool
 		want                        error
 	}{
-		{name: "initiation", code: "invalid_request", path: "/device-authorization", expires: 120, want: errOAuthFailed},
-		{name: "poll", code: "refresh-secret", expires: 120, want: errOAuthFailed},
-		{name: "discovery", path: "/.well-known/openid-configuration", expires: 120, want: errOAuthFailed},
+		{name: "initiation", code: "invalid_request", path: "/device-authorization", want: errOAuthFailed},
+		{name: "poll", code: "refresh-secret", want: errOAuthFailed},
+		{name: "discovery", path: "/.well-known/openid-configuration", want: errOAuthFailed},
 		{name: "wrong issuer", discovery: `{"issuer":"https://foreign.example/"}`, want: errOAuthFailed},
 		{
 			name: "missing device endpoint", discovery: `{"issuer":"https://identity.example/","token_endpoint":"https://identity.example/token"}`, want: errOAuthFailed,
@@ -183,9 +182,9 @@ func TestDeviceLoginFailures(t *testing.T) {
 			`"device_authorization_endpoint":"http://identity.example/device"}`, want: errMalformedResponse},
 		{name: "insecure revocation endpoint", discovery: `{"issuer":"https://identity.example/","token_endpoint":"https://identity.example/token",` +
 			`"revocation_endpoint":"http://identity.example/revoke"}`, want: errMalformedResponse},
-		{name: "denied", code: "access_denied", expires: 120, want: errDeviceDenied},
+		{name: "denied", code: "access_denied", want: errDeviceDenied},
 		{name: "expired", code: "authorization_pending", expires: 2, want: errDeviceExpired},
-		{name: "cancelled", code: "authorization_pending", expires: 120, cancel: true, want: context.Canceled},
+		{name: "cancelled", code: "authorization_pending", cancel: true, want: context.Canceled},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -256,7 +255,6 @@ func TestRefreshRecovery(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			clock := testingclock.NewFakePassiveClock(time.Unix(100, 0))
 			dir := t.TempDir()
 			var failed atomic.Bool
 			server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -273,27 +271,26 @@ func TestRefreshRecovery(t *testing.T) {
 					installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "recovered-access", "expires_in": 120})
 					return
 				}
-				access, lifetime := "access-secret", 10
+				body := map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one"}
 				if failed.Load() {
-					access, lifetime = "recovered-access", 120
+					body["access_token"], body["expires_in"] = "recovered-access", 120
 					if tc.failStore {
 						if err := os.Chmod(filepath.Join(dir, "remotes"), 0o500); err != nil {
 							t.Error(err)
 						}
 					}
 				}
-				installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": access, "refresh_token": "refresh-one", "expires_in": lifetime})
+				installationtest.WriteJSON(w, body)
 			})
-			first := newManager(t, server, clock, dir)
+			first := newManager(t, server, dir)
 			if err := first.loginInteractive(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			clock.SetTime(clock.Now().Add(100 * time.Second))
 			if _, err := first.controlToken(t.Context()); !errors.Is(err, tc.refreshErr) {
 				t.Fatalf("refresh error=%v, want %v", err, tc.refreshErr)
 			}
 
-			second := newManager(t, server, clock, dir)
+			second := newManager(t, server, dir)
 			token, err := second.controlToken(t.Context())
 			if !errors.Is(err, tc.connectErr) || err == nil && token != "recovered-access" {
 				t.Fatalf("reconnect token=%q error=%v, want %v", token, err, tc.connectErr)
@@ -308,10 +305,10 @@ func TestRefreshRecovery(t *testing.T) {
 	}
 }
 
-func newManager(t *testing.T, server *httptest.Server, clock *testingclock.FakePassiveClock, path string) *Client {
+func newManager(t *testing.T, server *httptest.Server, path string) *Client {
 	t.Helper()
 	manager, err := NewClient(t.Context(), ClientConfig{
-		Origin: server.URL, ConfigDir: path, HTTPClient: server.Client(), now: clock.Now,
+		Origin: server.URL, ConfigDir: path, HTTPClient: server.Client(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -354,7 +351,6 @@ func TestLoginRejectsIncompatibleDiscovery(t *testing.T) {
 
 func TestSavedCredentialMetadata(t *testing.T) {
 	t.Parallel()
-	clock := testingclock.NewFakePassiveClock(time.Unix(100, 0))
 	server := newAuthTestServer(t, nil)
 	for _, tc := range []struct {
 		name, document string
@@ -367,10 +363,10 @@ func TestSavedCredentialMetadata(t *testing.T) {
 		{"changed client", `{"issuer":"ISSUER","adminAudience":"urn:test","cliClientID":"other"}`, errEndpointChanged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			manager := newManager(t, server, clock, t.TempDir())
+			manager := newManager(t, server, t.TempDir())
 			seedAdminCredentials(t, manager, oauth2.Token{
 				AccessToken: "access-token", RefreshToken: "refresh-token",
-				TokenType: "Bearer", ExpiresIn: 3600, Expiry: clock.Now().Add(time.Hour),
+				TokenType: "Bearer", ExpiresIn: 3600, Expiry: time.Now().Add(time.Hour),
 			})
 			tokens, _ := json.Marshal(manager.state.Tokens)
 			oauth := strings.NewReplacer("ISSUER", server.URL+"/", "urn:test", installationtest.AdminAudience(server.URL)).Replace(tc.document)
@@ -404,12 +400,10 @@ func TestMachineCredentials(t *testing.T) {
 		body   string
 		want   error
 	}{
-		{"valid", 200, `{"access_token":"machine-token","token_type":"Bearer","expires_in":120}`, nil},
+		{"valid", 200, `{"access_token":"machine-token","token_type":"Bearer"}`, nil},
 		{"invalid secret", 401, `{"error":"invalid_client","error_description":"ci-secret"}`, errOAuthFailed},
-		{"malformed response", 200, `{"access_token":"ci-secret","token_type":"Bearer","expires_in":0}`, errMalformedResponse},
-		{"invalid token type", 200, `{"access_token":"ci-secret","token_type":"MAC","expires_in":120}`, errMalformedResponse},
-		{"invalid token", 200, `{"access_token":"invalid token ci-secret","token_type":"Bearer","expires_in":120}`, errMalformedResponse},
-		{"oversized lifetime", 200, `{"access_token":"ci-secret","token_type":"Bearer","expires_in":999999}`, errMalformedResponse},
+		{"invalid token type", 200, `{"access_token":"ci-secret","token_type":"MAC"}`, errMalformedResponse},
+		{"invalid token", 200, `{"access_token":"invalid token ci-secret","token_type":"Bearer"}`, errMalformedResponse},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
@@ -467,7 +461,6 @@ func TestConcurrentAuthenticationProcesses(t *testing.T) {
 		dir := os.Getenv("HOLON_AUTH_DIR")
 		manager, err := NewClient(t.Context(), ClientConfig{
 			Origin: os.Getenv("HOLON_AUTH_REMOTE"), ConfigDir: dir,
-			now:        func() time.Time { return time.Unix(100, 0) },
 			HTTPClient: &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}},
 		})
 		if err != nil {
@@ -525,10 +518,10 @@ func TestConcurrentAuthenticationProcesses(t *testing.T) {
 			})
 			dir := t.TempDir()
 			if refresh {
-				manager := newManager(t, server, testingclock.NewFakePassiveClock(time.Unix(100, 0)), dir)
+				manager := newManager(t, server, dir)
 				seedAdminCredentials(t, manager, oauth2.Token{
 					AccessToken: "expired", RefreshToken: "refresh-one",
-					TokenType: "Bearer", ExpiresIn: 3600, Expiry: time.Unix(1, 0),
+					TokenType: "Bearer", Expiry: time.Unix(1, 0),
 				})
 				<-info
 			}
@@ -558,7 +551,7 @@ func TestConcurrentAuthenticationProcesses(t *testing.T) {
 			other := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, map[string]any{"access_token": "other-access", "token_type": "Bearer", "refresh_token": "other-refresh", "expires_in": 3600})
 			})
-			otherManager := newManager(t, other, testingclock.NewFakePassiveClock(time.Unix(100, 0)), dir)
+			otherManager := newManager(t, other, dir)
 			if _, err := otherManager.controlToken(ctx); err != nil {
 				t.Fatalf("another remote's authentication was blocked: %v", err)
 			}
