@@ -130,6 +130,15 @@ func generationCases(t *testing.T) []generationCase {
 		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "go_module": "example.com/é/runtime", "own": "orders", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
 	}
 	add("empty-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
+	add("inputs-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime", "contracts": {"orders": {"tools": [{"name": "lookup",
+        "inputSchema": {"type": "object", "required": ["id", "rows", "byRegion"],
+            "properties": {
+                "id": {"type": "string"},
+                "rows": {"type": "array", "items": {"$ref": "#/$defs/Row"}},
+                "byRegion": {"type": "object", "additionalProperties": {"type": "object", "properties": {"quantity": {"type": "integer"}}}}
+            },
+            "$defs": {"Row": {"type": "object", "required": ["sku"], "properties": {"sku": {"type": "string"}}}}},
+        "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}}}]}}}`)
 	for _, target := range []string{"node", "python"} {
 		options := ""
 		if target == "node" {
