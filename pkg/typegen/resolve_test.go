@@ -25,7 +25,12 @@ func (h hostTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func liveServer(t *testing.T, name string) *httptest.Server {
 	t.Helper()
-	server := mcp.NewServer(&mcp.Implementation{Name: name, Version: "99"}, nil)
+	return versionedServer(t, name, "99")
+}
+
+func versionedServer(t *testing.T, name, version string) *httptest.Server {
+	t.Helper()
+	server := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
 	schema := json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`)
 	server.AddTool(&mcp.Tool{Name: "read", InputSchema: schema, OutputSchema: schema}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		t.Error("contract discovery executed a tool")
@@ -95,6 +100,20 @@ func TestRegistrySourceResolution(t *testing.T) {
 				t.Fatalf("ResolveDocument = %+v, %v", metadata, err)
 			}
 		})
+	}
+}
+
+func TestEndpointWithoutAVersionGeneratesClients(t *testing.T) {
+	live := versionedServer(t, "bare", "")
+	defer live.Close()
+	c := Consumer{Name: "app", Dir: t.TempDir(), Targets: []string{TargetTS, TargetPy}, Sources: []Source{{Endpoint: live.URL}}}
+	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: live.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	if identity := prepared.Metadata()["bare"].Identity; identity != (mcpcontract.Identity{Name: "bare", Version: "0.0.0"}) {
+		t.Fatalf("identity = %+v", identity)
 	}
 }
 
