@@ -34,6 +34,15 @@ type Options struct {
 	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
 	// GoModule is the runtime module that generated Go clients import; it defaults to github.com/holon-sh/sdk/go.
 	GoModule string
+	// Measure, when set, is called as Prepare starts a phase and returns the function that ends it.
+	Measure func(phase string) func()
+}
+
+func (o Options) measure(phase string) func() {
+	if o.Measure == nil {
+		return func() {}
+	}
+	return o.Measure(phase)
 }
 
 func validateEnv(env []string) error {
@@ -185,11 +194,15 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			_ = os.RemoveAll(root)
 		}
 	}()
-	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
+	unpacked := o.measure("tooling unpack")
+	err = tooling.Unpack(filepath.Join(root, "tooling"))
+	unpacked()
+	if err != nil {
 		return nil, err
 	}
 	p := &Prepared{paths: map[string]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}, documents: map[string]*Document{}}
 	var paths []*preparedSource
+	hashed := o.measure("source hashing")
 	for _, c := range consumers {
 		pc := &preparedConsumer{Consumer: c, packages: map[string]map[string][]byte{}}
 		p.consumers = append(p.consumers, pc)
@@ -217,16 +230,26 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			paths = append(paths, s)
 		}
 	}
-	if err = extractSources(ctx, root, paths, o, true); err != nil {
+	hashed()
+	extracted := o.measure("contract extraction")
+	err = extractSources(ctx, root, paths, o, true)
+	extracted()
+	if err != nil {
 		return nil, err
 	}
+	generated := o.measure("type generation")
 	external := map[string]*Document{}
 	for _, c := range p.consumers {
 		if err = p.prepareConsumer(ctx, c, external); err != nil {
+			generated()
 			return nil, err
 		}
 	}
-	if err = p.currentSources(); err != nil {
+	generated()
+	hashed = o.measure("source hashing")
+	err = p.currentSources()
+	hashed()
+	if err != nil {
 		return nil, err
 	}
 	return p, nil

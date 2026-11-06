@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/utils/clock"
+
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 	"github.com/klauspost/compress/zstd"
@@ -151,6 +153,35 @@ func TestDockerSourceBuild(t *testing.T) {
 			t.Fatalf("canceled build: %v", err)
 		}
 	})
+}
+
+func TestDockerSourceBuildTiming(t *testing.T) {
+	manifest := buildManifest(t, t.TempDir())
+	grant, options := sourceRegistry(t)
+	options.architectures = []string{runtime.GOARCH}
+	build := func() *timingTrace {
+		trace := newTimingTrace(clock.RealClock{}, "deploy", nil)
+		traced := options
+		traced.output, _, _ = newProgressOutput(io.Discard, io.Discard, false, clock.RealClock{})
+		traced.output.trace = trace
+		traced.HTTPClient = trace.registryClient(options.HTTPClient)
+		if _, err := buildAndPush(t.Context(), prepareBuild(t, manifest), &imageUpload{grant: grant}, traced); err != nil {
+			t.Fatal(err)
+		}
+		trace.finish()
+		return trace
+	}
+	cold := build()
+	t.Logf("cold phases: %v, blobs: %+v", phaseNames(cold.timingScope), cold.Blobs)
+	wantPhases(t, cold.timingScope, "plan", "connect builder", "solve", "context upload", "export", "push", "index push")
+	if cold.Blobs.Pushed == 0 || cold.Blobs.BytesPushed == 0 || cold.Blobs.Manifests == 0 {
+		t.Errorf("cold build blobs = %+v", cold.Blobs)
+	}
+	warm := build()
+	t.Logf("warm blobs: %+v", warm.Blobs)
+	if warm.Blobs.Pushed != 0 || warm.Blobs.Skipped == 0 || warm.Blobs.BytesSkipped == 0 {
+		t.Errorf("rebuild of unchanged source blobs = %+v", warm.Blobs)
+	}
 }
 
 func sourceRegistry(t *testing.T) (protocol.UploadGrant, buildOptions) {

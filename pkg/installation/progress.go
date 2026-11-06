@@ -40,6 +40,7 @@ type progressOutput struct {
 	clock    clock.PassiveClock
 	renderer errgroup.Group
 	statuses map[string]tea.ProgramStatus
+	trace    *timingTrace
 }
 
 func newProgressOutput(stdout, stderr io.Writer, verbose bool, clock clock.PassiveClock) (*progressOutput, io.Writer, io.Writer) {
@@ -142,11 +143,16 @@ func (o *progressOutput) logs(writer io.Writer) *buildLog {
 }
 
 func (o *progressOutput) measure(name, phase string) func() {
-	if o == nil || !o.verbose {
+	if o == nil {
 		return func() {}
+	}
+	record := o.trace.measure(name, phase)
+	if !o.verbose {
+		return record
 	}
 	started := o.clock.Now()
 	return func() {
+		record()
 		_, _ = fmt.Fprintf(o.writer, "Timing %s %s: %s\n", name, phase, o.clock.Since(started).Round(time.Millisecond))
 	}
 }

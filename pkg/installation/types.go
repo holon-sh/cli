@@ -89,6 +89,7 @@ func (w *typeWorkspace) acquire(manifest manifestSpec) error {
 func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options buildOptions) (_ manifestSpec, _ func(), err error) {
 	finish := options.output.measure("apps", "prepare contracts")
 	defer finish()
+	trace := options.output.timing()
 	parent, err := os.MkdirTemp("", "holon-types-")
 	if err != nil {
 		return manifestSpec{}, nil, err
@@ -111,6 +112,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	needed := map[string]bool{}
 	typeOptions := typegen.Options{
 		Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.Stderr, Run: options.extractTypes,
+		Measure: func(phase string) func() { return trace.measure("apps", phase) },
 	}
 	var pathApps []*manifestApp
 	for i := range manifest.Apps {
@@ -191,13 +193,19 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		}
 	}
 	if options.types != nil {
-		if err := typegen.Install(ctx, consumers, typeOptions); err != nil {
+		installed := trace.measure("apps", "type runtime install")
+		err := typegen.Install(ctx, consumers, typeOptions)
+		installed()
+		if err != nil {
 			return manifestSpec{}, nil, err
 		}
 	}
 	for _, app := range pathApps {
 		p := app.resolved.types
-		if p.fingerprint, err = snapshotSource(*app, p.root); err != nil {
+		snapshotted := trace.measure(app.Name, "source snapshot")
+		p.fingerprint, err = snapshotSource(*app, p.root)
+		snapshotted()
+		if err != nil {
 			return manifestSpec{}, nil, err
 		}
 	}
@@ -230,7 +238,10 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		metadata[app.Name] = p.metadata
 	}
 	if w := options.types; w != nil {
-		if err := prepared.Write(); err != nil {
+		written := trace.measure("apps", "type write")
+		err := prepared.Write()
+		written()
+		if err != nil {
 			return manifestSpec{}, nil, err
 		}
 		w.prepared = prepared
@@ -274,7 +285,8 @@ func typeServer(root string) (string, error) {
 	return entry, nil
 }
 
-func currentTypeSources(manifest manifestSpec) error {
+func currentTypeSources(manifest manifestSpec, trace *timingTrace) error {
+	defer trace.measure("apps", "source hashing")()
 	for _, app := range manifest.Apps {
 		p := app.resolved.types
 		if p == nil {

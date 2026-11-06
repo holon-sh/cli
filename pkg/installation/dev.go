@@ -25,8 +25,9 @@ import (
 const devDebounce = 250 * time.Millisecond
 
 type devChange struct {
-	contexts sets.Set[string]
-	manifest bool
+	contexts   sets.Set[string]
+	manifest   bool
+	firstEvent time.Time
 }
 
 type devWatcher struct {
@@ -137,6 +138,9 @@ func (w *devWatcher) run() {
 				if err != nil {
 					w.output.status("file watcher", fmt.Sprintf("continuing after error: %v", err), progressError)
 				}
+			}
+			if pending.firstEvent.IsZero() && (pending.contexts.Len() != 0 || pending.manifest) {
+				pending.firstEvent = w.clock.Now()
 			}
 			debounce = w.clock.After(devDebounce)
 		case <-debounce:
@@ -282,7 +286,10 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 				return err
 			}
 		case change := <-changes:
-			if err := d.rebuild(ctx, change); err != nil && ctx.Err() == nil {
+			finish := d.options.output.timing().beginCycle(change)
+			err := d.rebuild(ctx, change)
+			finish(err)
+			if err != nil && ctx.Err() == nil {
 				d.options.output.status("app rebuild", fmt.Sprintf("%v; existing service remains available", err), progressError)
 			}
 		}
@@ -295,9 +302,11 @@ func (d *devLoop) settle(announce func() error) error {
 		return nil
 	}
 	ready, err := SessionReady(d.session)
+	d.options.output.timing().observe(d.session, ready)
 	if !ready {
 		return err
 	}
+	d.options.output.timing().rolloutEnded("")
 	d.finishPending("ready", progressDone)
 	return announce()
 }
@@ -332,6 +341,7 @@ func (d *devLoop) poll(ctx context.Context) error {
 	}
 	d.options.output.status("remote deployment",
 		fmt.Sprintf("%s (generation %d): %s: %s", message, current.Generation, condition.Reason, condition.Message), progressError)
+	d.options.output.timing().rolloutEnded(condition.Reason + ": " + condition.Message)
 	d.finishPending("deployment failed", progressError)
 	return nil
 }
@@ -344,11 +354,12 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 }
 
 func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
+	trace := d.options.output.timing()
 	if change.manifest {
 		reloaded, err := resolveManifestFile(d.manifest.file)
 		if err == nil {
 			reloaded.sources, reloaded.access = d.manifest.sources, d.manifest.access
-			reloaded, err = resolveManifestGraph(ctx, reloaded, d.apps...)
+			reloaded, err = tracedGraph(ctx, reloaded, trace, d.apps...)
 		}
 		if err != nil {
 			return fmt.Errorf("metadata resolution failed: %w", err)
@@ -361,7 +372,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 			return nil
 		}
 	}
-	if _, err := d.manager.controlToken(ctx); err != nil {
+	if _, err := tracedToken(ctx, d.manager, trace); err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 	prepared, cleanup, err := prepareManifestTypes(ctx, d.manifest, d.options)
@@ -378,12 +389,13 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 	d.options.output.status("", "Preparing apps", progressWorking)
 	apps, err := buildManifestImages(ctx, d.manager, d.name, dirty, d.options)
 	if err == nil {
-		err = currentTypeSources(prepared)
+		err = currentTypeSources(prepared, trace)
 	}
 	cleanup()
 	if err != nil {
 		return fmt.Errorf("remote image preparation failed: %w", err)
 	}
+	trace.addApps(apps)
 	apps = slices.DeleteFunc(apps, func(app protocol.App) bool {
 		if !slices.ContainsFunc(d.session.Apps, func(current protocol.App) bool {
 			return current.Name == app.Name && current.Image == app.Image
@@ -403,7 +415,9 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 		return nil
 	}
 	d.options.output.deploying(apps)
+	finish := trace.measure("", "update session")
 	updated, err := patchSessionImages(ctx, d.manager, d.name, apps)
+	finish()
 	if err != nil {
 		d.options.output.apps(apps, "deployment failed", progressError)
 		return fmt.Errorf("remote update failed: %w", err)
@@ -414,6 +428,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 	}
 	d.options.types.accept(dirty)
 	d.session = updated
+	trace.awaitReady()
 	d.options.output.status("app rebuild", fmt.Sprintf("remote update requested (generation %d)", updated.Generation), progressDone)
 	return nil
 }

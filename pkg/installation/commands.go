@@ -133,7 +133,7 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 	cmd.Flags().BoolVar(&config.check, "check", false, "Type-check apps before starting or updating the session")
 	cmd.Flags().BoolVar(&config.jsonOutput, "json", false, "Write the ready API session as JSON (requires --detach)")
 	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "Detached session lifetime (whole seconds, at most 24h)")
-	return withProject(withProgress(cmd, config, "Done"), config)
+	return withTiming(withProject(withProgress(cmd, config, "Done"), config), config)
 }
 
 func newDeployCommand(config *commandConfig) *cobra.Command {
@@ -158,7 +158,7 @@ func newDeployCommand(config *commandConfig) *cobra.Command {
 			return runDeploy(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
 		},
 	}
-	return withProject(withProgress(cmd, config, "Deployment ready"), config)
+	return withTiming(withProject(withProgress(cmd, config, "Deployment ready"), config), config)
 }
 
 func withProject(cmd *cobra.Command, config *commandConfig) *cobra.Command {
@@ -198,6 +198,7 @@ func withProgress(cmd *cobra.Command, config *commandConfig, message string) *co
 		if config.jsonOutput {
 			renderedOut = stdout
 		}
+		output.trace = config.trace
 		config.output = output
 		config.Auth.Output = renderedErr
 		cmd.SetOut(renderedOut)

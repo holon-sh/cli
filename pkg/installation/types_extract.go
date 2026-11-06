@@ -39,6 +39,7 @@ func (o buildOptions) extractTypes(ctx context.Context, language, tooling string
 	}
 	logs := o.output.logs(o.Stderr)
 	command := slices.Concat([]string{runner.program, "/holon-tooling/" + language + "/" + runner.runner, args[0], "/app"}, args[2:])
+	defer o.output.timing().measure("apps", "contract extraction build")()
 	if err := extractInImage(ctx, args[1], tooling, command, stdout, env, logs); err != nil {
 		if !errors.As(err, new(*typegen.RunnerError)) {
 			logs.failed("MCP types")

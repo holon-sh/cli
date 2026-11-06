@@ -49,7 +49,9 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	}
 	p := app.resolved.types
 	snapshot := p.root
+	staged := options.output.timing().measure(app.Name, "stage types")
 	config, err := stageTypes(p, options.check)
+	staged()
 	if err != nil {
 		return "", err
 	}
@@ -101,6 +103,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	for _, arch := range architectures {
 		request.Platforms = append(request.Platforms, "linux/"+arch)
 	}
+	options.output.timing().addPlatforms(request.Platforms)
 	options.resolutions = cmp.Or(options.resolutions, new(sync.Map))
 	previous, _ := options.resolutions.Load(app.Name)
 	request.Resolution, _ = previous.(json.RawMessage)

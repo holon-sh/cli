@@ -46,6 +46,7 @@ type commandConfig struct {
 	verbose            bool
 	jsonOutput         bool
 	output             *progressOutput
+	trace              *timingTrace
 }
 
 func (c commandConfig) clock() clock.WithTicker {
@@ -92,11 +93,11 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 func uploadManifest(
 	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions, apps ...string,
 ) (protocol.AppsRequestFor[protocol.App], manifestSpec, error) {
-	if _, err := manager.controlToken(ctx); err != nil {
+	if _, err := tracedToken(ctx, manager, options.output.timing()); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
 	options.output.status("", "Preparing apps", progressWorking)
-	resolved, err := resolveManifestGraph(ctx, manifest, apps...)
+	resolved, err := tracedGraph(ctx, manifest, options.output.timing(), apps...)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
@@ -117,13 +118,24 @@ func uploadManifest(
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
-	if err := currentTypeSources(prepared); err != nil {
+	if err := currentTypeSources(prepared, options.output.timing()); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
 	}
 	if options.types != nil {
 		options.types.accept(prepared)
 	}
+	options.output.timing().addApps(built)
 	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, resolved, nil
+}
+
+func tracedToken(ctx context.Context, manager *Client, trace *timingTrace) (string, error) {
+	defer trace.measure("", "token")()
+	return manager.controlToken(ctx)
+}
+
+func tracedGraph(ctx context.Context, manifest manifestSpec, trace *timingTrace, apps ...string) (manifestSpec, error) {
+	defer trace.measure("", "graph resolution")()
+	return resolveManifestGraph(ctx, manifest, apps...)
 }
 
 func imageDestination(ctx context.Context, manager *Client, name string, manifest manifestSpec) (protocol.UploadGrant, error) {
@@ -150,8 +162,9 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if config.jsonOutput {
 		stdout = stderr
 	}
+	trace := config.output.timing()
 	config.output.status("", "Authenticating", progressWorking)
-	manager, err := NewClient(ctx, config.Auth)
+	manager, err := newTracedClient(ctx, config.Auth, trace)
 	if err != nil {
 		return err
 	}
@@ -168,19 +181,24 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	request.TTLSeconds = config.devTTLSeconds
-	token, err := manager.controlToken(ctx)
+	token, err := tracedToken(ctx, manager, trace)
 	if err != nil {
 		return err
 	}
 	config.output.deploying(request.Apps)
 	var session protocol.SessionResponse
-	if err := manager.client.Call(ctx, protocol.DevPlane, token, protocol.ToolCreateSession, request, &session); err != nil {
+	created := trace.measure("", "create session")
+	err = manager.client.Call(ctx, protocol.DevPlane, token, protocol.ToolCreateSession, request, &session)
+	created()
+	if err != nil {
 		if status := HTTPStatus(err); status >= http.StatusBadRequest && status < http.StatusInternalServerError {
 			return err
 		}
 		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
 		return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
 	}
+	trace.setSession(session.Name)
+	trace.awaitReady()
 	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
 		return err
 	}
@@ -199,7 +217,9 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	dev := &devLoop{manager: manager, name: session.Name, manifest: resolvedManifest, apps: apps, clock: config.clock(), options: options, session: session}
-	return errors.Join(dev.run(ctx, stdout), deleteWithFreshContext(manager, session.Name, session.UID))
+	err = dev.run(ctx, stdout)
+	defer trace.measure("", "delete session")()
+	return errors.Join(err, deleteWithFreshContext(manager, session.Name, session.UID))
 }
 
 func sessionPath(name, suffix string) string {
@@ -257,11 +277,18 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	defer finish()
 	config.output.status("", "Authenticating", progressWorking)
 	manifest := config.manifest
-	manager, err := NewClient(ctx, config.Auth)
+	trace := config.output.timing()
+	trace.setSession(protocol.ProductionName)
+	manager, err := newTracedClient(ctx, config.Auth, trace)
 	if err != nil {
 		return err
 	}
+	if _, err := tracedToken(ctx, manager, trace); err != nil {
+		return err
+	}
+	fetched := trace.measure("", "get session")
 	current, err := manager.Session(ctx, protocol.ProductionName)
+	fetched()
 	if err != nil && HTTPStatus(err) != http.StatusNotFound {
 		return err
 	}
@@ -279,10 +306,13 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 		return err
 	}
 	config.output.deploying(desired.Apps)
+	updated := trace.measure("", "update session")
 	accepted, err := replaceExecution(ctx, manager, protocol.ProductionName, current, desired)
+	updated()
 	if err != nil {
 		return err
 	}
+	trace.awaitReady()
 	ready, err := waitSessionReady(ctx, manager, protocol.ProductionName, accepted, config.output)
 	if err != nil {
 		return err
@@ -310,7 +340,9 @@ func waitSessionReady(
 		if err := manager.authorizeOperation(ctx, session); err != nil {
 			return false, err
 		}
-		return SessionReady(session)
+		ready, err := SessionReady(session)
+		output.timing().observe(session, ready)
+		return ready, err
 	})
 	return result, err
 }
