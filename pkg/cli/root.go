@@ -185,7 +185,7 @@ func newCheck(short string) *cobra.Command {
 	return cmd
 }
 
-const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, sh.holon.requires and, for a holon-ui project, its own server are used"
+const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory"
 
 // NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string) *cobra.Command {

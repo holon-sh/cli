@@ -173,8 +173,6 @@ An implementation of an MCP server, or its parent directory.
 holon types check -s bar/server.py
 ```
 
-A path inside the project is its own server: browser code calls it under the last segment of its name, and nothing else does. Give it an alias, as in `-s orders=./server`, to call it from every SDK as `apps.orders`. A project that depends on `holon-ui` needs no `-s` for a server at its root, under `src/` or under `server/`.
-
 </details>
 
 <details open>
@@ -240,8 +238,7 @@ Flags:
   -h, --help                 help for generate
   -o, --output string        Write the --contract document to FILE, such as holon-contract.json
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
-                             directory; repeatable. Without it, sh.holon.requires and, for a
-                             holon-ui project, its own server are used
+                             directory
   -v, --verbose              Show generation details
 ```
 
@@ -275,8 +272,7 @@ Flags:
       --no-generate          Type-check the existing clients only: no network, no install, no
                              writes
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
-                             directory; repeatable. Without it, sh.holon.requires and, for a
-                             holon-ui project, its own server are used
+                             directory
 ```
 
 </details>
