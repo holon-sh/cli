@@ -44,7 +44,7 @@ func unique(names map[string]bool, preferred string) string {
 	return name
 }
 
-func renderGo(value typ) string {
+func renderGo(value typ, input bool) string {
 	switch value.kind {
 	case kindString:
 		return "string"
@@ -62,16 +62,16 @@ func renderGo(value typ) string {
 			return "json.Number"
 		}
 	case kindArray:
-		return "[]" + renderGo(*value.item)
+		return "[]" + renderGo(*value.item, input)
 	case kindObject:
 		if len(value.fields) == 0 {
 			item := "json.RawMessage"
 			if value.extra.kind == extraOpen {
-				item = renderGo(*value.extra.value)
+				item = renderGo(*value.extra.value, input)
 			}
 			return "map[string]" + item
 		}
-		if value.extra.kind != extraClosed {
+		if value.extra.kind == extraOpen || value.extra.kind == extraImplicit && !input {
 			return "map[string]json.RawMessage"
 		}
 		for name := range value.fields {
@@ -84,7 +84,7 @@ func renderGo(value typ) string {
 		out.WriteString("struct {\n")
 		for _, name := range sortedKeys(value.fields) {
 			member := value.fields[name]
-			rendered := renderGo(member.value)
+			rendered := renderGo(member.value, input)
 			tagName := name
 			if !member.required {
 				if rendered != "json.RawMessage" {
@@ -114,15 +114,16 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 			tool := catalog[name]
 			method := unique(methods, typeIdentifier(name))
 			var symbols []string
-			for _, part := range []struct {
+			for index, part := range []struct {
 				suffix string
 				shape  shape
 			}{{"Input", tool.input}, {"Output", tool.output}} {
+				input := index == 0
 				symbol := unique(names, client+method+part.suffix)
-				fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(part.shape.value))
+				fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(part.shape.value, input))
 				for _, definition := range sortedKeys(part.shape.named) {
 					named := unique(names, symbol+typeIdentifier(definition))
-					fmt.Fprintf(&declarations, "type %s = %s\n\n", named, renderGo(part.shape.named[definition]))
+					fmt.Fprintf(&declarations, "type %s = %s\n\n", named, renderGo(part.shape.named[definition], input))
 				}
 				symbols = append(symbols, symbol)
 			}

@@ -75,8 +75,12 @@ type OrdersKitchenSinkInput = struct {
 	Nested *[][]struct {
 	Deep json.RawMessage "json:\"deep,omitempty\""
 } "json:\"nested,omitempty\""
-	NoType map[string]json.RawMessage "json:\"noType\""
-	NumericType *map[string]json.RawMessage "json:\"numericType,omitempty\""
+	NoType struct {
+	P bool "json:\"p\""
+} "json:\"noType\""
+	NumericType *struct {
+	P *bool "json:\"p,omitempty\""
+} "json:\"numericType,omitempty\""
 	OddKeyWithSpaces *string "json:\"odd key with spaces,omitempty\""
 	OneOf json.RawMessage "json:\"oneOf,omitempty\""
 	OpenObj *map[string]json.RawMessage "json:\"openObj,omitempty\""
@@ -110,8 +114,12 @@ type OrdersKitchenSinkInput = struct {
 	Nested *[][]struct {
 	Deep json.RawMessage "json:\"deep,omitempty\""
 } "json:\"nested,omitempty\""
-	NoType map[string]json.RawMessage "json:\"noType\""
-	NumericType *map[string]json.RawMessage "json:\"numericType,omitempty\""
+	NoType struct {
+	P bool "json:\"p\""
+} "json:\"noType\""
+	NumericType *struct {
+	P *bool "json:\"p,omitempty\""
+} "json:\"numericType,omitempty\""
 	OddKeyWithSpaces *string "json:\"odd key with spaces,omitempty\""
 	OneOf json.RawMessage "json:\"oneOf,omitempty\""
 	OpenObj *map[string]json.RawMessage "json:\"openObj,omitempty\""

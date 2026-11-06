@@ -32,15 +32,7 @@ func TestSnapshots(t *testing.T) {
 				if err := os.RemoveAll(directory); err != nil {
 					t.Fatal(err)
 				}
-				for name, content := range got {
-					path := filepath.Join(directory, name)
-					if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.WriteFile(path, content, 0o644); err != nil {
-						t.Fatal(err)
-					}
-				}
+				writeFiles(t, directory, got)
 				return
 			}
 			want := map[string][]byte{}
