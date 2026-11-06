@@ -485,7 +485,8 @@ func (t *timingTrace) write(path string, stderr io.Writer, result error) error {
 // read and is written after the progress display has stopped.
 func withTiming(cmd *cobra.Command, config *commandConfig) *cobra.Command {
 	var path string
-	cmd.Flags().StringVar(&path, "timing", "", `Write a JSON timing trace to FILE at exit ("-" for stderr)`)
+	cmd.Flags().StringVar(&path, "timing", "", "Write a JSON trace to `FILE` at exit (- for stderr): each phase's start, end and duration, "+
+		"image digests, platforms, blobs pushed and skipped, Ready poll lag, and one entry per edit in holon dev")
 	preRun, run := cmd.PreRunE, cmd.RunE
 	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
 		if path == "" {

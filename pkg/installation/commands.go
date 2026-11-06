@@ -114,7 +114,10 @@ func newDevCommand(config *commandConfig) *cobra.Command {
   holon dev --check
 
   # Keep the session after the command exits and print it as JSON
-  holon dev --detach --json`,
+  holon dev --detach --json
+
+  # Write a timing trace of the run
+  holon dev --detach --timing trace.json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if detached {
 				if ttl < time.Second || ttl > 24*time.Hour || ttl%time.Second != 0 {
@@ -153,7 +156,10 @@ func newDeployCommand(config *commandConfig) *cobra.Command {
   holon deploy notes --oauth=app:notes:read
 
   # Deploy an app outside holon.yaml that anyone can call
-  holon deploy notes --public`,
+  holon deploy notes --public
+
+  # Write a timing trace of the run
+  holon deploy --timing trace.json`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runDeploy(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
 		},
