@@ -117,7 +117,7 @@ func generationCases(t *testing.T) []generationCase {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const protocol = "type AuthProvider = { token(): Promise<string> };\ntype ClientCapabilities = { elicitation?: { form?: object } };\ntype ElicitHandler = () => { action: string };\ntype ToolClient<I, O, R> = { tools: { [K in keyof I]: (input: I[K]) => Promise<K extends keyof O ? O[K] : unknown> }; resources: { [U in keyof R]: { read(): Promise<R[U]> } }; callTool<K extends keyof I & string>(request: { name: K; arguments: I[K] }): Promise<unknown> };"
+	const protocol = "type AuthProvider = { token(): Promise<string> };\ntype ToolClient<I, O, R> = { tools: { [K in keyof I]: (input: I[K]) => Promise<K extends keyof O ? O[K] : unknown> }; resources: { [U in keyof R]: { read(): Promise<R[U]> } }; callTool<K extends keyof I & string>(request: { name: K; arguments: I[K] }): Promise<unknown> };"
 	const order = `{"tools": [
         {"name": "get_order", "inputSchema": {"type": "object", "additionalProperties": false,
             "properties": {"orderId": {"type": "string"}, "count": {"type": "integer"}}, "required": ["orderId"]},
