@@ -29,7 +29,7 @@ func TestGoDependencyPreparation(t *testing.T) {
 	image := publishTypeMetadata(t, fixture, name, metadata, options, nil)
 	root := t.TempDir()
 	const module = "module example.org/caller\n\ngo 1.27.0\n\n" +
-		"require github.com/holon-sh/sdk/go v0.0.0-20261025144240-b6f8fd7fc600\n"
+		"require github.com/holon-sh/sdk-go v0.0.1-dev.1\n"
 	sourceFiles(t, root, map[string]string{
 		"go.mod": module, dockerignoreFile: "holon\nholon/**\n",
 		"server.go": `package main
