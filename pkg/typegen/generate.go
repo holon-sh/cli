@@ -298,6 +298,12 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	request := mcptype.GenerateRequest{Identity: identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + c.Name}
 	c.slot = slotMetadata{Marker: mcpcontract.Marker, App: c.Name, Identity: identity}
 	aliases := map[string]string{}
+	if c.server != nil && c.Server.Alias != "" {
+		// Naming the own server asks for that client in every slot, not only the browser's.
+		request.Own = c.Server.Alias
+		aliases[request.Own] = c.Server.String()
+		request.Requires[request.Own], request.Contracts[request.Own] = identity, c.server.metadata.Schema
+	}
 	for _, source := range c.Sources {
 		metadata, err := p.resolve(ctx, source, external)
 		if err != nil {
@@ -344,7 +350,7 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
 	case TargetUI:
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "browser", "../runtime.mjs", "holon-sh/protocol"
-		if own.Schema != nil {
+		if own.Schema != nil && request.Own == "" {
 			request.Own = cmp.Or(serverKey(own.Identity.Name), "app")
 			if _, exists := request.Contracts[request.Own]; exists {
 				return nil, fmt.Errorf("own browser client %s conflicts with a dependency alias", request.Own)

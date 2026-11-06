@@ -74,6 +74,36 @@ func TestExplicitOwnServer(t *testing.T) {
 		}
 	}
 	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")
+	// Naming it asks for that client outside the browser as well.
+	run(t, "", "types", "generate", "-s", "shop=./server.py")
+	if data, err := os.ReadFile(filepath.Join(root, "node_modules/holon-sh/generated/index.d.ts")); err != nil || !strings.Contains(string(data), `"shop": {`) {
+		t.Fatalf("holon-sh = %s, %v", data, err)
+	}
+}
+
+func TestBareGenerateFindsTheOwnServerOfABrowserProject(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
+	writeCLIFile(t, root, "server/server.py", pythonServer)
+	writeCLIFile(t, root, "server/server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"}`)
+	installCLISlot(t, root)
+	// Only a browser client can call the own server, so without one there is nothing to generate.
+	run(t, "declares no requires; pass -s", "types", "generate")
+	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1","holon-ui":"^0.0.1"}}`)
+	run(t, "", "types", "generate")
+	data, err := os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts"))
+	if err != nil || !strings.Contains(string(data), `"view": {`) {
+		t.Fatalf("holon-ui = %s, %v", data, err)
+	}
+	// Requires declared beside the server count too.
+	writeCLIFile(t, root, "server/server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"`+requiresOrders)
+	if c, err := consumer(root, nil); err != nil || c.Server == nil || len(c.Sources) != 1 || c.Sources[0].Alias != "orders" {
+		t.Fatalf("consumer = %+v, %v", c, err)
+	}
 }
 
 func TestUsageErrors(t *testing.T) {
@@ -94,10 +124,13 @@ func TestUsageErrors(t *testing.T) {
 	run(t, "holon-sh is not installed", "check", "--no-generate")
 	installCLISlot(t, root)
 	run(t, "declares no requires; pass -s", "check")
-	writeCLIFile(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0","registry":"https://127.0.0.1:1"}}}}}}`)
+	writeCLIFile(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout"`+requiresOrders)
 	run(t, "example.com/orders@1.0.0", "types", "generate")
 	run(t, "has no generated clients; run holon types generate", "check", "--no-generate")
 }
+
+// requiresOrders ends a server.json that requires an orders server from an unreachable registry.
+const requiresOrders = `,"_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0","registry":"https://127.0.0.1:1"}}}}}}`
 
 const pythonServer = "from mcp.server import MCPServer\nserver = MCPServer('provider')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n"
 

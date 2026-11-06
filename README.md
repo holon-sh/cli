@@ -86,11 +86,10 @@ await apps.context7.tools["resolve-library-id"]({ libraryName: 1, query: "app ro
 // error TS2322: Type 'number' is not assignable to type 'string'.
 
 await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js" });
-// error TS2345: Argument of type '{ libraryName: string; }' is not assignable to parameter of type '{ [key: string]: unknown; libraryName: string; query: string; }'.
-//   Property '"query"' is missing in type '{ libraryName: string; }' but required in type '{ [key: string]: unknown; libraryName: string; query: string; }'.
+// error TS2741: Property '"query"' is missing in type '{ libraryName: string; }' but required in type '{ libraryName: string; query: string; }'.
 
 await apps.context7.tools["resolve-library"]({ libraryName: "Next.js", query: "app router" });
-// error TS2551: Property 'resolve-library' does not exist on type '{ readonly "query-docs": (input: { [key: string]: unknown; language?: string | undefined; libraryId: string; query: string; }, options?: CallOptions | undefined) => Promise<CompleteResult<unknown>>; readonly "resolve-library-id": (input: { ...; }, options?: CallOptions | undefined) => Promise<...>; }'. Did you mean 'resolve-library-id'?
+// error TS2551: Property 'resolve-library' does not exist on type '{ readonly "query-docs": (input: { language?: string | undefined; libraryId: string; query: string; }, options?: CallOptions | undefined) => Promise<CompleteResult<unknown>>; readonly "resolve-library-id": (input: { ...; }, options?: CallOptions | undefined) => Promise<...>; }'. Did you mean 'resolve-library-id'?
 ```
 
 </details>
@@ -151,7 +150,7 @@ await apps.bar.tools.greet({ name: 1 });
 // error TS2322: Type 'number' is not assignable to type 'string'.
 
 await apps.bar.tools.hello({ name: "world" });
-// error TS2339: Property 'hello' does not exist on type '{ readonly greet: (input: { [key: string]: unknown; name: string; }, options?: CallOptions | undefined) => Promise<{ [key: string]: unknown; result: string; }>; }'.
+// error TS2339: Property 'hello' does not exist on type '{ readonly greet: (input: { name: string; }, options?: CallOptions | undefined) => Promise<{ [key: string]: unknown; result: string; }>; }'.
 
 const text: string = greeting.text;
 // error TS2322: Type 'unknown' is not assignable to type 'string'.
@@ -173,6 +172,8 @@ An implementation of an MCP server, or its parent directory.
 ```sh
 holon types check -s bar/server.py
 ```
+
+A path inside the project is its own server: browser code calls it under the last segment of its name, and nothing else does. Give it an alias, as in `-s orders=./server`, to call it from every SDK as `apps.orders`. A project that depends on `holon-ui` needs no `-s` for a server at its root, under `src/` or under `server/`.
 
 </details>
 
@@ -220,6 +221,9 @@ Examples:
   # Another project
   holon types generate ../checkout
 
+  # Name the project's own server to call it from outside the browser too, as apps.orders
+  holon types generate -s orders=./server
+
   # Explicit dependencies: a server directory, a server entry, an MCP registry server, a remote
   #   MCP server named docs
   holon types generate -s ../orders
@@ -236,7 +240,8 @@ Flags:
   -h, --help                 help for generate
   -o, --output string        Write the --contract document to FILE, such as holon-contract.json
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
-                             directory; repeatable. Without it, sh.holon.requires is used
+                             directory; repeatable. Without it, sh.holon.requires and, for a
+                             holon-ui project, its own server are used
   -v, --verbose              Show generation details
 ```
 
@@ -270,7 +275,8 @@ Flags:
       --no-generate          Type-check the existing clients only: no network, no install, no
                              writes
   -s, --server stringArray   A dependency, [ALIAS=]PATH or URL, paths relative to the working
-                             directory; repeatable. Without it, sh.holon.requires is used
+                             directory; repeatable. Without it, sh.holon.requires and, for a
+                             holon-ui project, its own server are used
 ```
 
 </details>

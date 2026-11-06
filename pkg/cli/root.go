@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/spf13/cobra"
@@ -22,6 +23,9 @@ const generateExamples = `  # Generate for the current project
 
   # Another project
   holon types generate ../checkout
+
+  # Name the project's own server to call it from outside the browser too, as apps.orders
+  holon types generate -s orders=./server
 
   # Explicit dependencies: a server directory, a server entry, an MCP registry server, a remote MCP server named docs
   holon types generate -s ../orders
@@ -55,7 +59,8 @@ func clientDir(path string) (string, error) {
 }
 
 // consumer selects dependencies from -s. A -s path inside dir is the project's own server, which
-// supplies its identity and contract.
+// supplies its identity and contract. Without -s, a project with a browser slot finds its own server,
+// and the requires beside it join the project's.
 func consumer(dir string, servers []string) (typegen.Consumer, error) {
 	targets, err := typegen.DeclaredTargets(dir)
 	if err != nil {
@@ -80,6 +85,18 @@ func consumer(dir string, servers []string) (typegen.Consumer, error) {
 		c.Sources, err = typegen.DeclaredSources(dir)
 		if err != nil {
 			return c, err
+		}
+		if slices.Contains(targets, typegen.TargetUI) {
+			if c.Server, err = typegen.OwnServer(dir); err != nil {
+				return c, err
+			}
+			if c.Server != nil && c.Server.Path != dir {
+				requires, err := typegen.DeclaredSources(c.Server.Path)
+				if err != nil {
+					return c, err
+				}
+				c.Sources = append(c.Sources, requires...)
+			}
 		}
 	}
 	if len(c.Sources) == 0 && c.Server == nil {
@@ -167,7 +184,7 @@ func newCheck(short string) *cobra.Command {
 	return cmd
 }
 
-const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, sh.holon.requires is used"
+const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, sh.holon.requires and, for a holon-ui project, its own server are used"
 
 // NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string) *cobra.Command {

@@ -70,3 +70,40 @@ func TestServerDescribesItself(t *testing.T) {
 		})
 	}
 }
+
+func TestOwnServer(t *testing.T) {
+	const python, node = "from mcp.server import MCPServer", `import { McpServer } from "@modelcontextprotocol/server";`
+	for _, test := range []struct {
+		name  string
+		files map[string]string
+		want  string // the directory relative to the project, when one is found
+		fails bool
+	}{
+		{name: "none", files: map[string]string{"index.ts": node}},
+		{name: "entry at the root", files: map[string]string{"server.py": python}, want: "."},
+		{name: "entry under src", files: map[string]string{"src/server.ts": node}, want: "."},
+		{name: "entry in a server directory", files: map[string]string{"server/server.ts": node}, want: "server"},
+		{name: "a web server is not an MCP server", files: map[string]string{"server.js": "export default {};", "src/page.ts": node}},
+		{name: "a web server beside an MCP server", files: map[string]string{"server.js": "export default {};", "server/server.ts": node}, want: "server"},
+		{name: "a compiled binary named server", files: map[string]string{"server": ""}},
+		{name: "two servers", files: map[string]string{"server.py": python, "server/server.py": python}, fails: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, content := range test.files {
+				put(t, dir, name, content)
+			}
+			own, err := OwnServer(dir)
+			if (err != nil) != test.fails {
+				t.Fatalf("OwnServer error = %v, want failure %t", err, test.fails)
+			}
+			var got string
+			if own != nil {
+				got, _ = filepath.Rel(dir, own.Path)
+			}
+			if got != test.want {
+				t.Fatalf("OwnServer = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
