@@ -370,7 +370,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
-		if strings.Count(stdout.String(), "trace_id=aaaa") != 1 || strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
+		if strings.Contains(stdout.String(), "trace_id=aaaa") || strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}
 	})

@@ -236,7 +236,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		input := protocol.SessionLogsRequest{
 			AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}}, Event: protocol.MCPCallEvent,
 		}
-		if err := d.manager.StreamLogs(ctx, input, stdout); ctx.Err() == nil {
+		if err := d.manager.StreamLogs(ctx, input, d.options.output.logs(stdout)); ctx.Err() == nil {
 			d.options.output.status("request stream", "stopped: "+err.Error(), progressError)
 		}
 	})
