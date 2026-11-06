@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -48,10 +51,54 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	case source.Registry != nil:
 		return resolveRegistry(ctx, *source.Registry, o)
 	case source.Endpoint != "":
-		return liveContract(ctx, source.Endpoint, nil, o.HTTPClient)
+		return liveContract(ctx, source.Endpoint, nil, endpointClient(source, o))
 	default:
 		return ParseDocument(ctx, source.Document.Data)
 	}
+}
+
+// endpointClient reads an endpoint source's token from <ALIAS>_MCP_TOKEN and explains a refusal.
+// A registry record's remote never reaches here, so a token only goes to a URL its owner named.
+func endpointClient(source Source, o Options) *http.Client {
+	origin, err := url.Parse(source.Endpoint)
+	if err != nil {
+		return o.HTTPClient // liveContract reports the invalid URL.
+	}
+	transport := endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: origin}
+	if source.Alias != "" {
+		transport.variable = strings.ToUpper(strings.ReplaceAll(source.Alias, "-", "_")) + "_MCP_TOKEN"
+		transport.token = cmp.Or(commandenv.Value(o.Env, transport.variable), os.Getenv(transport.variable))
+	}
+	client := *o.HTTPClient
+	client.Transport = transport
+	return &client
+}
+
+type endpointTransport struct {
+	http.RoundTripper
+	origin          *url.URL
+	variable, token string
+}
+
+func (t endpointTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	// Redirects come through here too, and must not carry the token to another origin.
+	if t.token != "" && request.URL.Scheme == t.origin.Scheme && request.URL.Host == t.origin.Host {
+		request = request.Clone(request.Context())
+		request.Header.Set("Authorization", "Bearer "+t.token)
+	}
+	response, err := t.RoundTripper.RoundTrip(request)
+	if err != nil || response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden {
+		return response, err
+	}
+	_ = response.Body.Close()
+	hint := "if it needs a token, write ALIAS=URL and set ALIAS_MCP_TOKEN"
+	switch {
+	case t.token != "":
+		hint = "the token came from " + t.variable
+	case t.variable != "":
+		hint = "if it needs a token, set " + t.variable
+	}
+	return nil, fmt.Errorf("server refused the request with HTTP %d; %s", response.StatusCode, hint)
 }
 
 // resolveRegistry fetches a registry record, then its first OCI package's

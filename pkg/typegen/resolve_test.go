@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -40,10 +43,107 @@ func liveServer(t *testing.T, name string) *httptest.Server {
 	return httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
 }
 
+// liveServerBehind serves a live MCP server to requests whose Authorization header check accepts.
+func liveServerBehind(t *testing.T, check func(authorization string) bool) *httptest.Server {
+	t.Helper()
+	live := liveServer(t, "orders")
+	t.Cleanup(live.Close)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !check(r.Header.Get("Authorization")) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		live.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func tokenServer(t *testing.T, token string) *httptest.Server {
+	t.Helper()
+	return liveServerBehind(t, func(authorization string) bool { return authorization == "Bearer "+token })
+}
+
+// tokenlessServer fails the test if a request reaches it with a token.
+func tokenlessServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return liveServerBehind(t, func(authorization string) bool {
+		if authorization != "" {
+			t.Errorf("received %q", authorization)
+		}
+		return true
+	})
+}
+
+func TestEndpointToken(t *testing.T) {
+	server := tokenServer(t, "good-value")
+	for _, test := range []struct {
+		name, alias, env, want string
+	}{
+		{"accepted", "docs", "DOCS_MCP_TOKEN=good-value", ""},
+		{"hyphenated alias", "my-docs", "MY_DOCS_MCP_TOKEN=good-value", ""},
+		{"refused", "docs", "DOCS_MCP_TOKEN=bad-value", "HTTP 403; the token came from DOCS_MCP_TOKEN"},
+		{"missing", "docs", "OTHER_MCP_TOKEN=good-value", "HTTP 403; if it needs a token, set DOCS_MCP_TOKEN"},
+		{"no alias to name it", "", "DOCS_MCP_TOKEN=good-value", "write ALIAS=URL and set ALIAS_MCP_TOKEN"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Endpoint: server.URL}, Options{Env: []string{test.env}})
+			if test.want != "" {
+				if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), "-value") {
+					t.Fatalf("ResolveDocument = %v, want %q without the token", err, test.want)
+				}
+				return
+			}
+			if err != nil || len(document.Schema.Tools) != 1 {
+				t.Fatalf("ResolveDocument = %+v, %v", document, err)
+			}
+		})
+	}
+}
+
+func TestEndpointTokenIsNotWritten(t *testing.T) {
+	const token = "written-secret"
+	server := tokenServer(t, token)
+	app := t.TempDir()
+	slotPackage(t, app, "holon-sh")
+	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS, TargetGo}, Sources: []Source{{Alias: "docs", Endpoint: server.URL}}}
+	if err := Generate(t.Context(), []Consumer{c}, Options{Env: []string{"DOCS_MCP_TOKEN=" + token}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := filepath.WalkDir(app, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err == nil && strings.Contains(string(data), token) {
+			t.Errorf("%s reveals the token", path)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEndpointTokenStaysWithItsOrigin(t *testing.T) {
+	other := tokenlessServer(t)
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Errorf("the named origin received %q", r.Header.Get("Authorization"))
+		}
+		http.Redirect(w, r, other.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirecting.Close()
+	// The process environment is where the CLI's token comes from.
+	t.Setenv("DOCS_MCP_TOKEN", "secret")
+	if _, err := ResolveDocument(t.Context(), Source{Alias: "docs", Endpoint: redirecting.URL}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRegistrySourceResolution(t *testing.T) {
 	identity := mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"}
-	live := liveServer(t, "orders-live")
-	defer live.Close()
+	// A registry record's remote gets no token, even under an alias whose variable is set.
+	live := tokenlessServer(t)
 	mux := http.NewServeMux()
 	server := httptest.NewTLSServer(mux)
 	defer server.Close()
@@ -84,7 +184,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 				"images.example":                           image.Transport,
 			}}
 			ref := Reference{Name: identity.Name, Version: identity.Version, Registry: server.URL}
-			metadata, err := ResolveDocument(t.Context(), Source{Registry: &ref}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}})
+			metadata, err := ResolveDocument(t.Context(), Source{Alias: "orders", Registry: &ref}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir(), "ORDERS_MCP_TOKEN=secret"}})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {
 					t.Fatalf("ResolveDocument = %v, want %q", err, test.want)
