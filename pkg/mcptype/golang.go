@@ -44,9 +44,6 @@ func unique(names map[string]bool, preferred string) string {
 	return name
 }
 
-// renderGo writes a type. An input object that names its fields without declaring additional properties
-// is a struct, so a misspelled argument fails to compile rather than reaching a server that ignores it.
-// Outputs stay maps, because a server may add to them, and an object that names no fields is a free-form one.
 func renderGo(value typ, input bool) string {
 	switch value.kind {
 	case kindString:

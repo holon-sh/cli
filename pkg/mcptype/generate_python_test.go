@@ -2,9 +2,7 @@ package mcptype
 
 import (
 	"encoding/json"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -23,14 +21,7 @@ func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
 	// A stand-in runtime prints the identity the generated module constructs its clients with.
 	root := t.TempDir()
 	files["holon/client.py"] = []byte("import json\nclass Apps:\n    def __init__(self, identity, *rest):\n        print(json.dumps(identity))\ndef __getattr__(name):\n    return object\n")
-	for name, content := range files {
-		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, name), content, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeFiles(t, root, files)
 	command := exec.CommandContext(t.Context(), python, "-c", "import holon.apps")
 	command.Dir = root
 	output, err := command.CombinedOutput()

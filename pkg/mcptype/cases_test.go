@@ -8,6 +8,19 @@ import (
 	"testing"
 )
 
+func writeFiles(t *testing.T, root string, files map[string][]byte) {
+	t.Helper()
+	for name, content := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // generationCase is one package-generation request in its JSON wire form.
 type generationCase struct {
 	name, input string
