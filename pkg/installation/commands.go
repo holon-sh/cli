@@ -190,7 +190,7 @@ func withProject(cmd *cobra.Command, config *commandConfig) *cobra.Command {
 }
 
 func withProgress(cmd *cobra.Command, config *commandConfig, message string) *cobra.Command {
-	cmd.Flags().BoolVarP(&config.verbose, "verbose", "v", false, "Show Docker build output and timings; holon dev also shows each MCP call")
+	cmd.Flags().BoolVarP(&config.verbose, "verbose", "v", false, "Show verbose output")
 	run := cmd.RunE
 	cmd.RunE = func(cmd *cobra.Command, args []string) (result error) {
 		stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()

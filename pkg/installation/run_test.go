@@ -370,54 +370,10 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
-		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
+		if strings.Contains(stdout.String(), "trace_id=aaaa") || strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}
 	})
-}
-
-func TestRunDevShowsCallsOnlyWhenVerbose(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		args  []string
-		calls int
-	}{
-		{name: "default"},
-		{name: "verbose", args: []string{"--verbose"}, calls: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			t.Chdir(root)
-			sourceFiles(t, root, map[string]string{
-				manifestFileName: "apps:\n- name: alpha\n  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n",
-			})
-			h := newRunHarness(t)
-			h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolDeleteSession}, nil, func(w http.ResponseWriter, r *http.Request) {
-				if installationtest.ToolName(r) == protocol.ToolDeleteSession {
-					installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
-					return
-				}
-				installationtest.WriteJSON(w, apiSession(h, "alpha"))
-			})
-			h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
-				_, _ = io.WriteString(w, "2030-01-01T12:00:01Z INFO alpha tools/call echo ok 1ms trace_id=aaaa\n")
-			})
-			h.start(t, nil)
-			fc := testingclock.NewFakeClock(time.Now())
-			h.run.Clock = fc
-			stdout, stderr, stop := startDev(t, h.run, tc.args...)
-			stepUntil(t, fc, workflowPoll, func() bool {
-				return strings.Contains(stdout.String(), "/mcp/alpha") && strings.Contains(stderr.String(), "request stream stopped")
-			})
-			if err := stop(); err != nil {
-				t.Fatal(err)
-			}
-			if got := strings.Count(stdout.String(), "trace_id=aaaa"); got != tc.calls {
-				t.Fatalf("calls shown = %d, want %d: %q", got, tc.calls, stdout.String())
-			}
-		})
-	}
 }
 
 func TestDevDeploymentStatusTransitions(t *testing.T) {
