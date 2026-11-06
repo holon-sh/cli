@@ -23,6 +23,9 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
+// unversioned is the version of an identity with nothing to take one from.
+const unversioned = "0.0.0"
+
 type Options struct {
 	Env            []string
 	HTTPClient     *http.Client
@@ -276,7 +279,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	if c.metadata != nil {
 		return fmt.Errorf("contract dependency cycle at %s", c.Name)
 	}
-	identity := mcpcontract.Identity{Name: c.Name, Version: "0.0.0"}
+	identity := mcpcontract.Identity{Name: c.Name, Version: unversioned}
 	var alias string
 	if c.Server != nil {
 		alias = c.Server.Alias
