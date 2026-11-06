@@ -127,7 +127,8 @@ type Consumer struct {
 	// Dir is the absolute project directory.
 	Dir string
 	// Server is the consumer's own MCP server, a path source inside Dir. It supplies the
-	// consumer's identity, contract (Metadata) and check configuration.
+	// consumer's identity, contract (Metadata) and check configuration. Browser clients call it
+	// under its derived name; an Alias replaces that name and adds the client to every other slot.
 	Server *Source
 	// Targets are the slots to write.
 	// A server can have no targets when only its contract is needed.

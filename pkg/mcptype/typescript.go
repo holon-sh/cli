@@ -5,7 +5,10 @@ import (
 	"strings"
 )
 
-func renderTypeScript(value typ) string {
+// renderTypeScript writes a type. An input object that names its fields without declaring additional
+// properties is closed, so a misspelled argument fails excess-property checks rather than reaching a
+// server that ignores it. Outputs stay open, and an object that names no fields is a free-form one.
+func renderTypeScript(value typ, input bool) string {
 	switch value.kind {
 	case kindNever:
 		return "never"
@@ -24,17 +27,17 @@ func renderTypeScript(value typ) string {
 		}
 		return string(encode(value.literal))
 	case kindArray:
-		return fmt.Sprintf("Array<%s>", renderTypeScript(*value.item))
+		return fmt.Sprintf("Array<%s>", renderTypeScript(*value.item, input))
 	case kindUnion:
 		if len(value.items) == 0 {
 			return "never"
 		}
-		return "(" + joinTypeScript(value.items, " | ") + ")"
+		return "(" + joinTypeScript(value.items, " | ", input) + ")"
 	case kindIntersection:
 		if len(value.items) == 0 {
 			return "unknown"
 		}
-		return "(" + joinTypeScript(value.items, " & ") + ")"
+		return "(" + joinTypeScript(value.items, " & ", input) + ")"
 	case kindTuple:
 		items := make([]string, 0, len(value.prefix)+1)
 		for i, item := range value.prefix {
@@ -42,13 +45,13 @@ func renderTypeScript(value typ) string {
 			if i >= value.min {
 				optional = "?"
 			}
-			items = append(items, renderTypeScript(item)+optional)
+			items = append(items, renderTypeScript(item, input)+optional)
 		}
 		switch value.extra.kind {
 		case extraImplicit:
 			items = append(items, "...unknown[]")
 		case extraOpen:
-			items = append(items, fmt.Sprintf("...Array<%s>", renderTypeScript(*value.extra.value)))
+			items = append(items, fmt.Sprintf("...Array<%s>", renderTypeScript(*value.extra.value, input)))
 		}
 		return "[" + strings.Join(items, ", ") + "]"
 	case kindObject:
@@ -59,15 +62,17 @@ func renderTypeScript(value typ) string {
 			if !field.required {
 				optional = "?"
 			}
-			entries = append(entries, fmt.Sprintf("%s%s: %s;", quoted(name), optional, renderTypeScript(field.value)))
+			entries = append(entries, fmt.Sprintf("%s%s: %s;", quoted(name), optional, renderTypeScript(field.value, input)))
 		}
 		switch value.extra.kind {
 		case extraImplicit:
-			entries = append(entries, "[key: string]: unknown;")
+			if !input || len(value.fields) == 0 {
+				entries = append(entries, "[key: string]: unknown;")
+			}
 		case extraOpen:
 			rendered := "unknown"
 			if len(value.fields) == 0 {
-				rendered = renderTypeScript(*value.extra.value)
+				rendered = renderTypeScript(*value.extra.value, input)
 			}
 			entries = append(entries, fmt.Sprintf("[key: string]: %s;", rendered))
 		}
@@ -76,10 +81,10 @@ func renderTypeScript(value typ) string {
 	return "unknown"
 }
 
-func joinTypeScript(items []typ, separator string) string {
+func joinTypeScript(items []typ, separator string, input bool) string {
 	rendered := make([]string, len(items))
 	for i, item := range items {
-		rendered[i] = renderTypeScript(item)
+		rendered[i] = renderTypeScript(item, input)
 	}
 	return strings.Join(rendered, separator)
 }
@@ -101,10 +106,11 @@ func generateTypeScript(contracts map[string]catalog) string {
 				if index == 1 && !tool.structured {
 					continue
 				}
-				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value))
+				input := index == 0
+				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value, input))
 				named := make([]string, 0, len(shape.named))
 				for _, definition := range sortedKeys(shape.named) {
-					named = append(named, fmt.Sprintf("%s: %s;", quoted(definition), renderTypeScript(shape.named[definition])))
+					named = append(named, fmt.Sprintf("%s: %s;", quoted(definition), renderTypeScript(shape.named[definition], input)))
 				}
 				fmt.Fprintf(&exports[index+2], "    %s: { %s };\n", quoted(name), strings.Join(named, " "))
 			}
