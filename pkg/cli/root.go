@@ -58,9 +58,8 @@ func clientDir(path string) (string, error) {
 	return filepath.EvalSymlinks(dir)
 }
 
-// consumer selects dependencies from -s. A -s path inside dir is the project's own server, which
-// supplies its identity and contract. Without -s, a project with a browser slot finds its own server,
-// and the requires beside it join the project's.
+// consumer selects dependencies from -s, or what the project declares without it. A -s path inside
+// dir is the project's own server, which supplies its identity and contract.
 func consumer(dir string, servers []string) (typegen.Consumer, error) {
 	targets, err := typegen.DeclaredTargets(dir)
 	if err != nil {
@@ -82,27 +81,29 @@ func consumer(dir string, servers []string) (typegen.Consumer, error) {
 		c.Sources = append(c.Sources, source)
 	}
 	if len(servers) == 0 {
-		c.Sources, err = typegen.DeclaredSources(dir)
-		if err != nil {
+		if c.Server, c.Sources, err = declared(dir, targets); err != nil {
 			return c, err
-		}
-		if slices.Contains(targets, typegen.TargetUI) {
-			if c.Server, err = typegen.OwnServer(dir); err != nil {
-				return c, err
-			}
-			if c.Server != nil && c.Server.Path != dir {
-				requires, err := typegen.DeclaredSources(c.Server.Path)
-				if err != nil {
-					return c, err
-				}
-				c.Sources = append(c.Sources, requires...)
-			}
 		}
 	}
 	if len(c.Sources) == 0 && c.Server == nil {
 		return c, fmt.Errorf("%s declares no requires; pass -s", dir)
 	}
 	return c, nil
+}
+
+// declared returns the requires dir declares and, for a project with a browser slot, its own server
+// and the requires declared beside that server.
+func declared(dir string, targets []string) (*typegen.Source, []typegen.Source, error) {
+	sources, err := typegen.DeclaredSources(dir)
+	if err != nil || !slices.Contains(targets, typegen.TargetUI) {
+		return nil, sources, err
+	}
+	own, err := typegen.OwnServer(dir)
+	if err != nil || own == nil || own.Path == dir {
+		return own, sources, err
+	}
+	beside, err := typegen.DeclaredSources(own.Path)
+	return own, append(sources, beside...), err
 }
 
 func insideDir(path, dir string) bool {

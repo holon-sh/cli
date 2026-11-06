@@ -277,7 +277,9 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		return fmt.Errorf("contract dependency cycle at %s", c.Name)
 	}
 	identity := mcpcontract.Identity{Name: c.Name, Version: "0.0.0"}
+	var alias string
 	if c.Server != nil {
+		alias = c.Server.Alias
 		absolute, _ := filepath.Abs(c.Server.Path)
 		c.server = p.paths[absolute]
 		if !pathInsideContext(c.server.origin, c.Dir) {
@@ -298,12 +300,6 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	request := mcptype.GenerateRequest{Identity: identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + c.Name}
 	c.slot = slotMetadata{Marker: mcpcontract.Marker, App: c.Name, Identity: identity}
 	aliases := map[string]string{}
-	if c.server != nil && c.Server.Alias != "" {
-		// Naming the own server asks for that client in every slot, not only the browser's.
-		request.Own = c.Server.Alias
-		aliases[request.Own] = c.Server.String()
-		request.Requires[request.Own], request.Contracts[request.Own] = identity, c.server.metadata.Schema
-	}
 	for _, source := range c.Sources {
 		metadata, err := p.resolve(ctx, source, external)
 		if err != nil {
@@ -329,7 +325,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		}
 	}
 	for _, target := range c.Targets {
-		files, err := generateTypes(ctx, target, request, c.metadata, p.options.GoModule)
+		files, err := generateTypes(ctx, target, request, c.metadata, alias, p.options.GoModule)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
 		}
@@ -344,25 +340,28 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	return nil
 }
 
-func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, goModule string) (map[string][]byte, error) {
+// generateTypes generates one target's clients. Browser clients call the own server under its alias
+// or derived name; an alias also makes it a client in every other slot.
+func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, alias, goModule string) (map[string][]byte, error) {
 	switch target {
 	case TargetTS:
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
 	case TargetUI:
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "browser", "../runtime.mjs", "holon-sh/protocol"
-		if own.Schema != nil && request.Own == "" {
-			request.Own = cmp.Or(serverKey(own.Identity.Name), "app")
-			if _, exists := request.Contracts[request.Own]; exists {
-				return nil, fmt.Errorf("own browser client %s conflicts with a dependency alias", request.Own)
-			}
-			request.Requires, request.Contracts = maps.Clone(request.Requires), maps.Clone(request.Contracts)
-			request.Requires[request.Own], request.Contracts[request.Own] = own.Identity, own.Schema
-		}
+		alias = cmp.Or(alias, serverKey(own.Identity.Name), "app")
 	case TargetPy:
 		request.Target = "python"
 	case TargetGo:
 		request.Target = "go"
 		request.GoModule = goModule
+	}
+	if own.Schema != nil && alias != "" {
+		if _, exists := request.Contracts[alias]; exists {
+			return nil, fmt.Errorf("own client %s conflicts with a dependency alias", alias)
+		}
+		request.Own = alias
+		request.Requires, request.Contracts = maps.Clone(request.Requires), maps.Clone(request.Contracts)
+		request.Requires[alias], request.Contracts[alias] = own.Identity, own.Schema
 	}
 	return mcptype.Generate(ctx, request)
 }
