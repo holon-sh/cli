@@ -1,7 +1,6 @@
 package typegen
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -46,17 +45,9 @@ func OwnServer(dir string) (*Source, error) {
 
 // DeclaredSources returns one registry source per sh.holon.requires entry, sorted by alias.
 func DeclaredSources(dir string) ([]Source, error) {
-	path := filepath.Join(dir, "server.json")
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
+	d, err := readDescriptor(dir)
+	if err != nil || d == nil {
 		return nil, err
-	}
-	d, err := ParseDescriptor(data)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	var sources []Source
 	for _, alias := range slices.Sorted(maps.Keys(d.Requires)) {

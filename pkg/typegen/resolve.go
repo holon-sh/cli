@@ -28,20 +28,20 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	}
 	switch {
 	case source.Path != "":
-		root, err := os.MkdirTemp("", "holon-types-")
-		if err != nil {
-			return nil, err
-		}
-		defer os.RemoveAll(root)
-		if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
-			return nil, err
-		}
 		prepared, err := prepareSource(ctx, "source", source.Path)
 		if err != nil {
 			return nil, err
 		}
 		if prepared.language == "go" {
 			return nil, fmt.Errorf("%s: Go server contracts are not statically extracted", source.Path)
+		}
+		root, err := os.MkdirTemp("", "holon-types-")
+		if err != nil {
+			return nil, err
+		}
+		defer os.RemoveAll(root)
+		if err := tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
+			return nil, err
 		}
 		// Printing a contract is how a committed one is regenerated, so a stale file is not an error here.
 		if err := extractSources(ctx, root, []*preparedSource{prepared}, o, false); err != nil {
@@ -105,38 +105,38 @@ func (t endpointTransport) RoundTrip(request *http.Request) (*http.Response, err
 // contract document or its first streamable-http remote's schemas.
 // A package error is an error; a package without a contract artifact falls through to the remote.
 func resolveRegistry(ctx context.Context, ref Reference, o Options) (*Document, error) {
+	label := ref.Name + "@" + ref.Version
 	d, err := (Client{HTTP: o.HTTPClient, Origin: ref.RegistryURL()}).Get(ctx, ref.Name, ref.Version)
 	if err != nil {
-		return nil, fmt.Errorf("%s@%s: %w", ref.Name, ref.Version, err)
+		return nil, fmt.Errorf("%s: %w", label, err)
 	}
-	var metadata *Document
+	identity := d.Identity()
 	for _, pkg := range d.Packages {
-		if pkg.RegistryType == "oci" {
-			if metadata, err = resolveTypeMetadata(ctx, pkg.Identifier, o); err != nil {
-				err = fmt.Errorf("package %s: %w", pkg.Identifier, err)
-			}
+		if pkg.RegistryType != "oci" {
+			continue
+		}
+		metadata, err := resolveTypeMetadata(ctx, pkg.Identifier, o)
+		if err != nil {
+			return nil, fmt.Errorf("%s: package %s: %w", label, pkg.Identifier, err)
+		}
+		if metadata == nil {
 			break
 		}
+		if metadata.Identity != identity {
+			return nil, fmt.Errorf("%s: its contract document belongs to %s@%s", label, metadata.Identity.Name, metadata.Identity.Version)
+		}
+		return metadata, nil
 	}
-	if err == nil && metadata == nil {
-		for _, transport := range d.Remotes {
-			if transport.Type == "streamable-http" {
-				identity := d.Identity()
-				metadata, err = liveContract(ctx, transport.URL, &identity, o.HTTPClient)
-				break
+	for _, transport := range d.Remotes {
+		if transport.Type == "streamable-http" {
+			metadata, err := liveContract(ctx, transport.URL, &identity, o.HTTPClient)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", label, err)
 			}
+			return metadata, nil
 		}
 	}
-	if err == nil && metadata == nil {
-		return nil, fmt.Errorf("%s@%s publishes neither an OCI package with a contract nor a streamable-http remote", ref.Name, ref.Version)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("%s@%s: %w", ref.Name, ref.Version, err)
-	}
-	if metadata.Identity != d.Identity() {
-		return nil, fmt.Errorf("%s@%s: its contract document belongs to %s@%s", ref.Name, ref.Version, metadata.Identity.Name, metadata.Identity.Version)
-	}
-	return metadata, nil
+	return nil, fmt.Errorf("%s publishes neither an OCI package with a contract nor a streamable-http remote", label)
 }
 
 // liveContract initializes an MCP session and retrieves its advertised schemas. With a nil identity
@@ -147,20 +147,21 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" {
 		return nil, errors.New("MCP URL must be an HTTP(S) URL without credentials or a fragment")
 	}
-	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon-types", Version: "0.0.1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: location, HTTPClient: client}, nil)
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon-types", Version: "0.0.1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: location, HTTPClient: client, DisableStandaloneSSE: true}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", location, err)
 	}
 	defer session.Close()
+	initialized := session.InitializeResult()
 	if identity == nil {
-		info := session.InitializeResult().ServerInfo
+		info := initialized.ServerInfo
 		if info == nil || info.Name == "" {
 			return nil, fmt.Errorf("%s does not report a server name; give the client an alias", location)
 		}
 		identity = &mcpcontract.Identity{Name: info.Name, Version: cmp.Or(info.Version, unversioned)}
 	}
 	contract := &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}
-	if session.InitializeResult().Capabilities.Tools != nil {
+	if initialized.Capabilities.Tools != nil {
 		for tool, err := range session.Tools(ctx, nil) {
 			if err != nil {
 				return nil, err
@@ -179,7 +180,7 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 			contract.Tools = append(contract.Tools, mcpcontract.Tool{Name: tool.Name, Input: input, Output: output})
 		}
 	}
-	if session.InitializeResult().Capabilities.Resources != nil {
+	if initialized.Capabilities.Resources != nil {
 		for resource, err := range session.Resources(ctx, nil) {
 			if err != nil {
 				return nil, err
@@ -194,6 +195,5 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 			contract.Resources = append(contract.Resources, mcpcontract.Resource{URI: resource.URI, Output: output})
 		}
 	}
-	metadata := &mcpcontract.Metadata{Identity: *identity, Schema: contract}
-	return NewDocument(ctx, metadata)
+	return NewDocument(ctx, &mcpcontract.Metadata{Identity: *identity, Schema: contract})
 }

@@ -35,10 +35,7 @@ func ordersMetadata() *mcpcontract.Metadata {
 // document supplies metadata as a source document: its bytes as marshaled, validated only when resolved.
 func document(t *testing.T, metadata *mcpcontract.Metadata) *Document {
 	t.Helper()
-	data, err := json.Marshal(metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := mustJSON(t, metadata)
 	return &Document{Metadata: metadata, Data: data, Digest: digest.FromBytes(data).String()}
 }
 

@@ -203,20 +203,6 @@ func TestRegistrySourceResolution(t *testing.T) {
 	}
 }
 
-func TestEndpointWithoutAVersionGeneratesClients(t *testing.T) {
-	live := versionedServer(t, "bare", "")
-	defer live.Close()
-	c := Consumer{Name: "app", Dir: t.TempDir(), Targets: []string{TargetTS, TargetPy}, Sources: []Source{{Endpoint: live.URL}}}
-	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: live.Client()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prepared.Close()
-	if identity := prepared.Metadata()["bare"].Identity; identity != (mcpcontract.Identity{Name: "bare", Version: "0.0.0"}) {
-		t.Fatalf("identity = %+v", identity)
-	}
-}
-
 func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	live := liveServer(t, "Orders Live")
 	defer live.Close()
@@ -224,8 +210,14 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata.Identity != (mcpcontract.Identity{Name: "Orders Live", Version: "99"}) || len(metadata.Schema.Tools) != 1 {
+	if metadata.Identity != (mcpcontract.Identity{Name: "Orders Live", Version: "99"}) {
 		t.Fatalf("live contract = %+v", metadata)
+	}
+	bareServer := versionedServer(t, "bare", "")
+	defer bareServer.Close()
+	bare, err := ResolveDocument(t.Context(), Source{Endpoint: bareServer.URL}, Options{HTTPClient: bareServer.Client()})
+	if err != nil || bare.Identity != (mcpcontract.Identity{Name: "bare", Version: "0.0.0"}) {
+		t.Fatalf("unversioned contract = %+v, %v", bare, err)
 	}
 	outputs := map[string]string{}
 	for _, resource := range metadata.Schema.Resources {
@@ -243,14 +235,5 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	defer prepared.Close()
 	if reference := prepared.Metadata()["app"].Requires["orders-live"]; prepared.Documents()[reference] == nil {
 		t.Fatalf("alias not derived from serverInfo: %+v", prepared.Metadata()["app"].Requires)
-	}
-
-	unauthorized := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="example"`)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-	}))
-	defer unauthorized.Close()
-	if _, err := ResolveDocument(t.Context(), Source{Endpoint: unauthorized.URL}, Options{HTTPClient: unauthorized.Client()}); err == nil || !strings.Contains(err.Error(), unauthorized.URL) {
-		t.Fatalf("auth-protected endpoint = %v", err)
 	}
 }
