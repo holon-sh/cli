@@ -32,7 +32,7 @@ type Options struct {
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
 	// runs the server in its own directory and stops it after 30 seconds.
 	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
-	// GoModule is the runtime module that generated Go clients import; it defaults to github.com/holon-sh/sdk/go.
+	// GoModule is the runtime module that generated Go clients import; it defaults to github.com/holon-sh/sdk-go.
 	GoModule string
 }
 
@@ -46,7 +46,7 @@ func validateEnv(env []string) error {
 }
 
 func (o Options) defaults() Options {
-	o.GoModule = cmp.Or(o.GoModule, "github.com/holon-sh/sdk/go")
+	o.GoModule = cmp.Or(o.GoModule, "github.com/holon-sh/sdk-go")
 	o.HTTPClient = cmp.Or(o.HTTPClient, &http.Client{Timeout: 30 * time.Second})
 	o.Stdout = cmp.Or(o.Stdout, io.Discard)
 	o.Stderr = cmp.Or(o.Stderr, io.Discard)

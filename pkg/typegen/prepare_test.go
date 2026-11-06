@@ -324,7 +324,7 @@ func TestGoConsumerClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	clients := read(t, root, "holon/clients.go")
-	if !strings.Contains(clients, `holon "github.com/holon-sh/sdk/go"`) || !strings.Contains(clients, " Lookup(") {
+	if !strings.Contains(clients, `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(clients, " Lookup(") {
 		t.Fatalf("Go client lacks the default runtime or dependency tool:\n%s", clients)
 	}
 }
