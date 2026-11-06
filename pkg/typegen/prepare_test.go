@@ -249,7 +249,7 @@ func TestCheckTypeChecksTheProjectAgainstItsGeneratedClients(t *testing.T) {
 	app := t.TempDir()
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
 	pkg := slotPackage(t, app, "holon-sh")
-	put(t, pkg, "protocol.d.ts", "export type AuthProvider = unknown; export type ClientCapabilities = unknown; export type CallOptions = unknown; export type CallMetadata = unknown; export type ToolResult = unknown; export type ToolClient<I, O, R> = unknown; export declare class ToolCallError {}\n")
+	put(t, pkg, "protocol.d.ts", "export type AuthProvider = unknown; export type ClientCapabilities = unknown; export type ElicitHandler = unknown; export type CallOptions = unknown; export type CallMetadata = unknown; export type ToolResult = unknown; export type ToolClient<I, O, R> = unknown; export declare class ToolCallError {}\n")
 	linkTypeScript(t, app)
 	metadata := ordersMetadata()
 	metadata.Schema.Tools = []mcpcontract.Tool{{
