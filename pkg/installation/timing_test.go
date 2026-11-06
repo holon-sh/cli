@@ -511,6 +511,98 @@ func TestRegistryExchangeClassification(t *testing.T) {
 	}
 }
 
+func TestTimingPollLag(t *testing.T) {
+	observedAt := time.Date(2030, 1, 1, 0, 0, 10, 500_000_000, time.UTC)
+	session := func(transition time.Time) protocol.SessionResponse {
+		return protocol.SessionResponse{Generation: 3, Conditions: []protocol.Condition{{
+			Type: protocol.ConditionReady, Status: "True", ObservedGeneration: 2, LastTransitionTime: protocol.Time(transition),
+		}}}
+	}
+	for _, tc := range []struct {
+		name       string
+		transition time.Time
+		want       *float64
+	}{
+		{name: "after the transition", transition: observedAt.Add(-2500 * time.Millisecond), want: new(2500.0)},
+		{name: "server clock ahead", transition: observedAt.Add(time.Second), want: new(-1000.0)},
+		{name: "no transition time"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fc := testingclock.NewFakeClock(observedAt.Add(-time.Second))
+			trace := newTimingTrace(fc, "dev", nil)
+			trace.awaitReady()
+			trace.observe(protocol.SessionResponse{}, false)
+			lastNotReady := fc.Now()
+			fc.SetTime(observedAt)
+			trace.observe(session(tc.transition), true)
+			fc.Step(time.Minute)
+			trace.observe(session(tc.transition), true)
+
+			ready := trace.Ready
+			if ready.Polls != 2 || !ready.ObservedAt.Equal(observedAt) || !ready.PreviousPollAt.Equal(lastNotReady) {
+				t.Fatalf("a later look replaced the first observation: %+v", ready)
+			}
+			if ready.Generation != 3 || ready.ObservedGeneration != 2 {
+				t.Fatalf("generations = %d, %d; a stale condition must stay visible", ready.Generation, ready.ObservedGeneration)
+			}
+			if (ready.PollLagMs == nil) != (tc.want == nil) || tc.want != nil && *ready.PollLagMs != *tc.want {
+				t.Fatalf("pollLagMs = %v, want %v", ready.PollLagMs, tc.want)
+			}
+		})
+	}
+}
+
+func TestTimingTraceDocumentShape(t *testing.T) {
+	fc := testingclock.NewFakeClock(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
+	trace := newTimingTrace(fc, "dev", []string{"chat"})
+	trace.setOrigin("https://holon.example")
+	trace.setSession("gentle-otter-482")
+	trace.addPlatforms([]string{"linux/arm64"})
+	trace.addApps([]protocol.App{{Name: "chat", Image: "registry.example/chat@sha256:ab"}})
+	ready := protocol.SessionResponse{Conditions: []protocol.Condition{{
+		Type: protocol.ConditionReady, Status: "True", LastTransitionTime: protocol.Time(fc.Now()),
+	}}}
+	trace.awaitReady()
+	trace.observe(protocol.SessionResponse{}, false)
+	trace.observe(ready, true)
+	trace.rolloutEnded("")
+	finish := trace.beginCycle(devChange{manifest: true})
+	trace.addApps([]protocol.App{{Name: "chat", Image: "registry.example/chat@sha256:cd"}})
+	trace.awaitReady()
+	finish(nil)
+	trace.observe(protocol.SessionResponse{}, false)
+	trace.observe(ready, true)
+	trace.rolloutEnded("")
+
+	var stderr bytes.Buffer
+	if err := trace.write(timingStderr, &stderr, nil); err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(stderr.Bytes(), &document); err != nil {
+		t.Fatal(err)
+	}
+	wantKeys := func(name string, value any, keys ...string) {
+		t.Helper()
+		object, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("%s = %v", name, value)
+		}
+		for _, key := range keys {
+			if _, ok := object[key]; !ok {
+				t.Errorf("%s has no %q: %v", name, key, object)
+			}
+		}
+	}
+	wantKeys("document", document, "version", "command", "args", "origin", "session", "apps", "platforms",
+		"start", "end", "durationMs", "readyAfterMs", "phases", "images", "blobs", "ready", "cycles")
+	wantKeys("image", document["images"].([]any)[0], "app", "image", "digest")
+	wantKeys("blobs", document["blobs"], "pushed", "mounted", "skipped", "manifests", "bytesPushed", "bytesSkipped", "manifestBytes")
+	wantKeys("ready", document["ready"], "generation", "observedGeneration", "lastTransitionTime", "observedAt", "previousPollAt", "polls", "pollLagMs")
+	cycle := document["cycles"].([]any)[0]
+	wantKeys("cycle", cycle, "index", "manifest", "start", "end", "durationMs", "outcome", "phases", "images", "blobs", "ready")
+}
+
 func TestTimingTraceMarshalsItsFieldsOnce(t *testing.T) {
 	fc := testingclock.NewFakeClock(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
 	trace := newTimingTrace(fc, "dev", []string{"chat"})
