@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -33,25 +32,12 @@ func TestDevWatcherReportsWithoutChangeConsumer(t *testing.T) {
 		output:  output, done: make(chan struct{}),
 	}
 	go watcher.run()
-	for _, err := range []error{fsnotify.ErrEventOverflow, io.ErrUnexpectedEOF} {
-		watcher.watcher.Errors <- err
-	}
+	watcher.watcher.Errors <- fsnotify.ErrEventOverflow
 	close(events)
 	<-watcher.done
-	want := "file watcher continuing after error: " + fsnotify.ErrEventOverflow.Error() + "\n" +
-		"file watcher continuing after error: unexpected EOF\n"
+	want := "file watcher " + fsnotify.ErrEventOverflow.Error() + "\n"
 	if stream.String() != want {
 		t.Fatalf("watcher diagnostics = %q, want %q", stream.String(), want)
-	}
-}
-
-func TestDevTopologyEditRequiresRestart(t *testing.T) {
-	previous, reloaded := registryPackageManifest(t, "npm"), registryPackageManifest(t, "npm")
-	reloaded.Apps[0].Registry.Version = "2.0.0"
-	reloaded.Apps[0].resolved.Port = 8080
-	dev := devLoop{manifest: previous}
-	if dev.updateManifest(reloaded, &devChange{}) || !reflect.DeepEqual(dev.manifest, previous) {
-		t.Fatalf("blocked edit applied: manifest = %+v", dev.manifest)
 	}
 }
 

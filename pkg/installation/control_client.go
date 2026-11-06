@@ -34,7 +34,7 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 	client := *c.client
 	client.Transport = &controlTransport{base: cmp.Or(client.Transport, http.DefaultTransport), token: token, installation: c.installationUID}
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "cli"}, nil).Connect(ctx,
-		&mcp.StreamableClientTransport{Endpoint: origin + protocol.MCPPath, HTTPClient: &client},
+		&mcp.StreamableClientTransport{Endpoint: origin + protocol.MCPPath, HTTPClient: &client, DisableStandaloneSSE: true},
 		&mcp.ClientSessionOptions{ProtocolVersion: bridgeproxy.CurrentVersion})
 	if err != nil {
 		return err
