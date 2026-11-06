@@ -63,27 +63,9 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 			return "", err
 		}
 	}
-	var start []string
-	if slices.Contains([]string{".py", ".ts", ".js"}, filepath.Ext(entry)) {
-		hostDir := filepath.Join(snapshot, ".holon")
-		if err := os.Mkdir(hostDir, 0o755); err != nil {
-			return "", fmt.Errorf("prepare SDK launcher (.holon is reserved): %w", err)
-		}
-		adapter, launcher, contents := "adapter.mjs", "main.mjs", javascript.Bundle
-		bootstrap := "import { start } from './adapter.mjs';\nawait start(() => import('../" + entry + "'));\n"
-		start = []string{"node", "./.holon/main.mjs"}
-		if filepath.Ext(entry) == ".py" {
-			adapter, launcher, contents = "holon_host.py", "main.py", python.Adapter
-			module := strings.TrimSuffix(strings.ReplaceAll(entry, "/", "."), ".py")
-			bootstrap = fmt.Sprintf("import asyncio\nfrom holon_host import start\nasyncio.run(start(%q))\n", module)
-			start = []string{"python", "./.holon/main.py"}
-		}
-		if err := mcpcontract.WriteStable(filepath.Join(hostDir, adapter), []byte(contents), 0o644); err != nil {
-			return "", err
-		}
-		if err := mcpcontract.WriteStable(filepath.Join(hostDir, launcher), []byte(bootstrap), 0o644); err != nil {
-			return "", err
-		}
+	start, err := stageLauncher(snapshot, entry)
+	if err != nil {
+		return "", err
 	}
 
 	architectures := options.architectures
@@ -114,6 +96,38 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	}
 	options.resolutions.Store(app.Name, result.Resolution)
 	return result.Image, nil
+}
+
+func hostedEntry(entry string) bool {
+	return slices.Contains([]string{".py", ".ts", ".js"}, filepath.Ext(entry))
+}
+
+// stageLauncher writes the SDK launcher for a hosted server entry into snapshot and returns its start
+// command, or nothing for an entry that Holon does not host.
+func stageLauncher(snapshot, entry string) ([]string, error) {
+	if !hostedEntry(entry) {
+		return nil, nil
+	}
+	hostDir := filepath.Join(snapshot, ".holon")
+	if err := os.Mkdir(hostDir, 0o755); err != nil {
+		return nil, fmt.Errorf("prepare SDK launcher (.holon is reserved): %w", err)
+	}
+	adapter, launcher, contents := "adapter.mjs", "main.mjs", javascript.Bundle
+	bootstrap := "import { start } from './adapter.mjs';\nawait start(() => import('../" + entry + "'));\n"
+	start := []string{"node", "./.holon/main.mjs"}
+	if filepath.Ext(entry) == ".py" {
+		adapter, launcher, contents = "holon_host.py", "main.py", python.Adapter
+		module := strings.TrimSuffix(strings.ReplaceAll(entry, "/", "."), ".py")
+		bootstrap = fmt.Sprintf("import asyncio\nfrom holon_host import start\nasyncio.run(start(%q))\n", module)
+		start = []string{"python", "./.holon/main.py"}
+	}
+	if err := mcpcontract.WriteStable(filepath.Join(hostDir, adapter), []byte(contents), 0o644); err != nil {
+		return nil, err
+	}
+	if err := mcpcontract.WriteStable(filepath.Join(hostDir, launcher), []byte(bootstrap), 0o644); err != nil {
+		return nil, err
+	}
+	return start, nil
 }
 
 func sourceLabels(app manifestApp) map[string]string {

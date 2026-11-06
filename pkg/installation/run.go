@@ -31,6 +31,9 @@ const (
 	idlePoll         = 5 * time.Second
 	renewalInterval  = time.Minute
 	maxCommandOutput = 64 << 10
+
+	// sessionWaitSeconds is how long a get_session long poll may wait on the server.
+	sessionWaitSeconds = 30
 )
 
 type commandConfig struct {
@@ -185,6 +188,11 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
 		return err
 	}
+	if len(session.Endpoints) != 0 {
+		if err := printEndpointsAs(stdout, "Starting", session); err != nil {
+			return err
+		}
+	}
 	if request.TTLSeconds != nil {
 		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
 		if err != nil {
@@ -217,6 +225,32 @@ func ControlPlane(name string) protocol.Plane {
 func (m *Client) Session(ctx context.Context, name string) (protocol.SessionResponse, error) {
 	var session protocol.SessionResponse
 	err := m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, protocol.SessionRequest{Session: name}, &session)
+	return session, err
+}
+
+type sessionWaitRequest struct {
+	protocol.SessionRequest
+
+	WaitSeconds int    `json:"waitSeconds"`
+	Revision    string `json:"revision,omitempty"`
+}
+
+// awaitSession reads a session that is still converging, letting the server hold the answer until it
+// moves past revision, the last one the caller saw, so that a change between two reads is not missed.
+// An installation that refuses the wait, which is any failure that a plain read does not
+// share, is read plainly from then on.
+func (m *Client) awaitSession(ctx context.Context, name, revision string) (protocol.SessionResponse, error) {
+	if m.plainSessionReads.Load() {
+		return m.Session(ctx, name)
+	}
+	var session protocol.SessionResponse
+	request := sessionWaitRequest{SessionRequest: protocol.SessionRequest{Session: name}, WaitSeconds: sessionWaitSeconds, Revision: revision}
+	err := m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, request, &session)
+	if err == nil {
+		return session, nil
+	}
+	session, err = m.Session(ctx, name)
+	m.plainSessionReads.Store(err == nil)
 	return session, err
 }
 
@@ -297,9 +331,9 @@ func waitSessionReady(
 ) (protocol.SessionResponse, error) {
 	finish := output.measure(name, "rollout")
 	defer finish()
-	var result protocol.SessionResponse
+	result := accepted
 	err := wait.PollUntilContextCancel(ctx, workflowPoll, true, func(ctx context.Context) (bool, error) {
-		session, err := manager.Session(ctx, name)
+		session, err := manager.awaitSession(ctx, name, result.Revision)
 		if err != nil {
 			return false, err
 		}
@@ -348,7 +382,11 @@ func reportSessionProgress(
 }
 
 func printEndpoints(stdout io.Writer, session protocol.SessionResponse) error {
-	output := []byte("\nReady\n")
+	return printEndpointsAs(stdout, "Ready", session)
+}
+
+func printEndpointsAs(stdout io.Writer, heading string, session protocol.SessionResponse) error {
+	output := []byte("\n" + heading + "\n")
 	mode := protocol.ModeDevelopment
 	if session.Name == protocol.ProductionName {
 		mode = protocol.ModeProduction

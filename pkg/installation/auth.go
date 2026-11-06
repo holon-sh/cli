@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -100,6 +101,8 @@ type Client struct {
 	statePath string
 	client    *apiClient
 	info      protocol.Info
+
+	plainSessionReads atomic.Bool
 }
 
 func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {

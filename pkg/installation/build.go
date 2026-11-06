@@ -159,13 +159,7 @@ func pathInsideContext(path, contextPath string) bool {
 func buildManifestImages(
 	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions,
 ) ([]protocol.App, error) {
-	upload := &imageUpload{load: func(ctx context.Context) (protocol.UploadGrant, error) {
-		grant, err := imageDestination(ctx, manager, name, manifest)
-		if err == nil {
-			err = validateUploadGrant(grant, manifest)
-		}
-		return grant, err
-	}}
+	upload := newImageUpload(manager, name, manifest)
 	options.importPackage = func(ctx context.Context, app manifestApp) (protocol.ResolvedAppBuild, error) {
 		return importRegistryBuild(ctx, manager, ControlPlane(name), app, options.output)
 	}
@@ -175,6 +169,16 @@ func buildManifestImages(
 		options.catalogTag = appartifact.ReleasePrefix
 	}
 	return buildAndPush(ctx, manifest, upload, options)
+}
+
+func newImageUpload(manager *Client, name string, manifest manifestSpec) *imageUpload {
+	return &imageUpload{load: func(ctx context.Context) (protocol.UploadGrant, error) {
+		grant, err := imageDestination(ctx, manager, name, manifest)
+		if err == nil {
+			err = validateUploadGrant(grant, manifest)
+		}
+		return grant, err
+	}}
 }
 
 type imageUpload struct {

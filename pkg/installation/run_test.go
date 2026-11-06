@@ -297,6 +297,9 @@ func TestRunDevLifecycle(t *testing.T) {
 			}
 			installationtest.WriteJSON(w, session())
 		})
+	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
 	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
 		if query := r.URL.Query(); query.Get("event") != "holon.mcp.call" || query.Get("follow") != "true" {
 			t.Errorf("request stream query = %s", r.URL.RawQuery)
@@ -333,7 +336,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			})
 		}
 		await(stderr, "Configure API_KEY to start the session.", "request stream stopped")
-		if strings.Contains(stdout.String(), "/mcp/alpha") {
+		if !strings.Contains(stdout.String(), "Starting") || strings.Contains(stdout.String(), "Ready") {
 			t.Fatalf("startup: stdout=%q", stdout.String())
 		}
 		sourceFiles(t, root, map[string]string{"alpha/logic.ts": "broken"})
@@ -402,7 +405,7 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 			{Type: protocol.ConditionReady, Status: ready, Reason: protocol.ReasonProgressDeadline, Message: "rollout failed"},
 			{Type: protocol.ConditionAvailable, Status: "True"},
 		}}
-		if err := dev.poll(t.Context()); err != nil {
+		if err := dev.poll(manager.Session(t.Context(), dev.name)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -429,7 +432,7 @@ func TestDevStopsWhenReauthenticationIsRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 	dev := devLoop{manager: manager, name: "gentle-otter-482", options: buildOptions{types: &typeWorkspace{prepared: new(typegen.Prepared)}}}
-	if err := dev.poll(t.Context()); !errors.Is(err, errReauthenticationRequired) {
+	if err := dev.poll(manager.Session(t.Context(), dev.name)); !errors.Is(err, errReauthenticationRequired) {
 		t.Fatalf("poll = %v, want %v", err, errReauthenticationRequired)
 	}
 }

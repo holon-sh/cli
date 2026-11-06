@@ -25,8 +25,9 @@ import (
 const devDebounce = 250 * time.Millisecond
 
 type devChange struct {
-	contexts sets.Set[string]
-	manifest bool
+	contexts    sets.Set[string]
+	manifest    bool
+	imageInputs bool
 }
 
 type devWatcher struct {
@@ -133,6 +134,8 @@ func (w *devWatcher) run() {
 				changed, err := w.observe(root, path, event.Op)
 				if changed {
 					pending.contexts.Insert(root)
+					relative, _ := filepath.Rel(root, path)
+					pending.imageInputs = pending.imageInputs || imageBuildInput(relative)
 				}
 				w.output.problem("file watcher", err)
 			}
@@ -203,6 +206,8 @@ type devLoop struct {
 	options                buildOptions
 	session                protocol.SessionResponse
 	changedImages, pending sets.Set[string]
+	reloaded               map[string]string // the overlay digest each app last restarted from
+	nextRead               time.Time
 }
 
 func (d *devLoop) renew(ctx context.Context) {
@@ -241,7 +246,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		background.Wait()
 	}()
 	d.options.architectures = d.session.BuildArchitectures
-	d.changedImages, d.pending = sets.New[string](), sets.New[string]()
+	d.changedImages, d.pending, d.reloaded = sets.New[string](), sets.New[string](), map[string]string{}
 	for _, app := range d.session.Apps {
 		d.pending.Insert(app.Name)
 	}
@@ -268,14 +273,18 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		if lifecyclePending(d.session) {
 			changes, interval = nil, workflowPoll
 		}
+		read, stopRead := d.readSession(ctx, interval)
 		select {
 		case <-ctx.Done():
+			stopRead()
 			return nil
-		case <-d.clock.After(interval):
-			if err := d.poll(ctx); err != nil {
+		case result := <-read:
+			stopRead()
+			if err := d.poll(result.session, result.err); err != nil {
 				return err
 			}
 		case change := <-changes:
+			stopRead()
 			if err := d.rebuild(ctx, change); err != nil && ctx.Err() == nil {
 				d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
 			}
@@ -296,12 +305,42 @@ func (d *devLoop) settle(announce func() error) error {
 	return announce()
 }
 
-func (d *devLoop) poll(ctx context.Context) error {
+type sessionRead struct {
+	session protocol.SessionResponse
+	err     error
+}
+
+// readSession reads the session in the background, so that a save can interrupt a long poll. A session
+// that is converging is long-polled, no more often than workflowPoll in case the answer comes at once;
+// a healthy one has nothing to wait for and is read every idlePoll.
+func (d *devLoop) readSession(ctx context.Context, interval time.Duration) (<-chan sessionRead, context.CancelFunc) {
+	ctx, stop := context.WithCancel(ctx)
+	read, delay := d.manager.Session, interval
+	if interval == workflowPoll {
+		revision := d.session.Revision
+		read = func(ctx context.Context, name string) (protocol.SessionResponse, error) {
+			return d.manager.awaitSession(ctx, name, revision)
+		}
+		delay = max(0, d.nextRead.Sub(d.clock.Now()))
+	}
+	d.nextRead = d.clock.Now().Add(delay + workflowPoll)
+	result := make(chan sessionRead, 1)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-d.clock.After(delay):
+			session, err := read(ctx, d.name)
+			result <- sessionRead{session, err}
+		}
+	}()
+	return result, stop
+}
+
+func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
 	d.options.output.problem("editor imports", d.options.types.prepared.Write())
 	if expiry, err := time.Parse(time.RFC3339Nano, d.session.ExpiresAt); err == nil && !expiry.After(d.clock.Now()) {
 		return errors.New("development session lease expired")
 	}
-	current, err := d.manager.Session(ctx, d.name)
 	if slices.Contains([]int{http.StatusNotFound, http.StatusGone}, HTTPStatus(err)) {
 		return errors.New("development session is no longer available")
 	}
@@ -340,6 +379,12 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 }
 
 func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
+	if d.reloadable(change) {
+		change.contexts = d.reload(ctx, change)
+		if change.contexts.Len() == 0 {
+			return nil
+		}
+	}
 	if change.manifest {
 		reloaded, err := resolveManifestFile(d.manifest.file)
 		if err == nil {
@@ -407,6 +452,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 	for _, app := range apps {
 		d.pending.Insert(app.Name)
 		d.changedImages.Delete(app.Name)
+		delete(d.reloaded, app.Name)
 	}
 	d.options.types.accept(dirty)
 	d.session = updated

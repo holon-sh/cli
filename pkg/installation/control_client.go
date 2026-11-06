@@ -26,8 +26,11 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 	}
 	timeout := c.timeout
 	switch tool {
-	case protocol.ToolCreateSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession:
+	case protocol.ToolCreateSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession, toolReloadApp:
 		timeout = max(timeout, 5*time.Minute)
+	}
+	if _, waiting := input.(sessionWaitRequest); waiting {
+		timeout = max(timeout, (sessionWaitSeconds+15)*time.Second)
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
