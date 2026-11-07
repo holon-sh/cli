@@ -60,6 +60,7 @@ const kitchenSink = `{
         "noType": {"properties": {"p": {"type": "boolean"}}, "required": ["p", 7]},
         "numericType": {"type": 7, "properties": {"p": {"type": "boolean"}}},
         "cycle": {"$ref": "#/$defs/Node"},
+        "nodes": {"$ref": "#/$defs/Nodes"},
         "pointerEscape": {"$ref": "#/$defs/a~1b~0c"},
         "arrayRef": {"$ref": "#/$defs/list/prefixItems/0"},
         "rootRef": {"$ref": "#"},
@@ -76,6 +77,7 @@ const kitchenSink = `{
       },
       "$defs": {
         "Node": {"type": "object", "properties": {"next": {"$ref": "#/$defs/Node"}, "value": {"type": "integer"}}, "required": ["value"], "additionalProperties": false},
+        "Nodes": {"type": "array", "items": {"$ref": "#/$defs/Node"}},
         "a/b~c": {"type": "integer"},
         "list": {"type": "array", "prefixItems": [{"type": "string"}]},
         "for": {"type": "string"},
@@ -160,6 +162,7 @@ func generationCases(t *testing.T) []generationCase {
 		{"duplicate-resource", `"contracts": {"x": {"tools": [], "resources": [{"uri":"r://a", "outputSchema":{}}, {"uri":"r://a", "outputSchema":{}}]}}`},
 		{"external-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "https://example.com"}}}}]}}`},
 		{"unresolved-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/nope"}}}}]}}`},
+		{"external-ref-in-cycle", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/$defs/A"}}, "$defs": {"A": {"anyOf": [{"$ref": "/$defs/B"}]}, "B": {"$ref": "#/$defs/A"}}}}]}}`},
 		{"schema-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": 5}}}]}}`},
 	} {
 		cases = append(cases, generationCase{name: "invalid-" + test.name, input: `{"target": "node", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime", ` + test.patch + `}`, wantError: true})
