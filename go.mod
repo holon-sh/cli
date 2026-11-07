@@ -15,7 +15,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
 	github.com/holon-sh/mcp-bridge v0.0.4
-	github.com/holon-sh/protocol v0.0.1-dev.10.0.20261107201049-cfe9a018239a
+	github.com/holon-sh/protocol v0.0.1-dev.10.0.20261107201219-617df8bcb614
 	github.com/holon-sh/runtime v0.0.1-dev.2
 	github.com/klauspost/compress v1.19.2
 	github.com/moby/buildkit v0.33.1
