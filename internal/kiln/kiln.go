@@ -15,16 +15,14 @@ import (
 )
 
 type Request struct {
-	ConfigFilePath string          `json:"configFilePath,omitempty"`
-	Source         string          `json:"source"`
-	Platforms      []string        `json:"platforms"`
-	Start          []string        `json:"start,omitempty"`
-	Resolution     json.RawMessage `json:"resolution,omitempty"`
+	ConfigFilePath string   `json:"configFilePath,omitempty"`
+	Source         string   `json:"source"`
+	Platforms      []string `json:"platforms"`
+	Start          []string `json:"start,omitempty"`
 }
 
 type Result struct {
-	Dockerfile string          `json:"dockerfile"`
-	Resolution json.RawMessage `json:"resolution"`
+	Dockerfile string `json:"dockerfile"`
 }
 
 func Plan(ctx context.Context, request Request) (Result, error) {

@@ -507,7 +507,7 @@ func TestASaveInterruptsALongPoll(t *testing.T) {
 	build := buildImage(t, "built")
 	var builds sync.Mutex
 	count := 0
-	h.start(t, func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+	h.start(t, func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
 		builds.Lock()
 		count++
 		builds.Unlock()

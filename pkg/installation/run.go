@@ -16,7 +16,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -160,8 +159,8 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	options := buildOptions{
-		types:       new(typeWorkspace),
-		resolutions: new(sync.Map), builder: config.builder, HTTPClient: config.RegistryHTTPClient,
+		types:   new(typeWorkspace),
+		builder: config.builder, HTTPClient: config.RegistryHTTPClient,
 		Stderr: stderr, Env: config.Env, architectures: manager.info.BuildArchitectures, output: config.output,
 		builders: new(builderConnections), check: config.check,
 	}

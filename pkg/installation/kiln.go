@@ -3,7 +3,6 @@ package installation
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -25,7 +23,7 @@ import (
 	"github.com/holon-sh/runtime/host/python"
 )
 
-type buildApplication func(context.Context, buildRequest, io.Writer) (buildResult, error)
+type buildApplication func(context.Context, buildRequest, io.Writer) (string, error)
 
 type buildRequest struct {
 	kiln.Request
@@ -36,11 +34,6 @@ type buildRequest struct {
 	httpClient *http.Client
 	builders   *builderConnections
 	output     *progressOutput
-}
-
-type buildResult struct {
-	Image      string
-	Resolution json.RawMessage
 }
 
 func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, error) {
@@ -83,19 +76,15 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	for _, arch := range architectures {
 		request.Platforms = append(request.Platforms, "linux/"+arch)
 	}
-	options.resolutions = cmp.Or(options.resolutions, new(sync.Map))
-	previous, _ := options.resolutions.Load(app.Name)
-	request.Resolution, _ = previous.(json.RawMessage)
 	build := options.builder
 	if build == nil {
 		build = publishSource
 	}
-	result, err := build(ctx, request, options.Stderr)
+	image, err := build(ctx, request, options.Stderr)
 	if err != nil {
 		return "", fmt.Errorf("build %s: %w", app.Name, err)
 	}
-	options.resolutions.Store(app.Name, result.Resolution)
-	return result.Image, nil
+	return image, nil
 }
 
 func hostedEntry(entry string) bool {

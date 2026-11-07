@@ -82,13 +82,13 @@ func TestRunPreparationFailures(t *testing.T) {
 			h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, protocol.SessionResponse{})
 			})
-			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (buildResult, error) {
+			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (string, error) {
 				if tc.edit != "" {
 					err := os.WriteFile(filepath.Join(root, tc.edit), []byte("edited"), 0o644)
-					return buildResult{Image: "superseded"}, err
+					return "superseded", err
 				}
 				_, _ = io.WriteString(progress, tc.diagnostics+"\n")
-				return buildResult{}, errors.New("fixture build failed")
+				return "", errors.New("fixture build failed")
 			})
 			var diagnostics bytes.Buffer
 			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &diagnostics, h.run)
@@ -156,8 +156,8 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 	_, registry := buildRegistry(t)
 	registryHost := strings.TrimPrefix(registry.URL, "https://")
 	if build == nil {
-		build = func(context.Context, buildRequest, io.Writer) (buildResult, error) {
-			return buildResult{}, errors.New("fixture build failed")
+		build = func(context.Context, buildRequest, io.Writer) (string, error) {
+			return "", errors.New("fixture build failed")
 		}
 	}
 	h.run = commandConfig{
@@ -202,7 +202,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		writeDescriptor(t, filepath.Join(root, name, "server.json"), descriptorDocument(name))
 	}
 	firstBuild, nextBuild := buildImage(t, "first"), buildImage(t, "next")
-	build := func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+	build := func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
 		if !slices.Equal(request.Platforms, []string{"linux/arm64"}) {
 			t.Errorf("session platforms = %v", request.Platforms)
 		}
@@ -210,10 +210,10 @@ func TestRunDevLifecycle(t *testing.T) {
 		case "":
 			return firstBuild(ctx, request, progress)
 		case "broken":
-			return buildResult{}, errors.New("rebuild failed")
+			return "", errors.New("rebuild failed")
 		case "superseded":
 			if err := os.WriteFile(filepath.Join(root, "alpha", "logic.ts"), []byte("fixed"), 0o644); err != nil {
-				return buildResult{}, err
+				return "", err
 			}
 		}
 		return nextBuild(ctx, request, progress)
@@ -550,7 +550,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildClock := testingclock.NewFakeClock(time.Unix(100, 0))
-	build := func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+	build := func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
 		if !slices.Equal(request.Platforms, []string{"linux/amd64"}) {
 			t.Errorf("production platforms = %v", request.Platforms)
 		}

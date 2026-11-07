@@ -2,9 +2,7 @@ package installation
 
 import (
 	"bytes"
-	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,7 +14,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/holon-sh/cli/pkg/typegen"
 
@@ -42,7 +39,7 @@ func (o buildOptions) extractTypes(ctx context.Context, language, tooling string
 	}
 	logs := o.output.logs(o.Stderr)
 	command := slices.Concat([]string{runner.program, "/holon-tooling/" + language + "/" + runner.runner, args[0], "/app"}, args[2:])
-	if err := extractInImage(ctx, args[1], tooling, command, stdout, env, logs, cmp.Or(o.resolutions, new(sync.Map))); err != nil {
+	if err := extractInImage(ctx, args[1], tooling, command, stdout, env, logs); err != nil {
 		if !errors.As(err, new(*typegen.RunnerError)) {
 			logs.failed("MCP types")
 		}
@@ -73,7 +70,7 @@ func mentionsMCP(root string) bool {
 	return found
 }
 
-func extractInImage(ctx context.Context, source, tooling string, command []string, stdout io.Writer, env []string, logs io.Writer, resolutions *sync.Map) error {
+func extractInImage(ctx context.Context, source, tooling string, command []string, stdout io.Writer, env []string, logs io.Writer) error {
 	config, err := railpackConfig(filepath.Join(source, "railpack.json"))
 	if err != nil {
 		return err
@@ -85,19 +82,12 @@ func extractInImage(ctx context.Context, source, tooling string, command []strin
 	if err := writeTypeJSON(filepath.Join(source, ".holon-types", "railpack.json"), config); err != nil {
 		return err
 	}
-	// holon dev extracts on every save, and an unresolved plan queries the base image's registry, whose
-	// anonymous rate limit an hour of saving could exhaust. Snapshot directories are named after their apps.
-	key := "extract/" + filepath.Base(source)
-	previous, _ := resolutions.Load(key)
-	resolution, _ := previous.(json.RawMessage)
 	plan, err := kiln.Plan(ctx, kiln.Request{
 		Source: source, ConfigFilePath: ".holon-types/railpack.json", Platforms: []string{"linux/" + runtime.GOARCH},
-		Resolution: resolution,
 	})
 	if err != nil {
 		return err
 	}
-	resolutions.Store(key, plan.Resolution)
 	stages := finalStage.FindAllStringSubmatch(plan.Dockerfile, -1)
 	words := make([]string, len(command))
 	for i, word := range command {

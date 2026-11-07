@@ -27,7 +27,6 @@ type buildOptions struct {
 	catalogTag    string
 	types         *typeWorkspace
 	metadataGrant protocol.UploadGrant
-	resolutions   *sync.Map
 	architectures []string
 	builder       buildApplication
 	builders      *builderConnections
