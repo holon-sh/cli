@@ -48,7 +48,7 @@ type OrdersGetOrder2Input = struct {
 
 type OrdersGetOrder2Output = json.RawMessage
 
-type OrdersKitchenSinkInput = struct {
+type OrdersKitchenSinkInputValue struct {
 	X1starts *string "json:\"1starts,omitempty\""
 	DashKey *string "json:\"Dash-Key,omitempty\""
 	All json.RawMessage "json:\"all,omitempty\""
@@ -60,10 +60,7 @@ type OrdersKitchenSinkInput = struct {
 	ConstNum *json.Number "json:\"constNum,omitempty\""
 	ConstObj json.RawMessage "json:\"constObj,omitempty\""
 	ConstString *string "json:\"constString,omitempty\""
-	Cycle *struct {
-	Next json.RawMessage "json:\"next,omitempty\""
-	Value json.Number "json:\"value\""
-} "json:\"cycle,omitempty\""
+	Cycle *OrdersKitchenSinkInputNode "json:\"cycle,omitempty\""
 	DashKey2 *string "json:\"dash-key,omitempty\""
 	EmptyAll json.RawMessage "json:\"emptyAll,omitempty\""
 	EmptyAny json.RawMessage "json:\"emptyAny,omitempty\""
@@ -78,6 +75,7 @@ type OrdersKitchenSinkInput = struct {
 	NoType struct {
 	P bool "json:\"p\""
 } "json:\"noType\""
+	Nodes *[]OrdersKitchenSinkInputNode "json:\"nodes,omitempty\""
 	NumericType *struct {
 	P *bool "json:\"p,omitempty\""
 } "json:\"numericType,omitempty\""
@@ -87,68 +85,25 @@ type OrdersKitchenSinkInput = struct {
 	OpenTuple json.RawMessage "json:\"openTuple,omitempty\""
 	PlainArray *[]json.RawMessage "json:\"plainArray,omitempty\""
 	PointerEscape *json.Number "json:\"pointerEscape,omitempty\""
-	RootRef *struct {
-	X1starts *string "json:\"1starts,omitempty\""
-	DashKey *string "json:\"Dash-Key,omitempty\""
-	All json.RawMessage "json:\"all,omitempty\""
-	AllConflict json.RawMessage "json:\"allConflict,omitempty\""
-	AllNonObject json.RawMessage "json:\"allNonObject,omitempty\""
-	Annotated *string "json:\"annotated,omitempty\""
-	ArrayRef *string "json:\"arrayRef,omitempty\""
-	ClosedEmpty *map[string]json.RawMessage "json:\"closedEmpty,omitempty\""
-	ConstNum *json.Number "json:\"constNum,omitempty\""
-	ConstObj json.RawMessage "json:\"constObj,omitempty\""
-	ConstString *string "json:\"constString,omitempty\""
-	Cycle *struct {
-	Next json.RawMessage "json:\"next,omitempty\""
-	Value json.Number "json:\"value\""
-} "json:\"cycle,omitempty\""
-	DashKey2 *string "json:\"dash-key,omitempty\""
-	EmptyAll json.RawMessage "json:\"emptyAll,omitempty\""
-	EmptyAny json.RawMessage "json:\"emptyAny,omitempty\""
-	FalseSchema json.RawMessage "json:\"falseSchema,omitempty\""
-	ImplicitTuple json.RawMessage "json:\"implicitTuple,omitempty\""
-	Literals json.RawMessage "json:\"literals\""
-	MapOf *map[string]string "json:\"mapOf,omitempty\""
-	Multi json.RawMessage "json:\"multi,omitempty\""
-	Nested *[][]struct {
-	Deep json.RawMessage "json:\"deep,omitempty\""
-} "json:\"nested,omitempty\""
-	NoType struct {
-	P bool "json:\"p\""
-} "json:\"noType\""
-	NumericType *struct {
-	P *bool "json:\"p,omitempty\""
-} "json:\"numericType,omitempty\""
-	OddKeyWithSpaces *string "json:\"odd key with spaces,omitempty\""
-	OneOf json.RawMessage "json:\"oneOf,omitempty\""
-	OpenObj *map[string]json.RawMessage "json:\"openObj,omitempty\""
-	OpenTuple json.RawMessage "json:\"openTuple,omitempty\""
-	PlainArray *[]json.RawMessage "json:\"plainArray,omitempty\""
-	PointerEscape *json.Number "json:\"pointerEscape,omitempty\""
-	RootRef json.RawMessage "json:\"rootRef,omitempty\""
-	TrueObj *map[string]json.RawMessage "json:\"trueObj,omitempty\""
-	TrueSchema json.RawMessage "json:\"trueSchema,omitempty\""
-	Tuple json.RawMessage "json:\"tuple\""
-	UnknownKeyword json.RawMessage "json:\"unknownKeyword,omitempty\""
-} "json:\"rootRef,omitempty\""
+	RootRef *OrdersKitchenSinkInputValue "json:\"rootRef,omitempty\""
 	TrueObj *map[string]json.RawMessage "json:\"trueObj,omitempty\""
 	TrueSchema json.RawMessage "json:\"trueSchema,omitempty\""
 	Tuple json.RawMessage "json:\"tuple\""
 	UnknownKeyword json.RawMessage "json:\"unknownKeyword,omitempty\""
 }
+
+type OrdersKitchenSinkInputNode struct {
+	Next *OrdersKitchenSinkInputNode "json:\"next,omitempty\""
+	Value json.Number "json:\"value\""
+}
+
+type OrdersKitchenSinkInput = OrdersKitchenSinkInputValue
 
 type OrdersKitchenSinkInputX9lives = string
 
 type OrdersKitchenSinkInputLegacy = json.Number
 
-type OrdersKitchenSinkInputNode = struct {
-	Next *struct {
-	Next json.RawMessage "json:\"next,omitempty\""
-	Value json.Number "json:\"value\""
-} "json:\"next,omitempty\""
-	Value json.Number "json:\"value\""
-}
+type OrdersKitchenSinkInputNodes = []OrdersKitchenSinkInputNode
 
 type OrdersKitchenSinkInputPrivate = bool
 

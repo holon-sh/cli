@@ -42,10 +42,39 @@ func pythonOverloaded(lines []string) []string {
 type pythonEmitter struct {
 	shapes []string
 	names  map[string]bool
+	// Python evaluates TypedDict fields and alias values on import, so while a shape's recursive
+	// types are declared their names may not exist yet. Every other type is rendered after them.
+	declaring bool
+	merging   bool // Rendering an intersection whose recursive members are inlined.
+}
+
+// pythonTypedDict reports whether an object renders as a TypedDict rather than a dict.
+func pythonTypedDict(value typ) bool {
+	return value.kind == kindObject && value.extra.kind != extraOpen && (len(value.fields) > 0 || value.extra.kind != extraImplicit)
+}
+
+// declare writes a shape's recursive types.
+func (e *pythonEmitter) declare(s shape, scope string) {
+	e.declaring = true
+	defer func() { e.declaring = false }()
+	for _, ref := range s.nameRecursive(e.names, scope) {
+		if pythonTypedDict(ref.value) {
+			delete(e.names, ref.name) // Rendering the TypedDict claims its name back.
+			e.render(ref.value, ref.name)
+		} else {
+			rendered := e.render(ref.value, ref.name)
+			e.shapes = append(e.shapes, fmt.Sprintf("%s: _typing.TypeAlias = %s", ref.name, rendered))
+		}
+	}
 }
 
 func (e *pythonEmitter) render(value typ, name string) string {
 	switch value.kind {
+	case kindRecursive:
+		if e.declaring {
+			return quoted(value.ref.name)
+		}
+		return value.ref.name
 	case kindNever:
 		return "_typing.Never"
 	case kindString:
@@ -88,10 +117,23 @@ func (e *pythonEmitter) render(value typ, name string) string {
 		for i, item := range value.items {
 			rendered[i] = e.render(item, name)
 		}
+		// A quoted name does not support | at runtime.
+		if e.declaring && slices.ContainsFunc(value.items, func(item typ) bool { return item.kind == kindRecursive }) {
+			return "_typing.Union[" + strings.Join(rendered, ", ") + "]"
+		}
 		return strings.Join(rendered, " | ")
 	case kindIntersection:
+		// Only the outermost intersection inlines its recursive members, so that each renders once.
+		inline := !e.merging
+		if inline {
+			e.merging = true
+			defer func() { e.merging = false }()
+		}
 		combined := map[string]field{}
 		for _, item := range value.items {
+			if item.kind == kindRecursive && inline {
+				item = item.ref.value
+			}
 			if item.kind != kindObject {
 				return "_builtins.object"
 			}
@@ -105,7 +147,7 @@ func (e *pythonEmitter) render(value typ, name string) string {
 		}
 		return e.render(typ{kind: kindObject, fields: combined, extra: extra{kind: extraImplicit}}, name)
 	case kindObject:
-		if (len(value.fields) == 0 && value.extra.kind == extraImplicit) || value.extra.kind == extraOpen {
+		if !pythonTypedDict(value) {
 			rendered := "_builtins.object"
 			if len(value.fields) == 0 && value.extra.kind == extraOpen {
 				rendered = e.render(*value.extra.value, name+"Value")
@@ -131,6 +173,9 @@ func (e *pythonEmitter) render(value typ, name string) string {
 // input renders one input type and its keyword signatures. Unpack requires a
 // TypedDict, so unions become overloads and open objects use their value type.
 func (e *pythonEmitter) input(value typ, name string) (string, []string) {
+	for value.kind == kindRecursive && !pythonTypedDict(value.ref.value) {
+		value = value.ref.value
+	}
 	if value.kind == kindUnion && len(value.items) > 0 {
 		var inputs, arguments []string
 		for _, item := range value.items {
@@ -166,6 +211,8 @@ func generatePython(contracts map[string]catalog) string {
 			tool := tools[name]
 			shapes := []shape{tool.input, tool.output}
 			prefix := typeIdentifier(binding) + typeIdentifier(name)
+			emitter.declare(shapes[0], prefix+"Input")
+			emitter.declare(shapes[1], prefix+"Output")
 			input, arguments := emitter.input(shapes[0].value, prefix+"Input")
 			output := emitter.render(shapes[1].value, prefix+"Output")
 			returned := output
