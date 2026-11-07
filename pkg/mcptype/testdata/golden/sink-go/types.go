@@ -42,9 +42,7 @@ type OrdersGetOrderInput = struct {
 
 type OrdersGetOrderOutput = json.RawMessage
 
-type OrdersGetOrder2Input = struct {
-	Id string "json:\"id\""
-}
+type OrdersGetOrder2Input = OrdersGetOrderInput
 
 type OrdersGetOrder2Output = json.RawMessage
 

@@ -46,8 +46,6 @@ SchemasClassInput = _typing.TypedDict("SchemasClassInput", {"opt": _typing.NotRe
 
 SchemasGetOrderInput = _typing.TypedDict("SchemasGetOrderInput", {"id": _builtins.str})
 
-SchemasGetOrderInput2 = _typing.TypedDict("SchemasGetOrderInput2", {"id": _builtins.str})
-
 SchemasKitchenSinkInputValueAll = _typing.TypedDict("SchemasKitchenSinkInputValueAll", {"a": _builtins.str, "b": _typing.NotRequired[_builtins.int]})
 
 SchemasKitchenSinkInputValueClosedEmpty = _typing.TypedDict("SchemasKitchenSinkInputValueClosedEmpty", {})
@@ -85,7 +83,7 @@ class Inputs:
     class schemas:
         CallTool: _typing.TypeAlias = _builtins.dict[_builtins.str, _builtins.object]
         call_tool: _typing.TypeAlias = SchemasCallToolInput
-        get_order: _typing.TypeAlias = SchemasGetOrderInput2
+        get_order: _typing.TypeAlias = SchemasGetOrderInput
 
 class Outputs:
     class empty:
@@ -158,7 +156,7 @@ class OrdersApp(_typing.Protocol):
 class SchemasTools(_typing.Protocol):
     async def CallTool(self, options: _CallOptions | None = ..., /, **arguments: _builtins.object) -> _CompleteResult[_builtins.object]: ...
     async def call_tool(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasCallToolInput]) -> SchemasCallToolOutput: ...
-    async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasGetOrderInput2]) -> _CompleteResult[_builtins.object]: ...
+    async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasGetOrderInput]) -> _CompleteResult[_builtins.object]: ...
 
 class SchemasApp(_typing.Protocol):
     tools: SchemasTools
@@ -175,7 +173,7 @@ class SchemasApp(_typing.Protocol):
     @_typing.overload
     async def call_tool(self, name: _typing.Literal["get-order"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasGetOrderInput]) -> _ToolResult[_builtins.object]: ...
     @_typing.overload
-    async def call_tool(self, name: _typing.Literal["get_order"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasGetOrderInput2]) -> _ToolResult[_builtins.object]: ...
+    async def call_tool(self, name: _typing.Literal["get_order"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasGetOrderInput]) -> _ToolResult[_builtins.object]: ...
     @_typing.overload
     async def call_tool(self, name: _typing.Literal["kitchen-sink"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasKitchenSinkInputValue]) -> _ToolResult[_builtins.object]: ...
     @_typing.overload

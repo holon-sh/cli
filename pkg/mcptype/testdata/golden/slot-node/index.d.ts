@@ -3,6 +3,7 @@ import type { Outputs as Resources } from "./resources.js";
 import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } from "../protocol.js";
 export { ToolCallError } from "../protocol.js";
 export type { Resources };
+export type SchemasGetOrderInput = { "id": string; };
 export type SchemasKitchenSinkInputValue = { "1starts"?: string; "Dash-Key"?: string; "all"?: ({ "a": string; } & { "b"?: number; }); "allConflict"?: ({ "a"?: string; } & { "a"?: number; }); "allNonObject"?: (string & { [key: string]: unknown; }); "annotated"?: string; "arrayRef"?: string; "closedEmpty"?: {  }; "constNum"?: 1e+21; "constObj"?: unknown; "constString"?: "it's \"quoted\"\n"; "cycle"?: SchemasKitchenSinkInputNode; "dash-key"?: string; "emptyAll"?: unknown; "emptyAny"?: never; "falseSchema"?: never; "implicitTuple"?: ["x"?, ...unknown[]]; "literals": ("a" | 1 | 2.5 | -3 | true | null | unknown | unknown | 1.0 | 1e+21 | -0.0); "mapOf"?: { [key: string]: string; }; "multi"?: (string | null | Array<number> | unknown); "nested"?: Array<Array<{ "deep"?: null; }>>; "noType": { "p": boolean; }; "nodes"?: Array<SchemasKitchenSinkInputNode>; "numericType"?: { "p"?: boolean; }; "odd key with spaces"?: string; "oneOf"?: (string | number); "openObj"?: { "x"?: string; [key: string]: unknown; }; "openTuple"?: [boolean?, ...Array<number>]; "plainArray"?: Array<unknown>; "pointerEscape"?: number; "rootRef"?: SchemasKitchenSinkInputValue; "trueObj"?: { "x"?: string; [key: string]: unknown; }; "trueSchema"?: unknown; "tuple": [string, number?]; "unknownKeyword"?: unknown; };
 export type SchemasKitchenSinkInputNode = { "next"?: SchemasKitchenSinkInputNode; "value": number; };
 export interface Inputs {
@@ -21,8 +22,8 @@ export interface Inputs {
     "CallTool": { [key: string]: unknown; };
     "call_tool": { "a"?: number; "b": string; };
     "class": { "opt"?: { "n"?: number; }; };
-    "get-order": { "id": string; };
-    "get_order": { "id": string; };
+    "get-order": SchemasGetOrderInput;
+    "get_order": SchemasGetOrderInput;
     "kitchen-sink": SchemasKitchenSinkInputValue;
     "weird-keys": { "": null; "-"?: boolean; "x\"quote"?: string; "ünïcode"?: number; };
     "émoji🎉": { "é"?: string; };

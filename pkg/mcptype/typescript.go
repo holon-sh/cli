@@ -10,7 +10,7 @@ import (
 // server that ignores it. Outputs stay open, and an object that names no fields is a free-form one.
 func renderTypeScript(value typ, input bool) string {
 	switch value.kind {
-	case kindRecursive:
+	case kindDeclared:
 		return value.ref.name
 	case kindNever:
 		return "never"
@@ -89,6 +89,8 @@ func renderTypeScript(value typ, input bool) string {
 	return "unknown"
 }
 
+func declaresAll(*declaration) bool { return true }
+
 func joinTypeScript(items []typ, separator string, input bool) string {
 	rendered := make([]string, len(items))
 	for i, item := range items {
@@ -97,7 +99,7 @@ func joinTypeScript(items []typ, separator string, input bool) string {
 	return strings.Join(rendered, separator)
 }
 
-// generateTypeScript writes the recursive types, then the Inputs, Outputs, InputTypes and OutputTypes
+// generateTypeScript writes the declared types, then the Inputs, Outputs, InputTypes and OutputTypes
 // interfaces.
 func generateTypeScript(contracts map[string]catalog) string {
 	names := map[string]bool{}
@@ -117,8 +119,8 @@ func generateTypeScript(contracts map[string]catalog) string {
 				if index == 1 && !tool.structured {
 					continue
 				}
-				input := index == 0
-				for _, ref := range shape.nameRecursive(names, typeIdentifier(binding)+typeIdentifier(name)+[]string{"Input", "Output"}[index]) {
+				input, direction := index == 0, []string{"Input", "Output"}[index]
+				for _, ref := range shape.name(names, typeIdentifier(binding)+typeIdentifier(name)+direction, typeIdentifier(binding)+direction, declaresAll) {
 					fmt.Fprintf(&out, "export type %s = %s;\n", ref.name, renderTypeScript(ref.value, input))
 				}
 				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value, input))
