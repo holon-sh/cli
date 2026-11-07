@@ -3,7 +3,6 @@ package installation
 import (
 	"cmp"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/moby/buildkit/client"
 	"github.com/opencontainers/go-digest"
-	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/clock"
 	"oras.land/oras-go/v2/registry/remote/retry"
@@ -27,46 +25,23 @@ import (
 // timingStderr is the --timing path that selects standard error.
 const timingStderr = "-"
 
-// processStarted is the earliest moment this process can observe; it excludes the dynamic loader.
-var processStarted = time.Now()
-
-// timingTrace is the document --timing writes at exit: every phase of one holon dev or holon deploy,
-// and the context a later comparison needs. A nil trace records nothing, which is what keeps a run
-// without the flag unchanged. Phases nest and run concurrently, so their durations do not sum to the
-// total; start and end place each one on the run's timeline.
+// timingTrace is the document --timing writes at exit: every phase of one holon dev or holon deploy on
+// one timeline. A nil trace records nothing, which is what keeps a run without the flag unchanged.
+// Phases nest and run concurrently, so their durations do not sum to the total; start and end place
+// each one, and nesting is read from the timeline. Each edit in holon dev is an "edit" phase.
 type timingTrace struct {
-	Version      int       `json:"version"`
-	Command      string    `json:"command"`
-	Args         []string  `json:"args,omitempty"`
-	Origin       string    `json:"origin,omitempty"`
-	Session      string    `json:"session,omitempty"`
-	Apps         []string  `json:"apps,omitempty"`
-	Platforms    []string  `json:"platforms,omitempty"`
-	Start        time.Time `json:"start"`
-	End          time.Time `json:"end"`
-	DurationMs   float64   `json:"durationMs"`
-	ReadyAfterMs *float64  `json:"readyAfterMs,omitempty"`
-	Error        string    `json:"error,omitempty"`
-	timingScope
-	Cycles []*timingCycle `json:"cycles,omitempty"`
+	Command    string        `json:"command"`
+	Start      time.Time     `json:"start"`
+	End        time.Time     `json:"end"`
+	DurationMs float64       `json:"durationMs"`
+	Error      string        `json:"error,omitempty"`
+	Phases     []timingPhase `json:"phases"`
+	Images     []timingImage `json:"images,omitempty"`
+	Blobs      timingBlobs   `json:"blobs"`
+	Ready      []timingReady `json:"ready,omitempty"`
 
-	mu           sync.Mutex
-	clock        clock.PassiveClock
-	current      *timingCycle
-	awaiting     *timingCycle
-	rolloutStart time.Time
-	readyAt      time.Time
-	polls        int
-	lastPoll     time.Time
-}
-
-// timingScope is what one run, or one edit cycle within it, did.
-type timingScope struct {
-	Phases []timingPhase `json:"phases"`
-	Images []timingImage `json:"images,omitempty"`
-	Blobs  timingBlobs   `json:"blobs"`
-	Ready  *timingReady  `json:"ready,omitempty"`
-
+	mu          sync.Mutex
+	clock       clock.PassiveClock
 	existing    map[string]int64
 	transferred sets.Set[string]
 }
@@ -77,12 +52,12 @@ type timingPhase struct {
 	Start      time.Time `json:"start"`
 	End        time.Time `json:"end"`
 	DurationMs float64   `json:"durationMs"`
+	Failed     bool      `json:"failed,omitempty"`
 }
 
 type timingImage struct {
-	App    string `json:"app"`
-	Image  string `json:"image"`
-	Digest string `json:"digest,omitempty"`
+	App   string `json:"app"`
+	Image string `json:"image"`
 }
 
 // timingBlobs counts registry traffic as the registry acknowledged it. A blob is skipped when the
@@ -99,52 +74,11 @@ type timingBlobs struct {
 }
 
 // timingReady compares when the Session became Ready with when the CLI saw it. lastTransitionTime has
-// one-second resolution and the server's clock, so pollLagMs is only that accurate. previousPollAt is
-// the last time this clock saw the Session not ready: the gap from it to observedAt bounds the lag
-// with neither limitation.
+// one-second resolution and the server's clock, so pollLagMs is only that accurate.
 type timingReady struct {
-	Generation         int64      `json:"generation"`
-	ObservedGeneration int64      `json:"observedGeneration"`
-	LastTransitionTime *time.Time `json:"lastTransitionTime,omitempty"`
-	ObservedAt         time.Time  `json:"observedAt"`
-	PreviousPollAt     *time.Time `json:"previousPollAt,omitempty"`
-	Polls              int        `json:"polls"`
-	PollLagMs          *float64   `json:"pollLagMs,omitempty"`
-}
-
-// timingCycle is one edit in the dev loop, from the first file event to the Session being ready again.
-type timingCycle struct {
-	Index      int       `json:"index"`
-	Contexts   []string  `json:"contexts,omitempty"`
-	Manifest   bool      `json:"manifest,omitempty"`
-	Start      time.Time `json:"start"`
-	End        time.Time `json:"end"`
-	DurationMs float64   `json:"durationMs"`
-	Outcome    string    `json:"outcome"`
-	Error      string    `json:"error,omitempty"`
-	timingScope
-}
-
-const (
-	cycleUnchanged  = "unchanged"
-	cycleFailed     = "failed"
-	cycleUpdating   = "updating"
-	cycleReady      = "ready"
-	cycleSuperseded = "superseded"
-)
-
-func milliseconds(duration time.Duration) float64 {
-	return float64(duration.Microseconds()) / 1000
-}
-
-func newTimingTrace(clk clock.PassiveClock, command string, args []string) *timingTrace {
-	now := clk.Now()
-	trace := &timingTrace{Version: 1, Command: command, Args: args, Start: now, clock: clk}
-	if _, real := clk.(clock.RealClock); real {
-		trace.Start = processStarted
-		trace.add("", "process startup", processStarted, now)
-	}
-	return trace
+	LastTransitionTime time.Time `json:"lastTransitionTime"`
+	ObservedAt         time.Time `json:"observedAt"`
+	PollLagMs          float64   `json:"pollLagMs"`
 }
 
 func (o *progressOutput) timing() *timingTrace {
@@ -154,200 +88,61 @@ func (o *progressOutput) timing() *timingTrace {
 	return o.trace
 }
 
-// measure starts a phase and returns the function that ends it. Phases recorded during an edit cycle
-// belong to that cycle.
+func milliseconds(duration time.Duration) float64 {
+	return float64(duration.Microseconds()) / 1000
+}
+
+func newTimingTrace(clk clock.PassiveClock, command string) *timingTrace {
+	return &timingTrace{Command: command, Start: clk.Now(), clock: clk, existing: map[string]int64{}, transferred: sets.New[string]()}
+}
+
+// measure starts a phase and returns the function that ends it.
 func (t *timingTrace) measure(subject, name string) func() {
 	if t == nil {
 		return func() {}
 	}
-	started := t.clock.Now()
-	return func() { t.add(subject, name, started, t.clock.Now()) }
+	start := t.clock.Now()
+	return func() { t.add(timingPhase{Name: name, Subject: subject, Start: start, End: t.clock.Now()}) }
 }
 
-func (t *timingTrace) add(subject, name string, start, end time.Time) {
+// edit starts the "edit" phase of one change in the dev loop, from the watcher's first event, and
+// returns the function that ends it when its rollout settles.
+func (t *timingTrace) edit(change devChange) func(failed bool) {
+	if t == nil {
+		return func(bool) {}
+	}
+	return func(failed bool) {
+		t.add(timingPhase{Name: "edit", Subject: change.path, Start: change.firstEvent, End: t.clock.Now(), Failed: failed})
+	}
+}
+
+func (t *timingTrace) add(phase timingPhase) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.scope().addPhase(subject, name, start, end)
+	phase.DurationMs = milliseconds(phase.End.Sub(phase.Start))
+	t.Phases = append(t.Phases, phase)
 }
 
-func (t *timingTrace) scope() *timingScope {
-	if t.current != nil {
-		return &t.current.timingScope
-	}
-	return &t.timingScope
-}
-
-func (s *timingScope) addPhase(subject, name string, start, end time.Time) {
-	s.Phases = append(s.Phases, timingPhase{
-		Name: name, Subject: subject, Start: start, End: end, DurationMs: milliseconds(end.Sub(start)),
-	})
-}
-
-func (t *timingTrace) setOrigin(origin string) {
+func (t *timingTrace) addImages(apps []protocol.App) {
 	if t == nil {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.Origin = origin
-}
-
-func (t *timingTrace) setSession(name string) {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.Session = name
-}
-
-func (t *timingTrace) addPlatforms(platforms []string) {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, platform := range platforms {
-		if !slices.Contains(t.Platforms, platform) {
-			t.Platforms = append(t.Platforms, platform)
-		}
-	}
-}
-
-// addApps records what was built: the run's app names, and the images of those that have one.
-func (t *timingTrace) addApps(apps []protocol.App) {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	scope := t.scope()
 	for _, app := range apps {
-		if !slices.Contains(t.Apps, app.Name) {
-			t.Apps = append(t.Apps, app.Name)
-		}
-		if app.Image != "" {
-			_, imageDigest, _ := strings.Cut(app.Image, "@")
-			scope.Images = append(scope.Images, timingImage{App: app.Name, Image: app.Image, Digest: imageDigest})
-		}
+		t.Images = append(t.Images, timingImage{App: app.Name, Image: app.Image})
 	}
 }
 
-func (t *timingTrace) beginCycle(change devChange) func(error) {
-	if t == nil {
-		return func(error) {}
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	now := t.clock.Now()
-	first := change.firstEvent
-	if first.IsZero() {
-		first = now
-	}
-	cycle := &timingCycle{
-		Index: len(t.Cycles) + 1, Contexts: sets.List(change.contexts), Manifest: change.manifest,
-		Start: first, Outcome: cycleUnchanged,
-	}
-	cycle.addPhase("", "debounce", first, now)
-	t.Cycles = append(t.Cycles, cycle)
-	t.current = cycle
-	return func(err error) {
-		t.mu.Lock()
-		defer t.mu.Unlock()
-		t.current = nil
-		cycle.finish(t.clock.Now())
-		if err != nil {
-			cycle.Outcome, cycle.Error = cycleFailed, err.Error()
-		}
-	}
-}
-
-func (c *timingCycle) finish(end time.Time) {
-	c.End, c.DurationMs = end, milliseconds(end.Sub(c.Start))
-}
-
-// awaitReady marks the Session as rolling out: from here the next Ready observation belongs to the
-// edit cycle in progress, or to the run when there is none. An edit still waiting is superseded.
-func (t *timingTrace) awaitReady() {
+// ready records the CLI seeing the Session Ready.
+func (t *timingTrace) ready(session protocol.SessionResponse) {
 	if t == nil {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.awaiting != nil {
-		t.awaiting.Outcome = cycleSuperseded
-	}
-	t.awaiting = t.current
-	if t.current != nil {
-		t.current.Outcome = cycleUpdating
-	}
-	t.rolloutStart, t.polls, t.lastPoll, t.readyAt = t.clock.Now(), 0, time.Time{}, time.Time{}
-}
-
-// observe records one look at the Session. The first look that finds it ready records the poll lag.
-func (t *timingTrace) observe(session protocol.SessionResponse, ready bool) {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	now := t.clock.Now()
-	t.polls++
-	if !ready {
-		t.lastPoll = now
-		return
-	}
-	if !t.readyAt.IsZero() {
-		return
-	}
-	t.readyAt = now
-	condition := session.Condition(protocol.ConditionReady)
-	record := &timingReady{
-		Generation: session.Generation, ObservedGeneration: condition.ObservedGeneration, ObservedAt: now, Polls: t.polls,
-	}
-	if transition := time.Time(condition.LastTransitionTime); !transition.IsZero() {
-		record.LastTransitionTime = &transition
-		record.PollLagMs = new(milliseconds(now.Sub(transition)))
-	}
-	if !t.lastPoll.IsZero() {
-		record.PreviousPollAt = new(t.lastPoll)
-	}
-	if t.awaiting != nil {
-		t.awaiting.Ready = record
-		return
-	}
-	t.Ready = record
-	if t.ReadyAfterMs == nil {
-		t.ReadyAfterMs = new(milliseconds(now.Sub(t.Start)))
-	}
-}
-
-// rolloutEnded closes the wait awaitReady began, for the dev loop, whose wait is not one function
-// call that measure can bracket. A failed rollout passes the reason.
-func (t *timingTrace) rolloutEnded(failure string) {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.rolloutStart.IsZero() {
-		return
-	}
-	end := t.clock.Now()
-	if !t.readyAt.IsZero() {
-		end = t.readyAt
-	}
-	scope := &t.timingScope
-	if cycle := t.awaiting; cycle != nil {
-		scope = &cycle.timingScope
-		cycle.finish(end)
-		cycle.Outcome, cycle.Error = cycleReady, failure
-		if failure != "" {
-			cycle.Outcome = cycleFailed
-		}
-	}
-	scope.addPhase("", "rollout", t.rolloutStart, end)
-	t.awaiting, t.rolloutStart = nil, time.Time{}
+	now, transition := t.clock.Now(), time.Time(session.Condition(protocol.ConditionReady).LastTransitionTime)
+	t.Ready = append(t.Ready, timingReady{LastTransitionTime: transition, ObservedAt: now, PollLagMs: milliseconds(now.Sub(transition))})
 }
 
 // solveStatuses returns the channel to give a BuildKit solve, forwarding to display and turning the
@@ -369,7 +164,7 @@ func (t *timingTrace) solveStatuses(subject string, display chan *client.SolveSt
 				}
 				done.Insert(vertex.Digest)
 				end := t.clock.Now()
-				t.add(subject, name, end.Add(-vertex.Completed.Sub(*vertex.Started)), end)
+				t.add(timingPhase{Name: name, Subject: subject, Start: end.Add(-vertex.Completed.Sub(*vertex.Started)), End: end})
 			}
 			display <- status
 		}
@@ -416,45 +211,41 @@ func (t *timingTrace) registryClient(base *http.Client) *http.Client {
 func (t *timingTrace) registryExchange(request *http.Request, response *http.Response) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.scope().registryExchange(request, response)
-}
-
-func (s *timingScope) registryExchange(request *http.Request, response *http.Response) {
-	if s.existing == nil {
-		s.existing, s.transferred = map[string]int64{}, sets.New[string]()
-	}
 	query := request.URL.Query()
 	accepted := response.StatusCode >= 200 && response.StatusCode < 300
 	switch {
 	case request.Method == http.MethodPut && accepted && query.Get("digest") != "":
-		s.Blobs.Pushed++
-		s.Blobs.BytesPushed += request.ContentLength
-		s.transferred.Insert(query.Get("digest"))
-		delete(s.existing, query.Get("digest"))
+		t.Blobs.Pushed++
+		t.Blobs.BytesPushed += request.ContentLength
+		t.transferred.Insert(query.Get("digest"))
+		delete(t.existing, query.Get("digest"))
 	case request.Method == http.MethodPost && response.StatusCode == http.StatusCreated && query.Get("mount") != "":
-		s.Blobs.Mounted++
-		s.transferred.Insert(query.Get("mount"))
-		delete(s.existing, query.Get("mount"))
+		t.Blobs.Mounted++
+		t.transferred.Insert(query.Get("mount"))
+		delete(t.existing, query.Get("mount"))
 	case request.Method == http.MethodPut && accepted && registryManifest.MatchString(request.URL.Path):
-		s.Blobs.Manifests++
-		s.Blobs.ManifestBytes += request.ContentLength
+		t.Blobs.Manifests++
+		t.Blobs.ManifestBytes += request.ContentLength
 	case request.Method == http.MethodHead && accepted:
-		if match := registryBlob.FindStringSubmatch(request.URL.Path); match != nil && !s.transferred.Has(match[1]) {
-			s.existing[match[1]] = response.ContentLength
+		if match := registryBlob.FindStringSubmatch(request.URL.Path); match != nil && !t.transferred.Has(match[1]) {
+			t.existing[match[1]] = response.ContentLength
 		}
 	}
 }
 
-func (s *timingScope) finish() {
-	slices.SortStableFunc(s.Phases, func(a, b timingPhase) int { return a.Start.Compare(b.Start) })
-	s.Blobs.Skipped, s.Blobs.BytesSkipped = len(s.existing), 0
-	for _, size := range s.existing {
-		s.Blobs.BytesSkipped += size
+func (t *timingTrace) finish() {
+	slices.SortStableFunc(t.Phases, func(a, b timingPhase) int { return a.Start.Compare(b.Start) })
+	t.Blobs.Skipped, t.Blobs.BytesSkipped = len(t.existing), 0
+	for _, size := range t.existing {
+		t.Blobs.BytesSkipped += size
 	}
 }
 
-// write ends the trace and writes it to path, or to stderr for "-".
+// write ends the trace and writes it to path, or to stderr for "-". A nil trace writes nothing.
 func (t *timingTrace) write(path string, stderr io.Writer, result error) error {
+	if t == nil {
+		return nil
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.End = t.clock.Now()
@@ -463,9 +254,6 @@ func (t *timingTrace) write(path string, stderr io.Writer, result error) error {
 		t.Error = result.Error()
 	}
 	t.finish()
-	for _, cycle := range t.Cycles {
-		cycle.timingScope.finish()
-	}
 	data, err := json.MarshalIndent(t, "", "  ")
 	if err == nil {
 		data = append(data, '\n')
@@ -479,36 +267,4 @@ func (t *timingTrace) write(path string, stderr io.Writer, result error) error {
 		return fmt.Errorf("write timing trace: %w", err)
 	}
 	return nil
-}
-
-// withTiming adds --timing. It wraps the whole command, so the trace starts before the project file is
-// read and is written after the progress display has stopped.
-func withTiming(cmd *cobra.Command, config *commandConfig) *cobra.Command {
-	var path string
-	cmd.Flags().StringVar(&path, "timing", "", "Write a JSON trace to `FILE` at exit (- for stderr): each phase's start, end and duration, "+
-		"image digests, platforms, blobs pushed and skipped, Ready poll lag, and one entry per edit in holon dev")
-	preRun, run := cmd.PreRunE, cmd.RunE
-	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
-		if path == "" {
-			return preRun(cmd, args)
-		}
-		config.trace = newTimingTrace(config.clock(), cmd.Name(), args)
-		config.RegistryHTTPClient = config.trace.registryClient(config.RegistryHTTPClient)
-		finish := config.trace.measure("", "project config")
-		err := preRun(cmd, args)
-		finish()
-		if err != nil {
-			return errors.Join(err, config.trace.write(path, cmd.ErrOrStderr(), err))
-		}
-		return nil
-	}
-	cmd.RunE = func(cmd *cobra.Command, args []string) (result error) {
-		if path == "" {
-			return run(cmd, args)
-		}
-		stderr := cmd.ErrOrStderr()
-		defer func() { result = errors.Join(result, config.trace.write(path, stderr, result)) }()
-		return run(cmd, args)
-	}
-	return cmd
 }

@@ -27,6 +27,7 @@ const devDebounce = 250 * time.Millisecond
 type devChange struct {
 	contexts   sets.Set[string]
 	manifest   bool
+	path       string
 	firstEvent time.Time
 }
 
@@ -138,7 +139,7 @@ func (w *devWatcher) run() {
 				w.output.problem("file watcher", err)
 			}
 			if pending.firstEvent.IsZero() && (pending.contexts.Len() != 0 || pending.manifest) {
-				pending.firstEvent = w.clock.Now()
+				pending.firstEvent, pending.path = w.clock.Now(), path
 			}
 			debounce = w.clock.After(devDebounce)
 		case <-debounce:
@@ -207,6 +208,8 @@ type devLoop struct {
 	options                buildOptions
 	session                protocol.SessionResponse
 	changedImages, pending sets.Set[string]
+	// edited ends the trace's phase for the edit whose rollout is pending.
+	edited func(failed bool)
 }
 
 func (d *devLoop) renew(ctx context.Context) {
@@ -280,9 +283,12 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 				return err
 			}
 		case change := <-changes:
-			finish := d.options.output.timing().beginCycle(change)
+			d.endEdit(false)
+			d.edited = d.options.output.timing().edit(change)
 			err := d.rebuild(ctx, change)
-			finish(err)
+			if err != nil || d.pending.Len() == 0 {
+				d.endEdit(err != nil)
+			}
 			if err != nil && ctx.Err() == nil {
 				d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
 			}
@@ -296,11 +302,10 @@ func (d *devLoop) settle(announce func() error) error {
 		return nil
 	}
 	ready, err := SessionReady(d.session)
-	d.options.output.timing().observe(d.session, ready)
 	if !ready {
 		return err
 	}
-	d.options.output.timing().rolloutEnded("")
+	d.options.output.timing().ready(d.session)
 	d.finishPending("ready", progressDone)
 	return announce()
 }
@@ -337,7 +342,6 @@ func (d *devLoop) poll(ctx context.Context) error {
 	}
 	d.options.output.problem("remote deployment",
 		fmt.Errorf("%s (generation %d): %s: %s", message, current.Generation, condition.Reason, condition.Message))
-	d.options.output.timing().rolloutEnded(condition.Reason + ": " + condition.Message)
 	d.finishPending("deployment failed", progressError)
 	return nil
 }
@@ -347,15 +351,24 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 		d.options.output.status(app, phase, state)
 	}
 	d.pending.Clear()
+	d.endEdit(state == progressError)
+}
+
+func (d *devLoop) endEdit(failed bool) {
+	if d.edited != nil {
+		d.edited(failed)
+		d.edited = nil
+	}
 }
 
 func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
-	trace := d.options.output.timing()
 	if change.manifest {
 		reloaded, err := resolveManifestFile(d.manifest.file)
 		if err == nil {
 			reloaded.sources, reloaded.access = d.manifest.sources, d.manifest.access
-			reloaded, err = tracedGraph(ctx, reloaded, trace, d.apps...)
+			graph := d.options.output.measure("", "graph resolution")
+			reloaded, err = resolveManifestGraph(ctx, reloaded, d.apps...)
+			graph()
 		}
 		if err != nil {
 			return fmt.Errorf("metadata resolution failed: %w", err)
@@ -368,7 +381,10 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 			return nil
 		}
 	}
-	if _, err := tracedToken(ctx, d.manager, trace); err != nil {
+	token := d.options.output.measure("", "token")
+	_, err := d.manager.controlToken(ctx)
+	token()
+	if err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 	prepared, cleanup, err := prepareManifestTypes(ctx, d.manifest, d.options)
@@ -385,13 +401,15 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 	d.options.output.status("", "Preparing apps", progressWorking)
 	apps, err := buildManifestImages(ctx, d.manager, d.name, dirty, d.options)
 	if err == nil {
-		err = currentTypeSources(prepared, trace)
+		hashed := d.options.output.measure("apps", "source hashing")
+		err = currentTypeSources(prepared)
+		hashed()
 	}
 	cleanup()
 	if err != nil {
 		return fmt.Errorf("remote image preparation failed: %w", err)
 	}
-	trace.addApps(apps)
+	d.options.output.timing().addImages(apps)
 	apps = slices.DeleteFunc(apps, func(app protocol.App) bool {
 		if !slices.ContainsFunc(d.session.Apps, func(current protocol.App) bool {
 			return current.Name == app.Name && current.Image == app.Image
@@ -411,7 +429,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 		return nil
 	}
 	d.options.output.deploying(apps)
-	finish := trace.measure("", "update session")
+	finish := d.options.output.measure("", "update session")
 	updated, err := patchSessionImages(ctx, d.manager, d.name, apps)
 	finish()
 	if err != nil {
@@ -424,7 +442,6 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 	}
 	d.options.types.accept(dirty)
 	d.session = updated
-	trace.awaitReady()
 	d.options.output.status("app rebuild", fmt.Sprintf("remote update requested (generation %d)", updated.Generation), progressDone)
 	return nil
 }

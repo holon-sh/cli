@@ -66,7 +66,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			}
 			options.output.status(app.Name, action, progressWorking)
 			if app.resolved.registryPackage != nil {
-				imported := options.output.timing().measure(app.Name, "image import")
+				imported := options.output.measure(app.Name, "image import")
 				build, err := options.importPackage(ctx, app)
 				imported()
 				if err != nil {
@@ -85,7 +85,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			}
 			err = upload.run(ctx, func(grant protocol.UploadGrant) error {
 				if image == "" {
-					finish := options.output.timing().measure(app.Name, "image import")
+					finish := options.output.measure(app.Name, "image import")
 					imported, err := importImage(ctx, app.resolved.Image, grant.Registry, grant.Repositories[app.Name], grant.Grant, options.HTTPClient)
 					finish()
 					if err != nil {
@@ -102,7 +102,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 					image = prepared
 				}
 				if options.catalogTag != "" && grant.Grant != "" {
-					defer options.output.timing().measure(app.Name, "catalog push")()
+					defer options.output.measure(app.Name, "catalog push")()
 					return publishAppBuild(ctx, app, image, grant, options)
 				}
 				return nil
@@ -165,7 +165,7 @@ func buildManifestImages(
 	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions,
 ) ([]protocol.App, error) {
 	upload := &imageUpload{load: func(ctx context.Context) (protocol.UploadGrant, error) {
-		defer options.output.timing().measure("", "upload grant")()
+		defer options.output.measure("", "upload grant")()
 		grant, err := imageDestination(ctx, manager, name, manifest)
 		if err == nil {
 			err = validateUploadGrant(grant, manifest)

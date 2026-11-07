@@ -160,7 +160,7 @@ func TestDockerSourceBuildTiming(t *testing.T) {
 	grant, options := sourceRegistry(t)
 	options.architectures = []string{runtime.GOARCH}
 	build := func() *timingTrace {
-		trace := newTimingTrace(clock.RealClock{}, "deploy", nil)
+		trace := newTimingTrace(clock.RealClock{}, "deploy")
 		traced := options
 		traced.output, _, _ = newProgressOutput(io.Discard, io.Discard, false, clock.RealClock{})
 		traced.output.trace = trace
@@ -172,8 +172,8 @@ func TestDockerSourceBuildTiming(t *testing.T) {
 		return trace
 	}
 	cold := build()
-	t.Logf("cold phases: %v, blobs: %+v", phaseNames(cold.timingScope), cold.Blobs)
-	wantPhases(t, cold.timingScope, "plan", "connect builder", "solve", "context upload", "export", "push", "index push")
+	t.Logf("cold phases: %v, blobs: %+v", phaseNames(cold.Phases), cold.Blobs)
+	wantPhases(t, cold.Phases, "plan", "connect builder", "solve", "context upload", "export", "push", "index push")
 	if cold.Blobs.Pushed == 0 || cold.Blobs.BytesPushed == 0 || cold.Blobs.Manifests == 0 {
 		t.Errorf("cold build blobs = %+v", cold.Blobs)
 	}

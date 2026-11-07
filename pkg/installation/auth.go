@@ -103,23 +103,14 @@ type Client struct {
 }
 
 func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
-	return newTracedClient(ctx, config, nil)
-}
-
-func newTracedClient(ctx context.Context, config ClientConfig, trace *timingTrace) (*Client, error) {
-	finish := trace.measure("", "client config")
 	manager, err := newLocalAuthManager(config)
-	finish()
 	if err != nil {
 		return nil, err
 	}
-	trace.setOrigin(manager.client.baseURL)
 	if _, err := fmt.Fprintf(manager.output, "Running against %s\n", manager.client.baseURL); err != nil {
 		return nil, err
 	}
-	finish = trace.measure("", "info fetch")
 	manager.info, err = manager.client.Info(ctx)
-	finish()
 	if err != nil {
 		return nil, err
 	}

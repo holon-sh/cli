@@ -136,7 +136,7 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 	cmd.Flags().BoolVar(&config.check, "check", false, "Type-check apps before starting or updating the session")
 	cmd.Flags().BoolVar(&config.jsonOutput, "json", false, "Write the ready API session as JSON (requires --detach)")
 	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "Detached session lifetime (whole seconds, at most 24h)")
-	return withTiming(withProject(withProgress(cmd, config, "Done"), config), config)
+	return withProgress(withProject(cmd, config), config, "Done")
 }
 
 func newDeployCommand(config *commandConfig) *cobra.Command {
@@ -164,7 +164,7 @@ func newDeployCommand(config *commandConfig) *cobra.Command {
 			return runDeploy(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
 		},
 	}
-	return withTiming(withProject(withProgress(cmd, config, "Deployment ready"), config), config)
+	return withProgress(withProject(cmd, config), config, "Deployment ready")
 }
 
 func withProject(cmd *cobra.Command, config *commandConfig) *cobra.Command {
@@ -195,22 +195,42 @@ func withProject(cmd *cobra.Command, config *commandConfig) *cobra.Command {
 	return cmd
 }
 
+// withProgress adds the progress display, and --timing around it: the trace starts before the project
+// file is read and is written after the display has stopped.
 func withProgress(cmd *cobra.Command, config *commandConfig, message string) *cobra.Command {
+	var timing string
+	var trace *timingTrace
 	cmd.Flags().BoolVarP(&config.verbose, "verbose", "v", false, "Show verbose output")
-	run := cmd.RunE
+	cmd.Flags().StringVar(&timing, "timing", "", "Write a JSON trace to `FILE` at exit (- for stderr): each phase's start and end, "+
+		"each edit in holon dev, the images and registry blobs moved, and when the session became Ready versus when it was seen")
+	preRun, run := cmd.PreRunE, cmd.RunE
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if timing != "" {
+			trace = newTimingTrace(config.clock(), cmd.Name())
+			config.RegistryHTTPClient = trace.registryClient(config.RegistryHTTPClient)
+		}
+		finish := trace.measure("", "project config")
+		err := preRun(cmd, args)
+		finish()
+		if err != nil {
+			return errors.Join(err, trace.write(timing, cmd.ErrOrStderr(), err))
+		}
+		return nil
+	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) (result error) {
 		stdout, stderr := cmd.OutOrStdout(), cmd.ErrOrStderr()
 		output, renderedOut, renderedErr := newProgressOutput(stdout, stderr, config.verbose, config.clock())
 		if config.jsonOutput {
 			renderedOut = stdout
 		}
-		output.trace = config.trace
+		output.trace = trace
 		config.output = output
 		config.Auth.Output = renderedErr
 		cmd.SetOut(renderedOut)
 		cmd.SetErr(renderedErr)
 		defer func() {
 			result = errors.Join(result, output.finish(errors.Join(result, cmd.Context().Err()), message))
+			result = errors.Join(result, trace.write(timing, stderr, result))
 		}()
 		return run(cmd, args)
 	}

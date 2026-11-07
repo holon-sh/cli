@@ -2,10 +2,9 @@ package installation
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -14,14 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/moby/buildkit/client"
-	"github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	testingclock "k8s.io/utils/clock/testing"
-	"oras.land/oras-go/v2/content"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
@@ -36,7 +32,7 @@ type timingSession struct {
 	generation int64
 	notReady   int
 	transition time.Time
-	onCreate   func()
+	failing    bool
 }
 
 func newTimingHarness(t *testing.T, session *timingSession, build buildApplication) (*runHarness, string) {
@@ -63,9 +59,6 @@ func newTimingHarness(t *testing.T, session *timingSession, build buildApplicati
 		case protocol.ToolCreateSession:
 			session.apps = arguments["apps"]
 			session.generation = 1
-			if session.onCreate != nil {
-				session.onCreate()
-			}
 		case protocol.ToolUpdateSession:
 			session.apps = arguments["desired"].(map[string]any)["apps"]
 			session.generation++
@@ -74,8 +67,13 @@ func newTimingHarness(t *testing.T, session *timingSession, build buildApplicati
 		if name == "" {
 			name = "gentle-otter-482"
 		}
-		status := "True"
-		if tool == protocol.ToolGetSession && session.notReady > 0 {
+		status, reason := "True", "Ready"
+		switch {
+		case session.failing && tool == protocol.ToolUpdateSession:
+			status, reason = "False", "Progressing"
+		case session.failing && tool == protocol.ToolGetSession:
+			status, reason = "False", protocol.ReasonProgressDeadline
+		case tool == protocol.ToolGetSession && session.notReady > 0:
 			session.notReady--
 			status = "False"
 		}
@@ -84,7 +82,7 @@ func newTimingHarness(t *testing.T, session *timingSession, build buildApplicati
 			"expiresAt": "2030-01-02T00:00:00Z", "apps": session.apps,
 			"endpoints": []protocol.SessionEndpoint{{Name: "alpha", URL: "https://apps.example/mcp/alpha"}},
 			"conditions": []map[string]any{{
-				"type": protocol.ConditionReady, "status": status, "reason": "Ready", "observedGeneration": session.generation,
+				"type": protocol.ConditionReady, "status": status, "reason": reason, "observedGeneration": session.generation,
 				"lastTransitionTime": session.transition.Format(time.RFC3339),
 			}},
 		})
@@ -106,17 +104,17 @@ func readTrace(t *testing.T, path string) *timingTrace {
 	return trace
 }
 
-func phaseNames(scope timingScope) []string {
-	names := make([]string, 0, len(scope.Phases))
-	for _, phase := range scope.Phases {
+func phaseNames(phases []timingPhase) []string {
+	names := make([]string, 0, len(phases))
+	for _, phase := range phases {
 		names = append(names, phase.Name)
 	}
 	return names
 }
 
-func wantPhases(t *testing.T, scope timingScope, want ...string) {
+func wantPhases(t *testing.T, phases []timingPhase, want ...string) {
 	t.Helper()
-	names := phaseNames(scope)
+	names := phaseNames(phases)
 	for _, name := range want {
 		if !slices.Contains(names, name) {
 			t.Errorf("phases = %v, missing %q", names, name)
@@ -124,58 +122,70 @@ func wantPhases(t *testing.T, scope timingScope, want ...string) {
 	}
 }
 
-func TestTimingTraceCoversARun(t *testing.T) {
+func TestTimingTrace(t *testing.T) {
 	for _, tc := range []struct {
-		command string
-		args    []string
-		session string
-		phases  []string
+		name     string
+		args     []string
+		notReady int
+		project  string
+		path     string
+		err      string
+		phases   []string
 	}{
 		{
-			command: "dev", args: []string{"--detach", "--ttl", "1m"}, session: "gentle-otter-482",
+			name: "dev", args: []string{"dev", "--detach", "--ttl", "1m"}, notReady: 1,
 			phases: []string{"create session", "type write", "type runtime install"},
 		},
-		{command: "deploy", session: protocol.ProductionName, phases: []string{"get session", "update session", "deploy"}},
+		// deploy reads the session once before it starts.
+		{name: "deploy", args: []string{"deploy"}, notReady: 2, phases: []string{"get session", "update session", "deploy"}},
+		{name: "invalid project", args: []string{"dev"}, project: "apps: [{unknown: true}]\n", err: "unknown"},
+		{name: "unwritable trace", args: []string{"deploy"}, path: filepath.Join("missing", "trace.json"), err: "write timing trace"},
 	} {
-		t.Run(tc.command, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			started := time.Date(2030, 1, 1, 0, 0, 10, 0, time.UTC)
 			fc := testingclock.NewFakeClock(started)
-			notReady := 1
-			if tc.command == "deploy" {
-				notReady = 2 // deploy reads the session once before it starts.
-			}
-			session := &timingSession{notReady: notReady, transition: started.Add(-7 * time.Second)}
+			session := &timingSession{notReady: tc.notReady, transition: started.Add(-7 * time.Second)}
 			h, manifest := newTimingHarness(t, session, buildImage(t, "first"))
 			h.run.Clock = fc
-			path := filepath.Join(t.TempDir(), "trace.json")
-			args := slices.Concat([]string{tc.command, "alpha", "--project", manifest, "--timing", path}, tc.args)
-			if err := executeCommand(t.Context(), args, nil, nil, h.run); err != nil {
+			if tc.project != "" {
+				manifest = filepath.Join(t.TempDir(), manifestFileName)
+				sourceFiles(t, filepath.Dir(manifest), map[string]string{manifestFileName: tc.project})
+			}
+			path := filepath.Join(t.TempDir(), cmp.Or(tc.path, "trace.json"))
+			args := slices.Concat(tc.args, []string{"alpha", "--project", manifest, "--timing", path})
+			err := executeCommand(t.Context(), args, nil, nil, h.run)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("error = %v, want %q", err, tc.err)
+				}
+				if tc.path != "" {
+					return
+				}
+				if trace := readTrace(t, path); trace.Error == "" || !slices.Contains(phaseNames(trace.Phases), "project config") {
+					t.Fatalf("failed run trace = %+v", trace)
+				}
+				return
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
 			trace := readTrace(t, path)
-			if trace.Version != 1 || trace.Command != tc.command || trace.Session != tc.session || trace.Error != "" ||
-				!slices.Equal(trace.Apps, []string{"alpha"}) || !slices.Equal(trace.Args, []string{"alpha"}) || trace.Origin != h.server.URL {
-				t.Fatalf("trace context = %+v", trace)
+			if trace.Command != tc.args[0] || trace.Error != "" {
+				t.Fatalf("trace = %+v", trace)
 			}
-			if len(trace.Platforms) == 0 {
-				t.Errorf("trace records no platforms")
-			}
-			if len(trace.Images) != 1 || trace.Images[0].App != "alpha" || !strings.HasPrefix(trace.Images[0].Digest, "sha256:") ||
-				!strings.HasSuffix(trace.Images[0].Image, "@"+trace.Images[0].Digest) {
+			if len(trace.Images) != 1 || trace.Images[0].App != "alpha" || !strings.Contains(trace.Images[0].Image, "@sha256:") {
 				t.Errorf("images = %+v", trace.Images)
 			}
-			wantPhases(t, trace.timingScope, slices.Concat(tc.phases, []string{
-				"project config", "client config", "info fetch", "token", "graph resolution", "prepare contracts", "source snapshot",
+			wantPhases(t, trace.Phases, slices.Concat(tc.phases, []string{
+				"project config", "client", "token", "graph resolution", "prepare contracts", "source snapshot",
 				"source hashing", "contract extraction", "type generation", "upload grant",
 				"stage types", "build and upload", "catalog push", "rollout",
 			})...)
 			if !slices.IsSortedFunc(trace.Phases, func(a, b timingPhase) int { return a.Start.Compare(b.Start) }) {
-				t.Errorf("phases are not in start order: %v", phaseNames(trace.timingScope))
+				t.Errorf("phases are not in start order: %v", phaseNames(trace.Phases))
 			}
-			ready := trace.Ready
-			if ready == nil || ready.PollLagMs == nil || *ready.PollLagMs != 7000 || ready.Polls != 2 ||
-				ready.PreviousPollAt == nil || ready.Generation != ready.ObservedGeneration || trace.ReadyAfterMs == nil {
-				t.Fatalf("ready = %+v, readyAfterMs = %v", ready, trace.ReadyAfterMs)
+			if len(trace.Ready) != 1 || trace.Ready[0].PollLagMs != 7000 {
+				t.Fatalf("ready = %+v", trace.Ready)
 			}
 		})
 	}
@@ -189,19 +199,13 @@ func TestTimingFlagLeavesOutputUnchanged(t *testing.T) {
 			h.run.Clock = fc
 			run := func(extra ...string) (string, string) {
 				var stdout, stderr bytes.Buffer
-				args := slices.Concat(command, []string{"alpha", "--project", manifest, "-v"}, extra)
+				args := slices.Concat(command, []string{"alpha", "--project", manifest}, extra)
 				if err := executeCommand(t.Context(), args, &stdout, &stderr, h.run); err != nil {
 					t.Fatal(err)
 				}
 				return stdout.String(), stderr.String()
 			}
 			plainOut, plainErr := run()
-			if !strings.Contains(plainErr, "Timing alpha build and upload") {
-				t.Fatalf("existing timing lines missing: %q", plainErr)
-			}
-			if strings.Contains(plainErr, "graph resolution") {
-				t.Fatalf("-v gained a timing line: %q", plainErr)
-			}
 			tracedOut, tracedErr := run("--timing", timingStderr)
 			if tracedOut != plainOut {
 				t.Fatalf("stdout = %q, want %q", tracedOut, plainOut)
@@ -219,411 +223,53 @@ func TestTimingFlagLeavesOutputUnchanged(t *testing.T) {
 }
 
 func TestTimingTraceRecordsEachEditCycle(t *testing.T) {
-	marker := 0
-	base := func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
-		marker++
-		return buildImage(t, strconv.Itoa(marker/2))(ctx, request, progress)
+	var image atomic.Int64
+	build := func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+		return buildImage(t, strconv.FormatInt(image.Load(), 10))(ctx, request, progress)
 	}
 	fc := testingclock.NewFakeClock(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
 	session := &timingSession{transition: fc.Now().Add(-time.Second)}
-	h, manifest := newTimingHarness(t, session, base)
+	h, manifest := newTimingHarness(t, session, build)
 	h.run.Clock = fc
 	path := filepath.Join(t.TempDir(), "trace.json")
 	stdout, stderr, stop := startDev(t, h.run, "alpha", "--project", manifest, "--timing", path)
 	stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stdout.String(), "Watching for changes.") })
-	source := map[string]string{"alpha/server.js": "export default {changed: true}"}
-
-	root := filepath.Dir(manifest)
-	started := len(stderr.String())
-	sourceFiles(t, root, source)
-	stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[started:], "remote update requested") })
-	stepUntil(t, fc, workflowPoll, func() bool { return strings.Contains(stderr.String()[started:], "alpha ready") })
-
-	started = len(stderr.String())
-	sourceFiles(t, root, map[string]string{"alpha/server.js": "export default {changed: 2}"})
-	stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[started:], "remote image is unchanged") })
+	changed := filepath.Join(filepath.Dir(manifest), "alpha", "server.js")
+	edit := func(version int64, settled string) {
+		image.Store(version)
+		started := len(stderr.String())
+		sourceFiles(t, filepath.Dir(manifest), map[string]string{"alpha/server.js": "export default {version: " + strconv.FormatInt(version, 10) + "}"})
+		stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[started:], "remote update requested") })
+		stepUntil(t, fc, workflowPoll, func() bool { return strings.Contains(stderr.String()[started:], settled) })
+	}
+	edit(1, "alpha ready")
+	session.mu.Lock()
+	session.failing = true
+	session.mu.Unlock()
+	edit(2, "alpha deployment failed")
 	if err := stop(); err != nil {
 		t.Fatalf("dev run: %v, stderr=%q", err, stderr.String())
 	}
 
 	trace := readTrace(t, path)
-	if trace.Ready == nil || trace.ReadyAfterMs == nil {
-		t.Fatalf("first readiness not recorded: %+v", trace.Ready)
-	}
-	wantPhases(t, trace.timingScope, "create session", "rollout", "delete session")
-	if len(trace.Cycles) != 2 {
-		t.Fatalf("cycles = %d, want 2", len(trace.Cycles))
-	}
-	updated, unchanged := trace.Cycles[0], trace.Cycles[1]
-	if updated.Index != 1 || updated.Outcome != cycleReady || !slices.Equal(updated.Contexts, []string{filepath.Join(root, "alpha")}) ||
-		updated.Ready == nil || updated.Ready.PollLagMs == nil || len(updated.Images) != 1 {
-		t.Fatalf("updated cycle = %+v", updated)
-	}
-	wantPhases(t, updated.timingScope, "debounce", "contract extraction", "type generation", "build and upload", "update session", "rollout")
-	debounce := updated.Phases[slices.IndexFunc(updated.Phases, func(p timingPhase) bool { return p.Name == "debounce" })]
-	if debounce.DurationMs < float64(devDebounce.Milliseconds()) || debounce.Start != updated.Start {
-		t.Errorf("debounce = %+v, cycle start = %v", debounce, updated.Start)
-	}
-	if updated.DurationMs != float64(updated.End.Sub(updated.Start).Milliseconds()) || updated.End.Before(debounce.End) {
-		t.Errorf("cycle does not span its phases: %+v", updated)
-	}
-	if unchanged.Outcome != cycleUnchanged || slices.Contains(phaseNames(unchanged.timingScope), "update session") {
-		t.Errorf("unchanged cycle = %+v", unchanged)
-	}
-	if names := phaseNames(trace.timingScope); slices.Contains(names, "debounce") {
-		t.Errorf("cycle phases leaked into the run: %v", names)
-	}
-}
-
-func TestTimingCycleOutcomes(t *testing.T) {
-	failed := protocol.SessionResponse{Generation: 2}
-	for _, tc := range []struct {
-		name string
-		run  func(*timingTrace) []string
-	}{
-		{name: "failed build", run: func(trace *timingTrace) []string {
-			finish := trace.beginCycle(devChange{})
-			finish(errors.New("build failed"))
-			return []string{cycleFailed}
-		}},
-		{name: "failed rollout", run: func(trace *timingTrace) []string {
-			finish := trace.beginCycle(devChange{})
-			trace.awaitReady()
-			finish(nil)
-			trace.observe(failed, false)
-			trace.rolloutEnded("ProgressDeadlineExceeded: unready")
-			return []string{cycleFailed}
-		}},
-		{name: "exits while waiting", run: func(trace *timingTrace) []string {
-			finish := trace.beginCycle(devChange{})
-			trace.awaitReady()
-			finish(nil)
-			return []string{cycleUpdating}
-		}},
-		{name: "edit during a rollout", run: func(trace *timingTrace) []string {
-			finish := trace.beginCycle(devChange{})
-			trace.awaitReady()
-			finish(nil)
-			finish = trace.beginCycle(devChange{})
-			trace.awaitReady()
-			finish(nil)
-			trace.observe(failed, true)
-			trace.rolloutEnded("")
-			return []string{cycleSuperseded, cycleReady}
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			trace := newTimingTrace(testingclock.NewFakeClock(time.Unix(100, 0)), "dev", nil)
-			want := tc.run(trace)
-			var got []string
-			for _, cycle := range trace.Cycles {
-				got = append(got, cycle.Outcome)
-			}
-			if !slices.Equal(got, want) {
-				t.Fatalf("outcomes = %v, want %v", got, want)
-			}
-		})
-	}
-}
-
-func TestTimingTraceFailures(t *testing.T) {
-	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{manifestFileName: "apps: [{unknown: true}]\n"})
-	path := filepath.Join(root, "trace.json")
-	config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir()}}
-	err := executeCommand(t.Context(), []string{"dev", "--project", filepath.Join(root, manifestFileName), "--timing", path}, nil, nil, config)
-	if err == nil {
-		t.Fatal("invalid project accepted")
-	}
-	if trace := readTrace(t, path); trace.Error == "" || !slices.Contains(phaseNames(trace.timingScope), "project config") {
-		t.Fatalf("failed run trace = %+v", trace)
-	}
-
-	h, manifest := newTimingHarness(t, &timingSession{}, buildImage(t, "first"))
-	missing := filepath.Join(root, "missing", "trace.json")
-	err = executeCommand(t.Context(), []string{"deploy", "alpha", "--project", manifest, "--timing", missing}, nil, nil, h.run)
-	if err == nil || !strings.Contains(err.Error(), "write timing trace") {
-		t.Fatalf("unwritable trace = %v", err)
-	}
-}
-
-func TestProgressMeasureRecordsWithoutPrinting(t *testing.T) {
-	for _, verbose := range []bool{false, true} {
-		fc := testingclock.NewFakeClock(time.Unix(100, 0))
-		var stream bytes.Buffer
-		output, _, _ := newProgressOutput(io.Discard, &stream, verbose, fc)
-		output.measure("alpha", "untraced")()
-		output.trace = newTimingTrace(fc, "dev", nil)
-		finish := output.measure("alpha", "traced")
-		fc.Step(1500 * time.Millisecond)
-		finish()
-		output.timing().measure("alpha", "trace only")()
-		want := ""
-		if verbose {
-			want = "Timing alpha untraced: 0s\nTiming alpha traced: 1.5s\n"
-		}
-		if stream.String() != want {
-			t.Fatalf("verbose=%v: printed %q, want %q", verbose, stream.String(), want)
-		}
-		if names := phaseNames(output.trace.timingScope); !slices.Equal(names, []string{"traced", "trace only"}) {
-			t.Fatalf("recorded %v", names)
-		}
-		if phase := output.trace.Phases[0]; phase.DurationMs != 1500 || phase.Subject != "alpha" {
-			t.Fatalf("phase = %+v", phase)
-		}
-	}
-	var nothing *progressOutput
-	nothing.measure("alpha", "nil output")()
-	nothing.timing().measure("alpha", "nil trace")()
-}
-
-func TestSolveStatusesSeparatesBuilderPhases(t *testing.T) {
-	fc := testingclock.NewFakeClock(time.Unix(100, 0))
-	trace := newTimingTrace(fc, "dev", nil)
-	display := make(chan *client.SolveStatus)
-	statuses := trace.solveStatuses("alpha linux/arm64", display)
-	var forwarded int
-	var rendered sync.WaitGroup
-	rendered.Go(func() {
-		for range display {
-			forwarded++
-		}
-	})
-	builderClock := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
-	vertex := func(name string, took time.Duration, finished bool) *client.Vertex {
-		result := &client.Vertex{Digest: digest.FromString(name), Name: name, Started: &builderClock}
-		if finished {
-			result.Completed = new(builderClock.Add(took))
-		}
-		return result
-	}
-	for _, status := range []*client.SolveStatus{
-		{Vertexes: []*client.Vertex{vertex("exporting to oci image format", 0, false)}},
-		{Vertexes: []*client.Vertex{vertex("[internal] load build context", 250*time.Millisecond, true), vertex("[1/2] RUN true", time.Hour, true)}},
-		{Vertexes: []*client.Vertex{vertex("exporting to oci image format", 3*time.Second, true)}},
-		{Vertexes: []*client.Vertex{vertex("exporting to oci image format", 3*time.Second, true)}},
-	} {
-		statuses <- status
-	}
-	close(statuses)
-	rendered.Wait()
-	if forwarded != 4 {
-		t.Fatalf("forwarded %d statuses to the display, want 4", forwarded)
-	}
-	got := map[string]float64{}
+	wantPhases(t, trace.Phases, "create session", "update session", "delete session")
+	var edits []timingPhase
 	for _, phase := range trace.Phases {
-		if phase.Subject != "alpha linux/arm64" || !phase.End.Equal(fc.Now()) {
-			t.Errorf("phase = %+v", phase)
-		}
-		got[phase.Name] = phase.DurationMs
-	}
-	if len(trace.Phases) != 2 || got["context upload"] != 250 || got["export"] != 3000 {
-		t.Fatalf("phases = %+v", trace.Phases)
-	}
-	var untraced *timingTrace
-	if channel := make(chan *client.SolveStatus); untraced.solveStatuses("alpha", channel) != channel {
-		t.Fatal("an untraced solve must report straight to the display")
-	}
-}
-
-func TestRegistryClientCountsBlobs(t *testing.T) {
-	_, registry := buildRegistry(t)
-	host := strings.TrimPrefix(registry.URL, "https://")
-	blob := []byte("layer contents")
-	descriptor := content.NewDescriptorFromBytes(ocispec.MediaTypeImageLayer, blob)
-	session := func(trace *timingTrace) func(bool) bool {
-		repository, err := imageRepository(host+"/holon/upload/alpha", "grant-secret", trace.registryClient(registry.Client()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return func(push bool) bool {
-			if push {
-				if err := repository.Push(t.Context(), descriptor, bytes.NewReader(blob)); err != nil {
-					t.Fatal(err)
-				}
-				return true
-			}
-			exists, err := repository.Exists(t.Context(), descriptor)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return exists
+		if phase.Name == "edit" {
+			edits = append(edits, phase)
 		}
 	}
-	clk := testingclock.NewFakeClock(time.Unix(100, 0))
-	first := newTimingTrace(clk, "dev", nil)
-	act := session(first)
-	if act(false) {
-		t.Fatal("fresh registry already has the blob")
+	if len(edits) != 2 || edits[0].Subject != changed || edits[0].Failed || edits[1].Subject != changed || !edits[1].Failed {
+		t.Fatalf("edits = %+v, want %s ready then failed", edits, changed)
 	}
-	act(true)
-	act(false)
-	first.finish()
-	if want := (timingBlobs{Pushed: 1, BytesPushed: int64(len(blob))}); first.Blobs != want {
-		t.Fatalf("pushed run = %+v, want %+v", first.Blobs, want)
+	if edits[0].DurationMs < float64(devDebounce.Milliseconds()) {
+		t.Errorf("edit does not span the debounce: %+v", edits[0])
 	}
-
-	second := newTimingTrace(clk, "dev", nil)
-	act = session(second)
-	for range 2 {
-		if !act(false) {
-			t.Fatal("pushed blob is missing")
-		}
+	update := trace.Phases[slices.IndexFunc(trace.Phases, func(p timingPhase) bool { return p.Name == "update session" })]
+	if update.Start.Before(edits[0].Start) || update.End.After(edits[0].End) {
+		t.Errorf("update session %+v lies outside its edit %+v", update, edits[0])
 	}
-	second.finish()
-	if want := (timingBlobs{Skipped: 1, BytesSkipped: int64(len(blob))}); second.Blobs != want {
-		t.Fatalf("skipping run = %+v, want %+v", second.Blobs, want)
-	}
-}
-
-func TestRegistryExchangeClassification(t *testing.T) {
-	const layer = "sha256:" + "ab"
-	for _, tc := range []struct {
-		name   string
-		method string
-		target string
-		status int
-		size   int64
-		want   timingBlobs
-	}{
-		{name: "rejected upload", method: http.MethodPut, target: "/v2/a/b/blobs/uploads/1?digest=" + layer, status: 401, size: 9},
-		{name: "cross-repository mount", method: http.MethodPost, target: "/v2/a/blobs/uploads/?mount=" + layer + "&from=b", status: 201, want: timingBlobs{Mounted: 1}},
-		{name: "mount the registry declined", method: http.MethodPost, target: "/v2/a/blobs/uploads/?mount=" + layer + "&from=b", status: 202},
-		{name: "manifest", method: http.MethodPut, target: "/v2/a/b/manifests/sha256:ab", status: 201, size: 9, want: timingBlobs{Manifests: 1, ManifestBytes: 9}},
-		{name: "existing manifest is not a blob", method: http.MethodHead, target: "/v2/a/manifests/sha256:ab", status: 200, size: 9},
-		{name: "missing blob", method: http.MethodHead, target: "/v2/a/blobs/" + layer, status: 404, size: 9},
-		{name: "existing blob", method: http.MethodHead, target: "/v2/a/b/blobs/" + layer, status: 200, size: 9, want: timingBlobs{Skipped: 1, BytesSkipped: 9}},
-		{name: "token request", method: http.MethodPost, target: "/token", status: 200},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			request, err := http.NewRequest(tc.method, "https://registry.example"+tc.target, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			request.ContentLength = tc.size
-			var scope timingScope
-			scope.registryExchange(request, &http.Response{StatusCode: tc.status, ContentLength: tc.size})
-			scope.finish()
-			if scope.Blobs != tc.want {
-				t.Fatalf("blobs = %+v, want %+v", scope.Blobs, tc.want)
-			}
-		})
-	}
-}
-
-func TestTimingPollLag(t *testing.T) {
-	observedAt := time.Date(2030, 1, 1, 0, 0, 10, 500_000_000, time.UTC)
-	session := func(transition time.Time) protocol.SessionResponse {
-		return protocol.SessionResponse{Generation: 3, Conditions: []protocol.Condition{{
-			Type: protocol.ConditionReady, Status: "True", ObservedGeneration: 2, LastTransitionTime: protocol.Time(transition),
-		}}}
-	}
-	for _, tc := range []struct {
-		name       string
-		transition time.Time
-		want       *float64
-	}{
-		{name: "after the transition", transition: observedAt.Add(-2500 * time.Millisecond), want: new(2500.0)},
-		{name: "server clock ahead", transition: observedAt.Add(time.Second), want: new(-1000.0)},
-		{name: "no transition time"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fc := testingclock.NewFakeClock(observedAt.Add(-time.Second))
-			trace := newTimingTrace(fc, "dev", nil)
-			trace.awaitReady()
-			trace.observe(protocol.SessionResponse{}, false)
-			lastNotReady := fc.Now()
-			fc.SetTime(observedAt)
-			trace.observe(session(tc.transition), true)
-			fc.Step(time.Minute)
-			trace.observe(session(tc.transition), true)
-
-			ready := trace.Ready
-			if ready.Polls != 2 || !ready.ObservedAt.Equal(observedAt) || !ready.PreviousPollAt.Equal(lastNotReady) {
-				t.Fatalf("a later look replaced the first observation: %+v", ready)
-			}
-			if ready.Generation != 3 || ready.ObservedGeneration != 2 {
-				t.Fatalf("generations = %d, %d; a stale condition must stay visible", ready.Generation, ready.ObservedGeneration)
-			}
-			if (ready.PollLagMs == nil) != (tc.want == nil) || tc.want != nil && *ready.PollLagMs != *tc.want {
-				t.Fatalf("pollLagMs = %v, want %v", ready.PollLagMs, tc.want)
-			}
-		})
-	}
-}
-
-func TestTimingTraceDocumentShape(t *testing.T) {
-	fc := testingclock.NewFakeClock(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
-	trace := newTimingTrace(fc, "dev", []string{"chat"})
-	trace.setOrigin("https://holon.example")
-	trace.setSession("gentle-otter-482")
-	trace.addPlatforms([]string{"linux/arm64"})
-	trace.addApps([]protocol.App{{Name: "chat", Image: "registry.example/chat@sha256:ab"}})
-	ready := protocol.SessionResponse{Conditions: []protocol.Condition{{
-		Type: protocol.ConditionReady, Status: "True", LastTransitionTime: protocol.Time(fc.Now()),
-	}}}
-	trace.awaitReady()
-	trace.observe(protocol.SessionResponse{}, false)
-	trace.observe(ready, true)
-	trace.rolloutEnded("")
-	finish := trace.beginCycle(devChange{manifest: true})
-	trace.addApps([]protocol.App{{Name: "chat", Image: "registry.example/chat@sha256:cd"}})
-	trace.awaitReady()
-	finish(nil)
-	trace.observe(protocol.SessionResponse{}, false)
-	trace.observe(ready, true)
-	trace.rolloutEnded("")
-
-	var stderr bytes.Buffer
-	if err := trace.write(timingStderr, &stderr, nil); err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(stderr.Bytes(), &document); err != nil {
-		t.Fatal(err)
-	}
-	wantKeys := func(name string, value any, keys ...string) {
-		t.Helper()
-		object, ok := value.(map[string]any)
-		if !ok {
-			t.Fatalf("%s = %v", name, value)
-		}
-		for _, key := range keys {
-			if _, ok := object[key]; !ok {
-				t.Errorf("%s has no %q: %v", name, key, object)
-			}
-		}
-	}
-	wantKeys("document", document, "version", "command", "args", "origin", "session", "apps", "platforms",
-		"start", "end", "durationMs", "readyAfterMs", "phases", "images", "blobs", "ready", "cycles")
-	wantKeys("image", document["images"].([]any)[0], "app", "image", "digest")
-	wantKeys("blobs", document["blobs"], "pushed", "mounted", "skipped", "manifests", "bytesPushed", "bytesSkipped", "manifestBytes")
-	wantKeys("ready", document["ready"], "generation", "observedGeneration", "lastTransitionTime", "observedAt", "previousPollAt", "polls", "pollLagMs")
-	cycle := document["cycles"].([]any)[0]
-	wantKeys("cycle", cycle, "index", "manifest", "start", "end", "durationMs", "outcome", "phases", "images", "blobs", "ready")
-}
-
-func TestTimingTraceMarshalsItsFieldsOnce(t *testing.T) {
-	fc := testingclock.NewFakeClock(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
-	trace := newTimingTrace(fc, "dev", []string{"chat"})
-	trace.measure("chat", "plan")()
-	var stderr bytes.Buffer
-	if err := trace.write(timingStderr, &stderr, errors.New("failed")); err != nil {
-		t.Fatal(err)
-	}
-	var document map[string]any
-	if err := json.Unmarshal(stderr.Bytes(), &document); err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"version", "command", "args", "start", "end", "durationMs", "error", "phases", "blobs"} {
-		if _, ok := document[key]; !ok {
-			t.Errorf("document has no %q: %s", key, fmt.Sprint(document))
-		}
-	}
-	phase := document["phases"].([]any)[0].(map[string]any)
-	for _, key := range []string{"name", "subject", "start", "end", "durationMs"} {
-		if _, ok := phase[key]; !ok {
-			t.Errorf("phase has no %q: %v", key, phase)
-		}
+	if len(trace.Ready) != 2 || !trace.Ready[1].ObservedAt.Equal(edits[0].End) {
+		t.Errorf("ready = %+v, want the session and the first edit", trace.Ready)
 	}
 }

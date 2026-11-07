@@ -81,7 +81,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 		entries := slices.Clone(manifests)
 		var annotations map[string]string
 		if p := request.app.resolved.types; p.metadata != nil {
-			finish := request.output.timing().measure(request.app.Name, "contract push")
+			finish := request.output.measure(request.app.Name, "contract push")
 			metadata, ownDigest, err := pushTypeMetadata(ctx, repository, p.metadata, p.documents)
 			finish()
 			if err != nil {
@@ -94,7 +94,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 			Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex,
 			Manifests: entries, Annotations: annotations,
 		})
-		defer request.output.timing().measure(request.app.Name, "index push")()
+		defer request.output.measure(request.app.Name, "index push")()
 		descriptor, err := oras.PushBytes(ctx, repository, ocispec.MediaTypeImageIndex, data)
 		if err == nil {
 			image = repository.Reference.String() + "@" + descriptor.Digest.String()
