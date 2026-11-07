@@ -51,9 +51,9 @@ func goRecursive(value typ) bool {
 }
 
 // goStruct reports whether an object decodes as a struct: one that names fields with valid tags and
-// allows no others.
-func goStruct(value typ, input bool) bool {
-	if value.kind != kindObject || len(value.fields) == 0 || value.extra.kind == extraOpen || value.extra.kind == extraImplicit && !input {
+// declares no schema for other properties.
+func goStruct(value typ) bool {
+	if value.kind != kindObject || len(value.fields) == 0 || value.extra.kind == extraOpen {
 		return false
 	}
 	for name := range value.fields {
@@ -66,15 +66,15 @@ func goStruct(value typ, input bool) bool {
 
 // goDeclares reports whether a type is declared. A shared map is not, since maps of one type are
 // interchangeable anyway.
-func goDeclares(ref *declaration, input bool) bool {
-	return ref.cyclic || goStruct(ref.value, input)
+func goDeclares(ref *declaration) bool {
+	return ref.cyclic || goStruct(ref.value)
 }
 
-func renderGo(value typ, input bool) string {
+func renderGo(value typ) string {
 	switch value.kind {
 	case kindDeclared:
-		if !goDeclares(value.ref, input) {
-			return renderGo(value.ref.value, input)
+		if !goDeclares(value.ref) {
+			return renderGo(value.ref.value)
 		}
 		if !goRecursive(value.ref.value) {
 			return "json.RawMessage"
@@ -96,16 +96,16 @@ func renderGo(value typ, input bool) string {
 			return "json.Number"
 		}
 	case kindArray:
-		return "[]" + renderGo(*value.item, input)
+		return "[]" + renderGo(*value.item)
 	case kindObject:
 		if len(value.fields) == 0 {
 			item := "json.RawMessage"
 			if value.extra.kind == extraOpen {
-				item = renderGo(*value.extra.value, input)
+				item = renderGo(*value.extra.value)
 			}
 			return "map[string]" + item
 		}
-		if !goStruct(value, input) {
+		if !goStruct(value) {
 			return "map[string]json.RawMessage"
 		}
 		names := map[string]bool{}
@@ -113,7 +113,7 @@ func renderGo(value typ, input bool) string {
 		out.WriteString("struct {\n")
 		for _, name := range sortedKeys(value.fields) {
 			member := value.fields[name]
-			rendered := renderGo(member.value, input)
+			rendered := renderGo(member.value)
 			tagName := name
 			// A struct cannot contain a recursive type by value, since that type may contain the struct.
 			if (!member.required || member.value.kind == kindDeclared && member.value.ref.cyclic) && rendered != "json.RawMessage" {
@@ -144,36 +144,34 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 			tool := catalog[name]
 			method := unique(methods, typeIdentifier(name))
 			var symbols []string
-			for index, part := range []struct {
+			for _, part := range []struct {
 				suffix string
 				shape  shape
 			}{{"Input", tool.input}, {"Output", tool.output}} {
-				input := index == 0
 				symbol := unique(names, client+method+part.suffix)
-				declares := func(ref *declaration) bool { return goDeclares(ref, input) }
 				root := part.shape.value
 				// A type that this tool uses first as its whole input or output is declared as that.
-				if root.kind == kindDeclared && root.ref.name == "" && declares(root.ref) && root.ref.preferred(symbol, client+part.suffix) == symbol {
+				if root.kind == kindDeclared && root.ref.name == "" && goDeclares(root.ref) && root.ref.preferred(symbol, client+part.suffix) == symbol {
 					root.ref.name = symbol
 				}
-				for _, ref := range part.shape.name(names, symbol, client+part.suffix, declares) {
+				for _, ref := range part.shape.name(names, symbol, client+part.suffix, goDeclares) {
 					// Only a defined type can contain itself, but one defined from json.RawMessage would
 					// lose its methods.
 					format := "type %s = %s\n\n"
 					if ref.cyclic && goRecursive(ref.value) {
 						format = "type %s %s\n\n"
 					}
-					fmt.Fprintf(&declarations, format, ref.name, renderGo(ref.value, input))
+					fmt.Fprintf(&declarations, format, ref.name, renderGo(ref.value))
 				}
 				if root.kind != kindDeclared || root.ref.name != symbol {
-					fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(root, input))
+					fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(root))
 				}
 				for _, definition := range sortedKeys(part.shape.named) {
 					value, preferred := part.shape.named[definition], symbol+typeIdentifier(definition)
 					if value.kind == kindDeclared && value.ref.name == preferred {
 						continue
 					}
-					fmt.Fprintf(&declarations, "type %s = %s\n\n", unique(names, preferred), renderGo(value, input))
+					fmt.Fprintf(&declarations, "type %s = %s\n\n", unique(names, preferred), renderGo(value))
 				}
 				symbols = append(symbols, symbol)
 			}

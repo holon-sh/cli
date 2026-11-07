@@ -15,12 +15,11 @@ import (
 const fileInfo = `"FileInfo":{"type":"object","additionalProperties":false,"required":["name"],"properties":{"name":{"type":"string"},"owner":{"$ref":"#/$defs/Owner"},"children":{"type":"array","items":{"$ref":"#/$defs/FileInfo"}}}},
 	"Owner":{"type":"object","additionalProperties":false,"required":["login"],"properties":{"login":{"type":"string"}}}`
 
-// recursiveSchema closes its objects, so that the Go client has structs to walk. A compiler that
-// rejects any of its odd entries rejects the whole generated client: Knot and Tangle reach themselves
-// through nothing that can be declared, and Wrap only reaches a type that does. The rest of Pair
-// needs its own spelling in TypeScript, Spiral merges with itself, which Python can only do by
-// inlining, and Ring requires itself, which a Go struct cannot hold by value. Chain only names Link,
-// so Link is the type declared.
+// A compiler that rejects any of recursiveSchema's odd entries rejects the whole generated client:
+// Knot and Tangle reach themselves through nothing that can be declared, and Wrap only reaches a
+// type that does. The rest of Pair needs its own spelling in TypeScript, Spiral merges with itself,
+// which Python can only do by inlining, and Ring requires itself, which a Go struct cannot hold by
+// value. Chain only names Link, so Link is the type declared.
 const recursiveSchema = `{"type":"object","additionalProperties":false,"required":["root"],"properties":{
 	"root":{"$ref":"#/$defs/FileInfo"},
 	"tree":{"$ref":"#/$defs/Tree"},
@@ -58,8 +57,8 @@ const recursiveSchema = `{"type":"object","additionalProperties":false,"required
 const statInput = `{"type":"object","properties":{"file":{"$ref":"#/$defs/FileInfo"},
 	"open":{"type":"object","properties":{"state":{"type":"string"}},"additionalProperties":true},"free":{"type":"object"}},"$defs":{` + fileInfo + `}}`
 
-// openFileInfo has the common shape of a recursive output: its objects stay open, so the Go client
-// reads them as maps.
+// openFileInfo has the common shape of a recursive output: its objects name fields without declaring
+// additionalProperties, and render as closed ones do.
 const openFileInfo = `"$defs":{"FileInfo":{"type":"object","required":["name"],"properties":{"name":{"type":"string"},"children":{"type":"array","items":{"$ref":"#/$defs/FileInfo"}}}}}`
 
 // openFileTree is openFileInfo's FileInfo as a whole output.
@@ -136,6 +135,7 @@ declare const walk: Walk;
 declare const stat: Outputs["files"]["stat"];
 declare const listed: Outputs["files"]["list"];
 declare const resource: Resources["files"]["files://root"];
+declare const summary: Omit<OutputTypes["files"]["list"]["FileInfo"], "children">;
 export const name: string = walk.root.children![0]!.children![0]!.name;
 export const read: string = resource.children![0]!.children![0]!.name;
 export const login: string = stat.file.children![0]!.owner!.login;
@@ -152,7 +152,7 @@ export const index: Walk["index"] = { a: { b: {} } };
 export const mutual: Walk["left"] = { right: { left: { right: {} } } };
 export const pair: Walk["pair"] = ["a", ["b", ["c"]]];
 export const self: string = walk.self!.self!.root.name;
-export const extra: Outputs["files"]["list"] = { files: [], other: true };
+export const summarized: string = summary.name;
 export const input: Inputs["files"]["walk"] = { root: { name: "a", children: [{ name: "b", children: [{ name: "c" }] }] } };
 export const open: Inputs["files"]["stat"] = { file: { name: "a", owner: { login: "b" } }, open: { other: 1 }, free: { other: 1 } };
 `)
@@ -169,6 +169,7 @@ export const nme = walk.self!.self!.root.children![0]!.children![0]!.nme;
 export const rihgt = walk.left!.right.left!.right.left!.rihgt;
 export const lgin = stat.file.children![0]!.owner!.lgin;
 export const open = listed.files[0]!.children![0]!.children![0]!.name satisfies 1;
+export const extra: Outputs["files"]["list"] = { files: [], other: true };
 export const pair: Walk["pair"] = ["a", ["b", [1]]];
 export const input: Inputs["files"]["walk"] = { root: { name: "a", children: [{ name: "b", children: [{ nma: "c" }] }] } };
 export const top: Inputs["files"]["stat"] = { fil: { name: "a" } };
@@ -176,7 +177,7 @@ export const owner: InputTypes["files"]["stat"]["Owner"] = { lgn: "a" };
 `)
 		mustReject(t, app,
 			"Property 'nam' does not exist", "Property 'nme' does not exist", "Property 'rihgt' does not exist", "Property 'lgin' does not exist",
-			"does not satisfy the expected type", "Type 'number' is not assignable", "'nma' does not exist", "'fil' does not exist", "'lgn' does not exist")
+			"does not satisfy the expected type", "'other' does not exist", "Type 'number' is not assignable", "'nma' does not exist", "'fil' does not exist", "'lgn' does not exist")
 	})
 	t.Run("python", func(t *testing.T) {
 		t.Parallel()
@@ -261,6 +262,13 @@ func TestDecodesEveryDepth(t *testing.T) {
 	}
 	if walk.Left.Right.Left.Right.Left != nil || len((*walk.Rows)[0]) != 1 || (*walk.Index)["a"]["b"] == nil || walk.Wrapped.Name != "d" {
 		t.Fatalf("decoded %+v", walk)
+	}
+	var listed FilesListOutput
+	if err := json.Unmarshal([]byte(`+"`"+`{"files": [{"name": "a", "children": [{"name": "b"}]}]}`+"`"+`), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if name := (*listed.Files[0].Children)[0].Name; name != "b" {
+		t.Fatalf("name = %q", name)
 	}
 	// Unions decode as raw JSON, as they do when not recursive, and so does their exported name.
 	var tree FilesWalkOutputTree

@@ -150,10 +150,10 @@ await apps.bar.tools.greet({ name: 1 });
 // error TS2322: Type 'number' is not assignable to type 'string'.
 
 await apps.bar.tools.hello({ name: "world" });
-// error TS2339: Property 'hello' does not exist on type '{ readonly greet: (input: { name: string; }, options?: CallOptions | undefined) => Promise<{ [key: string]: unknown; result: string; }>; }'.
+// error TS2339: Property 'hello' does not exist on type '{ readonly greet: (input: { name: string; }, options?: CallOptions | undefined) => Promise<{ result: string; }>; }'.
 
-const text: string = greeting.text;
-// error TS2322: Type 'unknown' is not assignable to type 'string'.
+greeting.text;
+// error TS2339: Property 'text' does not exist on type '{ result: string; }'.
 ```
 
 </details>

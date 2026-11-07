@@ -52,7 +52,7 @@ type pythonEmitter struct {
 
 // pythonTypedDict reports whether an object renders as a TypedDict rather than a dict.
 func pythonTypedDict(value typ) bool {
-	return value.kind == kindObject && value.extra.kind != extraOpen && (len(value.fields) > 0 || value.extra.kind != extraImplicit)
+	return value.kind == kindObject && value.extra.kind == extraClosed
 }
 
 // pythonDeclares reports whether a type is declared, which a shared dict is not.
@@ -165,7 +165,7 @@ func (e *pythonEmitter) render(value typ, name string) string {
 				combined[key] = member
 			}
 		}
-		return e.render(typ{kind: kindObject, fields: combined, extra: extra{kind: extraImplicit}}, name)
+		return e.render(objectType(combined, extra{kind: extraImplicit}), name)
 	case kindObject:
 		if !pythonTypedDict(value) {
 			rendered := "_builtins.object"
