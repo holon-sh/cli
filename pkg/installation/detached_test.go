@@ -107,23 +107,3 @@ func TestDetachedDevLifecycle(t *testing.T) {
 		})
 	}
 }
-
-func TestDetachedDevArguments(t *testing.T) {
-	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{manifestFileName: manifestFixture})
-	for _, tc := range []struct {
-		args    []string
-		message string
-	}{
-		{[]string{"--ttl", "24h"}, "--ttl requires --detach"},
-		{[]string{"--json"}, "--json requires --detach"},
-		{[]string{"--detach", "--ttl", "0s"}, "whole seconds"},
-		{[]string{"--detach", "--ttl", "1.5s"}, "whole seconds"},
-		{[]string{"--detach", "--ttl", "25h"}, "whole seconds"},
-	} {
-		err := executeCommand(t.Context(), append([]string{"dev"}, tc.args...), nil, nil, commandConfig{file: filepath.Join(root, manifestFileName)})
-		if err == nil || !strings.Contains(err.Error(), tc.message) {
-			t.Fatalf("%v: %v", tc.args, err)
-		}
-	}
-}

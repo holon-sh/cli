@@ -115,9 +115,7 @@ func (c *apiClient) Do(ctx context.Context, method, path string, request apiRequ
 		if err != nil || mediaType != "text/plain" {
 			return errMalformedResponse
 		}
-		if _, err = io.Copy(request.Stream, response.Body); err == nil {
-			err = errStreamEnded
-		}
+		_, err = io.Copy(request.Stream, response.Body)
 		return err
 	}
 	data, err := clientutil.ReadLimited(response.Body, maxHTTPBody)
@@ -162,6 +160,15 @@ func HTTPStatus(err error) int {
 	}
 	failure, _ := errors.AsType[*httpError](err)
 	return ptr.Deref(failure, httpError{}).StatusCode
+}
+
+// resumable reports whether a log stream failure is transient: the stream ended, its transport failed or the server
+// returned a 5xx. A rejected or malformed response, including an installation mismatch, is final.
+func resumable(err error) bool {
+	if status := HTTPStatus(err); status != 0 {
+		return status >= http.StatusInternalServerError
+	}
+	return !errors.Is(err, errMalformedResponse) && !errors.Is(err, errResponseTooLarge) && !errors.Is(err, errInvalidRequestPath)
 }
 
 func responseError(data []byte, token string, status int) (string, string) {
@@ -229,5 +236,3 @@ func validClientID(value string) bool {
 	return len(value) <= 1024 && utf8.ValidString(value) && strings.TrimSpace(value) != "" &&
 		!strings.ContainsFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }
-
-var errStreamEnded = errors.New("the log stream ended")
