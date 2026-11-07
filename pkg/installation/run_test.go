@@ -210,13 +210,13 @@ func TestRunDevLifecycle(t *testing.T) {
 		if !slices.Equal(request.Platforms, []string{"linux/arm64"}) {
 			t.Errorf("session platforms = %v", request.Platforms)
 		}
-		switch edit, _ := os.ReadFile(filepath.Join(root, "alpha", "logic.ts")); string(edit) {
+		switch edit, _ := os.ReadFile(filepath.Join(root, "alpha", "logic.txt")); string(edit) {
 		case "":
 			return firstBuild(ctx, request, progress)
 		case "broken":
 			return "", errors.New("rebuild failed")
 		case "superseded":
-			if err := os.WriteFile(filepath.Join(root, "alpha", "logic.ts"), []byte("fixed"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(root, "alpha", "logic.txt"), []byte("fixed"), 0o644); err != nil {
 				return "", err
 			}
 		}
@@ -301,9 +301,6 @@ func TestRunDevLifecycle(t *testing.T) {
 			}
 			installationtest.WriteJSON(w, session())
 		})
-	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	})
 	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
 		if query := r.URL.Query(); query.Get("event") != "holon.mcp.call" || query.Get("follow") != "true" {
 			t.Errorf("request stream query = %s", r.URL.RawQuery)
@@ -340,7 +337,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			})
 		}
 		await(stderr, "Configure API_KEY to start the session.", "request stream stopped")
-		sourceFiles(t, root, map[string]string{"alpha/logic.ts": "broken"})
+		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "broken"})
 		await(stderr, "remote image preparation failed")
 		mu.Lock()
 		waiting = ""
@@ -351,7 +348,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		writeDescriptor(t, filepath.Join(root, "alpha", "server.json"), document)
 		await(stderr, "restart holon dev")
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
-		sourceFiles(t, root, map[string]string{"alpha/logic.ts": "superseded"})
+		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "superseded"})
 		await(stderr, "discarding the superseded update", "remote update requested")
 		mu.Lock()
 		unavailable = true
