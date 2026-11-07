@@ -9,10 +9,29 @@ import (
 	"strings"
 )
 
-// shape is one schema's type with the named types from its definitions and $defs sections.
+// shape is one schema's type with the named types from its definitions and $defs sections, and
+// the recursive types they mention.
 type shape struct {
-	value typ
-	named map[string]typ
+	value     typ
+	named     map[string]typ
+	recursive []*recursive
+}
+
+// nameRecursive gives each recursive type an identifier within scope and returns them to declare.
+// Every name is assigned first, because recursive types can refer to each other in any order.
+func (s shape) nameRecursive(names map[string]bool, scope string) []*recursive {
+	for _, ref := range s.recursive {
+		ref.name = unique(names, scope+typeIdentifier(ref.pointer[strings.LastIndexByte(ref.pointer, '/')+1:]))
+	}
+	return s.recursive
+}
+
+// recursive is a type that refers to itself, which only a declared name can express.
+type recursive struct {
+	pointer string
+	value   typ
+	name    string // Assigned by nameRecursive.
+	cyclic  bool
 }
 
 type typeKind uint8
@@ -31,6 +50,7 @@ const (
 	kindObject
 	kindUnion
 	kindIntersection
+	kindRecursive
 )
 
 // typ is the type a schema describes.
@@ -43,6 +63,7 @@ type typ struct {
 	fields  map[string]field // kindObject
 	extra   extra            // kindTuple rest, kindObject additional properties
 	items   []typ            // kindUnion, kindIntersection
+	ref     *recursive       // kindRecursive
 }
 
 type extraKind uint8
@@ -54,8 +75,9 @@ const (
 )
 
 type extra struct {
-	kind  extraKind
-	value *typ // extraOpen
+	kind      extraKind
+	value     *typ // extraOpen
+	recursive bool // extraOpen: value mentions a recursive type
 }
 
 type field struct {
@@ -64,8 +86,8 @@ type field struct {
 }
 
 func parseShape(ctx context.Context, schema Value) (shape, error) {
-	parser := &parser{ctx: ctx, root: schema, active: map[string]bool{}}
-	value, err := parser.parse(schema, 0)
+	parser := &parser{ctx: ctx, root: schema, references: map[string]*recursive{}}
+	value, err := parser.reference("#", schema, 0)
 	if err != nil {
 		return shape{}, err
 	}
@@ -74,19 +96,106 @@ func parseShape(ctx context.Context, schema Value) (shape, error) {
 	for _, section := range []string{"definitions", "$defs"} {
 		definitions, _ := root[section].(Object)
 		for _, name := range sortedKeys(definitions) {
-			if result.named[name], err = parser.parse(definitions[name], 0); err != nil {
+			if result.named[name], err = parser.reference("#/"+section+"/"+name, definitions[name], 0); err != nil {
 				return shape{}, err
 			}
 		}
+	}
+	for _, reference := range sortedKeys(parser.references) {
+		result.recursive = append(result.recursive, parser.references[reference])
 	}
 	return result, nil
 }
 
 type parser struct {
-	ctx    context.Context
-	root   Value
-	active map[string]bool
+	ctx        context.Context
+	root       Value
+	references map[string]*recursive // Being parsed, or found to be recursive.
+	mentions   int                   // Times a recursive type has been named.
 }
+
+// resolve finds the schema a reference points at.
+func (p *parser) resolve(reference string) (Value, error) {
+	path, ok := strings.CutPrefix(reference, "#")
+	if !ok {
+		return nil, fmt.Errorf("external schema reference is unsupported: %s", reference)
+	}
+	target, ok := pointer(p.root, path)
+	if !ok {
+		return nil, fmt.Errorf("unresolved schema reference: %s", reference)
+	}
+	return target, nil
+}
+
+// reference returns the type a reference resolves to. Its target is inlined unless it reaches
+// itself, in which case it is declared once and every mention of it names that declaration.
+func (p *parser) reference(reference string, target Value, depth int) (typ, error) {
+	if known, ok := p.references[reference]; ok {
+		known.cyclic = true
+		p.mentions++
+		return typ{kind: kindRecursive, ref: known}, nil
+	}
+	if p.selfDefined(target, reference, map[string]bool{}) {
+		return typ{kind: kindUnknown}, nil
+	}
+	if alias(target) {
+		return p.parse(target, depth) // The schema it names is declared instead, if that one recurs.
+	}
+	current := &recursive{pointer: reference}
+	p.references[reference] = current
+	value, err := p.parse(target, depth)
+	if err != nil {
+		return typ{}, err
+	}
+	if !current.cyclic {
+		delete(p.references, reference)
+		return value, nil
+	}
+	current.value = value
+	return typ{kind: kindRecursive, ref: current}, nil
+}
+
+// selfDefined reports whether schema reaches reference through other references and combinators
+// alone. With no array or object in between, as in `type T = T | string`, no language can declare it.
+func (p *parser) selfDefined(schema Value, reference string, seen map[string]bool) bool {
+	object, _ := schema.(Object)
+	if next, ok := object["$ref"].(string); ok {
+		if next == reference {
+			return true
+		}
+		if seen[next] {
+			return false
+		}
+		seen[next] = true
+		target, err := p.resolve(next)
+		return err == nil && p.selfDefined(target, reference, seen) // parse reports the error.
+	}
+	for _, combinator := range combinators {
+		if items, ok := object[combinator.key].([]Value); ok {
+			return slices.ContainsFunc(items, func(item Value) bool { return p.selfDefined(item, reference, seen) })
+		}
+	}
+	return false
+}
+
+// alias reports whether schema only names another schema: a reference, or a combinator of one.
+func alias(schema Value) bool {
+	object, _ := schema.(Object)
+	if _, ok := object["$ref"].(string); ok {
+		return true
+	}
+	for _, combinator := range combinators {
+		if items, ok := object[combinator.key].([]Value); ok {
+			return len(items) == 1 && alias(items[0])
+		}
+	}
+	return false
+}
+
+var combinators = []struct {
+	key  string
+	kind typeKind
+}{{"anyOf", kindUnion}, {"oneOf", kindUnion}, {"allOf", kindIntersection}}
 
 func (p *parser) extra(value Value, present bool, depth int) (extra, error) {
 	if !present {
@@ -95,11 +204,12 @@ func (p *parser) extra(value Value, present bool, depth int) (extra, error) {
 	if value == false {
 		return extra{kind: extraClosed}, nil
 	}
+	before := p.mentions
 	item, err := p.parse(value, depth+1)
 	if err != nil {
 		return extra{}, err
 	}
-	return extra{kind: extraOpen, value: &item}, nil
+	return extra{kind: extraOpen, value: &item, recursive: p.mentions > before}, nil
 }
 
 func (p *parser) parseAll(items []Value, depth int) ([]typ, error) {
@@ -132,33 +242,20 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 		return typ{}, errors.New("schema must be an object or boolean")
 	}
 	if reference, ok := object["$ref"].(string); ok {
-		path, ok := strings.CutPrefix(reference, "#")
-		if !ok {
-			return typ{}, fmt.Errorf("external schema reference is unsupported: %s", reference)
-		}
-		target, ok := pointer(p.root, path)
-		if !ok {
-			return typ{}, fmt.Errorf("unresolved schema reference: %s", reference)
-		}
-		if p.active[reference] {
-			return typ{kind: kindUnknown}, nil
-		}
-		p.active[reference] = true
-		value, err := p.parse(target, depth+1)
+		target, err := p.resolve(reference)
 		if err != nil {
 			return typ{}, err
 		}
-		delete(p.active, reference)
-		return value, nil
+		return p.reference(reference, target, depth+1)
 	}
-	for _, combinator := range []struct {
-		key  string
-		kind typeKind
-	}{{"anyOf", kindUnion}, {"oneOf", kindUnion}, {"allOf", kindIntersection}} {
+	for _, combinator := range combinators {
 		if items, ok := object[combinator.key].([]Value); ok {
 			types, err := p.parseAll(items, depth)
 			if err != nil {
 				return typ{}, err
+			}
+			if len(types) == 1 && types[0].kind == kindRecursive {
+				return types[0], nil
 			}
 			return typ{kind: combinator.kind, items: types}, nil
 		}
