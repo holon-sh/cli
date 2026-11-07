@@ -5,15 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/opencontainers/go-digest"
 )
 
 // The v1 contract document. Decoding a value validates it; there is no separate validate step.
-
-// contractIdentity names a published app.
-type contractIdentity struct {
-	Name, Version string
-}
 
 // contractTool is one tool's schemas. Output is nil when the tool declares no outputSchema.
 type contractTool struct {
@@ -34,30 +30,35 @@ type contract struct {
 
 // metadata is the document an image publishes.
 type metadata struct {
-	Identity contractIdentity
+	Identity mcpcontract.Identity
 	Schema   *contract
 	Requires map[string]string
 }
 
-func decodeIdentity(value Value) (contractIdentity, error) {
+// checkIdentity requires what names a published app.
+func checkIdentity(identity mcpcontract.Identity) error {
+	if identity.Name == "" || identity.Version == "" {
+		return errors.New("identity name and version must be nonempty")
+	}
+	return nil
+}
+
+func decodeIdentity(value Value) (mcpcontract.Identity, error) {
 	object, err := asObject(value)
 	if err != nil {
-		return contractIdentity{}, err
+		return mcpcontract.Identity{}, err
 	}
-	var identity contractIdentity
+	var identity mcpcontract.Identity
 	for name, target := range map[string]*string{"name": &identity.Name, "version": &identity.Version} {
 		raw, err := requiredField(object, name)
 		if err != nil {
-			return contractIdentity{}, err
+			return mcpcontract.Identity{}, err
 		}
 		if *target, err = asString(raw); err != nil {
-			return contractIdentity{}, err
-		}
-		if *target == "" {
-			return contractIdentity{}, errors.New("identity name and version must be nonempty")
+			return mcpcontract.Identity{}, err
 		}
 	}
-	return identity, nil
+	return identity, checkIdentity(identity)
 }
 
 func decodeContract(value Value) (contract, error) {

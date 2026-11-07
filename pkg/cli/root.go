@@ -33,6 +33,9 @@ const generateExamples = `  # Generate for the current project
   holon types generate -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
   holon types generate -s docs=https://mcp.context7.com/mcp
 
+  # A remote MCP server that requires a token: DOCS_MCP_TOKEN is sent to it as a bearer token
+  DOCS_MCP_TOKEN=... holon types generate -s docs=https://mcp.example.com/mcp
+
   # Print one server's contract, or commit it beside its server.json
   holon types generate --contract ../orders
   holon types generate --contract ../orders -o ../orders/holon-contract.json`

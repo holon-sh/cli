@@ -84,8 +84,8 @@ func (r generateRequest) validate() error {
 		return fmt.Errorf("unknown target %q", r.Target)
 	}
 	for _, identity := range slices.AppendSeq([]mcpcontract.Identity{r.Identity}, maps.Values(r.Requires)) {
-		if identity.Name == "" || identity.Version == "" {
-			return errors.New("identity name and version must be nonempty")
+		if err := checkIdentity(identity); err != nil {
+			return err
 		}
 	}
 	if r.Protocol != "" && r.ProtocolSpecifier != "" {
