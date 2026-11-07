@@ -34,59 +34,38 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 	return c, fakeRun(results)
 }
 
-func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
-	c, extract := checkoutConsumer(t, TargetTS, TargetUI)
-	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Run: extract})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prepared.Close()
-	metadata := prepared.Metadata()["checkout"]
-	if metadata.Identity.Name != "example.com/checkout" || metadata.Schema == nil || len(prepared.Documents()[metadata.Requires["orders"]].Schema.Tools) != 1 {
-		t.Fatalf("consumer metadata = %+v", metadata)
-	}
-	if server := prepared.Servers()["checkout"]; server.Name != "example.com/checkout" || server.Description != "Checkout" {
-		t.Fatalf("checkout server = %+v", server)
-	}
-	stage := t.TempDir()
-	for pkg, write := range map[string]func(string, string) error{"holon-sh": prepared.WriteNodeSlot, "holon-ui": prepared.WriteBrowserSlot} {
-		if err := os.MkdirAll(filepath.Join(stage, pkg), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err = write("checkout", filepath.Join(stage, pkg)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// Server code calls its dependencies; browser code also calls the server itself.
-	if node := read(t, stage, "holon-sh/generated/index.js"); !strings.Contains(node, `"lookup"`) || strings.Contains(node, `"status"`) {
-		t.Fatalf("node client:\n%s", node)
-	}
-	if browser := read(t, stage, "holon-ui/generated/index.js"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `appClass(identity, contracts, "checkout")`) {
-		t.Fatalf("browser client:\n%s", browser)
-	}
-}
-
-func TestAliasedOwnServerIsAClientInEverySlot(t *testing.T) {
+// Server code calls the project's own server only under an alias, and browser code always calls
+// it. Either way it stays the project's own server, not a dependency of itself.
+func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing.T) {
 	c, extract := checkoutConsumer(t, TargetTS, TargetUI, TargetPy)
-	c.Server.Alias = "shop"
-	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Run: extract})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prepared.Close()
-	packages := prepared.consumer("checkout").packages
-	if node := string(packages[TargetTS]["index.d.ts"]); !strings.Contains(node, `"shop": {`) {
-		t.Fatalf("node client:\n%s", node)
-	}
-	if python := string(packages[TargetPy]["holon/apps/__init__.py"]); !strings.Contains(python, "shop: ShopApp") {
-		t.Fatalf("python client:\n%s", python)
-	}
-	if browser := string(packages[TargetUI]["index.d.ts"]); !strings.Contains(browser, `type OwnAppKey = "shop"`) || strings.Contains(browser, `"checkout": {`) {
-		t.Fatalf("browser client:\n%s", browser)
-	}
-	// It stays the project's own server, not a dependency of itself.
-	if metadata := prepared.Metadata()["checkout"]; metadata.Requires["shop"] != "" {
-		t.Fatalf("consumer metadata = %+v", metadata)
+	for _, test := range []struct{ alias, key string }{{"", "checkout"}, {"shop", "shop"}} {
+		c.Server.Alias = test.alias
+		prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Run: extract})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer prepared.Close()
+		stage := t.TempDir()
+		for dir, write := range map[string]func(string, string) error{"holon-sh": prepared.WriteNodeSlot, "holon-ui": prepared.WriteBrowserSlot, "python": prepared.WritePythonSlot} {
+			if err := os.MkdirAll(filepath.Join(stage, dir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := write("checkout", filepath.Join(stage, dir)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// The own server's tool is status; its dependency's is lookup.
+		aliased := test.alias != ""
+		node, python := read(t, stage, "holon-sh/generated/index.d.ts"), read(t, stage, "python/holon/apps/__init__.py")
+		if !strings.Contains(node, `"lookup"`) || strings.Contains(node, `"`+test.key+`": {`) != aliased || strings.Contains(python, "def status(") != aliased {
+			t.Fatalf("server clients under alias %q:\n%s\n%s", test.alias, node, python)
+		}
+		if browser := read(t, stage, "holon-ui/generated/index.d.ts"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `type OwnAppKey = "`+test.key+`"`) || strings.Contains(browser, `"checkout": {`) == aliased {
+			t.Fatalf("browser client under alias %q:\n%s", test.alias, browser)
+		}
+		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 1 {
+			t.Fatalf("requires = %v", requires)
+		}
 	}
 	c.Sources[0].Alias = "shop"
 	if _, err := Prepare(t.Context(), []Consumer{c}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "own client shop conflicts") {
@@ -95,19 +74,31 @@ func TestAliasedOwnServerIsAClientInEverySlot(t *testing.T) {
 }
 
 func TestServersDescribeEachConsumersOwnServer(t *testing.T) {
-	chat := t.TempDir()
-	put(t, chat, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	put(t, chat, "server.ts", "export default {};\n")
 	info := json.RawMessage(`{"name":"example.com/chat","version":"2.0.0","title":"Chat","description":"Chat with Holon","websiteUrl":"https://example.com/chat"}`)
-	options := Options{Run: fakeRun(map[string]any{"": extraction{ServerInfo: info}})}
-	prepared, err := Prepare(t.Context(), []Consumer{{Name: "chat", Dir: chat, Server: &Source{Path: filepath.Join(chat, "server.ts")}}}, options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prepared.Close()
-	want := Server{Name: "example.com/chat", Version: "2.0.0", Title: "Chat", Description: "Chat with Holon", WebsiteURL: "https://example.com/chat"}
-	if got := prepared.Servers()["chat"]; got != want {
-		t.Fatalf("chat server = %+v, want %+v", got, want)
+	for _, test := range []struct {
+		name, descriptor string
+		want             Server
+	}{
+		{"MCP constructor", "", Server{Name: "example.com/chat", Version: "2.0.0", Title: "Chat", Description: "Chat with Holon", WebsiteURL: "https://example.com/chat"}},
+		{"server.json", `{"name":"example.com/chat","version":"1.0.0","description":"Chat"}`, Server{Name: "example.com/chat", Version: "1.0.0", Description: "Chat"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			chat := t.TempDir()
+			put(t, chat, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
+			put(t, chat, "server.ts", "export default {};\n")
+			if test.descriptor != "" {
+				put(t, chat, "server.json", test.descriptor)
+			}
+			options := Options{Run: fakeRun(map[string]any{"": extraction{ServerInfo: info}, "example.com/chat": extraction{}})}
+			prepared, err := Prepare(t.Context(), []Consumer{{Name: "chat", Dir: chat, Server: &Source{Path: filepath.Join(chat, "server.ts")}}}, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer prepared.Close()
+			if got := prepared.Servers()["chat"]; got != test.want {
+				t.Fatalf("chat server = %+v, want %+v", got, test.want)
+			}
+		})
 	}
 }
 
