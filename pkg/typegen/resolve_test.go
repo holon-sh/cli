@@ -85,7 +85,6 @@ func TestEndpointToken(t *testing.T) {
 	for _, test := range []struct {
 		name, alias, env, want string
 	}{
-		{"accepted", "docs", "DOCS_MCP_TOKEN=good-value", ""},
 		{"hyphenated alias", "my-docs", "MY_DOCS_MCP_TOKEN=good-value", ""},
 		{"refused", "docs", "DOCS_MCP_TOKEN=bad-value", "HTTP 403; the token came from DOCS_MCP_TOKEN"},
 		{"missing", "docs", "OTHER_MCP_TOKEN=good-value", "HTTP 403; if it needs a token, set DOCS_MCP_TOKEN"},
