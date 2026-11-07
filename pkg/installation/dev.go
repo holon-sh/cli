@@ -264,16 +264,16 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		if err := d.settle(announce); err != nil {
 			return err
 		}
-		phase, state, interval := "Watching for changes", progressIdle, idlePoll
+		phase, state := "Watching for changes", progressIdle
 		if d.pending.Len() > 0 {
-			phase, state, interval = "Deploying apps", progressWorking, workflowPoll
+			phase, state = "Deploying apps", progressWorking
 		}
 		reportSessionProgress(d.session, d.options.output, phase, state)
 		changes := watcher.changes
 		if lifecyclePending(d.session) {
-			changes, interval = nil, workflowPoll
+			changes = nil
 		}
-		read, stopRead := d.readSession(ctx, interval)
+		read, stopRead := d.readSession(ctx)
 		select {
 		case <-ctx.Done():
 			stopRead()
@@ -310,26 +310,18 @@ type sessionRead struct {
 	err     error
 }
 
-// readSession reads the session in the background, so that a save can interrupt a long poll. A session
-// that is converging is long-polled, no more often than workflowPoll in case the answer comes at once;
-// a healthy one has nothing to wait for and is read every idlePoll.
-func (d *devLoop) readSession(ctx context.Context, interval time.Duration) (<-chan sessionRead, context.CancelFunc) {
+// readSession long-polls the session in the background, so that a save can interrupt it. Reads start
+// at most every workflowPoll, in case the answers come at once.
+func (d *devLoop) readSession(ctx context.Context) (<-chan sessionRead, context.CancelFunc) {
 	ctx, stop := context.WithCancel(ctx)
-	read, delay := d.manager.Session, interval
-	if interval == workflowPoll {
-		revision := d.session.Revision
-		read = func(ctx context.Context, name string) (protocol.SessionResponse, error) {
-			return d.manager.awaitSession(ctx, name, revision)
-		}
-		delay = max(0, d.nextRead.Sub(d.clock.Now()))
-	}
+	revision, delay := d.session.Revision, max(0, d.nextRead.Sub(d.clock.Now()))
 	d.nextRead = d.clock.Now().Add(delay + workflowPoll)
 	result := make(chan sessionRead, 1)
 	go func() {
 		select {
 		case <-ctx.Done():
 		case <-d.clock.After(delay):
-			session, err := read(ctx, d.name)
+			session, err := d.manager.awaitSession(ctx, d.name, revision)
 			result <- sessionRead{session, err}
 		}
 	}()
@@ -344,7 +336,7 @@ func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
 	if slices.Contains([]int{http.StatusNotFound, http.StatusGone}, HTTPStatus(err)) {
 		return errors.New("development session is no longer available")
 	}
-	if credentialsLost(err) {
+	if credentialsLost(err) || errors.Is(err, errSessionWaitRefused) {
 		return err
 	}
 	if err != nil {

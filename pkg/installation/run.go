@@ -27,7 +27,6 @@ import (
 
 const (
 	workflowPoll     = time.Second
-	idlePoll         = 5 * time.Second
 	renewalInterval  = time.Minute
 	maxCommandOutput = 64 << 10
 
@@ -225,6 +224,8 @@ func (m *Client) Session(ctx context.Context, name string) (protocol.SessionResp
 	return session, err
 }
 
+var errSessionWaitRefused = errors.New("this installation is too old for this CLI: it refused a session long poll")
+
 type sessionWaitRequest struct {
 	protocol.SessionRequest
 
@@ -232,22 +233,15 @@ type sessionWaitRequest struct {
 	Revision    string `json:"revision,omitempty"`
 }
 
-// awaitSession reads a session that is still converging, letting the server hold the answer until it
-// moves past revision, the last one the caller saw, so that a change between two reads is not missed.
-// An installation that refuses the wait, which is any failure that a plain read does not
-// share, is read plainly from then on.
+// awaitSession reads a session once the server has seen it move past revision, the last one the caller
+// saw, or after sessionWaitSeconds. The revision keeps a change between two reads from being missed.
 func (m *Client) awaitSession(ctx context.Context, name, revision string) (protocol.SessionResponse, error) {
-	if m.plainSessionReads.Load() {
-		return m.Session(ctx, name)
-	}
 	var session protocol.SessionResponse
 	request := sessionWaitRequest{SessionRequest: protocol.SessionRequest{Session: name}, WaitSeconds: sessionWaitSeconds, Revision: revision}
 	err := m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, request, &session)
-	if err == nil {
-		return session, nil
+	if errors.Is(err, errMalformedResponse) || HTTPStatus(err) == http.StatusBadRequest {
+		return session, fmt.Errorf("%w: %w", errSessionWaitRefused, err)
 	}
-	session, err = m.Session(ctx, name)
-	m.plainSessionReads.Store(err == nil)
 	return session, err
 }
 

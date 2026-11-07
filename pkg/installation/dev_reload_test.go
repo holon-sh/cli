@@ -411,66 +411,82 @@ func TestRunDevPrintsURLsBeforeTheSessionIsReady(t *testing.T) {
 	}
 }
 
-func TestAwaitSessionLongPollsAndFallsBack(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		rejects bool
-		want    []any
-	}{
-		{name: "supported", want: []any{float64(sessionWaitSeconds), float64(sessionWaitSeconds), float64(sessionWaitSeconds)}},
-		{name: "rejected", rejects: true, want: []any{float64(sessionWaitSeconds), nil, nil}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			h := newRunHarness(t)
-			var mu sync.Mutex
-			var waits []any
-			var lastRevision any
-			h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, r *http.Request) {
-				var input map[string]any
-				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-					t.Error(err)
-				}
-				mu.Lock()
-				defer mu.Unlock()
-				waits = append(waits, input["waitSeconds"])
-				if input["waitSeconds"] != nil && input["revision"] != lastRevision {
-					t.Errorf("long poll revision = %v, want %v", input["revision"], lastRevision)
-				}
-				lastRevision = strconv.Itoa(len(waits))
-				if test.rejects && input["waitSeconds"] != nil {
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
+func TestWaitSessionReadyLongPollsFromTheLastRevision(t *testing.T) {
+	h := newRunHarness(t)
+	var mu sync.Mutex
+	var seen []any
+	h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+		var input map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if input["waitSeconds"] != float64(sessionWaitSeconds) {
+			t.Errorf("waitSeconds = %v", input["waitSeconds"])
+		}
+		seen = append(seen, input["revision"])
+		response := apiSession(h, "alpha")
+		response["revision"] = strconv.Itoa(len(seen))
+		if len(seen) < 3 {
+			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
+		}
+		installationtest.WriteJSON(w, response)
+	})
+	h.start(t, nil)
+	manager, err := NewClient(t.Context(), h.run.Auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var accepted protocol.SessionResponse
+	data, err := json.Marshal(apiSession(h, "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &accepted); err != nil {
+		t.Fatal(err)
+	}
+	accepted.Revision = "0"
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	if _, err := waitSessionReady(ctx, manager, "gentle-otter-482", accepted, nil); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []any{"0", "1", "2"}; !slices.Equal(seen, want) {
+		t.Fatalf("revisions = %v, want %v", seen, want)
+	}
+}
+
+func TestDevStopsWhenTheInstallationRefusesALongPoll(t *testing.T) {
+	root := t.TempDir()
+	sourceFiles(t, root, map[string]string{
+		manifestFileName:  "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n",
+		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
+	})
+	_, registry := buildRegistry(t)
+	h := newRunHarness(t)
+	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, buildGrant(registry))
+	})
+	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolDeleteSession},
+		nil, func(w http.ResponseWriter, r *http.Request) {
+			switch installationtest.ToolName(r) {
+			case protocol.ToolDeleteSession:
+				installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+			case protocol.ToolGetSession:
+				w.WriteHeader(http.StatusBadRequest)
+			default:
 				response := apiSession(h, "alpha")
-				response["revision"] = lastRevision
-				if len(waits) < 3 {
-					response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
-				}
+				response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
 				installationtest.WriteJSON(w, response)
-			})
-			h.start(t, nil)
-			manager, err := NewClient(t.Context(), h.run.Auth)
-			if err != nil {
-				t.Fatal(err)
-			}
-			accepted, err := manager.Session(t.Context(), "gentle-otter-482")
-			if err != nil {
-				t.Fatal(err)
-			}
-			mu.Lock()
-			waits = nil
-			mu.Unlock()
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-			defer cancel()
-			if _, err := waitSessionReady(ctx, manager, "gentle-otter-482", accepted, nil); err != nil {
-				t.Fatal(err)
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			if !slices.Equal(waits, test.want) {
-				t.Fatalf("waitSeconds per read = %v, want %v", waits, test.want)
 			}
 		})
+	h.start(t, buildImage(t, "built"))
+	err := executeCommand(t.Context(), []string{"dev", "--project", filepath.Join(root, manifestFileName)}, io.Discard, io.Discard, h.run)
+	if !errors.Is(err, errSessionWaitRefused) {
+		t.Fatalf("dev = %v, want %v", err, errSessionWaitRefused)
 	}
 }
 
