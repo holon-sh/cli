@@ -94,6 +94,7 @@ func stageSnapshot(app manifestApp, p *preparedTypes, check bool) (string, []str
 		}
 	}
 	start, err := stageLauncher(p.root, entry)
+	p.hosted = start != nil
 	return config, start, err
 }
 

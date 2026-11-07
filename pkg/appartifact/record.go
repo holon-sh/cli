@@ -8,7 +8,6 @@ import (
 	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2"
-	"oras.land/oras-go/v2/content"
 
 	"github.com/holon-sh/protocol"
 )
@@ -60,7 +59,7 @@ func Publish(ctx context.Context, repository oras.Target, image ocispec.Descript
 		return err
 	}
 	if tag == ReleasePrefix {
-		tag = releaseTag(descriptor)
+		tag += descriptor.Digest.Encoded()
 	}
 	if err = repository.Tag(ctx, descriptor, tag); err == nil {
 		return nil
@@ -70,58 +69,4 @@ func Publish(ctx context.Context, repository oras.Target, image ocispec.Descript
 		return nil
 	}
 	return errors.New("app build publication was not confirmed; the image is uploaded, but deployment was not submitted")
-}
-
-// Build is an image's published build metadata.
-type Build struct {
-	Metadata ocispec.Descriptor // the index Publish pushed
-	Image    ocispec.Descriptor
-	Record   protocol.BuildRecord
-}
-
-// Read returns the build metadata that reference names in target.
-func Read(ctx context.Context, target oras.ReadOnlyTarget, reference string) (Build, error) {
-	metadata, err := target.Resolve(ctx, reference)
-	if err != nil {
-		return Build{}, err
-	}
-	var index ocispec.Index
-	if err := fetchDocument(ctx, target, metadata, &index); err != nil {
-		return Build{}, err
-	}
-	if index.ArtifactType != indexType || len(index.Manifests) != 2 {
-		return Build{}, errors.New("not app build metadata")
-	}
-	var manifest ocispec.Manifest
-	if err := fetchDocument(ctx, target, index.Manifests[1], &manifest); err != nil {
-		return Build{}, err
-	}
-	if len(manifest.Layers) != 1 || manifest.Layers[0].MediaType != mediaType {
-		return Build{}, errors.New("not app build metadata")
-	}
-	build := Build{Metadata: metadata, Image: index.Manifests[0]}
-	if err := fetchDocument(ctx, target, manifest.Layers[0], &build.Record); err != nil {
-		return Build{}, err
-	}
-	return build, build.Record.Validate()
-}
-
-// Release tags build metadata already in target as a release, under the name Publish gives one.
-func Release(ctx context.Context, target oras.Target, metadata ocispec.Descriptor) error {
-	return target.Tag(ctx, metadata, releaseTag(metadata))
-}
-
-func releaseTag(metadata ocispec.Descriptor) string {
-	return ReleasePrefix + metadata.Digest.Encoded()
-}
-
-func fetchDocument(ctx context.Context, target content.Fetcher, descriptor ocispec.Descriptor, value any) error {
-	if descriptor.Size <= 0 || descriptor.Size > maxDocumentSize {
-		return errors.New("app build metadata exceeds limit")
-	}
-	data, err := content.FetchAll(ctx, target, descriptor)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, value)
 }

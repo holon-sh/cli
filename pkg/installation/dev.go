@@ -27,7 +27,7 @@ const devDebounce = 250 * time.Millisecond
 type devChange struct {
 	contexts    sets.Set[string]
 	manifest    bool
-	imageInputs bool
+	imageInputs bool // a changed file is not server source, so an image build may read it
 }
 
 type devWatcher struct {
@@ -135,7 +135,7 @@ func (w *devWatcher) run() {
 				if changed {
 					pending.contexts.Insert(root)
 					relative, _ := filepath.Rel(root, path)
-					pending.imageInputs = pending.imageInputs || imageBuildInput(relative)
+					pending.imageInputs = pending.imageInputs || !serverSource(relative)
 				}
 				w.output.problem("file watcher", err)
 			}
@@ -207,8 +207,7 @@ type devLoop struct {
 	session                protocol.SessionResponse
 	changedImages, pending sets.Set[string]
 	reloaded               map[string]string // the overlay digest each app last restarted from
-	nextRead               time.Time
-	readySince             time.Time // when the session last became ready
+	readySince             time.Time         // when the session last became ready
 }
 
 func (d *devLoop) renew(ctx context.Context) {
@@ -252,7 +251,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		d.pending.Insert(app.Name)
 	}
 	announce := sync.OnceValue(func() error {
-		if err := printEndpoints(stdout, d.session); err != nil {
+		if err := printEndpoints(stdout, "Ready", d.session); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C stops this session.")
@@ -314,20 +313,22 @@ type sessionRead struct {
 	err     error
 }
 
-// readSession long-polls the session in the background, so that a save can interrupt it. Reads start
-// at most every workflowPoll, in case the answers come at once.
+// readSession long-polls the session in the background, so that a save can interrupt it. A failed read
+// answers at once, so it is reported only after workflowPoll, which paces reads through an outage.
 func (d *devLoop) readSession(ctx context.Context) (<-chan sessionRead, context.CancelFunc) {
 	ctx, stop := context.WithCancel(ctx)
-	revision, delay := d.session.Revision, max(0, d.nextRead.Sub(d.clock.Now()))
-	d.nextRead = d.clock.Now().Add(delay + workflowPoll)
+	revision := d.session.Revision
 	result := make(chan sessionRead, 1)
 	go func() {
-		select {
-		case <-ctx.Done():
-		case <-d.clock.After(delay):
-			session, err := d.manager.awaitSession(ctx, d.name, revision)
-			result <- sessionRead{session, err}
+		session, err := d.manager.awaitSession(ctx, d.name, revision)
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-d.clock.After(workflowPoll):
+			}
 		}
+		result <- sessionRead{session, err}
 	}()
 	return result, stop
 }
@@ -340,7 +341,7 @@ func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
 	if slices.Contains([]int{http.StatusNotFound, http.StatusGone}, HTTPStatus(err)) {
 		return errors.New("development session is no longer available")
 	}
-	if credentialsLost(err) || errors.Is(err, errSessionWaitRefused) {
+	if credentialsLost(err) {
 		return err
 	}
 	if err != nil {

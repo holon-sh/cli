@@ -30,8 +30,8 @@ const (
 	renewalInterval  = time.Minute
 	maxCommandOutput = 64 << 10
 
-	// sessionWaitSeconds is how long a get_session long poll may wait on the server.
-	sessionWaitSeconds = 30
+	// sessionWait is how long the server holds a get_session that names a revision.
+	sessionWait = 30 * time.Second
 )
 
 type commandConfig struct {
@@ -196,7 +196,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(ready)
 		}
-		if err := printEndpoints(stdout, ready); err != nil {
+		if err := printEndpoints(stdout, "Ready", ready); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
@@ -223,25 +223,18 @@ func (m *Client) Session(ctx context.Context, name string) (protocol.SessionResp
 	return session, err
 }
 
-var errSessionWaitRefused = errors.New("this installation is too old for this CLI: it refused a session long poll")
-
 type sessionWaitRequest struct {
 	protocol.SessionRequest
 
-	WaitSeconds int    `json:"waitSeconds"`
-	Revision    string `json:"revision,omitempty"`
+	Revision string `json:"revision,omitempty"`
 }
 
-// awaitSession reads a session once the server has seen it move past revision, the last one the caller
-// saw, or after sessionWaitSeconds. The revision keeps a change between two reads from being missed.
+// awaitSession reads a session once it has moved past revision, the last one the caller saw, which the
+// server waits for up to sessionWait. Without a revision it answers at once.
 func (m *Client) awaitSession(ctx context.Context, name, revision string) (protocol.SessionResponse, error) {
 	var session protocol.SessionResponse
-	request := sessionWaitRequest{SessionRequest: protocol.SessionRequest{Session: name}, WaitSeconds: sessionWaitSeconds, Revision: revision}
-	err := m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, request, &session)
-	if errors.Is(err, errToolRejected) || HTTPStatus(err) == http.StatusBadRequest {
-		return session, fmt.Errorf("%w: %w", errSessionWaitRefused, err)
-	}
-	return session, err
+	request := sessionWaitRequest{SessionRequest: protocol.SessionRequest{Session: name}, Revision: revision}
+	return session, m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, request, &session)
 }
 
 func SessionReady(session protocol.SessionResponse) (bool, error) {
@@ -296,16 +289,20 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	}
 	builders := new(builderConnections)
 	defer builders.close()
-	options := buildOptions{
-		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env,
-		output: config.output, builders: builders, architectures: manager.info.BuildArchitectures,
-	}
-	desired, promoted := promoteDevelopment(ctx, manager, manifest, options, selection...)
-	if !promoted {
-		desired, _, err = uploadManifest(ctx, manager, protocol.ProductionName, manifest, options, selection...)
-		if err != nil {
-			return err
+	// Without the session list, deploy builds every image, as it would with no development session.
+	sessions, _ := scopeSessions(ctx, manager, "")
+	reusable := map[string][]string{}
+	for _, session := range sessions {
+		for _, app := range session.Apps {
+			reusable[app.Name] = append(reusable[app.Name], app.Image)
 		}
+	}
+	desired, _, err := uploadManifest(ctx, manager, protocol.ProductionName, manifest, buildOptions{
+		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env, output: config.output,
+		builders: builders, architectures: manager.info.BuildArchitectures, reusable: reusable,
+	}, selection...)
+	if err != nil {
+		return err
 	}
 	config.output.deploying(desired.Apps)
 	accepted, err := replaceExecution(ctx, manager, protocol.ProductionName, current, desired)
@@ -317,7 +314,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 		return err
 	}
 	config.output.apps(desired.Apps, "ready", progressDone)
-	return printEndpoints(stdout, ready)
+	return printEndpoints(stdout, "Ready", ready)
 }
 
 func waitSessionReady(
@@ -389,14 +386,10 @@ func printStartingEndpoints(stdout io.Writer, origin string, session protocol.Se
 	if len(session.Endpoints) == 0 {
 		return nil
 	}
-	return printEndpointsAs(stdout, "Starting", session)
+	return printEndpoints(stdout, "Starting", session)
 }
 
-func printEndpoints(stdout io.Writer, session protocol.SessionResponse) error {
-	return printEndpointsAs(stdout, "Ready", session)
-}
-
-func printEndpointsAs(stdout io.Writer, heading string, session protocol.SessionResponse) error {
+func printEndpoints(stdout io.Writer, heading string, session protocol.SessionResponse) error {
 	output := []byte("\n" + heading + "\n")
 	mode := protocol.ModeDevelopment
 	if session.Name == protocol.ProductionName {

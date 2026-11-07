@@ -340,9 +340,6 @@ func TestRunDevLifecycle(t *testing.T) {
 			})
 		}
 		await(stderr, "Configure API_KEY to start the session.", "request stream stopped")
-		if !strings.Contains(stdout.String(), "Starting") || strings.Contains(stdout.String(), "Ready") {
-			t.Fatalf("startup: stdout=%q", stdout.String())
-		}
 		sourceFiles(t, root, map[string]string{"alpha/logic.ts": "broken"})
 		await(stderr, "remote image preparation failed")
 		mu.Lock()

@@ -20,6 +20,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/protocol"
 )
@@ -44,24 +45,13 @@ type reloadAppResult struct {
 	ElapsedSeconds float64   `json:"elapsedSeconds"` // how long the API waited, from fetching the source to the app being ready
 }
 
-// imageBuildInput reports whether a file, relative to its app, is consumed by the image's build steps,
-// so that changing it needs a rebuild rather than a source overlay. This is deliberately a plain list
-// for v0; it will be refined, for example from the steps the build plan actually runs.
-func imageBuildInput(relative string) bool {
+// serverSource reports whether a changed file, relative to its app, is server code that a source overlay
+// can deliver: a Python or JavaScript module outside ui/. Any other file, from a lockfile to a data file,
+// may be read by the image build, so it takes the rebuild path.
+func serverSource(relative string) bool {
 	relative = filepath.ToSlash(relative)
-	if first, _, _ := strings.Cut(relative, "/"); first == "ui" {
-		return true
-	}
-	name := path.Base(relative)
-	if strings.HasPrefix(name, "vite.config.") || strings.HasPrefix(name, "tsconfig.") {
-		return true
-	}
-	return slices.Contains([]string{
-		manifestFileName, "holon.yml", "server.json", "railpack.json", "Dockerfile", dockerignoreFile, "MANIFEST.in",
-		"pyproject.toml", "requirements.txt", "uv.lock", "poetry.lock", "Pipfile", "Pipfile.lock",
-		"package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb",
-		"go.mod", "go.sum",
-	}, name)
+	first, _, _ := strings.Cut(relative, "/")
+	return first != "ui" && slices.Contains([]string{".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"}, path.Ext(relative))
 }
 
 // reloadable reports whether a change can restart its apps in place: only source edits, to apps that
@@ -72,8 +62,8 @@ func (d *devLoop) reloadable(change devChange) bool {
 	}
 	apps := d.changedApps(change)
 	return len(apps) != 0 && !slices.ContainsFunc(apps, func(app manifestApp) bool {
-		entry, err := sourceEntry(app.Path)
-		return err != nil || app.resolved.stdio || !hostedEntry(entry) || d.options.types.accepted[app.Name] == nil
+		p := d.options.types.accepted[app.Name]
+		return p == nil || !p.hosted
 	})
 }
 
@@ -118,6 +108,9 @@ func (d *devLoop) reload(ctx context.Context, change devChange) (sets.Set[string
 	}
 	accepted := prepared
 	accepted.Apps = slices.DeleteFunc(slices.Clone(prepared.Apps), func(app manifestApp) bool { return !change.contexts.Has(app.Path) })
+	for _, app := range accepted.Apps {
+		app.resolved.types.hosted = true // each reloaded, so its overlay staged the launcher
+	}
 	d.options.types.accept(accepted)
 	return failed, slices.ContainsFunc(prepared.Apps, func(app manifestApp) bool { return d.options.types.affected(ctx, app, prepared) })
 }
@@ -139,7 +132,7 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 		return nil
 	}
 	upload := newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
-	if err := pushOverlay(ctx, upload, app.Name, overlay, archive, d.options); err != nil {
+	if err := pushOverlay(ctx, upload, app, overlay, archive, d.options); err != nil {
 		return fmt.Errorf("upload source: %w", err)
 	}
 	seconds, err := d.callReload(ctx, app.Name, overlay.Digest.String())
@@ -226,6 +219,9 @@ func (d *devLoop) buildOverlay(app manifestApp, snapshot, archive string) (ocisp
 	if _, _, err := stageSnapshot(app, &types, false); err != nil {
 		return ocispec.Descriptor{}, err
 	}
+	if !types.hosted {
+		return ocispec.Descriptor{}, errors.New("the app no longer has a server entry the launcher runs")
+	}
 	return writeOverlay(snapshot, archive)
 }
 
@@ -296,12 +292,8 @@ func writeOverlayEntry(archive *tar.Writer, source, name string, info fs.FileInf
 	return err
 }
 
-func pushOverlay(ctx context.Context, upload *imageUpload, app string, overlay ocispec.Descriptor, archive string, options buildOptions) error {
-	return upload.run(ctx, func(grant protocol.UploadGrant) error {
-		repository, err := imageRepository(grant.Registry+"/"+grant.Repositories[app], grant.Grant, options.HTTPClient)
-		if err != nil {
-			return err
-		}
+func pushOverlay(ctx context.Context, upload *imageUpload, app manifestApp, overlay ocispec.Descriptor, archive string, options buildOptions) error {
+	return buildRequest{app: app, upload: upload, httpClient: options.HTTPClient}.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		exists, err := repository.Blobs().Exists(ctx, overlay)
 		if err != nil || exists {
 			return err

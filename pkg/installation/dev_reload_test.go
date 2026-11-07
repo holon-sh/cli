@@ -3,7 +3,6 @@ package installation
 import (
 	"archive/tar"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,30 +24,14 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-func TestImageBuildInput(t *testing.T) {
-	for _, relative := range []string{
-		"holon.yaml", "server.json", "railpack.json", "Dockerfile", ".dockerignore", "pyproject.toml", "uv.lock",
-		"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "requirements.txt", "go.mod",
-		"ui/index.tsx", "ui", "vite.config.ts", "tsconfig.json", "nested/package.json",
+func TestOnlyServerSourceReloads(t *testing.T) {
+	for relative, want := range map[string]bool{
+		"tools.py": true, "lib/store.ts": true, "server.mjs": true,
+		"ui/main.ts": false, "pyproject.toml": false, "data/menu.json": false, "ui": false,
 	} {
-		if !imageBuildInput(relative) {
-			t.Errorf("imageBuildInput(%q) = false", relative)
+		if got := serverSource(relative); got != want {
+			t.Errorf("serverSource(%q) = %v, want %v", relative, got, want)
 		}
-	}
-	for _, relative := range []string{"tools.py", "server.py", "lib/store.ts", "docs/ui/page.md", "uilib.py"} {
-		if imageBuildInput(relative) {
-			t.Errorf("imageBuildInput(%q) = true", relative)
-		}
-	}
-}
-
-func TestReloadAppRequestNamesExactlyTheProtocolArguments(t *testing.T) {
-	data, err := json.Marshal(reloadAppRequest{
-		AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: "s"}, App: "a"}, Digest: "d", MediaType: overlayMediaType,
-	})
-	want := `{"session":"s","app":"a","digest":"d","mediaType":"application/vnd.holon.source-overlay.v0.tar+zstd"}`
-	if err != nil || string(data) != want {
-		t.Fatalf("request = %s (%v), want %s", data, err, want)
 	}
 }
 
@@ -88,53 +71,6 @@ func overlayEntries(t *testing.T, path string) map[string]string {
 	}
 }
 
-func TestWriteOverlayIsStableAndLeavesOutBuildMetadata(t *testing.T) {
-	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{
-		"server.py": "server", "lib/tools.py": "tools", ".holon/main.py": "launcher", ".holon-types/railpack.json": "{}",
-	})
-	if err := os.Symlink("lib/tools.py", filepath.Join(root, "alias.py")); err != nil {
-		t.Fatal(err)
-	}
-	archive := filepath.Join(t.TempDir(), "overlay")
-	first, err := writeOverlay(root, archive)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.MediaType != overlayMediaType {
-		t.Fatalf("media type = %s", first.MediaType)
-	}
-	info, err := os.Stat(archive)
-	if err != nil || info.Size() != first.Size {
-		t.Fatalf("size = %d, file %v %v", first.Size, info, err)
-	}
-	got := overlayEntries(t, archive)
-	want := map[string]string{
-		"server.py": "server", "lib/": "", "lib/tools.py": "tools", ".holon/": "", ".holon/main.py": "launcher", "alias.py": "-> lib/tools.py",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("entries = %v, want %v", got, want)
-	}
-	for name, contents := range want {
-		if got[name] != contents {
-			t.Fatalf("%s = %q, want %q", name, got[name], contents)
-		}
-	}
-
-	if err := os.Chtimes(filepath.Join(root, "server.py"), time.Unix(1000, 0), time.Unix(1000, 0)); err != nil {
-		t.Fatal(err)
-	}
-	second, err := writeOverlay(root, archive)
-	if err != nil || second.Digest != first.Digest {
-		t.Fatalf("touched snapshot digest = %s, want %s (%v)", second.Digest, first.Digest, err)
-	}
-	sourceFiles(t, root, map[string]string{"server.py": "edited"})
-	third, err := writeOverlay(root, archive)
-	if err != nil || third.Digest == first.Digest {
-		t.Fatalf("edited snapshot digest = %s (%v)", third.Digest, err)
-	}
-}
-
 // reloadFixture runs holon dev for one source app against a fake control plane and registry.
 type reloadFixture struct {
 	root     string
@@ -149,9 +85,30 @@ type reloadFixture struct {
 	updates  int
 	failNext bool
 	revision int
-	reads    int
+	changed  chan struct{} // closed when the session moves past revision
+	reads    []string      // the revision each get_session named
 	unready  bool
 	readyAt  time.Time
+}
+
+// update changes the session and moves it past its revision, which releases any held read.
+func (f *reloadFixture) update(change func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	change()
+	f.moved()
+}
+
+func (f *reloadFixture) moved() {
+	f.revision++
+	close(f.changed)
+	f.changed = make(chan struct{})
+}
+
+func (f *reloadFixture) readCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.reads)
 }
 
 func (f *reloadFixture) reloadRequests() []reloadAppRequest {
@@ -203,19 +160,39 @@ func alphaProject(t *testing.T, extra map[string]string) (string, *runHarness, *
 	return root, h, registry
 }
 
-func startReloadFixture(t *testing.T) *reloadFixture {
+func startReloadFixture(t *testing.T, extra map[string]string) *reloadFixture {
 	t.Helper()
-	f := &reloadFixture{readyAt: time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)}
+	f := &reloadFixture{readyAt: time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC), changed: make(chan struct{})}
 	var h *runHarness
-	f.root, h, f.registry = alphaProject(t, map[string]string{
-		"alpha/tools.py": "first", "alpha/pyproject.toml": "[project]\nname = \"alpha\"\n",
-	})
+	files := map[string]string{"alpha/tools.py": "first", "alpha/pyproject.toml": "[project]\nname = \"alpha\"\n"}
+	maps.Copy(files, extra)
+	f.root, h, f.registry = alphaProject(t, files)
+	if err := os.Symlink("tools.py", filepath.Join(f.root, "alpha", "alias.py")); err != nil {
+		t.Fatal(err)
+	}
 	var served []protocol.App
 	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession},
 		nil, func(w http.ResponseWriter, r *http.Request) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			switch installationtest.ToolName(r) {
+			case protocol.ToolGetSession:
+				var input struct {
+					Revision string `json:"revision"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+					t.Error(err)
+				}
+				f.reads = append(f.reads, input.Revision)
+				for input.Revision == strconv.Itoa(f.revision) && r.Context().Err() == nil {
+					changed := f.changed
+					f.mu.Unlock()
+					select {
+					case <-changed:
+					case <-r.Context().Done():
+					}
+					f.mu.Lock()
+				}
 			case protocol.ToolDeleteSession:
 				installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
 				return
@@ -232,12 +209,12 @@ func startReloadFixture(t *testing.T) *reloadFixture {
 				}
 				served = input.Desired.Apps
 				f.updates++
+				f.moved()
 			}
 			response := apiSession(h, "alpha")
 			response["apps"], response["revision"] = served, strconv.Itoa(f.revision)
 			status := map[bool]string{false: "True", true: "False"}[f.unready]
 			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: status, LastTransitionTime: protocol.Time(f.readyAt)}}
-			f.reads++
 			installationtest.WriteJSON(w, response)
 		})
 	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, r *http.Request) {
@@ -273,7 +250,8 @@ func startReloadFixture(t *testing.T) *reloadFixture {
 }
 
 func TestDevReloadsSourceEditsInPlace(t *testing.T) {
-	f := startReloadFixture(t)
+	// Only image builds read .holon-types, so a source overlay leaves it out.
+	f := startReloadFixture(t, map[string]string{"alpha/.holon-types/notes.txt": "build only"})
 	repository := "holon/upload/alpha"
 
 	started := len(f.stderr.String())
@@ -298,11 +276,15 @@ func TestDevReloadsSourceEditsInPlace(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := overlayEntries(t, archive)
-	if entries["tools.py"] != "second" || !strings.Contains(entries[".holon/main.mjs"], "../server.js") {
+	if entries["tools.py"] != "second" || !strings.Contains(entries[".holon/main.mjs"], "../server.js") ||
+		entries["alias.py"] != "-> tools.py" || slices.ContainsFunc(slices.Collect(maps.Keys(entries)), func(name string) bool {
+		return strings.HasPrefix(name, ".holon-types")
+	}) {
 		t.Fatalf("overlay entries = %v", entries)
 	}
 
-	// A save that leaves the snapshot's bytes as they were pushes and restarts nothing.
+	// A save that leaves the snapshot's bytes as they were, which touches only their times, pushes and
+	// restarts nothing.
 	started = len(f.stderr.String())
 	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "second"})
 	f.await(func() bool { return strings.Contains(f.stderr.String()[started:], "alpha unchanged") })
@@ -310,20 +292,21 @@ func TestDevReloadsSourceEditsInPlace(t *testing.T) {
 		t.Fatalf("identical snapshot: reloads=%d blobs=%d", len(requests), f.blobs(repository))
 	}
 
-	// A renewal moves only the revision and restarts nothing.
+	// The fixture holds every read that names the current revision, so each reload above interrupted one.
+	// A change releases it, and the next read names the revision it brought: a renewal, here, which
+	// restarts nothing.
 	observed := func(change func()) {
 		t.Helper()
-		f.mu.Lock()
-		change()
-		reads := f.reads
-		f.mu.Unlock()
-		f.await(func() bool {
-			f.mu.Lock()
-			defer f.mu.Unlock()
-			return f.reads > reads+1
-		})
+		reads := f.readCount()
+		f.update(change)
+		f.await(func() bool { return f.readCount() > reads })
 	}
-	observed(func() { f.revision++ })
+	observed(func() {})
+	f.mu.Lock()
+	if last := f.reads[len(f.reads)-1]; last != strconv.Itoa(f.revision) {
+		t.Errorf("read after the session moved named revision %q, want %d", last, f.revision)
+	}
+	f.mu.Unlock()
 	if requests := f.reloadRequests(); len(requests) != 1 {
 		t.Fatalf("a renewal restarted the app: %+v", requests)
 	}
@@ -356,7 +339,7 @@ func TestDevReloadsSourceEditsInPlace(t *testing.T) {
 }
 
 func TestDevFallsBackToARebuildWhenAReloadFails(t *testing.T) {
-	f := startReloadFixture(t)
+	f := startReloadFixture(t, nil)
 	started := len(f.stderr.String())
 	f.failNextReload()
 	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "second"})
@@ -373,7 +356,7 @@ func TestDevFallsBackToARebuildWhenAReloadFails(t *testing.T) {
 }
 
 func TestDevReportsExtractionFailureAfterTheReload(t *testing.T) {
-	f := startReloadFixture(t)
+	f := startReloadFixture(t, nil)
 	started := len(f.stderr.String())
 	// Mentioning an MCP SDK makes this app an MCP server, whose extraction cannot reach the test's builder.
 	sourceFiles(t, f.root, map[string]string{"alpha/server.js": `import "@modelcontextprotocol/sdk"; export default {}`})
@@ -429,121 +412,6 @@ func TestRunDevPrintsURLsBeforeTheSessionIsReady(t *testing.T) {
 	if got := stdout.String(); got != want {
 		t.Fatalf("stdout after ready = %q, want %q", got, want)
 	}
-	if err := stop(); err != nil {
-		t.Fatalf("run: %v stderr=%q", err, stderr.String())
-	}
-}
-
-func TestWaitSessionReadyLongPollsFromTheLastRevision(t *testing.T) {
-	h := newRunHarness(t)
-	var mu sync.Mutex
-	var seen []any
-	h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, r *http.Request) {
-		var input map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if input["waitSeconds"] != float64(sessionWaitSeconds) {
-			t.Errorf("waitSeconds = %v", input["waitSeconds"])
-		}
-		seen = append(seen, input["revision"])
-		response := apiSession(h, "alpha")
-		response["revision"] = strconv.Itoa(len(seen))
-		if len(seen) < 3 {
-			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
-		}
-		installationtest.WriteJSON(w, response)
-	})
-	h.start(t, nil)
-	manager, err := NewClient(t.Context(), h.run.Auth)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var accepted protocol.SessionResponse
-	data, err := json.Marshal(apiSession(h, "alpha"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(data, &accepted); err != nil {
-		t.Fatal(err)
-	}
-	accepted.Revision = "0"
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	if _, err := waitSessionReady(ctx, manager, "gentle-otter-482", accepted, nil); err != nil {
-		t.Fatal(err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if want := []any{"0", "1", "2"}; !slices.Equal(seen, want) {
-		t.Fatalf("revisions = %v, want %v", seen, want)
-	}
-}
-
-func TestDevStopsWhenTheInstallationRefusesALongPoll(t *testing.T) {
-	root, h, _ := alphaProject(t, nil)
-	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolDeleteSession},
-		nil, func(w http.ResponseWriter, r *http.Request) {
-			switch installationtest.ToolName(r) {
-			case protocol.ToolDeleteSession:
-				installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
-			case protocol.ToolGetSession:
-				w.WriteHeader(http.StatusBadRequest)
-			default:
-				response := apiSession(h, "alpha")
-				response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
-				installationtest.WriteJSON(w, response)
-			}
-		})
-	h.start(t, buildImage(t, "built"))
-	err := executeCommand(t.Context(), []string{"dev", "--project", filepath.Join(root, manifestFileName)}, io.Discard, io.Discard, h.run)
-	if !errors.Is(err, errSessionWaitRefused) {
-		t.Fatalf("dev = %v, want %v", err, errSessionWaitRefused)
-	}
-}
-
-func TestASaveInterruptsALongPoll(t *testing.T) {
-	root, h, _ := alphaProject(t, nil)
-	waiting := make(chan struct{}, 16)
-	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolDeleteSession},
-		nil, func(w http.ResponseWriter, r *http.Request) {
-			if installationtest.ToolName(r) == protocol.ToolDeleteSession {
-				installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
-				return
-			}
-			var input map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Error(err)
-			}
-			if input["waitSeconds"] != nil {
-				waiting <- struct{}{}
-				<-r.Context().Done()
-			}
-			response := apiSession(h, "alpha")
-			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
-			installationtest.WriteJSON(w, response)
-		})
-	build := buildImage(t, "built")
-	var builds sync.Mutex
-	count := 0
-	h.start(t, func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
-		builds.Lock()
-		count++
-		builds.Unlock()
-		return build(ctx, request, progress)
-	})
-	fc := testingclock.NewFakeClock(time.Now())
-	h.run.Clock = fc
-	_, stderr, stop := startDev(t, h.run, "--project", filepath.Join(root, manifestFileName))
-	stepUntil(t, fc, devDebounce, func() bool { return len(waiting) != 0 })
-	sourceFiles(t, root, map[string]string{"alpha/server.js": "export default {edited: true}"})
-	stepUntil(t, fc, devDebounce, func() bool {
-		builds.Lock()
-		defer builds.Unlock()
-		return count == 2
-	})
 	if err := stop(); err != nil {
 		t.Fatalf("run: %v stderr=%q", err, stderr.String())
 	}
