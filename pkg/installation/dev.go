@@ -109,6 +109,17 @@ func (w *devWatcher) observe(root, path string, op fsnotify.Op) (bool, error) {
 	return !ignored, err
 }
 
+// editorFiles are what editors write beside a file while saving it: backups, vim's write test and swap
+// files, Emacs locks and auto-saves, and JetBrains' temporary copies. They are not the app's.
+var editorFiles = []string{"*~", "4913", ".*.sw?", ".#*", "#*#", "*___jb_*"}
+
+func editorFile(name string) bool {
+	return slices.ContainsFunc(editorFiles, func(pattern string) bool {
+		matched, _ := filepath.Match(pattern, name)
+		return matched
+	})
+}
+
 func (w *devWatcher) run() {
 	defer close(w.done)
 	pending := devChange{contexts: sets.New[string]()}
@@ -124,6 +135,9 @@ func (w *devWatcher) run() {
 				continue
 			}
 			path := filepath.Clean(event.Name)
+			if editorFile(filepath.Base(path)) {
+				continue
+			}
 			if w.metadata.Has(path) {
 				pending.manifest = true
 			}
@@ -207,7 +221,6 @@ type devLoop struct {
 	session                protocol.SessionResponse
 	changedImages, pending sets.Set[string]
 	reloaded               map[string]string // the overlay digest each app last restarted from
-	readySince             time.Time         // when the session last became ready
 }
 
 func (d *devLoop) renew(ctx context.Context) {
@@ -283,14 +296,11 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 			if err := d.poll(result.session, result.err); err != nil {
 				return err
 			}
-			if result.err == nil && d.noticeRestart(result.session) {
-				if failed := d.resend(ctx); failed.Len() != 0 {
-					d.reportRebuild(ctx, d.buildImages(ctx, devChange{contexts: failed}))
-				}
-			}
 		case change := <-changes:
 			stopRead()
-			d.reportRebuild(ctx, d.rebuild(ctx, change))
+			if err := d.rebuild(ctx, change); err != nil && ctx.Err() == nil {
+				d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
+			}
 		}
 	}
 	return nil
@@ -373,13 +383,6 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 		d.options.output.status(app, phase, state)
 	}
 	d.pending.Clear()
-}
-
-// reportRebuild shows a failed update; the service the session already runs stays up.
-func (d *devLoop) reportRebuild(ctx context.Context, err error) {
-	if err != nil && ctx.Err() == nil {
-		d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
-	}
 }
 
 // rebuild applies a saved change: in place when its apps can reload, and through new images otherwise.

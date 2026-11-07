@@ -135,77 +135,21 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	if err := pushOverlay(ctx, upload, app, overlay, archive, d.options); err != nil {
 		return fmt.Errorf("upload source: %w", err)
 	}
-	seconds, err := d.callReload(ctx, app.Name, overlay.Digest.String())
-	if err != nil {
-		return err
-	}
-	d.reloaded[app.Name] = overlay.Digest.String()
-	d.options.output.status(app.Name, fmt.Sprintf("reloaded in %.1f s", seconds), progressDone)
-	return nil
-}
-
-// callReload restarts app from the overlay blob digest names and reports how long the restart took.
-func (d *devLoop) callReload(ctx context.Context, app, digest string) (float64, error) {
 	var result reloadAppResult
 	request := reloadAppRequest{
-		AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app},
-		Digest:     digest, MediaType: overlayMediaType,
+		AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name},
+		Digest:     overlay.Digest.String(), MediaType: overlayMediaType,
 	}
 	if err := d.manager.Call(ctx, ControlPlane(d.name), toolReloadApp, request, &result); err != nil {
-		return 0, err
+		return err
 	}
 	if result.Digest != request.Digest {
-		return 0, errors.New("the app restarted from different source")
+		return errors.New("the app restarted from different source")
 	}
-	return cmp.Or(result.ElapsedSeconds, result.ReadyAt.Sub(result.RestartedAt).Seconds()), nil
-}
-
-// noticeRestart reports a restart this loop did not cause: the session becoming ready again outside its
-// own rollouts, as it does once a restarted pod has booted from its image. A renewal moves only the
-// revision. The session reports readiness for all its apps together, so a restart of any app re-sends
-// every overlay.
-func (d *devLoop) noticeRestart(current protocol.SessionResponse) bool {
-	ready := current.Condition(protocol.ConditionReady)
-	if ready.Status != "True" {
-		return false
-	}
-	since := time.Time(ready.LastTransitionTime)
-	restarted := d.pending.Len() == 0 && !d.readySince.IsZero() && since.After(d.readySince)
-	d.readySince = since
-	return restarted
-}
-
-const restartRetries = 5
-
-// resend restarts each app that was running an overlay from that overlay again, and returns the build
-// contexts of those it could not restart, which need an image so that none keeps serving older code.
-func (d *devLoop) resend(ctx context.Context) sets.Set[string] {
-	failed := sets.New[string]()
-	for _, app := range d.manifest.Apps {
-		digest := d.reloaded[app.Name]
-		if digest == "" {
-			continue
-		}
-		d.options.output.status(app.Name, "restarted, reloading", progressWorking)
-		seconds, err := d.callReload(ctx, app.Name, digest)
-		// A runtime answers 503 while its app is still starting, after the pod already reports ready.
-		for attempt := 0; err != nil && attempt < restartRetries; attempt++ {
-			select {
-			case <-ctx.Done():
-				return failed
-			case <-d.clock.After(time.Second):
-			}
-			seconds, err = d.callReload(ctx, app.Name, digest)
-		}
-		if err != nil {
-			d.options.output.status(app.Name, fmt.Sprintf("restarted on its image; reload failed: %v; rebuilding", err), progressWorking)
-			delete(d.reloaded, app.Name)
-			failed.Insert(app.Path)
-			continue
-		}
-		d.options.output.status(app.Name, fmt.Sprintf("restarted, reloaded in %.1f s", seconds), progressDone)
-	}
-	return failed
+	d.reloaded[app.Name] = request.Digest
+	seconds := cmp.Or(result.ElapsedSeconds, result.ReadyAt.Sub(result.RestartedAt).Seconds())
+	d.options.output.status(app.Name, fmt.Sprintf("reloaded in %.1f s", seconds), progressDone)
+	return nil
 }
 
 // buildOverlay fills snapshot as an image build would, with the clients of the last accepted build,

@@ -24,13 +24,22 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-func TestOnlyServerSourceReloads(t *testing.T) {
+func TestChangeClassification(t *testing.T) {
 	for relative, want := range map[string]bool{
 		"tools.py": true, "lib/store.ts": true, "server.mjs": true,
 		"ui/main.ts": false, "pyproject.toml": false, "data/menu.json": false, "ui": false,
 	} {
 		if got := serverSource(relative); got != want {
 			t.Errorf("serverSource(%q) = %v, want %v", relative, got, want)
+		}
+	}
+	// The watcher ignores what editors write while saving, but not dotfiles that builds read.
+	for name, want := range map[string]bool{
+		".tools.py.swp": true, "tools.py~": true, "4913": true, ".#tools.py": true, "tools.py___jb_tmp___": true,
+		"tools.py": false, ".python-version": false, ".dockerignore": false,
+	} {
+		if got := editorFile(name); got != want {
+			t.Errorf("editorFile(%q) = %v, want %v", name, got, want)
 		}
 	}
 }
@@ -87,8 +96,6 @@ type reloadFixture struct {
 	revision int
 	changed  chan struct{} // closed when the session moves past revision
 	reads    []string      // the revision each get_session named
-	unready  bool
-	readyAt  time.Time
 }
 
 // update changes the session and moves it past its revision, which releases any held read.
@@ -162,7 +169,7 @@ func alphaProject(t *testing.T, extra map[string]string) (string, *runHarness, *
 
 func startReloadFixture(t *testing.T, extra map[string]string) *reloadFixture {
 	t.Helper()
-	f := &reloadFixture{readyAt: time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC), changed: make(chan struct{})}
+	f := &reloadFixture{changed: make(chan struct{})}
 	var h *runHarness
 	files := map[string]string{"alpha/tools.py": "first", "alpha/pyproject.toml": "[project]\nname = \"alpha\"\n"}
 	maps.Copy(files, extra)
@@ -213,8 +220,6 @@ func startReloadFixture(t *testing.T, extra map[string]string) *reloadFixture {
 			}
 			response := apiSession(h, "alpha")
 			response["apps"], response["revision"] = served, strconv.Itoa(f.revision)
-			status := map[bool]string{false: "True", true: "False"}[f.unready]
-			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: status, LastTransitionTime: protocol.Time(f.readyAt)}}
 			installationtest.WriteJSON(w, response)
 		})
 	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, r *http.Request) {
@@ -293,35 +298,15 @@ func TestDevReloadsSourceEditsInPlace(t *testing.T) {
 	}
 
 	// The fixture holds every read that names the current revision, so each reload above interrupted one.
-	// A change releases it, and the next read names the revision it brought: a renewal, here, which
-	// restarts nothing.
-	observed := func(change func()) {
-		t.Helper()
-		reads := f.readCount()
-		f.update(change)
-		f.await(func() bool { return f.readCount() > reads })
-	}
-	observed(func() {})
+	// A change releases it, and the next read names the revision it brought.
+	reads := f.readCount()
+	f.update(func() {})
+	f.await(func() bool { return f.readCount() > reads })
 	f.mu.Lock()
 	if last := f.reads[len(f.reads)-1]; last != strconv.Itoa(f.revision) {
 		t.Errorf("read after the session moved named revision %q, want %d", last, f.revision)
 	}
 	f.mu.Unlock()
-	if requests := f.reloadRequests(); len(requests) != 1 {
-		t.Fatalf("a renewal restarted the app: %+v", requests)
-	}
-	// A restarted pod comes back on its image, so its overlay is sent again without a save, retried
-	// while the runtime is still starting.
-	started = len(f.stderr.String())
-	f.failNextReload()
-	observed(func() { f.unready = true })
-	observed(func() { f.unready, f.readyAt = false, f.readyAt.Add(2*time.Second) })
-	f.await(func() bool {
-		return strings.Contains(f.stderr.String()[started:], "alpha restarted, reloaded in 1.2 s")
-	})
-	if requests := f.reloadRequests(); len(requests) != 3 || requests[1].Digest != requests[0].Digest || requests[2].Digest != requests[0].Digest {
-		t.Fatalf("restart re-sent %+v", requests)
-	}
 
 	// A file the image build consumes takes the rebuild path.
 	started = len(f.stderr.String())
@@ -330,7 +315,7 @@ func TestDevReloadsSourceEditsInPlace(t *testing.T) {
 	f.await(func() bool {
 		return strings.Contains(f.stderr.String()[started:], "continuing to watch") || f.updateCount() != 0
 	})
-	if requests := f.reloadRequests(); len(requests) != 3 {
+	if requests := f.reloadRequests(); len(requests) != 1 {
 		t.Fatalf("pyproject.toml edit reloaded: %+v", requests)
 	}
 	if err := f.stop(); err != nil {
