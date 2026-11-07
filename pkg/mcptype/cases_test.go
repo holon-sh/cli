@@ -126,7 +126,7 @@ func generationCases(t *testing.T) []generationCase {
          "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}},
         {"name": "then", "inputSchema": {"type": "object", "additionalProperties": false}}
     ], "resources": [{"uri": "orders://summary", "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}}]}`
-	sampleContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}, "schemas": ` + kitchenSink + `}`
+	sampleContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}`
 	runtime := `{"runtime.mjs": "` + base64.StdEncoding.EncodeToString([]byte("export {};\n")) + `", "nested/bytes.dat": "` + base64.StdEncoding.EncodeToString([]byte{0, 128, 255, '\n'}) + `"}`
 	for _, target := range []string{"browser", "go"} {
 		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "go_module": "example.com/é/runtime", "own": "orders", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
@@ -142,11 +142,12 @@ func generationCases(t *testing.T) []generationCase {
             "$defs": {"Row": {"type": "object", "required": ["sku"], "properties": {"sku": {"type": "string"}}}}},
         "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}}}]}}}`)
 	for _, target := range []string{"node", "python"} {
-		options := ""
+		// sink-browser already renders the kitchen sink's TypeScript, so only Python renders it here.
+		options, contracts := "", sampleContracts+`, "schemas": `+kitchenSink+`}`
 		if target == "node" {
-			options = `, "runtime_specifier": "../runtime.mjs", "protocol_specifier": "../protocol.js"`
+			options, contracts = `, "runtime_specifier": "../runtime.mjs", "protocol_specifier": "../protocol.js"`, sampleContracts+`}`
 		}
-		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+sampleContracts+`, "banner": "holon-generated-apps-v1 app=checkout"`+options+`}`)
+		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+contracts+`, "banner": "holon-generated-apps-v1 app=checkout"`+options+`}`)
 	}
 	for _, test := range []struct{ name, patch string }{
 		{"go-module-missing", `"target": "go", "go_module": ""`},
