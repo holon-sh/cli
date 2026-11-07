@@ -62,9 +62,13 @@ const statInput = `{"type":"object","properties":{"file":{"$ref":"#/$defs/FileIn
 // reads them as maps.
 const openFileInfo = `"$defs":{"FileInfo":{"type":"object","required":["name"],"properties":{"name":{"type":"string"},"children":{"type":"array","items":{"$ref":"#/$defs/FileInfo"}}}}}`
 
+// openFileTree is openFileInfo's FileInfo as a whole output.
+const openFileTree = `{"$ref":"#/$defs/FileInfo",` + openFileInfo + `}`
+
 // generateFiles writes a client for recursiveSchema as tool walk, statInput as tool stat, openFileInfo
-// as tool list and as a resource, and as tool nest a keyword input that is a map of itself, which
-// Python cannot unpack as a TypedDict.
+// as tool list and as two resources, and as tool nest a keyword input that is a map of itself, which
+// Python cannot unpack as a TypedDict. The resources share their FileInfo as walk and stat share
+// theirs, so the two declarations would take the same name.
 func generateFiles(t *testing.T, app, target string) {
 	t.Helper()
 	source := Source{Document: document(t, &mcpcontract.Metadata{
@@ -76,7 +80,10 @@ func generateFiles(t *testing.T, app, target string) {
 				{Name: "list", Input: json.RawMessage(`{"type":"object","additionalProperties":false}`), Output: json.RawMessage(`{"type":"object","required":["files"],"properties":{"files":{"type":"array","items":{"$ref":"#/$defs/FileInfo"}}},` + openFileInfo + `}`)},
 				{Name: "nest", Input: json.RawMessage(`{"type":"object","additionalProperties":{"anyOf":[{"$ref":"#"},{"type":"null"}]}}`)},
 			},
-			Resources: []mcpcontract.Resource{{URI: "files://root", Output: json.RawMessage(`{"$ref":"#/$defs/FileInfo",` + openFileInfo + `}`)}},
+			Resources: []mcpcontract.Resource{
+				{URI: "files://root", Output: json.RawMessage(openFileTree)},
+				{URI: "files://home", Output: json.RawMessage(openFileTree)},
+			},
 		},
 	})}
 	if err := Generate(t.Context(), []Consumer{{Name: "caller", Dir: app, Targets: []string{target}, Sources: []Source{source}}}, Options{}); err != nil {
@@ -119,7 +126,7 @@ func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {
 		t.Parallel()
 		app := typeScriptApp(t)
 		// Unlike the runner's own flags, these check the generated declarations themselves, and
-		// that a project publishing declarations can export an inferred recursive type.
+		// that a project publishing declarations can export an inferred recursive type, a resource's too.
 		put(t, app, "tsconfig.json", `{"compilerOptions":{"strict":true,"noEmit":true,"declaration":true,"skipLibCheck":false,"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext"},"include":["src"]}`)
 		generateFiles(t, app, TargetTS)
 		declaredOnce(t, read(t, app, "node_modules/holon-sh/generated/index.d.ts"), `"login": string`)
@@ -133,6 +140,7 @@ export const name: string = walk.root.children![0]!.children![0]!.name;
 export const read: string = resource.children![0]!.children![0]!.name;
 export const login: string = stat.file.children![0]!.owner!.login;
 export const inferred = [walk.root, listed.files];
+export const exported = resource;
 export const indexed: NonNullable<Walk["root"]["children"]>[number]["name"] = "a";
 export const named: OutputTypes["files"]["walk"]["FileInfo"] = walk.root;
 export const wrapped: string = walk.wrapped!.children![0]!.name;
