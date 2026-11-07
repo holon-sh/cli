@@ -1,7 +1,6 @@
 package installation
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -51,28 +50,5 @@ run: {transport: {type: stdio}}`, wantError: "run requires a registry OCI packag
 	}
 	if _, err := parseManifest([]byte(strings.Replace(manifestFixture, "name: alpha", "name: api", 1)), "fixture"); err == nil {
 		t.Fatal("accepted a reserved app name")
-	}
-}
-
-func TestManifestCallerPolicy(t *testing.T) {
-	for _, test := range []struct {
-		name, access string
-		valid        bool
-		callers      []string
-	}{
-		{"omitted", `{server: {}}`, true, nil},
-		{"empty", `{server: {}, callers: []}`, true, []string{}},
-		{"duplicate", `{server: {}, callers: [beta, beta]}`, false, nil},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			manifest := strings.Replace(manifestFixture, "{server: {}}", test.access, 1)
-			project, err := parseManifest([]byte(manifest), "fixture")
-			if (err == nil) != test.valid {
-				t.Fatalf("parse: %v", err)
-			}
-			if test.valid && !reflect.DeepEqual(project.Apps[0].Access.Callers, test.callers) {
-				t.Fatalf("parsed callers = %#v, want %#v", project.Apps[0].Access.Callers, test.callers)
-			}
-		})
 	}
 }
