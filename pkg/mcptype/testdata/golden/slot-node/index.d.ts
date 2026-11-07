@@ -1,8 +1,8 @@
 // holon-generated-apps-v1 app=checkout
-import type { Outputs as Resources } from "./resources.js";
 import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } from "../protocol.js";
 export { ToolCallError } from "../protocol.js";
-export type { Resources };
+export type Resources = import("./resources.js").Outputs;
+export type * from "./resources.js";
 export interface Inputs {
   "empty": {
   };

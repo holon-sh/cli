@@ -100,9 +100,8 @@ func joinTypeScript(items []typ, separator string, input bool) string {
 }
 
 // generateTypeScript writes the declared types, then the Inputs, Outputs, InputTypes and OutputTypes
-// interfaces.
-func generateTypeScript(contracts map[string]catalog) string {
-	names := map[string]bool{}
+// interfaces. Declared types take identifiers that names does not hold yet, and names keeps them.
+func generateTypeScript(contracts map[string]catalog, names map[string]bool) string {
 	var out strings.Builder
 	exports := make([]strings.Builder, 4)
 	for i, name := range []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"} {
