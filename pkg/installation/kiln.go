@@ -28,13 +28,13 @@ type buildApplication func(context.Context, buildRequest, io.Writer) (string, er
 type buildRequest struct {
 	kiln.Request
 
-	Env         []string
-	app         manifestApp
-	annotations map[string]string
-	upload      *imageUpload
-	httpClient  *http.Client
-	builders    *builderConnections
-	output      *progressOutput
+	Env        []string
+	app        manifestApp
+	promotion  string // the promotionKey published with the image, or ""
+	upload     *imageUpload
+	httpClient *http.Client
+	builders   *builderConnections
+	output     *progressOutput
 }
 
 func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions, promotion string) (string, error) {
@@ -42,43 +42,19 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		return "", errors.New("invalid build architectures")
 	}
 	p := app.resolved.types
-	snapshot := p.root
-	config, err := stageTypes(p, true)
+	config, start, err := stageSnapshot(app, p, true)
 	if err != nil {
 		return "", err
-	}
-	if _, err := hookartifact.Discover(os.DirFS(snapshot)); err != nil {
-		return "", err
-	}
-	var entry string
-	if !app.resolved.stdio {
-		entry, err = sourceEntry(snapshot)
-		if err != nil {
-			return "", err
-		}
-	}
-	start, err := stageLauncher(snapshot, entry)
-	if err != nil {
-		return "", err
-	}
-
-	architectures := options.architectures
-	if len(architectures) == 0 {
-		architectures = []string{"amd64", "arm64"}
 	}
 	env, err := commandenv.Environ(options.Env)
 	if err != nil {
 		return "", err
 	}
 	request := buildRequest{
-		Request: kiln.Request{ConfigFilePath: config, Source: snapshot, Start: start}, Env: env, app: app, upload: upload,
-		annotations: map[string]string{},
-		httpClient:  options.HTTPClient, builders: options.builders, output: options.output,
+		Request: kiln.Request{ConfigFilePath: config, Source: p.root, Start: start}, Env: env, app: app, promotion: promotion,
+		upload: upload, httpClient: options.HTTPClient, builders: options.builders, output: options.output,
 	}
-	if promotion != "" {
-		request.annotations[promotionAnnotation] = promotion
-	}
-	for _, arch := range architectures {
+	for _, arch := range buildArchitectures(options.architectures) {
 		request.Platforms = append(request.Platforms, "linux/"+arch)
 	}
 	build := options.builder
@@ -90,6 +66,35 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		return "", fmt.Errorf("build %s: %w", app.Name, err)
 	}
 	return image, nil
+}
+
+// buildArchitectures are the architectures images are built for: the installation's, or both by default.
+func buildArchitectures(configured []string) []string {
+	if len(configured) == 0 {
+		return []string{"amd64", "arm64"}
+	}
+	return configured
+}
+
+// stageSnapshot fills p's snapshot as an image build or a source overlay reads it: the generated clients,
+// then the SDK launcher for a hosted entry. It returns the build configuration and start command, either
+// of which may be empty.
+func stageSnapshot(app manifestApp, p *preparedTypes, check bool) (string, []string, error) {
+	config, err := stageTypes(p, check)
+	if err != nil {
+		return "", nil, err
+	}
+	if _, err := hookartifact.Discover(os.DirFS(p.root)); err != nil {
+		return "", nil, err
+	}
+	var entry string
+	if !app.resolved.stdio {
+		if entry, err = sourceEntry(p.root); err != nil {
+			return "", nil, err
+		}
+	}
+	start, err := stageLauncher(p.root, entry)
+	return config, start, err
 }
 
 func hostedEntry(entry string) bool {

@@ -238,7 +238,7 @@ func (m *Client) awaitSession(ctx context.Context, name, revision string) (proto
 	var session protocol.SessionResponse
 	request := sessionWaitRequest{SessionRequest: protocol.SessionRequest{Session: name}, WaitSeconds: sessionWaitSeconds, Revision: revision}
 	err := m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, request, &session)
-	if errors.Is(err, errMalformedResponse) || HTTPStatus(err) == http.StatusBadRequest {
+	if errors.Is(err, errToolRejected) || HTTPStatus(err) == http.StatusBadRequest {
 		return session, fmt.Errorf("%w: %w", errSessionWaitRefused, err)
 	}
 	return session, err
@@ -378,7 +378,7 @@ func reportSessionProgress(
 // printStartingEndpoints prints where the session's apps will be. The API publishes endpoints only once
 // their apps are up, but the URLs follow from the session's name.
 func printStartingEndpoints(stdout io.Writer, origin string, session protocol.SessionResponse) error {
-	base, err := protocol.PlaneOrigin(origin, protocol.SessionPlane, session.Name)
+	base, err := protocol.SessionAudience(origin, protocol.ModeDevelopment, session.Name)
 	if err != nil {
 		return err
 	}

@@ -84,9 +84,9 @@ func (d *devLoop) changedApps(change devChange) []manifestApp {
 }
 
 // reload restarts each changed app in place and returns the build contexts of those it could not
-// reload. Contract extraction and client generation run alongside, so that typed clients still update
-// without delaying the restart.
-func (d *devLoop) reload(ctx context.Context, change devChange) sets.Set[string] {
+// reload, and whether a new contract left another app's compiled clients stale. Contract extraction and
+// client generation run alongside, so that typed clients still update without delaying the restart.
+func (d *devLoop) reload(ctx context.Context, change devChange) (sets.Set[string], bool) {
 	var extraction errgroup.Group
 	var prepared manifestSpec
 	extraction.Go(func() error {
@@ -110,22 +110,16 @@ func (d *devLoop) reload(ctx context.Context, change devChange) sets.Set[string]
 	err := extraction.Wait()
 	if failed.Len() != 0 || ctx.Err() != nil {
 		// The rebuild prepares again and reports its own failure.
-		return failed
+		return failed, false
 	}
 	d.options.output.problem("MCP types", err)
 	if err != nil {
-		return failed
+		return failed, false
 	}
 	accepted := prepared
 	accepted.Apps = slices.DeleteFunc(slices.Clone(prepared.Apps), func(app manifestApp) bool { return !change.contexts.Has(app.Path) })
 	d.options.types.accept(accepted)
-	// A new contract can leave another app's clients stale, and those are compiled into its image.
-	if slices.ContainsFunc(prepared.Apps, func(app manifestApp) bool { return d.options.types.affected(ctx, app, prepared) }) {
-		if err := d.rebuild(ctx, devChange{contexts: sets.New[string]()}); err != nil && ctx.Err() == nil {
-			d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
-		}
-	}
-	return failed
+	return failed, slices.ContainsFunc(prepared.Apps, func(app manifestApp) bool { return d.options.types.affected(ctx, app, prepared) })
 }
 
 func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
@@ -173,27 +167,26 @@ func (d *devLoop) callReload(ctx context.Context, app, digest string) (float64, 
 	return cmp.Or(result.ElapsedSeconds, result.ReadyAt.Sub(result.RestartedAt).Seconds()), nil
 }
 
-// noticeRestart records a restart this loop did not cause: the session going unready and ready again,
-// as it does while a restarted pod boots from its image. A renewal moves only the revision. The session
-// reports readiness for all its apps together, so a restart of any app re-sends every overlay.
-func (d *devLoop) noticeRestart(current protocol.SessionResponse) {
+// noticeRestart reports a restart this loop did not cause: the session becoming ready again outside its
+// own rollouts, as it does once a restarted pod has booted from its image. A renewal moves only the
+// revision. The session reports readiness for all its apps together, so a restart of any app re-sends
+// every overlay.
+func (d *devLoop) noticeRestart(current protocol.SessionResponse) bool {
 	ready := current.Condition(protocol.ConditionReady)
 	if ready.Status != "True" {
-		d.unready = d.unready || d.pending.Len() == 0
-		return
+		return false
 	}
 	since := time.Time(ready.LastTransitionTime)
-	if d.pending.Len() == 0 && (d.unready || !d.readySince.IsZero() && since.After(d.readySince)) {
-		d.restarted = len(d.reloaded) != 0
-	}
-	d.readySince, d.unready = since, false
+	restarted := d.pending.Len() == 0 && !d.readySince.IsZero() && since.After(d.readySince)
+	d.readySince = since
+	return restarted
 }
 
 const restartRetries = 5
 
-// resend restarts each app that was running an overlay from that overlay again, and rebuilds those it
-// cannot, so that none keeps serving its image's older code.
-func (d *devLoop) resend(ctx context.Context) {
+// resend restarts each app that was running an overlay from that overlay again, and returns the build
+// contexts of those it could not restart, which need an image so that none keeps serving older code.
+func (d *devLoop) resend(ctx context.Context) sets.Set[string] {
 	failed := sets.New[string]()
 	for _, app := range d.manifest.Apps {
 		digest := d.reloaded[app.Name]
@@ -206,7 +199,7 @@ func (d *devLoop) resend(ctx context.Context) {
 		for attempt := 0; err != nil && attempt < restartRetries; attempt++ {
 			select {
 			case <-ctx.Done():
-				return
+				return failed
 			case <-d.clock.After(time.Second):
 			}
 			seconds, err = d.callReload(ctx, app.Name, digest)
@@ -219,12 +212,7 @@ func (d *devLoop) resend(ctx context.Context) {
 		}
 		d.options.output.status(app.Name, fmt.Sprintf("restarted, reloaded in %.1f s", seconds), progressDone)
 	}
-	if failed.Len() == 0 {
-		return
-	}
-	if err := d.rebuild(ctx, devChange{contexts: failed, imageInputs: true}); err != nil && ctx.Err() == nil {
-		d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
-	}
+	return failed
 }
 
 // buildOverlay fills snapshot as an image build would, with the clients of the last accepted build,
@@ -235,14 +223,7 @@ func (d *devLoop) buildOverlay(app manifestApp, snapshot, archive string) (ocisp
 	}
 	types := *d.options.types.accepted[app.Name]
 	types.root = snapshot
-	if _, err := stageTypes(&types, false); err != nil {
-		return ocispec.Descriptor{}, err
-	}
-	entry, err := sourceEntry(snapshot)
-	if err != nil {
-		return ocispec.Descriptor{}, err
-	}
-	if _, err := stageLauncher(snapshot, entry); err != nil {
+	if _, _, err := stageSnapshot(app, &types, false); err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	return writeOverlay(snapshot, archive)

@@ -209,7 +209,6 @@ type devLoop struct {
 	reloaded               map[string]string // the overlay digest each app last restarted from
 	nextRead               time.Time
 	readySince             time.Time // when the session last became ready
-	unready, restarted     bool
 }
 
 func (d *devLoop) renew(ctx context.Context) {
@@ -285,15 +284,14 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 			if err := d.poll(result.session, result.err); err != nil {
 				return err
 			}
-			if d.restarted {
-				d.restarted = false
-				d.resend(ctx)
+			if result.err == nil && d.noticeRestart(result.session) {
+				if failed := d.resend(ctx); failed.Len() != 0 {
+					d.reportRebuild(ctx, d.buildImages(ctx, devChange{contexts: failed}))
+				}
 			}
 		case change := <-changes:
 			stopRead()
-			if err := d.rebuild(ctx, change); err != nil && ctx.Err() == nil {
-				d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
-			}
+			d.reportRebuild(ctx, d.rebuild(ctx, change))
 		}
 	}
 	return nil
@@ -348,7 +346,6 @@ func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
 	if err != nil {
 		return nil
 	}
-	d.noticeRestart(current)
 	d.session = current
 	condition := current.Condition(protocol.ConditionReady)
 	if slices.Contains([]string{protocol.ReasonLeaseExpired, protocol.ReasonDeleting}, condition.Reason) {
@@ -377,13 +374,27 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 	d.pending.Clear()
 }
 
+// reportRebuild shows a failed update; the service the session already runs stays up.
+func (d *devLoop) reportRebuild(ctx context.Context, err error) {
+	if err != nil && ctx.Err() == nil {
+		d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
+	}
+}
+
+// rebuild applies a saved change: in place when its apps can reload, and through new images otherwise.
 func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 	if d.reloadable(change) {
-		change.contexts = d.reload(ctx, change)
-		if change.contexts.Len() == 0 {
+		failed, stale := d.reload(ctx, change)
+		if failed.Len() == 0 && !stale {
 			return nil
 		}
+		// An empty change still rebuilds the apps whose clients went stale.
+		change.contexts = failed
 	}
+	return d.buildImages(ctx, change)
+}
+
+func (d *devLoop) buildImages(ctx context.Context, change devChange) error {
 	if change.manifest {
 		reloaded, err := resolveManifestFile(d.manifest.file)
 		if err == nil {

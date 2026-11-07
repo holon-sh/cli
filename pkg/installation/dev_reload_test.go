@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -184,20 +184,31 @@ func (f *reloadFixture) blobs(repository string) int {
 	return count
 }
 
-func startReloadFixture(t *testing.T) *reloadFixture {
+// alphaProject writes a project with one source app, alpha, plus extra files, and serves its upload grant
+// from a fresh registry. Tests answer the session tools themselves.
+func alphaProject(t *testing.T, extra map[string]string) (string, *runHarness, *imageRegistry) {
 	t.Helper()
-	f := &reloadFixture{root: t.TempDir(), readyAt: time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)}
-	sourceFiles(t, f.root, map[string]string{
+	root := t.TempDir()
+	files := map[string]string{
 		manifestFileName:  "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n",
 		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
-		"alpha/tools.py": "first", "alpha/pyproject.toml": "[project]\nname = \"alpha\"\n",
-	})
-	var server *httptest.Server
-	f.registry, server = buildRegistry(t)
-	grant := buildGrant(server)
+	}
+	maps.Copy(files, extra)
+	sourceFiles(t, root, files)
+	registry, server := buildRegistry(t)
 	h := newRunHarness(t)
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, grant)
+		installationtest.WriteJSON(w, buildGrant(server))
+	})
+	return root, h, registry
+}
+
+func startReloadFixture(t *testing.T) *reloadFixture {
+	t.Helper()
+	f := &reloadFixture{readyAt: time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)}
+	var h *runHarness
+	f.root, h, f.registry = alphaProject(t, map[string]string{
+		"alpha/tools.py": "first", "alpha/pyproject.toml": "[project]\nname = \"alpha\"\n",
 	})
 	var served []protocol.App
 	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession},
@@ -378,16 +389,7 @@ func TestDevReportsExtractionFailureAfterTheReload(t *testing.T) {
 }
 
 func TestRunDevPrintsURLsBeforeTheSessionIsReady(t *testing.T) {
-	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{
-		manifestFileName:  "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n",
-		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
-	})
-	_, registry := buildRegistry(t)
-	h := newRunHarness(t)
-	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, buildGrant(registry))
-	})
+	root, h, _ := alphaProject(t, nil)
 	var mu sync.Mutex
 	ready := false
 	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolDeleteSession},
@@ -481,16 +483,7 @@ func TestWaitSessionReadyLongPollsFromTheLastRevision(t *testing.T) {
 }
 
 func TestDevStopsWhenTheInstallationRefusesALongPoll(t *testing.T) {
-	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{
-		manifestFileName:  "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n",
-		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
-	})
-	_, registry := buildRegistry(t)
-	h := newRunHarness(t)
-	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, buildGrant(registry))
-	})
+	root, h, _ := alphaProject(t, nil)
 	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolDeleteSession},
 		nil, func(w http.ResponseWriter, r *http.Request) {
 			switch installationtest.ToolName(r) {
@@ -512,16 +505,7 @@ func TestDevStopsWhenTheInstallationRefusesALongPoll(t *testing.T) {
 }
 
 func TestASaveInterruptsALongPoll(t *testing.T) {
-	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{
-		manifestFileName:  "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n",
-		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
-	})
-	_, registry := buildRegistry(t)
-	h := newRunHarness(t)
-	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, buildGrant(registry))
-	})
+	root, h, _ := alphaProject(t, nil)
 	waiting := make(chan struct{}, 16)
 	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolDeleteSession},
 		nil, func(w http.ResponseWriter, r *http.Request) {

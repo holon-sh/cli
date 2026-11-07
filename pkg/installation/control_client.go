@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	bridgeproxy "github.com/holon-sh/mcp-bridge/proxy"
@@ -47,6 +48,10 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 	if err != nil {
 		return err
 	}
+	if result.IsError && result.StructuredContent == nil {
+		// The MCP SDK reports arguments its input schema refuses with text alone.
+		return fmt.Errorf("%w: %s", errToolRejected, toolText(result))
+	}
 	encoded, err := json.Marshal(result.StructuredContent)
 	if err != nil || result.StructuredContent == nil {
 		return errMalformedResponse
@@ -54,7 +59,7 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 	if result.IsError {
 		code, message := responseError(encoded, token, http.StatusBadRequest)
 		if code == "" {
-			return errors.New("control tool rejected the request")
+			return errToolRejected
 		}
 		return &protocol.Error{Code: code, Message: message}
 	}
@@ -97,4 +102,16 @@ func (t *controlTransport) RoundTrip(request *http.Request) (*http.Response, err
 	}
 	response.Body = io.NopCloser(bytes.NewReader(data))
 	return response, nil
+}
+
+var errToolRejected = errors.New("control tool rejected the request")
+
+func toolText(result *mcp.CallToolResult) string {
+	var texts []string
+	for _, item := range result.Content {
+		if text, ok := item.(*mcp.TextContent); ok {
+			texts = append(texts, text.Text)
+		}
+	}
+	return strings.Join(texts, " ")
 }

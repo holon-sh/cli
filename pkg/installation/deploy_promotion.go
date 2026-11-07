@@ -2,20 +2,20 @@ package installation
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"slices"
 	"strings"
 	"sync"
 
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/pkg/appartifact"
@@ -37,11 +37,11 @@ var executableDigest = sync.OnceValue(func() string {
 		return ""
 	}
 	defer func() { _ = file.Close() }()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	sum, err := digest.SHA256.FromReader(file)
+	if err != nil {
 		return ""
 	}
-	return hex.EncodeToString(hash.Sum(nil))
+	return sum.Encoded()
 })
 
 // promotionKey names everything an app's image is built from: its source snapshot and those of the apps
@@ -53,11 +53,8 @@ func promotionKey(app manifestApp, fingerprints map[string]string, architectures
 	if executable == "" || slices.ContainsFunc(names, func(name string) bool { return fingerprints[name] == "" }) {
 		return ""
 	}
-	if len(architectures) == 0 {
-		architectures = []string{"amd64", "arm64"}
-	}
 	hash := sha256.New()
-	_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", executable, strings.Join(slices.Sorted(slices.Values(architectures)), ","))
+	_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", executable, strings.Join(slices.Sorted(slices.Values(buildArchitectures(architectures))), ","))
 	for _, name := range names {
 		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", name, fingerprints[name])
 	}
@@ -74,122 +71,103 @@ func promoteDevelopment(
 	if err != nil || protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil) != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, false
 	}
+	sessions, err := scopeSessions(ctx, manager, "")
+	if err != nil {
+		return protocol.AppsRequestFor[protocol.App]{}, false
+	}
+	candidates := map[string][]string{}
+	for _, session := range sessions {
+		for _, app := range session.Apps {
+			if app.Image != "" {
+				candidates[app.Name] = append(candidates[app.Name], app.Image)
+			}
+		}
+	}
 	fingerprints := map[string]string{}
 	for _, app := range resolved.Apps {
-		if app.Path == "" {
-			if app.resolved.Remote == nil {
+		switch {
+		case app.Path != "" && len(candidates[app.Name]) != 0:
+			if fingerprints[app.Name], err = snapshotSource(app, ""); err != nil {
 				return protocol.AppsRequestFor[protocol.App]{}, false
 			}
-			continue
-		}
-		if fingerprints[app.Name], err = snapshotSource(app, ""); err != nil {
+		case app.Path != "" || app.resolved.Remote == nil:
 			return protocol.AppsRequestFor[protocol.App]{}, false
 		}
 	}
-	var sessions struct {
-		Items []protocol.SessionResponse `json:"items"`
-	}
-	if err := manager.Call(ctx, protocol.DevPlane, toolListSessions, struct{}{}, &sessions); err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, false
-	}
-	grant, err := imageDestination(ctx, manager, protocol.ProductionName, resolved)
-	if err != nil || validateUploadGrant(grant, resolved) != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, false
-	}
-	desired := make([]protocol.App, 0, len(resolved.Apps))
+	keys := map[string]string{}
 	for _, app := range resolved.Apps {
-		declaration := app.resolved.App
-		if app.Path != "" {
-			key := promotionKey(app, fingerprints, manager.info.BuildArchitectures)
-			image := promotableImage(ctx, app, key, sessions.Items, grant, options)
-			if key == "" || image == "" {
-				return protocol.AppsRequestFor[protocol.App]{}, false
-			}
-			declaration.Image = image
+		if app.Path == "" {
+			continue
 		}
-		desired = append(desired, declaration)
+		if keys[app.Name] = promotionKey(app, fingerprints, manager.info.BuildArchitectures); keys[app.Name] == "" {
+			return protocol.AppsRequestFor[protocol.App]{}, false
+		}
+	}
+	desired := make([]protocol.App, len(resolved.Apps))
+	err = newImageUpload(manager, protocol.ProductionName, resolved).run(ctx, func(grant protocol.UploadGrant) error {
+		for i, app := range resolved.Apps {
+			desired[i] = app.resolved.App
+			if app.Path == "" {
+				continue
+			}
+			image, err := promotableImage(ctx, app, keys[app.Name], candidates[app.Name], grant, options)
+			if err != nil || image == "" {
+				return cmp.Or(err, errNotPromotable)
+			}
+			desired[i].Image = image
+		}
+		return nil
+	})
+	if err != nil {
+		return protocol.AppsRequestFor[protocol.App]{}, false
 	}
 	options.output.status("", "Reusing development images", progressWorking)
 	return protocol.AppsRequestFor[protocol.App]{Apps: desired}, true
 }
 
-// promotableImage finds a development image of app carrying key in the production upload repository,
+var errNotPromotable = errors.New("no development image matches")
+
+// promotableImage finds the image among images that carries key in the production upload repository,
 // and publishes its build record as a release when the installation keeps a catalog.
 func promotableImage(
-	ctx context.Context, app manifestApp, key string, sessions []protocol.SessionResponse, grant protocol.UploadGrant, options buildOptions,
-) string {
+	ctx context.Context, app manifestApp, key string, images []string, grant protocol.UploadGrant, options buildOptions,
+) (string, error) {
 	name := grant.Registry + "/" + grant.Repositories[app.Name]
 	repository, err := imageRepository(name, grant.Grant, options.HTTPClient)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	for _, session := range sessions {
-		for _, candidate := range session.Apps {
-			if candidate.Name != app.Name || candidate.Image == "" {
-				continue
-			}
-			if named, err := ociimage.Parse(candidate.Image); err != nil || named.Name() != name {
-				continue
-			}
-			descriptor, annotations, err := fetchIndex(ctx, repository, candidate.Image)
-			if err != nil || annotations[promotionAnnotation] != key {
-				continue
-			}
-			if grant.Grant == "" || releaseDevelopmentRecord(ctx, repository, app, descriptor) == nil {
-				return candidate.Image
-			}
+	for _, image := range images {
+		if named, err := ociimage.Parse(image); err != nil || named.Name() != name {
+			continue
+		}
+		descriptor, err := repository.Resolve(ctx, image)
+		var index ocispec.Index
+		if err != nil || ociimage.FetchJSON(ctx, repository, descriptor, &index) != nil || index.Annotations[promotionAnnotation] != key {
+			continue
+		}
+		if grant.Grant == "" {
+			return image, nil
+		}
+		if released, err := releaseDevelopmentRecord(ctx, repository, app, descriptor); err != nil || released {
+			return image, err
 		}
 	}
-	return ""
+	return "", nil
 }
 
-func fetchIndex(ctx context.Context, repository *remote.Repository, reference string) (ocispec.Descriptor, map[string]string, error) {
-	descriptor, data, err := fetchJSON(ctx, repository, reference)
-	if err != nil {
-		return ocispec.Descriptor{}, nil, err
-	}
-	var index ocispec.Index
-	if err := json.Unmarshal(data, &index); err != nil {
-		return ocispec.Descriptor{}, nil, err
-	}
-	return descriptor, index.Annotations, nil
-}
-
-func fetchJSON(ctx context.Context, repository *remote.Repository, reference string) (ocispec.Descriptor, []byte, error) {
-	descriptor, err := repository.Resolve(ctx, reference)
-	if err != nil {
-		return ocispec.Descriptor{}, nil, err
-	}
-	data, err := content.FetchAll(ctx, repository, descriptor)
-	return descriptor, data, err
-}
-
-// releaseDevelopmentRecord tags the build record a development build published for image as a release,
-// once it is the record this deploy would publish. Its server identity comes from the same source.
-func releaseDevelopmentRecord(ctx context.Context, repository *remote.Repository, app manifestApp, image ocispec.Descriptor) error {
-	descriptor, data, err := fetchJSON(ctx, repository, appartifact.DevelopmentTag)
-	if err != nil {
-		return err
-	}
-	var index ocispec.Index
-	if err := json.Unmarshal(data, &index); err != nil || len(index.Manifests) != 2 || index.Manifests[0].Digest != image.Digest {
-		return errors.New("the development build record names another image")
-	}
-	_, data, err = fetchJSON(ctx, repository, index.Manifests[1].Digest.String())
-	var metadata ocispec.Manifest
-	if err != nil || json.Unmarshal(data, &metadata) != nil || len(metadata.Layers) != 1 {
-		return errors.New("the development build record is unreadable")
-	}
-	data, err = content.FetchAll(ctx, repository.Blobs(), metadata.Layers[0])
-	var record protocol.BuildRecord
-	if err != nil || json.Unmarshal(data, &record) != nil {
-		return errors.New("the development build record is unreadable")
+// releaseDevelopmentRecord publishes, as a release, the build record a development build published for
+// image, when it describes this deploy's declaration. Its server identity comes from the same source.
+func releaseDevelopmentRecord(ctx context.Context, repository *remote.Repository, app manifestApp, image ocispec.Descriptor) (bool, error) {
+	build, err := appartifact.Read(ctx, repository, appartifact.DevelopmentTag)
+	if err != nil || build.Image.Digest != image.Digest {
+		return false, nil
 	}
 	// JSON, which the record was read from, does not tell an empty list from an absent one.
-	published, _ := json.Marshal(record.Runtime)
+	published, _ := json.Marshal(build.Record.Runtime)
 	wanted, _ := json.Marshal(mcpregistry.BuildRecord(app.resolved.App, app.resolved.catalogEnv, nil).Runtime)
 	if !bytes.Equal(published, wanted) {
-		return errors.New("the development build record describes another declaration")
+		return false, nil
 	}
-	return repository.Tag(ctx, descriptor, appartifact.ReleasePrefix+descriptor.Digest.Encoded())
+	return true, appartifact.Release(ctx, repository, build.Metadata)
 }

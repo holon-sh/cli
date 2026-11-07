@@ -79,9 +79,9 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 	var image string
 	err = request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		entries := slices.Clone(manifests)
-		annotations := maps.Clone(request.annotations)
-		if annotations == nil {
-			annotations = map[string]string{}
+		annotations := map[string]string{}
+		if request.promotion != "" {
+			annotations[promotionAnnotation] = request.promotion
 		}
 		if p := request.app.resolved.types; p.metadata != nil {
 			metadata, ownDigest, err := pushTypeMetadata(ctx, repository, p.metadata, p.documents)

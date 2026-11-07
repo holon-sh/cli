@@ -14,7 +14,8 @@ import (
 
 const RuntimePath = "/holon-mcp-runtime"
 
-func fetchJSON(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor, value any) error {
+// FetchJSON decodes registry metadata, refusing documents larger than 4 MiB.
+func FetchJSON(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor, value any) error {
 	if descriptor.Size <= 0 || descriptor.Size > 4<<20 {
 		return errors.New("invalid image metadata size")
 	}

@@ -25,7 +25,7 @@ func Copy(ctx context.Context, source oras.ReadOnlyTarget, destination oras.Targ
 	var children, selected []ocispec.Descriptor
 	switch descriptor.MediaType {
 	case ocispec.MediaTypeImageIndex, "application/vnd.docker.distribution.manifest.list.v2+json":
-		if err := fetchJSON(ctx, source, descriptor, &document); err != nil {
+		if err := FetchJSON(ctx, source, descriptor, &document); err != nil {
 			return ocispec.Descriptor{}, err
 		}
 		if err := json.Unmarshal(document["manifests"], &children); err != nil {
@@ -75,11 +75,11 @@ func imagePlatform(ctx context.Context, source content.Fetcher, descriptor ocisp
 		return ocispec.Platform{}, fmt.Errorf("unsupported image manifest %q", descriptor.MediaType)
 	}
 	var manifest ocispec.Manifest
-	if err := fetchJSON(ctx, source, descriptor, &manifest); err != nil {
+	if err := FetchJSON(ctx, source, descriptor, &manifest); err != nil {
 		return ocispec.Platform{}, err
 	}
 	var config ocispec.Image
-	if err := fetchJSON(ctx, source, manifest.Config, &config); err != nil {
+	if err := FetchJSON(ctx, source, manifest.Config, &config); err != nil {
 		return ocispec.Platform{}, err
 	}
 	return config.Platform, nil
