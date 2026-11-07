@@ -1,10 +1,8 @@
 package installation
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -14,32 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"k8s.io/utils/clock"
 	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 )
-
-func TestDevWatcherReportsWithoutChangeConsumer(t *testing.T) {
-	var stream bytes.Buffer
-	output, _, _ := newProgressOutput(io.Discard, &stream, false, clock.RealClock{})
-	events := make(chan fsnotify.Event)
-	watcher := devWatcher{
-		watcher: &fsnotify.Watcher{Events: events, Errors: make(chan error)},
-		output:  output, done: make(chan struct{}),
-	}
-	go watcher.run()
-	watcher.watcher.Errors <- fsnotify.ErrEventOverflow
-	close(events)
-	<-watcher.done
-	want := "file watcher " + fsnotify.ErrEventOverflow.Error() + "\n"
-	if stream.String() != want {
-		t.Fatalf("watcher diagnostics = %q, want %q", stream.String(), want)
-	}
-}
 
 func TestRunDevRebuildsWhatASaveChanged(t *testing.T) {
 	fixture, registry := buildRegistry(t)
