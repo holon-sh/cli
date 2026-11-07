@@ -9,19 +9,21 @@ import (
 	"strings"
 )
 
-// shape is one schema's type with the named types from its definitions and $defs sections.
+// shape is one schema's type with the named types from its definitions and $defs sections, and
+// the recursive types they mention.
 type shape struct {
 	value     typ
 	named     map[string]typ
 	recursive []*recursive
 }
 
-// nameRecursive gives each recursive type an identifier within scope, before any declaration is
-// rendered: recursive types can refer to each other in any order.
-func (s shape) nameRecursive(names map[string]bool, scope string) {
+// nameRecursive gives each recursive type an identifier within scope and returns them to declare.
+// Every name is assigned first, because recursive types can refer to each other in any order.
+func (s shape) nameRecursive(names map[string]bool, scope string) []*recursive {
 	for _, ref := range s.recursive {
 		ref.name = unique(names, scope+typeIdentifier(ref.pointer[strings.LastIndexByte(ref.pointer, '/')+1:]))
 	}
+	return s.recursive
 }
 
 // recursive is a type that refers to itself, which only a declared name can express.
@@ -75,7 +77,7 @@ const (
 type extra struct {
 	kind      extraKind
 	value     *typ // extraOpen
-	recursive bool // extraOpen: value names a recursive type
+	recursive bool // extraOpen: value mentions a recursive type
 }
 
 type field struct {
@@ -136,6 +138,9 @@ func (p *parser) reference(reference string, target Value, depth int) (typ, erro
 	if p.selfDefined(target, reference, map[string]bool{}) {
 		return typ{kind: kindUnknown}, nil
 	}
+	if alias(target) {
+		return p.parse(target, depth) // The schema it names is declared instead, if that one recurs.
+	}
 	current := &recursive{pointer: reference}
 	p.references[reference] = current
 	value, err := p.parse(target, depth)
@@ -168,6 +173,20 @@ func (p *parser) selfDefined(schema Value, reference string, seen map[string]boo
 	for _, combinator := range combinators {
 		if items, ok := object[combinator.key].([]Value); ok {
 			return slices.ContainsFunc(items, func(item Value) bool { return p.selfDefined(item, reference, seen) })
+		}
+	}
+	return false
+}
+
+// alias reports whether schema only names another schema: a reference, or a combinator of one.
+func alias(schema Value) bool {
+	object, _ := schema.(Object)
+	if _, ok := object["$ref"].(string); ok {
+		return true
+	}
+	for _, combinator := range combinators {
+		if items, ok := object[combinator.key].([]Value); ok {
+			return len(items) == 1 && alias(items[0])
 		}
 	}
 	return false

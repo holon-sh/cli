@@ -60,6 +60,7 @@ const kitchenSink = `{
         "noType": {"properties": {"p": {"type": "boolean"}}, "required": ["p", 7]},
         "numericType": {"type": 7, "properties": {"p": {"type": "boolean"}}},
         "cycle": {"$ref": "#/$defs/Node"},
+        "nodes": {"$ref": "#/$defs/Nodes"},
         "pointerEscape": {"$ref": "#/$defs/a~1b~0c"},
         "arrayRef": {"$ref": "#/$defs/list/prefixItems/0"},
         "rootRef": {"$ref": "#"},
@@ -76,6 +77,7 @@ const kitchenSink = `{
       },
       "$defs": {
         "Node": {"type": "object", "properties": {"next": {"$ref": "#/$defs/Node"}, "value": {"type": "integer"}}, "required": ["value"], "additionalProperties": false},
+        "Nodes": {"type": "array", "items": {"$ref": "#/$defs/Node"}},
         "a/b~c": {"type": "integer"},
         "list": {"type": "array", "prefixItems": [{"type": "string"}]},
         "for": {"type": "string"},

@@ -40,15 +40,12 @@ func pythonOverloaded(lines []string) []string {
 }
 
 type pythonEmitter struct {
-	shapes  []string
-	names   map[string]bool
-	merging map[*recursive]bool // Recursive types being inlined into an intersection.
-}
-
-// pythonExported unquotes an exported alias that is just a recursive type's name. Every declared
-// type exists by the time exports run, and callers can then use it as a class, as in `X | None`.
-func pythonExported(rendered string) string {
-	return strings.Trim(rendered, `"`)
+	shapes []string
+	names  map[string]bool
+	// Python evaluates TypedDict fields and alias values on import, so while a shape's recursive
+	// types are declared their names may not exist yet. Every other type is rendered after them.
+	declaring bool
+	merging   bool // Rendering an intersection whose recursive members are inlined.
 }
 
 // pythonTypedDict reports whether an object renders as a TypedDict rather than a dict.
@@ -58,8 +55,9 @@ func pythonTypedDict(value typ) bool {
 
 // declare writes a shape's recursive types.
 func (e *pythonEmitter) declare(s shape, scope string) {
-	s.nameRecursive(e.names, scope)
-	for _, ref := range s.recursive {
+	e.declaring = true
+	defer func() { e.declaring = false }()
+	for _, ref := range s.nameRecursive(e.names, scope) {
 		if pythonTypedDict(ref.value) {
 			delete(e.names, ref.name) // Rendering the TypedDict claims its name back.
 			e.render(ref.value, ref.name)
@@ -73,8 +71,10 @@ func (e *pythonEmitter) declare(s shape, scope string) {
 func (e *pythonEmitter) render(value typ, name string) string {
 	switch value.kind {
 	case kindRecursive:
-		// Python evaluates most of the generated types on import, when this name may not exist yet.
-		return quoted(value.ref.name)
+		if e.declaring {
+			return quoted(value.ref.name)
+		}
+		return value.ref.name
 	case kindNever:
 		return "_typing.Never"
 	case kindString:
@@ -118,16 +118,20 @@ func (e *pythonEmitter) render(value typ, name string) string {
 			rendered[i] = e.render(item, name)
 		}
 		// A quoted name does not support | at runtime.
-		if slices.ContainsFunc(value.items, func(item typ) bool { return item.kind == kindRecursive }) {
+		if e.declaring && slices.ContainsFunc(value.items, func(item typ) bool { return item.kind == kindRecursive }) {
 			return "_typing.Union[" + strings.Join(rendered, ", ") + "]"
 		}
 		return strings.Join(rendered, " | ")
 	case kindIntersection:
+		// Only the outermost intersection inlines its recursive members, so that each renders once.
+		inline := !e.merging
+		if inline {
+			e.merging = true
+			defer func() { e.merging = false }()
+		}
 		combined := map[string]field{}
 		for _, item := range value.items {
-			if item.kind == kindRecursive && !e.merging[item.ref] {
-				e.merging[item.ref] = true
-				defer delete(e.merging, item.ref)
+			if item.kind == kindRecursive && inline {
 				item = item.ref.value
 			}
 			if item.kind != kindObject {
@@ -169,10 +173,7 @@ func (e *pythonEmitter) render(value typ, name string) string {
 // input renders one input type and its keyword signatures. Unpack requires a
 // TypedDict, so unions become overloads and open objects use their value type.
 func (e *pythonEmitter) input(value typ, name string) (string, []string) {
-	for value.kind == kindRecursive {
-		if pythonTypedDict(value.ref.value) {
-			return value.ref.name, []string{"_typing.Unpack[" + value.ref.name + "]"}
-		}
+	for value.kind == kindRecursive && !pythonTypedDict(value.ref.value) {
 		value = value.ref.value
 	}
 	if value.kind == kindUnion && len(value.items) > 0 {
@@ -195,7 +196,7 @@ func (e *pythonEmitter) input(value typ, name string) (string, []string) {
 
 // generatePython writes the typing-only module body: shapes, export classes, protocols and _Clients.
 func generatePython(contracts map[string]catalog) string {
-	emitter := &pythonEmitter{names: map[string]bool{"Inputs": true, "Outputs": true, "InputTypes": true, "OutputTypes": true}, merging: map[*recursive]bool{}}
+	emitter := &pythonEmitter{names: map[string]bool{"Inputs": true, "Outputs": true, "InputTypes": true, "OutputTypes": true}}
 	var clients []string
 	exportNames := []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"}
 	exports := make([][]string, 4)
@@ -231,11 +232,11 @@ func generatePython(contracts map[string]catalog) string {
 				if i == 1 && !tool.structured {
 					continue
 				}
-				appExports[i] = append(appExports[i], fmt.Sprintf("        %s: _typing.TypeAlias = %s", name, pythonExported(rendered)))
+				appExports[i] = append(appExports[i], fmt.Sprintf("        %s: _typing.TypeAlias = %s", name, rendered))
 				var types []string
 				for _, definition := range sortedKeys(shapes[i].named) {
 					if pythonIdentifier(definition) {
-						types = append(types, fmt.Sprintf("            %s: _typing.TypeAlias = %s", definition, pythonExported(emitter.render(shapes[i].named[definition], prefix+exportNames[i]+typeIdentifier(definition)))))
+						types = append(types, fmt.Sprintf("            %s: _typing.TypeAlias = %s", definition, emitter.render(shapes[i].named[definition], prefix+exportNames[i]+typeIdentifier(definition))))
 					}
 				}
 				appExports[i+2] = append(appExports[i+2], pythonBlock(fmt.Sprintf("        class %s:", name), types, "            "))

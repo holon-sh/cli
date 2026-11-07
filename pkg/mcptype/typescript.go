@@ -97,7 +97,8 @@ func joinTypeScript(items []typ, separator string, input bool) string {
 	return strings.Join(rendered, separator)
 }
 
-// generateTypeScript writes the Inputs, Outputs, InputTypes and OutputTypes interfaces.
+// generateTypeScript writes the recursive types, then the Inputs, Outputs, InputTypes and OutputTypes
+// interfaces.
 func generateTypeScript(contracts map[string]catalog) string {
 	names := map[string]bool{}
 	var out strings.Builder
@@ -117,8 +118,7 @@ func generateTypeScript(contracts map[string]catalog) string {
 					continue
 				}
 				input := index == 0
-				shape.nameRecursive(names, typeIdentifier(binding)+typeIdentifier(name)+[]string{"Input", "Output"}[index])
-				for _, ref := range shape.recursive {
+				for _, ref := range shape.nameRecursive(names, typeIdentifier(binding)+typeIdentifier(name)+[]string{"Input", "Output"}[index]) {
 					fmt.Fprintf(&out, "export type %s = %s;\n", ref.name, renderTypeScript(ref.value, input))
 				}
 				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value, input))

@@ -44,9 +44,18 @@ func unique(names map[string]bool, preferred string) string {
 	return name
 }
 
+// goRecursive reports whether a recursive type keeps its recursion in Go, which arrays and objects
+// do. The others are unions, intersections and tuples, which decode as raw JSON as usual.
+func goRecursive(value typ) bool {
+	return value.kind == kindArray || value.kind == kindObject
+}
+
 func renderGo(value typ, input bool) string {
 	switch value.kind {
 	case kindRecursive:
+		if !goRecursive(value.ref.value) {
+			return "json.RawMessage"
+		}
 		return value.ref.name
 	case kindString:
 		return "string"
@@ -123,12 +132,11 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 			}{{"Input", tool.input}, {"Output", tool.output}} {
 				input := index == 0
 				symbol := unique(names, client+method+part.suffix)
-				part.shape.nameRecursive(names, symbol)
-				for _, ref := range part.shape.recursive {
+				for _, ref := range part.shape.nameRecursive(names, symbol) {
+					// Only a defined type can contain itself, but one defined from json.RawMessage would
+					// lose its methods.
 					format := "type %s = %s\n\n"
-					// Arrays and objects can contain themselves, which only a defined type allows. The
-					// rest are json.RawMessage, whose methods a defined type would lose, or another name.
-					if ref.value.kind == kindArray || ref.value.kind == kindObject {
+					if goRecursive(ref.value) {
 						format = "type %s %s\n\n"
 					}
 					fmt.Fprintf(&declarations, format, ref.name, renderGo(ref.value, input))

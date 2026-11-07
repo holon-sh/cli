@@ -75,6 +75,7 @@ type OrdersKitchenSinkInputValue struct {
 	NoType struct {
 	P bool "json:\"p\""
 } "json:\"noType\""
+	Nodes *[]OrdersKitchenSinkInputNode "json:\"nodes,omitempty\""
 	NumericType *struct {
 	P *bool "json:\"p,omitempty\""
 } "json:\"numericType,omitempty\""
@@ -101,6 +102,8 @@ type OrdersKitchenSinkInput = OrdersKitchenSinkInputValue
 type OrdersKitchenSinkInputX9lives = string
 
 type OrdersKitchenSinkInputLegacy = json.Number
+
+type OrdersKitchenSinkInputNodes = []OrdersKitchenSinkInputNode
 
 type OrdersKitchenSinkInputPrivate = bool
 

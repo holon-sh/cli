@@ -14,7 +14,8 @@ import (
 // rejects any of its odd entries rejects the whole generated client: Knot and Tangle reach themselves
 // through nothing that can be declared, and Wrap only reaches a type that does. The rest of Pair
 // needs its own spelling in TypeScript, Spiral merges with itself, which Python can only do by
-// inlining, and Ring requires itself, which a Go struct cannot hold by value.
+// inlining, and Ring requires itself, which a Go struct cannot hold by value. Chain only names Link,
+// so Link is the type declared.
 const recursiveSchema = `{"type":"object","additionalProperties":false,"required":["root"],"properties":{
 	"root":{"$ref":"#/$defs/FileInfo"},
 	"tree":{"$ref":"#/$defs/Tree"},
@@ -29,6 +30,7 @@ const recursiveSchema = `{"type":"object","additionalProperties":false,"required
 	"tangle":{"$ref":"#/$defs/TangleA"},
 	"spiral":{"$ref":"#/$defs/Spiral"},
 	"ring":{"$ref":"#/$defs/Ring"},
+	"chain":{"$ref":"#/$defs/Chain"},
 	"self":{"$ref":"#"}},
 "$defs":{
 	"FileInfo":{"type":"object","additionalProperties":false,"required":["name"],"properties":{"name":{"type":"string"},"children":{"type":"array","items":{"$ref":"#/$defs/FileInfo"}}}},
@@ -43,7 +45,9 @@ const recursiveSchema = `{"type":"object","additionalProperties":false,"required
 	"TangleA":{"anyOf":[{"type":"object","properties":{"x":{"$ref":"#/$defs/TangleB"}}},{"$ref":"#/$defs/TangleB"}]},
 	"TangleB":{"anyOf":[{"$ref":"#/$defs/TangleA"},{"type":"object","properties":{"y":{"$ref":"#/$defs/TangleB"}}}]},
 	"Spiral":{"type":"object","additionalProperties":false,"properties":{"next":{"allOf":[{"$ref":"#/$defs/Spiral"},{"type":"object","properties":{"extra":{"type":"string"}}}]}}},
-	"Ring":{"type":"object","additionalProperties":false,"required":["next"],"properties":{"next":{"$ref":"#/$defs/Ring"}}}}}`
+	"Ring":{"type":"object","additionalProperties":false,"required":["next"],"properties":{"next":{"$ref":"#/$defs/Ring"}}},
+	"Chain":{"$ref":"#/$defs/Link"},
+	"Link":{"type":"object","additionalProperties":false,"properties":{"chain":{"$ref":"#/$defs/Chain"},"next":{"$ref":"#/$defs/Link"}}}}}`
 
 // openFileInfo has the common shape of a recursive output: its objects stay open, so the Go client
 // reads them as maps.
@@ -70,12 +74,19 @@ func generateRecursive(t *testing.T, app, target string) {
 	}
 }
 
-// mustReject fails unless compile rejects its source, reporting every expected diagnostic.
-func mustReject(t *testing.T, compile func() (string, error), diagnostics ...string) {
+// check runs holon types check on app.
+func check(t *testing.T, app string) (string, error) {
+	var output bytes.Buffer
+	err := Check(t.Context(), app, Options{Stdout: &output, Stderr: &output})
+	return output.String(), err
+}
+
+// mustReject fails unless holon types check rejects app, reporting every expected diagnostic.
+func mustReject(t *testing.T, app string, diagnostics ...string) {
 	t.Helper()
-	output, err := compile()
+	output, err := check(t, app)
 	if err == nil {
-		t.Fatalf("accepted a wrong field two levels down:\n%s", output)
+		t.Fatalf("accepted wrong uses at depth:\n%s", output)
 	}
 	for _, diagnostic := range diagnostics {
 		if !strings.Contains(output, diagnostic) {
@@ -85,14 +96,8 @@ func mustReject(t *testing.T, compile func() (string, error), diagnostics ...str
 }
 
 func TestRecursiveTypesStayPreciseAtAnyDepth(t *testing.T) {
-	check := func(app string) func() (string, error) {
-		return func() (string, error) {
-			var output bytes.Buffer
-			err := Check(t.Context(), app, Options{Stdout: &output, Stderr: &output})
-			return output.String(), err
-		}
-	}
 	t.Run("typescript", func(t *testing.T) {
+		t.Parallel()
 		app := typeScriptApp(t)
 		// Unlike the runner's own flags, these check the generated declarations themselves, and
 		// that a project publishing declarations can export an inferred recursive type.
@@ -119,7 +124,7 @@ export const pair: Walk["pair"] = ["a", ["b", ["c"]]];
 export const self: string = walk.self!.self!.root.name;
 export const input: Inputs["files"]["walk"] = { root: { name: "a", children: [{ name: "b", children: [{ name: "c" }] }] } };
 `)
-		if output, err := check(app)(); err != nil {
+		if output, err := check(t, app); err != nil {
 			t.Fatalf("check: %v\n%s", err, output)
 		}
 		put(t, app, "src/index.ts", `import type { Inputs, Outputs } from "holon-sh";
@@ -133,11 +138,12 @@ export const open = listed.files[0]!.children![0]!.children![0]!.name satisfies 
 export const pair: Walk["pair"] = ["a", ["b", [1]]];
 export const input: Inputs["files"]["walk"] = { root: { name: "a", children: [{ name: "b", children: [{ nma: "c" }] }] } };
 `)
-		mustReject(t, check(app),
+		mustReject(t, app,
 			"Property 'nam' does not exist", "Property 'nme' does not exist", "Property 'rihgt' does not exist",
 			"does not satisfy the expected type", "Type 'number' is not assignable", "'nma' does not exist")
 	})
 	t.Run("python", func(t *testing.T) {
+		t.Parallel()
 		app := t.TempDir()
 		python := pythonEnvironment(app, needPython(t))
 		if exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
@@ -168,12 +174,12 @@ async def use(walk: Outputs.files.walk, listed: Outputs.files.list, named: Outpu
     await apps.files.tools.walk(root={"name": "a", "children": [{"name": "b", "children": [{"name": "c"}]}]})
     await apps.files.tools.nest(a={"b": None})
 `)
-		if output, err := check(app)(); err != nil {
+		if output, err := check(t, app); err != nil {
 			t.Fatalf("check: %v\n%s", err, output)
 		}
 		// mypy reads the module without running it, but Python evaluates most of its types on import,
 		// and a caller's annotations too unless it postpones them.
-		load := exec.CommandContext(t.Context(), python, "-c", "import holon.apps as a; a.Outputs.files.walk | None; a.OutputTypes.files.walk.Tree | None")
+		load := exec.CommandContext(t.Context(), python, "-c", "import holon.apps as a; a.Outputs.files.walk | None; a.OutputTypes.files.walk.Tree | None; a.OutputTypes.files.walk.Chain | None")
 		load.Dir = app
 		if output, err := load.CombinedOutput(); err != nil {
 			t.Fatalf("generated module failed to import: %v\n%s", err, output)
@@ -186,19 +192,13 @@ async def use(walk: Outputs.files.walk, listed: Outputs.files.list) -> None:
     await apps.files.tools.walk(root={"name": "a", "children": [{"name": "b", "children": [{"nma": "c"}]}]})
     await apps.files.tools.nest(a=1)
 `)
-		mustReject(t, check(app), `has no key "nam"`, `has no key "nme"`, `has no key "rihgt"`, `"nma"`, `Argument "a" to "nest"`)
+		mustReject(t, app, `has no key "nam"`, `has no key "nme"`, `has no key "rihgt"`, `"nma"`, `Argument "a" to "nest"`)
 	})
 	t.Run("go", func(t *testing.T) {
+		t.Parallel()
 		app := t.TempDir()
 		put(t, app, "go.mod", "module example.com/caller\n\ngo 1.27.0\n")
 		generateRecursive(t, app, TargetGo)
-		// holon types check leaves Go to the compiler. Only clients.go needs the SDK.
-		compile := func() (string, error) {
-			command := exec.CommandContext(t.Context(), "go", "test", "holon/types.go", "holon/use_test.go")
-			command.Dir = app
-			output, err := command.CombinedOutput()
-			return string(output), err
-		}
 		put(t, app, "holon/use_test.go", `package holon
 
 import (
@@ -220,8 +220,9 @@ func TestDecodesEveryDepth(t *testing.T) {
 	if walk.Left.Right.Left.Right.Left != nil || len((*walk.Rows)[0]) != 1 || (*walk.Index)["a"]["b"] == nil || walk.Wrapped.Name != "d" {
 		t.Fatalf("decoded %+v", walk)
 	}
-	tree, err := json.Marshal(walk.Tree)
-	if err != nil || string(tree) != `+"`"+`["leaf",["leaf",["leaf"]]]`+"`"+` {
+	// Unions decode as raw JSON, as they do when not recursive, and so does their exported name.
+	var tree FilesWalkOutputTree
+	if err := json.Unmarshal(walk.Tree, &tree); err != nil || string(tree) != `+"`"+`["leaf", ["leaf", ["leaf"]]]`+"`"+` {
 		t.Fatalf("tree = %s, %v", tree, err)
 	}
 	var named FilesWalkOutputFileInfo = *walk.Root
@@ -231,15 +232,12 @@ func TestDecodesEveryDepth(t *testing.T) {
 	_, _, _ = named, inputRoot, self
 }
 `)
-		if output, err := compile(); err != nil {
+		// holon types check leaves Go to the compiler. Only clients.go needs the SDK. Go has no
+		// dynamic member access, so reading Name at depth also proves a misspelling would not compile.
+		compile := exec.CommandContext(t.Context(), "go", "test", "holon/types.go", "holon/use_test.go")
+		compile.Dir = app
+		if output, err := compile.CombinedOutput(); err != nil {
 			t.Fatalf("generated types do not compile and decode: %v\n%s", err, output)
 		}
-		put(t, app, "holon/use_test.go", `package holon
-
-func use(walk FilesWalkOutput) string {
-	return (*(*walk.Root.Children)[0].Children)[0].Nam
-}
-`)
-		mustReject(t, compile, "Nam undefined")
 	})
 }
