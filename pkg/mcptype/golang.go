@@ -50,9 +50,32 @@ func goRecursive(value typ) bool {
 	return value.kind == kindArray || value.kind == kindObject
 }
 
+// goStruct reports whether an object decodes as a struct: one that names fields with valid tags and
+// allows no others.
+func goStruct(value typ, input bool) bool {
+	if value.kind != kindObject || len(value.fields) == 0 || value.extra.kind == extraOpen || value.extra.kind == extraImplicit && !input {
+		return false
+	}
+	for name := range value.fields {
+		if name == "-" || !goTagName.MatchString(name) {
+			return false
+		}
+	}
+	return true
+}
+
+// goDeclares reports whether a type is declared. A shared map is not, since maps of one type are
+// interchangeable anyway.
+func goDeclares(ref *declaration, input bool) bool {
+	return ref.cyclic || goStruct(ref.value, input)
+}
+
 func renderGo(value typ, input bool) string {
 	switch value.kind {
-	case kindRecursive:
+	case kindDeclared:
+		if !goDeclares(value.ref, input) {
+			return renderGo(value.ref.value, input)
+		}
 		if !goRecursive(value.ref.value) {
 			return "json.RawMessage"
 		}
@@ -82,13 +105,8 @@ func renderGo(value typ, input bool) string {
 			}
 			return "map[string]" + item
 		}
-		if value.extra.kind == extraOpen || value.extra.kind == extraImplicit && !input {
+		if !goStruct(value, input) {
 			return "map[string]json.RawMessage"
-		}
-		for name := range value.fields {
-			if name == "-" || !goTagName.MatchString(name) {
-				return "map[string]json.RawMessage"
-			}
 		}
 		names := map[string]bool{}
 		var out strings.Builder
@@ -98,7 +116,7 @@ func renderGo(value typ, input bool) string {
 			rendered := renderGo(member.value, input)
 			tagName := name
 			// A struct cannot contain a recursive type by value, since that type may contain the struct.
-			if (!member.required || member.value.kind == kindRecursive) && rendered != "json.RawMessage" {
+			if (!member.required || member.value.kind == kindDeclared && member.value.ref.cyclic) && rendered != "json.RawMessage" {
 				rendered = "*" + rendered
 			}
 			if !member.required {
@@ -132,19 +150,27 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 			}{{"Input", tool.input}, {"Output", tool.output}} {
 				input := index == 0
 				symbol := unique(names, client+method+part.suffix)
-				for _, ref := range part.shape.nameRecursive(names, symbol) {
+				declares := func(ref *declaration) bool { return goDeclares(ref, input) }
+				root := part.shape.value
+				// A type that this tool uses first as its whole input or output is declared as that.
+				if root.kind == kindDeclared && root.ref.name == "" && declares(root.ref) && root.ref.preferred(symbol, client+part.suffix) == symbol {
+					root.ref.name = symbol
+				}
+				for _, ref := range part.shape.name(names, symbol, client+part.suffix, declares) {
 					// Only a defined type can contain itself, but one defined from json.RawMessage would
 					// lose its methods.
 					format := "type %s = %s\n\n"
-					if goRecursive(ref.value) {
+					if ref.cyclic && goRecursive(ref.value) {
 						format = "type %s %s\n\n"
 					}
 					fmt.Fprintf(&declarations, format, ref.name, renderGo(ref.value, input))
 				}
-				fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(part.shape.value, input))
+				if root.kind != kindDeclared || root.ref.name != symbol {
+					fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(root, input))
+				}
 				for _, definition := range sortedKeys(part.shape.named) {
 					value, preferred := part.shape.named[definition], symbol+typeIdentifier(definition)
-					if value.kind == kindRecursive && value.ref.name == preferred {
+					if value.kind == kindDeclared && value.ref.name == preferred {
 						continue
 					}
 					fmt.Fprintf(&declarations, "type %s = %s\n\n", unique(names, preferred), renderGo(value, input))

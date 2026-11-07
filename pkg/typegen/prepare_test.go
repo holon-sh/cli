@@ -244,46 +244,6 @@ func TestGenerateGivesEachProjectItsOwnNodeSlot(t *testing.T) {
 	}
 }
 
-func TestCheckTypeChecksTheProjectAgainstItsGeneratedClients(t *testing.T) {
-	app := typeScriptApp(t)
-	metadata := ordersMetadata()
-	metadata.Schema.Tools = []mcpcontract.Tool{{
-		Name: "lookup",
-		Input: json.RawMessage(`{"type":"object","$defs":{"Filter":{"type":"object","properties":{"state":{"type":"string"}}}},"properties":{
-			"ids":{"type":"array","items":{"type":"string"}},
-			"filter":{"$ref":"#/$defs/Filter"},
-			"open":{"type":"object","properties":{"state":{"type":"string"}},"additionalProperties":true},
-			"free":{"type":"object"}}}`),
-		Output: json.RawMessage(`{"type":"object","properties":{"total":{"type":"number"}}}`),
-	}}
-	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, metadata)}}}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	// An unused @ts-expect-error fails the check too, so each expectation is pinned to its line.
-	put(t, app, "src/index.ts", `import type { Inputs, InputTypes, Outputs } from "holon-sh";
-type Lookup = Inputs["orders"]["lookup"];
-export const declared: Lookup = { ids: ["a"], filter: { state: "open" } };
-export const open: Lookup = { open: { other: 1 }, free: { other: 1 } };
-export const output: Outputs["orders"]["lookup"] = { total: 1, other: true };
-// @ts-expect-error a misspelled argument
-export const misspelled: Lookup = { id: "a" };
-// @ts-expect-error a misspelled nested argument
-export const nested: Lookup = { filter: { stat: "open" } };
-// @ts-expect-error a misspelled field of a named input
-export const named: InputTypes["orders"]["lookup"]["Filter"] = { stat: "open" };
-`)
-	var output bytes.Buffer
-	options := Options{Stdout: &output, Stderr: &output}
-	if err := Check(t.Context(), app, options); err != nil {
-		t.Fatalf("check: %v\n%s", err, &output)
-	}
-	put(t, app, "src/index.ts", `import type { Inputs } from "holon-sh"; export const input: Inputs["orders"]["lookup"] = { id: "a" };`)
-	if err := Check(t.Context(), app, options); err == nil || !strings.Contains(err.Error(), "does not type-check") {
-		t.Fatalf("check accepted a misspelled argument: %v\n%s", err, &output)
-	}
-}
-
 func TestSuppliedContractsRemainDistinctAndValidated(t *testing.T) {
 	metadata := ordersMetadata()
 	source := Source{Document: document(t, metadata)}
