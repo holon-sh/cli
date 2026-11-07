@@ -208,6 +208,8 @@ type devLoop struct {
 	changedImages, pending sets.Set[string]
 	reloaded               map[string]string // the overlay digest each app last restarted from
 	nextRead               time.Time
+	readySince             time.Time // when the session last became ready
+	unready, restarted     bool
 }
 
 func (d *devLoop) renew(ctx context.Context) {
@@ -283,6 +285,10 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 			if err := d.poll(result.session, result.err); err != nil {
 				return err
 			}
+			if d.restarted {
+				d.restarted = false
+				d.resend(ctx)
+			}
 		case change := <-changes:
 			stopRead()
 			if err := d.rebuild(ctx, change); err != nil && ctx.Err() == nil {
@@ -342,10 +348,7 @@ func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
 	if err != nil {
 		return nil
 	}
-	if current.Revision != d.session.Revision {
-		// A restarted pod boots from its image, so the next save has to send its source even if unchanged.
-		clear(d.reloaded)
-	}
+	d.noticeRestart(current)
 	d.session = current
 	condition := current.Condition(protocol.ConditionReady)
 	if slices.Contains([]string{protocol.ReasonLeaseExpired, protocol.ReasonDeleting}, condition.Reason) {

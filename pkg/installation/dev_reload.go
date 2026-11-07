@@ -148,20 +148,83 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	if err := pushOverlay(ctx, upload, app.Name, overlay, archive, d.options); err != nil {
 		return fmt.Errorf("upload source: %w", err)
 	}
-	var result reloadAppResult
-	request := reloadAppRequest{
-		AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name},
-		Digest:     overlay.Digest.String(), MediaType: overlayMediaType,
-	}
-	if err := d.manager.Call(ctx, ControlPlane(d.name), toolReloadApp, request, &result); err != nil {
+	seconds, err := d.callReload(ctx, app.Name, overlay.Digest.String())
+	if err != nil {
 		return err
 	}
-	if result.Digest != request.Digest {
-		return errors.New("the app restarted from different source")
-	}
-	d.reloaded[app.Name] = request.Digest
-	d.options.output.status(app.Name, fmt.Sprintf("reloaded in %.1f s", cmp.Or(result.ElapsedSeconds, result.ReadyAt.Sub(result.RestartedAt).Seconds())), progressDone)
+	d.reloaded[app.Name] = overlay.Digest.String()
+	d.options.output.status(app.Name, fmt.Sprintf("reloaded in %.1f s", seconds), progressDone)
 	return nil
+}
+
+// callReload restarts app from the overlay blob digest names and reports how long the restart took.
+func (d *devLoop) callReload(ctx context.Context, app, digest string) (float64, error) {
+	var result reloadAppResult
+	request := reloadAppRequest{
+		AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app},
+		Digest:     digest, MediaType: overlayMediaType,
+	}
+	if err := d.manager.Call(ctx, ControlPlane(d.name), toolReloadApp, request, &result); err != nil {
+		return 0, err
+	}
+	if result.Digest != request.Digest {
+		return 0, errors.New("the app restarted from different source")
+	}
+	return cmp.Or(result.ElapsedSeconds, result.ReadyAt.Sub(result.RestartedAt).Seconds()), nil
+}
+
+// noticeRestart records a restart this loop did not cause: the session going unready and ready again,
+// as it does while a restarted pod boots from its image. A renewal moves only the revision. The session
+// reports readiness for all its apps together, so a restart of any app re-sends every overlay.
+func (d *devLoop) noticeRestart(current protocol.SessionResponse) {
+	ready := current.Condition(protocol.ConditionReady)
+	if ready.Status != "True" {
+		d.unready = d.unready || d.pending.Len() == 0
+		return
+	}
+	since := time.Time(ready.LastTransitionTime)
+	if d.pending.Len() == 0 && (d.unready || !d.readySince.IsZero() && since.After(d.readySince)) {
+		d.restarted = len(d.reloaded) != 0
+	}
+	d.readySince, d.unready = since, false
+}
+
+const restartRetries = 5
+
+// resend restarts each app that was running an overlay from that overlay again, and rebuilds those it
+// cannot, so that none keeps serving its image's older code.
+func (d *devLoop) resend(ctx context.Context) {
+	failed := sets.New[string]()
+	for _, app := range d.manifest.Apps {
+		digest := d.reloaded[app.Name]
+		if digest == "" {
+			continue
+		}
+		d.options.output.status(app.Name, "restarted, reloading", progressWorking)
+		seconds, err := d.callReload(ctx, app.Name, digest)
+		// A runtime answers 503 while its app is still starting, after the pod already reports ready.
+		for attempt := 0; err != nil && attempt < restartRetries; attempt++ {
+			select {
+			case <-ctx.Done():
+				return
+			case <-d.clock.After(time.Second):
+			}
+			seconds, err = d.callReload(ctx, app.Name, digest)
+		}
+		if err != nil {
+			d.options.output.status(app.Name, fmt.Sprintf("restarted on its image; reload failed: %v; rebuilding", err), progressWorking)
+			delete(d.reloaded, app.Name)
+			failed.Insert(app.Path)
+			continue
+		}
+		d.options.output.status(app.Name, fmt.Sprintf("restarted, reloaded in %.1f s", seconds), progressDone)
+	}
+	if failed.Len() == 0 {
+		return
+	}
+	if err := d.rebuild(ctx, devChange{contexts: failed, imageInputs: true}); err != nil && ctx.Err() == nil {
+		d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
+	}
 }
 
 // buildOverlay fills snapshot as an image build would, with the clients of the last accepted build,

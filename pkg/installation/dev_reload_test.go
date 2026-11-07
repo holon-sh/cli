@@ -150,6 +150,8 @@ type reloadFixture struct {
 	failNext bool
 	revision int
 	reads    int
+	unready  bool
+	readyAt  time.Time
 }
 
 func (f *reloadFixture) reloadRequests() []reloadAppRequest {
@@ -184,7 +186,7 @@ func (f *reloadFixture) blobs(repository string) int {
 
 func startReloadFixture(t *testing.T) *reloadFixture {
 	t.Helper()
-	f := &reloadFixture{root: t.TempDir()}
+	f := &reloadFixture{root: t.TempDir(), readyAt: time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)}
 	sourceFiles(t, f.root, map[string]string{
 		manifestFileName:  "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n",
 		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
@@ -222,6 +224,8 @@ func startReloadFixture(t *testing.T) *reloadFixture {
 			}
 			response := apiSession(h, "alpha")
 			response["apps"], response["revision"] = served, strconv.Itoa(f.revision)
+			status := map[bool]string{false: "True", true: "False"}[f.unready]
+			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: status, LastTransitionTime: protocol.Time(f.readyAt)}}
 			f.reads++
 			installationtest.WriteJSON(w, response)
 		})
@@ -295,18 +299,35 @@ func TestDevReloadsSourceEditsInPlace(t *testing.T) {
 		t.Fatalf("identical snapshot: reloads=%d blobs=%d", len(requests), f.blobs(repository))
 	}
 
-	// A moved revision can mean a restarted pod, back on its image, so the same bytes are sent again.
-	f.mu.Lock()
-	f.revision++
-	reads := f.reads
-	f.mu.Unlock()
-	f.await(func() bool {
+	// A renewal moves only the revision and restarts nothing.
+	observed := func(change func()) {
+		t.Helper()
 		f.mu.Lock()
-		defer f.mu.Unlock()
-		return f.reads > reads+1
+		change()
+		reads := f.reads
+		f.mu.Unlock()
+		f.await(func() bool {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			return f.reads > reads+1
+		})
+	}
+	observed(func() { f.revision++ })
+	if requests := f.reloadRequests(); len(requests) != 1 {
+		t.Fatalf("a renewal restarted the app: %+v", requests)
+	}
+	// A restarted pod comes back on its image, so its overlay is sent again without a save, retried
+	// while the runtime is still starting.
+	started = len(f.stderr.String())
+	f.failNextReload()
+	observed(func() { f.unready = true })
+	observed(func() { f.unready, f.readyAt = false, f.readyAt.Add(2*time.Second) })
+	f.await(func() bool {
+		return strings.Contains(f.stderr.String()[started:], "alpha restarted, reloaded in 1.2 s")
 	})
-	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "second"})
-	f.await(func() bool { return len(f.reloadRequests()) == 2 })
+	if requests := f.reloadRequests(); len(requests) != 3 || requests[1].Digest != requests[0].Digest || requests[2].Digest != requests[0].Digest {
+		t.Fatalf("restart re-sent %+v", requests)
+	}
 
 	// A file the image build consumes takes the rebuild path.
 	started = len(f.stderr.String())
@@ -315,7 +336,7 @@ func TestDevReloadsSourceEditsInPlace(t *testing.T) {
 	f.await(func() bool {
 		return strings.Contains(f.stderr.String()[started:], "continuing to watch") || f.updateCount() != 0
 	})
-	if requests := f.reloadRequests(); len(requests) != 2 {
+	if requests := f.reloadRequests(); len(requests) != 3 {
 		t.Fatalf("pyproject.toml edit reloaded: %+v", requests)
 	}
 	if err := f.stop(); err != nil {
