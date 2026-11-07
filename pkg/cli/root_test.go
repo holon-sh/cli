@@ -125,7 +125,7 @@ func TestProjectRunsForEachApp(t *testing.T) {
 	writeCLIFile(t, root, "orders/server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
 	writeCLIFile(t, root, "site/index.html", "<p>no runtime and no MCP server</p>")
 
-	// The apps holon dev --check builds: a client, and a server that makes no calls; not the site.
+	// The apps holon dev builds and checks: a client, and a server that makes no calls; not the site.
 	// Dependencies on apps in the file use them; any other keeps its registry reference.
 	consumers, err := projectConsumers(root)
 	if err != nil {

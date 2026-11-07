@@ -11,7 +11,7 @@ runs:
       uses: actions/checkout@v7
       with:
         repository: hughhan1/kiln
-        ref: 0fa146c47583f45d7f4af3c2ed2332e3a6b6ce7b
+        ref: 815c166115108faf415b265f3e02dca395f3f9eb
         path: .kiln
         persist-credentials: false
     - name: Prepare build environment
@@ -31,9 +31,7 @@ runs:
       shell: bash
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y musl-tools pkg-config libcurl4-openssl-dev libssl-dev \
-          libpsl-dev libssh-dev libkrb5-dev libldap2-dev librtmp-dev libnghttp2-dev \
-          libidn2-dev libbrotli-dev libzstd-dev zlib1g-dev
+        sudo apt-get install -y musl-tools pkg-config
     - uses: ocaml/setup-ocaml@v3
       if: steps.sdk.outputs.cache-hit != 'true' && (runner.os != 'Linux' || inputs.static != 'true')
       with:
@@ -52,17 +50,10 @@ runs:
           docker buildx build --file packaging/Dockerfile --output "type=local,dest=$destination" .
         else
           if [ "$RUNNER_OS" = Linux ]; then
-            libdir="/usr/lib/$(gcc -dumpmachine)"
-            export PKG_CONFIG_LIBDIR="$libdir/pkgconfig:/usr/share/pkgconfig"
-            export CURLCFLAGS="$(pkg-config --cflags libcurl)"
-            export CURLLIBS="-L$libdir -lcurl"
             export DUNE_WORKSPACE="$RUNNER_TEMP/dune-workspace"
             printf '(lang dune 3.18)\n(env (_ (link_flags (:standard -runtime-variant _pic))))\n' > "$DUNE_WORKSPACE"
           fi
           OPAMSWITCH="$GITHUB_WORKSPACE" scripts/package "$destination"
-          if [ "$RUNNER_OS" = Linux ]; then
-            sed -i "/^Libs:/ s|$| $(pkg-config --static --libs libcurl)|" "$destination/lib/pkgconfig/kiln.pc"
-          fi
         fi
     - name: Configure Go linking
       shell: bash

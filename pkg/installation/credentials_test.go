@@ -132,11 +132,11 @@ func TestDevelopmentAuthenticationBeforeBuild(t *testing.T) {
 			})
 			config := commandConfig{
 				Auth: ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)},
-				builder: func(context.Context, buildRequest, io.Writer) (buildResult, error) {
+				builder: func(context.Context, buildRequest, io.Writer) (string, error) {
 					if !authorized.Load() {
 						t.Error("build started before development authorization")
 					}
-					return buildResult{}, built
+					return "", built
 				},
 			}
 			args := []string{"dev", "--project", filepath.Join(root, manifestFileName)}

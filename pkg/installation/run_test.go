@@ -92,13 +92,13 @@ func TestRunPreparationFailures(t *testing.T) {
 			h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, protocol.SessionResponse{})
 			})
-			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (buildResult, error) {
+			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (string, error) {
 				if tc.edit != "" {
 					err := os.WriteFile(filepath.Join(root, tc.edit), []byte("edited"), 0o644)
-					return buildResult{Image: "superseded"}, err
+					return "superseded", err
 				}
 				_, _ = io.WriteString(progress, tc.diagnostics+"\n")
-				return buildResult{}, errors.New("fixture build failed")
+				return "", errors.New("fixture build failed")
 			})
 			var diagnostics bytes.Buffer
 			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &diagnostics, h.run)
@@ -141,6 +141,10 @@ func newRunHarness(t *testing.T) *runHarness {
 
 func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
+	// After any test's own: deploy looks for development sessions to reuse images from.
+	h.control.Handle([]string{toolListSessions}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, map[string]any{"items": []protocol.SessionResponse{}})
+	})
 	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
 		w.WriteHeader(http.StatusOK)
@@ -166,8 +170,8 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 	_, registry := buildRegistry(t)
 	registryHost := strings.TrimPrefix(registry.URL, "https://")
 	if build == nil {
-		build = func(context.Context, buildRequest, io.Writer) (buildResult, error) {
-			return buildResult{}, errors.New("fixture build failed")
+		build = func(context.Context, buildRequest, io.Writer) (string, error) {
+			return "", errors.New("fixture build failed")
 		}
 	}
 	h.run = commandConfig{
@@ -212,18 +216,18 @@ func TestRunDevLifecycle(t *testing.T) {
 		writeDescriptor(t, filepath.Join(root, name, "server.json"), descriptorDocument(name))
 	}
 	firstBuild, nextBuild := buildImage(t, "first"), buildImage(t, "next")
-	build := func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+	build := func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
 		if !slices.Equal(request.Platforms, []string{"linux/arm64"}) {
 			t.Errorf("session platforms = %v", request.Platforms)
 		}
-		switch edit, _ := os.ReadFile(filepath.Join(root, "alpha", "logic.ts")); string(edit) {
+		switch edit, _ := os.ReadFile(filepath.Join(root, "alpha", "logic.txt")); string(edit) {
 		case "":
 			return firstBuild(ctx, request, progress)
 		case "broken":
-			return buildResult{}, errors.New("rebuild failed")
+			return "", errors.New("rebuild failed")
 		case "superseded":
-			if err := os.WriteFile(filepath.Join(root, "alpha", "logic.ts"), []byte("fixed"), 0o644); err != nil {
-				return buildResult{}, err
+			if err := os.WriteFile(filepath.Join(root, "alpha", "logic.txt"), []byte("fixed"), 0o644); err != nil {
+				return "", err
 			}
 		}
 		return nextBuild(ctx, request, progress)
@@ -342,10 +346,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			})
 		}
 		await(stderr, "Configure API_KEY to start the session.", "request stream stopped")
-		if strings.Contains(stdout.String(), "/mcp/alpha") {
-			t.Fatalf("startup: stdout=%q", stdout.String())
-		}
-		sourceFiles(t, root, map[string]string{"alpha/logic.ts": "broken"})
+		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "broken"})
 		await(stderr, "remote image preparation failed")
 		mu.Lock()
 		waiting = ""
@@ -356,7 +357,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		writeDescriptor(t, filepath.Join(root, "alpha", "server.json"), document)
 		await(stderr, "restart holon dev")
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
-		sourceFiles(t, root, map[string]string{"alpha/logic.ts": "superseded"})
+		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "superseded"})
 		await(stderr, "discarding the superseded update", "remote update requested")
 		mu.Lock()
 		unavailable = true
@@ -411,7 +412,7 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 			{Type: protocol.ConditionReady, Status: ready, Reason: protocol.ReasonProgressDeadline, Message: "rollout failed"},
 			{Type: protocol.ConditionAvailable, Status: "True"},
 		}}
-		if err := dev.poll(t.Context()); err != nil {
+		if err := dev.poll(manager.Session(t.Context(), dev.name)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -438,7 +439,7 @@ func TestDevStopsWhenReauthenticationIsRequired(t *testing.T) {
 		t.Fatal(err)
 	}
 	dev := devLoop{manager: manager, name: "gentle-otter-482", options: buildOptions{types: &typeWorkspace{prepared: new(typegen.Prepared)}}}
-	if err := dev.poll(t.Context()); !errors.Is(err, errReauthenticationRequired) {
+	if err := dev.poll(manager.Session(t.Context(), dev.name)); !errors.Is(err, errReauthenticationRequired) {
 		t.Fatalf("poll = %v, want %v", err, errReauthenticationRequired)
 	}
 }
@@ -556,7 +557,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildClock := testingclock.NewFakeClock(time.Unix(100, 0))
-	build := func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+	build := func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
 		if !slices.Equal(request.Platforms, []string{"linux/amd64"}) {
 			t.Errorf("production platforms = %v", request.Platforms)
 		}

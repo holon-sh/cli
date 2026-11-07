@@ -8,9 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -24,9 +22,9 @@ import (
 
 func buildImage(t *testing.T, marker string) buildApplication {
 	t.Helper()
-	return func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+	return func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
 		if _, err := io.WriteString(progress, "fixture build output\n"); err != nil {
-			return buildResult{}, err
+			return "", err
 		}
 		fixture, source := buildRegistry(t)
 		config := ocispec.ImageConfig{
@@ -37,14 +35,18 @@ func buildImage(t *testing.T, marker string) buildApplication {
 		for _, platform := range request.Platforms {
 			children = append(children, addTestImage(t, fixture, strings.TrimPrefix(platform, "linux/"), config, nil))
 		}
-		descriptor := addTestIndex(fixture, children...)
+		var annotations map[string]string
+		if request.promotion != "" {
+			annotations = map[string]string{promotionAnnotation: request.promotion}
+		}
+		descriptor := addAnnotatedTestIndex(fixture, annotations, children...)
 		var image string
 		err := request.upload.run(ctx, func(grant protocol.UploadGrant) (err error) {
 			image, err = importImage(ctx, strings.TrimPrefix(source.URL, "https://")+"/source@"+descriptor.Digest.String(),
 				grant.Registry, grant.Repositories[request.app.Name], grant.Grant, request.httpClient)
 			return err
 		})
-		return buildResult{Image: image, Resolution: json.RawMessage(`{"fixture":"resolution"}`)}, err
+		return image, err
 	}
 }
 
@@ -136,10 +138,10 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	_, server := buildRegistry(t)
 	build := buildImage(t, "source")
 	options := buildOptions{HTTPClient: server.Client(), catalogTag: appartifact.DevelopmentTag}
-	options.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+	options.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
 		snapshot := request.Source
 		if err := os.WriteFile(filepath.Join(root, "main.mjs"), []byte("console.log(2)"), 0o600); err != nil {
-			return buildResult{}, err
+			return "", err
 		}
 		t.Run("build input", func(t *testing.T) {
 			for name, want := range map[string]string{
@@ -244,18 +246,18 @@ func TestSourceFailureCancelsConcurrentBuilds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := buildOptions{builder: func(ctx context.Context, request buildRequest, _ io.Writer) (buildResult, error) {
+	options := buildOptions{builder: func(ctx context.Context, request buildRequest, _ io.Writer) (string, error) {
 		started <- request.Source
 		if request.app.Name == "alpha" {
 			select {
 			case <-release:
-				return buildResult{}, errors.New("build failed")
+				return "", errors.New("build failed")
 			case <-ctx.Done():
 			}
 		} else {
 			<-ctx.Done()
 		}
-		return buildResult{}, ctx.Err()
+		return "", ctx.Err()
 	}}
 	finished := make(chan error, 1)
 	go func() {
@@ -279,33 +281,6 @@ func TestSourceFailureCancelsConcurrentBuilds(t *testing.T) {
 	for _, source := range snapshots {
 		if _, err := os.Stat(filepath.Dir(source)); !os.IsNotExist(err) {
 			t.Fatal("failed build retained temporary source and image data")
-		}
-	}
-}
-
-func TestSourceSessionResolution(t *testing.T) {
-	root := t.TempDir()
-	manifest := buildManifest(t, root)
-	build := buildImage(t, "resolution")
-	_, server := buildRegistry(t)
-	grant := buildGrant(server)
-	options := buildOptions{resolutions: new(sync.Map), architectures: []string{"arm64"}, HTTPClient: server.Client()}
-	for _, resolution := range []string{"", `{"fixture":"resolution"}`} {
-		options.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
-			if !slices.Equal(request.Platforms, []string{"linux/arm64"}) {
-				t.Fatalf("build platforms: %v", request.Platforms)
-			}
-			if string(request.Resolution) != resolution {
-				t.Fatalf("resolution reuse: %+v", request)
-			}
-			return build(ctx, request, progress)
-		}
-		prepared := prepareBuild(t, manifest)
-		if _, err := buildAndPush(t.Context(), prepared, &imageUpload{grant: grant}, options); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := os.Stat(filepath.Join(root, ".holon")); !os.IsNotExist(err) {
-			t.Fatalf("host injection modified application source: %v", err)
 		}
 	}
 }

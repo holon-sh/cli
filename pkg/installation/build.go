@@ -27,7 +27,6 @@ type buildOptions struct {
 	catalogTag    string
 	types         *typeWorkspace
 	metadataGrant protocol.UploadGrant
-	resolutions   *sync.Map
 	architectures []string
 	builder       buildApplication
 	builders      *builderConnections
@@ -36,7 +35,7 @@ type buildOptions struct {
 	Env           []string
 	HTTPClient    *http.Client
 	output        *progressOutput
-	check         bool
+	reusable      map[string][]string // development session images by app, which a deploy reuses when they match
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
@@ -44,6 +43,12 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 	apps := make([]protocol.App, len(manifest.Apps))
 	group, ctx := errgroup.WithContext(ctx)
 	group.SetLimit(3)
+	fingerprints := map[string]string{}
+	for _, app := range manifest.Apps {
+		if p := app.resolved.types; p != nil {
+			fingerprints[app.Name] = p.fingerprint
+		}
+	}
 	for index, app := range manifest.Apps {
 		declaration := app.resolved.App
 		if app.resolved.Remote != nil {
@@ -76,8 +81,10 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			}
 			var image string
 			if app.resolved.Image == "" {
-				image, err = buildSource(ctx, app, upload, options)
-				if err != nil {
+				key := promotionKey(app, fingerprints, options.architectures)
+				if image = reusableImage(ctx, app, key, options.reusable[app.Name], upload, options); image != "" {
+					options.output.status(app.Name, "reusing its development image", progressWorking)
+				} else if image, err = buildSource(ctx, app, upload, options, key); err != nil {
 					return err
 				}
 			}
@@ -159,13 +166,7 @@ func pathInsideContext(path, contextPath string) bool {
 func buildManifestImages(
 	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions,
 ) ([]protocol.App, error) {
-	upload := &imageUpload{load: func(ctx context.Context) (protocol.UploadGrant, error) {
-		grant, err := imageDestination(ctx, manager, name, manifest)
-		if err == nil {
-			err = validateUploadGrant(grant, manifest)
-		}
-		return grant, err
-	}}
+	upload := newImageUpload(manager, name, manifest)
 	options.importPackage = func(ctx context.Context, app manifestApp) (protocol.ResolvedAppBuild, error) {
 		return importRegistryBuild(ctx, manager, ControlPlane(name), app, options.output)
 	}
@@ -175,6 +176,16 @@ func buildManifestImages(
 		options.catalogTag = appartifact.ReleasePrefix
 	}
 	return buildAndPush(ctx, manifest, upload, options)
+}
+
+func newImageUpload(manager *Client, name string, manifest manifestSpec) *imageUpload {
+	return &imageUpload{load: func(ctx context.Context) (protocol.UploadGrant, error) {
+		grant, err := imageDestination(ctx, manager, name, manifest)
+		if err == nil {
+			err = validateUploadGrant(grant, manifest)
+		}
+		return grant, err
+	}}
 }
 
 type imageUpload struct {

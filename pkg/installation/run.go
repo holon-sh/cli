@@ -17,7 +17,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -29,9 +28,11 @@ import (
 
 const (
 	workflowPoll     = time.Second
-	idlePoll         = 5 * time.Second
 	renewalInterval  = time.Minute
 	maxCommandOutput = 64 << 10
+
+	// sessionWait is how long the server holds a get_session that names a revision.
+	sessionWait = 30 * time.Second
 )
 
 type commandConfig struct {
@@ -39,7 +40,6 @@ type commandConfig struct {
 	file               string
 	apps               []string
 	devTTLSeconds      *int64
-	check              bool
 	builder            buildApplication
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
@@ -158,10 +158,10 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	options := buildOptions{
-		types:       new(typeWorkspace),
-		resolutions: new(sync.Map), builder: config.builder, HTTPClient: config.RegistryHTTPClient,
+		types:   new(typeWorkspace),
+		builder: config.builder, HTTPClient: config.RegistryHTTPClient,
 		Stderr: stderr, Env: config.Env, architectures: manager.info.BuildArchitectures, output: config.output,
-		builders: new(builderConnections), check: config.check,
+		builders: new(builderConnections),
 	}
 	defer options.types.close()
 	defer options.builders.close()
@@ -186,6 +186,9 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
 		return err
 	}
+	if err := printStartingEndpoints(stdout, manager.client.baseURL, session); err != nil {
+		return err
+	}
 	if request.TTLSeconds != nil {
 		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
 		if err != nil {
@@ -194,7 +197,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(ready)
 		}
-		if err := printEndpoints(stdout, ready); err != nil {
+		if err := printEndpoints(stdout, "Ready", ready); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
@@ -219,6 +222,20 @@ func (m *Client) Session(ctx context.Context, name string) (protocol.SessionResp
 	var session protocol.SessionResponse
 	err := m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, protocol.SessionRequest{Session: name}, &session)
 	return session, err
+}
+
+type sessionWaitRequest struct {
+	protocol.SessionRequest
+
+	Revision string `json:"revision,omitempty"`
+}
+
+// awaitSession reads a session once it has moved past revision, the last one the caller saw, which the
+// server waits for up to sessionWait. Without a revision it answers at once.
+func (m *Client) awaitSession(ctx context.Context, name, revision string) (protocol.SessionResponse, error) {
+	var session protocol.SessionResponse
+	request := sessionWaitRequest{SessionRequest: protocol.SessionRequest{Session: name}, Revision: revision}
+	return session, m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, request, &session)
 }
 
 func SessionReady(session protocol.SessionResponse) (bool, error) {
@@ -273,9 +290,17 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	}
 	builders := new(builderConnections)
 	defer builders.close()
+	// Without the session list, deploy builds every image, as it would with no development session.
+	sessions, _ := scopeSessions(ctx, manager, "")
+	reusable := map[string][]string{}
+	for _, session := range sessions {
+		for _, app := range session.Apps {
+			reusable[app.Name] = append(reusable[app.Name], app.Image)
+		}
+	}
 	desired, _, err := uploadManifest(ctx, manager, protocol.ProductionName, manifest, buildOptions{
-		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env,
-		output: config.output, builders: builders, architectures: manager.info.BuildArchitectures, check: true,
+		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env, output: config.output,
+		builders: builders, architectures: manager.info.BuildArchitectures, reusable: reusable,
 	}, selection...)
 	if err != nil {
 		return err
@@ -290,7 +315,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 		return err
 	}
 	config.output.apps(desired.Apps, "ready", progressDone)
-	return printEndpoints(stdout, ready)
+	return printEndpoints(stdout, "Ready", ready)
 }
 
 func waitSessionReady(
@@ -298,9 +323,9 @@ func waitSessionReady(
 ) (protocol.SessionResponse, error) {
 	finish := output.measure(name, "rollout")
 	defer finish()
-	var result protocol.SessionResponse
+	result := accepted
 	err := wait.PollUntilContextCancel(ctx, workflowPoll, true, func(ctx context.Context) (bool, error) {
-		session, err := manager.Session(ctx, name)
+		session, err := manager.awaitSession(ctx, name, result.Revision)
 		if err != nil {
 			return false, err
 		}
@@ -348,8 +373,25 @@ func reportSessionProgress(
 	output.status(name, phase, state)
 }
 
-func printEndpoints(stdout io.Writer, session protocol.SessionResponse) error {
-	output := []byte("\nReady\n")
+// printStartingEndpoints prints where the session's apps will be. The API publishes endpoints only once
+// their apps are up, but the URLs follow from the session's name.
+func printStartingEndpoints(stdout io.Writer, origin string, session protocol.SessionResponse) error {
+	base, err := protocol.SessionAudience(origin, protocol.ModeDevelopment, session.Name)
+	if err != nil {
+		return err
+	}
+	session.Endpoints = make([]protocol.SessionEndpoint, 0, len(session.Apps))
+	for _, app := range session.Apps {
+		session.Endpoints = append(session.Endpoints, protocol.SessionEndpoint{Name: app.Name, URL: base + protocol.AppPath(app.Name)})
+	}
+	if len(session.Endpoints) == 0 {
+		return nil
+	}
+	return printEndpoints(stdout, "Starting", session)
+}
+
+func printEndpoints(stdout io.Writer, heading string, session protocol.SessionResponse) error {
+	output := []byte("\n" + heading + "\n")
 	mode := protocol.ModeDevelopment
 	if session.Name == protocol.ProductionName {
 		mode = protocol.ModeProduction

@@ -42,7 +42,7 @@ func rewrite(
 	ctx context.Context, repository oras.Target, descriptor ocispec.Descriptor, platform *ocispec.Platform, transform func(*Image) error,
 ) (ocispec.Descriptor, error) {
 	var document map[string]json.RawMessage
-	if err := fetchJSON(ctx, repository, descriptor, &document); err != nil {
+	if err := FetchJSON(ctx, repository, descriptor, &document); err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	switch descriptor.MediaType {
@@ -90,7 +90,7 @@ func rewrite(
 			return ocispec.Descriptor{}, err
 		}
 		var data json.RawMessage
-		if err := fetchJSON(ctx, repository, configDescriptor, &data); err != nil {
+		if err := FetchJSON(ctx, repository, configDescriptor, &data); err != nil {
 			return ocispec.Descriptor{}, err
 		}
 		var config map[string]json.RawMessage

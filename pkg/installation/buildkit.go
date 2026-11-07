@@ -50,16 +50,16 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-func publishSource(ctx context.Context, request buildRequest, progress io.Writer) (buildResult, error) {
+func publishSource(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
 	planned := request.output.measure(request.app.Name, "plan")
 	plan, err := kiln.Plan(ctx, request.Request)
 	planned()
 	if err != nil {
-		return buildResult{}, err
+		return "", err
 	}
 	source, err := fsutil.NewFS(request.Source)
 	if err != nil {
-		return buildResult{}, err
+		return "", err
 	}
 	manifests := make([]ocispec.Descriptor, len(request.Platforms))
 	group, buildCtx := errgroup.WithContext(ctx)
@@ -71,7 +71,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 		})
 	}
 	if err := group.Wait(); err != nil {
-		return buildResult{}, err
+		return "", err
 	}
 	slices.SortFunc(manifests, func(a, b ocispec.Descriptor) int {
 		return strings.Compare(a.Platform.Architecture, b.Platform.Architecture)
@@ -79,14 +79,17 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 	var image string
 	err = request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		entries := slices.Clone(manifests)
-		var annotations map[string]string
+		annotations := map[string]string{}
+		if request.promotion != "" {
+			annotations[promotionAnnotation] = request.promotion
+		}
 		if p := request.app.resolved.types; p.metadata != nil {
 			metadata, ownDigest, err := pushTypeMetadata(ctx, repository, p.metadata, p.documents)
 			if err != nil {
 				return err
 			}
 			entries = append(entries, metadata)
-			annotations = map[string]string{mcpcontract.DigestAnnotation: ownDigest}
+			annotations[mcpcontract.DigestAnnotation] = ownDigest
 		}
 		data, _ := json.Marshal(ocispec.Index{
 			Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex,
@@ -98,7 +101,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 		}
 		return err
 	})
-	return buildResult{Image: image, Resolution: plan.Resolution}, err
+	return image, err
 }
 
 var quietContentStore = sync.OnceFunc(func() { _ = log.SetLevel("error") })

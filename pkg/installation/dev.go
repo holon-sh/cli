@@ -25,8 +25,9 @@ import (
 const devDebounce = 250 * time.Millisecond
 
 type devChange struct {
-	contexts sets.Set[string]
-	manifest bool
+	contexts    sets.Set[string]
+	manifest    bool
+	imageInputs bool // a changed file is not server source, so an image build may read it
 }
 
 type devWatcher struct {
@@ -108,6 +109,17 @@ func (w *devWatcher) observe(root, path string, op fsnotify.Op) (bool, error) {
 	return !ignored, err
 }
 
+// editorFiles are what editors write beside a file while saving it: backups, vim's write test and swap
+// files, Emacs locks and auto-saves, and JetBrains' temporary copies. They are not the app's.
+var editorFiles = []string{"*~", "4913", ".*.sw?", ".#*", "#*#", "*___jb_*"}
+
+func editorFile(name string) bool {
+	return slices.ContainsFunc(editorFiles, func(pattern string) bool {
+		matched, _ := filepath.Match(pattern, name)
+		return matched
+	})
+}
+
 func (w *devWatcher) run() {
 	defer close(w.done)
 	pending := devChange{contexts: sets.New[string]()}
@@ -123,6 +135,9 @@ func (w *devWatcher) run() {
 				continue
 			}
 			path := filepath.Clean(event.Name)
+			if editorFile(filepath.Base(path)) {
+				continue
+			}
 			if w.metadata.Has(path) {
 				pending.manifest = true
 			}
@@ -133,6 +148,8 @@ func (w *devWatcher) run() {
 				changed, err := w.observe(root, path, event.Op)
 				if changed {
 					pending.contexts.Insert(root)
+					relative, _ := filepath.Rel(root, path)
+					pending.imageInputs = pending.imageInputs || !serverSource(relative)
 				}
 				w.output.problem("file watcher", err)
 			}
@@ -203,6 +220,7 @@ type devLoop struct {
 	options                buildOptions
 	session                protocol.SessionResponse
 	changedImages, pending sets.Set[string]
+	reloaded               map[string]string // the overlay digest each app last restarted from
 }
 
 func (d *devLoop) renew(ctx context.Context) {
@@ -241,12 +259,12 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		background.Wait()
 	}()
 	d.options.architectures = d.session.BuildArchitectures
-	d.changedImages, d.pending = sets.New[string](), sets.New[string]()
+	d.changedImages, d.pending, d.reloaded = sets.New[string](), sets.New[string](), map[string]string{}
 	for _, app := range d.session.Apps {
 		d.pending.Insert(app.Name)
 	}
 	announce := sync.OnceValue(func() error {
-		if err := printEndpoints(stdout, d.session); err != nil {
+		if err := printEndpoints(stdout, "Ready", d.session); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C stops this session.")
@@ -259,23 +277,27 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		if err := d.settle(announce); err != nil {
 			return err
 		}
-		phase, state, interval := "Watching for changes", progressIdle, idlePoll
+		phase, state := "Watching for changes", progressIdle
 		if d.pending.Len() > 0 {
-			phase, state, interval = "Deploying apps", progressWorking, workflowPoll
+			phase, state = "Deploying apps", progressWorking
 		}
 		reportSessionProgress(d.session, d.options.output, phase, state)
 		changes := watcher.changes
 		if lifecyclePending(d.session) {
-			changes, interval = nil, workflowPoll
+			changes = nil
 		}
+		read, stopRead := d.readSession(ctx)
 		select {
 		case <-ctx.Done():
+			stopRead()
 			return nil
-		case <-d.clock.After(interval):
-			if err := d.poll(ctx); err != nil {
+		case result := <-read:
+			stopRead()
+			if err := d.poll(result.session, result.err); err != nil {
 				return err
 			}
 		case change := <-changes:
+			stopRead()
 			if err := d.rebuild(ctx, change); err != nil && ctx.Err() == nil {
 				d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
 			}
@@ -296,12 +318,36 @@ func (d *devLoop) settle(announce func() error) error {
 	return announce()
 }
 
-func (d *devLoop) poll(ctx context.Context) error {
+type sessionRead struct {
+	session protocol.SessionResponse
+	err     error
+}
+
+// readSession long-polls the session in the background, so that a save can interrupt it. A failed read
+// answers at once, so it is reported only after workflowPoll, which paces reads through an outage.
+func (d *devLoop) readSession(ctx context.Context) (<-chan sessionRead, context.CancelFunc) {
+	ctx, stop := context.WithCancel(ctx)
+	revision := d.session.Revision
+	result := make(chan sessionRead, 1)
+	go func() {
+		session, err := d.manager.awaitSession(ctx, d.name, revision)
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-d.clock.After(workflowPoll):
+			}
+		}
+		result <- sessionRead{session, err}
+	}()
+	return result, stop
+}
+
+func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
 	d.options.output.problem("editor imports", d.options.types.prepared.Write())
 	if expiry, err := time.Parse(time.RFC3339Nano, d.session.ExpiresAt); err == nil && !expiry.After(d.clock.Now()) {
 		return errors.New("development session lease expired")
 	}
-	current, err := d.manager.Session(ctx, d.name)
 	if slices.Contains([]int{http.StatusNotFound, http.StatusGone}, HTTPStatus(err)) {
 		return errors.New("development session is no longer available")
 	}
@@ -339,7 +385,20 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 	d.pending.Clear()
 }
 
+// rebuild applies a saved change: in place when its apps can reload, and through new images otherwise.
 func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
+	if d.reloadable(change) {
+		failed, stale := d.reload(ctx, change)
+		if failed.Len() == 0 && !stale {
+			return nil
+		}
+		// An empty change still rebuilds the apps whose clients went stale.
+		change.contexts = failed
+	}
+	return d.buildImages(ctx, change)
+}
+
+func (d *devLoop) buildImages(ctx context.Context, change devChange) error {
 	if change.manifest {
 		reloaded, err := resolveManifestFile(d.manifest.file)
 		if err == nil {
@@ -407,6 +466,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 	for _, app := range apps {
 		d.pending.Insert(app.Name)
 		d.changedImages.Delete(app.Name)
+		delete(d.reloaded, app.Name)
 	}
 	d.options.types.accept(dirty)
 	d.session = updated

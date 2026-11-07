@@ -16,7 +16,7 @@ import (
 )
 
 const dependencyHelp = "Leverages sh.holon.requires in the publisher-provided metadata field (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to resolve dependencies, or the -s list for explicit dependencies.\n\n" +
-	"In a directory with a holon.yaml, runs for each of its path apps, as holon dev --check does; a dependency named after another app in the file uses that app."
+	"In a directory with a holon.yaml, runs for each of its path apps, as holon dev does when it builds their images; a dependency named after another app in the file uses that app."
 
 const generateExamples = `  # Generate for the current project
   holon types generate
