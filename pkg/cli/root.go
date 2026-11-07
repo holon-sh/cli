@@ -16,7 +16,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const dependencyHelp = "Leverages sh.holon.requires in the publisher-provided metadata field (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to resolve dependencies, or the -s list for explicit dependencies."
+const dependencyHelp = "Leverages sh.holon.requires in the publisher-provided metadata field (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to resolve dependencies, or the -s list for explicit dependencies.\n\n" +
+	"In a directory with a holon.yaml, runs for each of its path apps, as holon dev --check does; a dependency named after another app in the file uses that app."
 
 const generateExamples = `  # Generate for the current project
   holon types generate
@@ -140,19 +141,42 @@ func printContract(cmd *cobra.Command, arg, output string) error {
 	return err
 }
 
-// generateProject resolves the client directory and generates its declared slots from -s
-// or server.json requires. It returns the directory for type-checking.
-func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (string, error) {
-	typed := cmd.Flags().Arg(0)
-	dir, err := clientDir(typed)
+// generateProject resolves the client directory and, when generate is set, generates its slots:
+// those of each app in its holon.yaml, or else its own from -s or server.json requires. It returns
+// the directories to type-check.
+func generateProject(cmd *cobra.Command, servers []string, progress io.Writer, generate bool) ([]string, error) {
+	dir, err := clientDir(cmd.Flags().Arg(0))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	c, err := consumer(dir, servers)
-	if err != nil {
-		return "", err
+	consumers, err := projectConsumers(dir)
+	switch {
+	case err != nil:
+		return nil, err
+	case consumers != nil && len(servers) > 0:
+		return nil, errors.New("-s names one app's dependencies; pass that app's DIR")
+	case consumers == nil && !generate:
+		return []string{dir}, nil
+	case consumers == nil:
+		c, err := consumer(dir, servers)
+		if err != nil {
+			return nil, err
+		}
+		consumers = []typegen.Consumer{c}
 	}
-	return dir, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
+	if generate {
+		if err := typegen.Generate(cmd.Context(), consumers, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()}); err != nil {
+			return nil, err
+		}
+	}
+	var dirs []string
+	for _, c := range consumers {
+		// An app with only its own server makes no calls to check.
+		if len(c.Targets) != 0 {
+			dirs = append(dirs, c.Dir)
+		}
+	}
+	return dirs, nil
 }
 
 // newCheck builds the check command; it is registered as "holon types check" and as the
@@ -171,17 +195,16 @@ func newCheck(short string) *cobra.Command {
 		if noGenerate && len(servers) > 0 {
 			return errors.New("--no-generate type-checks the existing clients; -s has no effect")
 		}
-		var dir string
-		var err error
-		if noGenerate {
-			dir, err = clientDir(cmd.Flags().Arg(0))
-		} else {
-			dir, err = generateProject(cmd, servers, io.Discard)
-		}
+		dirs, err := generateProject(cmd, servers, io.Discard, !noGenerate)
 		if err != nil {
 			return err
 		}
-		return typegen.Check(cmd.Context(), dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
+		for _, dir := range dirs {
+			if err := typegen.Check(cmd.Context(), dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}}
 	cmd.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
 	cmd.Flags().BoolVar(&noGenerate, "no-generate", false, "Type-check the existing clients only: no network, no install, no writes")
@@ -221,7 +244,7 @@ func NewTypesCommand() *cobra.Command {
 		if verbose {
 			progress = cmd.ErrOrStderr()
 		}
-		_, err := generateProject(cmd, servers, progress)
+		_, err := generateProject(cmd, servers, progress, true)
 		return err
 	}}
 	generate.Flags().StringVar(&contract, "contract", "", "Print one server's MCP contract instead of generating")

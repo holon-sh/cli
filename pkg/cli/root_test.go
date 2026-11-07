@@ -132,6 +132,62 @@ func TestConsumerSelectsTheOwnServer(t *testing.T) {
 	}
 }
 
+func TestProjectRunsForEachApp(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	writeCLIFile(t, root, "holon.yaml", `apps:
+  - {name: view, path: view, access: {server: {}}}
+  - {name: orders, path: orders, access: {server: {}}}
+  - {name: docs, remote: {url: "https://docs.example/mcp"}, access: {server: {}}}
+  - {name: site, path: site, access: {server: {}}}
+`)
+	view := filepath.Join(root, "view")
+	writeCLIFile(t, view, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
+	installCLISlot(t, view)
+	requires := func(aliases ...string) string {
+		entries := make([]string, len(aliases))
+		for i, alias := range aliases {
+			entries[i] = `"` + alias + `":{"name":"example.com/` + alias + `","version":"1.0.0","registry":"https://127.0.0.1:1"}`
+		}
+		return `{"name":"example.com/view","version":"1.0.0","description":"View","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{` + strings.Join(entries, ",") + `}}}}}`
+	}
+	writeCLIFile(t, view, "server.json", requires("docs", "orders", "search"))
+	writeCLIFile(t, root, "orders/server.py", pythonServer)
+	writeCLIFile(t, root, "orders/server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
+	writeCLIFile(t, root, "site/index.html", "<p>no runtime and no MCP server</p>")
+
+	// The apps holon dev --check builds: a client, and a server that makes no calls; not the site.
+	// Dependencies on apps in the file use them; any other keeps its registry reference.
+	consumers, err := projectConsumers(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, c := range consumers {
+		names = append(names, c.Name)
+	}
+	if !slices.Equal(names, []string{"view", "orders"}) || consumers[1].Server == nil || len(consumers[1].Targets) != 0 {
+		t.Fatalf("consumers = %+v", consumers)
+	}
+	sources := consumers[0].Sources
+	if len(sources) != 3 || sources[0].Endpoint != "https://docs.example/mcp" || sources[1].Path != filepath.Join(root, "orders") || sources[2].Registry == nil {
+		t.Fatalf("view sources = %+v", sources)
+	}
+
+	// check reaches the app's slot, not the project root, which declares no runtime of its own.
+	run(t, filepath.Join(view, "node_modules/holon-sh")+" has no generated clients", "check", "--no-generate")
+	run(t, "-s names one app's dependencies; pass that app's DIR", "check", "-s", "x")
+	// orders comes from its source, so the unreachable registry is never asked.
+	writeCLIFile(t, view, "server.json", requires("orders"))
+	run(t, "", "types", "generate")
+	if data, err := os.ReadFile(filepath.Join(view, "node_modules/holon-sh/generated/index.d.ts")); err != nil || !strings.Contains(string(data), `"orders"`) {
+		t.Fatalf("view clients = %s, %v", data, err)
+	}
+}
+
 func TestUsageErrors(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
