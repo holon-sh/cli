@@ -188,10 +188,8 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
 		return err
 	}
-	if len(session.Endpoints) != 0 {
-		if err := printEndpointsAs(stdout, "Starting", session); err != nil {
-			return err
-		}
+	if err := printStartingEndpoints(stdout, manager.client.baseURL, session); err != nil {
+		return err
 	}
 	if request.TTLSeconds != nil {
 		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
@@ -379,6 +377,23 @@ func reportSessionProgress(
 		phase, state = condition.Message, progressBlocked
 	}
 	output.status(name, phase, state)
+}
+
+// printStartingEndpoints prints where the session's apps will be. The API publishes endpoints only once
+// their apps are up, but the URLs follow from the session's name.
+func printStartingEndpoints(stdout io.Writer, origin string, session protocol.SessionResponse) error {
+	base, err := protocol.PlaneOrigin(origin, protocol.SessionPlane, session.Name)
+	if err != nil {
+		return err
+	}
+	session.Endpoints = make([]protocol.SessionEndpoint, 0, len(session.Apps))
+	for _, app := range session.Apps {
+		session.Endpoints = append(session.Endpoints, protocol.SessionEndpoint{Name: app.Name, URL: base + protocol.AppPath(app.Name)})
+	}
+	if len(session.Endpoints) == 0 {
+		return nil
+	}
+	return printEndpointsAs(stdout, "Starting", session)
 }
 
 func printEndpoints(stdout io.Writer, session protocol.SessionResponse) error {

@@ -148,6 +148,8 @@ type reloadFixture struct {
 	reloads  []reloadAppRequest
 	updates  int
 	failNext bool
+	revision int
+	reads    int
 }
 
 func (f *reloadFixture) reloadRequests() []reloadAppRequest {
@@ -219,7 +221,8 @@ func startReloadFixture(t *testing.T) *reloadFixture {
 				f.updates++
 			}
 			response := apiSession(h, "alpha")
-			response["apps"] = served
+			response["apps"], response["revision"] = served, strconv.Itoa(f.revision)
+			f.reads++
 			installationtest.WriteJSON(w, response)
 		})
 	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, r *http.Request) {
@@ -292,6 +295,19 @@ func TestDevReloadsSourceEditsInPlace(t *testing.T) {
 		t.Fatalf("identical snapshot: reloads=%d blobs=%d", len(requests), f.blobs(repository))
 	}
 
+	// A moved revision can mean a restarted pod, back on its image, so the same bytes are sent again.
+	f.mu.Lock()
+	f.revision++
+	reads := f.reads
+	f.mu.Unlock()
+	f.await(func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.reads > reads+1
+	})
+	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "second"})
+	f.await(func() bool { return len(f.reloadRequests()) == 2 })
+
 	// A file the image build consumes takes the rebuild path.
 	started = len(f.stderr.String())
 	sourceFiles(t, f.root, map[string]string{"alpha/pyproject.toml": "[project]\nname = \"renamed\"\n"})
@@ -299,7 +315,7 @@ func TestDevReloadsSourceEditsInPlace(t *testing.T) {
 	f.await(func() bool {
 		return strings.Contains(f.stderr.String()[started:], "continuing to watch") || f.updateCount() != 0
 	})
-	if requests := f.reloadRequests(); len(requests) != 1 {
+	if requests := f.reloadRequests(); len(requests) != 2 {
 		t.Fatalf("pyproject.toml edit reloaded: %+v", requests)
 	}
 	if err := f.stop(); err != nil {
@@ -363,6 +379,8 @@ func TestRunDevPrintsURLsBeforeTheSessionIsReady(t *testing.T) {
 			defer mu.Unlock()
 			response := apiSession(h, "alpha")
 			if !ready {
+				// As the API does, publish no endpoints until the apps are up.
+				response["endpoints"] = []protocol.SessionEndpoint{}
 				response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
 			}
 			installationtest.WriteJSON(w, response)

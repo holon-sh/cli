@@ -350,6 +350,10 @@ func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
 	if err != nil {
 		return nil
 	}
+	if current.Revision != d.session.Revision {
+		// A restarted pod boots from its image, so the next save has to send its source even if unchanged.
+		clear(d.reloaded)
+	}
 	d.session = current
 	condition := current.Condition(protocol.ConditionReady)
 	if slices.Contains([]string{protocol.ReasonLeaseExpired, protocol.ReasonDeleting}, condition.Reason) {
