@@ -25,10 +25,10 @@ export interface Outputs {
     "select": { "columns": Array<{ "value": number; }>; };
   };
   "orders": {
-    "get_order": { "total": number; [key: string]: unknown; };
+    "get_order": { "total": number; };
   };
   "with-hyphen": {
-    "get_order": { "total": number; [key: string]: unknown; };
+    "get_order": { "total": number; };
   };
 }
 export interface InputTypes {

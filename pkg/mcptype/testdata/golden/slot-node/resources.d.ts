@@ -17,10 +17,10 @@ export interface Outputs {
   "mysql": {
   };
   "orders": {
-    "orders://summary": { "total": number; [key: string]: unknown; };
+    "orders://summary": { "total": number; };
   };
   "with-hyphen": {
-    "orders://summary": { "total": number; [key: string]: unknown; };
+    "orders://summary": { "total": number; };
   };
 }
 export interface InputTypes {

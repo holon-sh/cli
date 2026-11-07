@@ -34,7 +34,7 @@ func parseCatalog(ctx context.Context, contract contract) (catalog, error) {
 		tools[i] = compiledTool{input: input, output: output, structured: tool.Output != nil}
 		inputs[i], outputs[i] = &tools[i].input, &tools[i].output
 	}
-	// Inputs and outputs render differently, so each shares only with its own kind.
+	// Inputs and outputs are named apart, so each shares only with its own kind.
 	share(inputs)
 	share(outputs)
 	result := make(catalog, len(names))

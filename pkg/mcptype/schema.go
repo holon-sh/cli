@@ -89,10 +89,11 @@ type typ struct {
 
 type extraKind uint8
 
+// extraKind is what a schema says of properties or items beyond the named ones.
 const (
-	extraImplicit extraKind = iota
-	extraClosed
-	extraOpen
+	extraImplicit extraKind = iota // Nothing: a tuple takes any rest, and an object is free-form.
+	extraClosed                    // None.
+	extraOpen                      // A schema for them.
 )
 
 type extra struct {
@@ -104,6 +105,18 @@ type extra struct {
 type field struct {
 	value    typ
 	required bool
+}
+
+// objectType is the type of an object schema. One that names fields without declaring a schema for
+// others is closed, since the generated types take the named fields to be all there are: a
+// misspelled argument fails excess-property checks rather than reaching a server that ignores it,
+// and a result keeps its fields under Omit, which an index signature would reduce to unknown. An
+// implicit object therefore names no fields.
+func objectType(fields map[string]field, extra extra) typ {
+	if len(fields) > 0 && extra.kind == extraImplicit {
+		extra.kind = extraClosed
+	}
+	return typ{kind: kindObject, fields: fields, extra: extra}
 }
 
 func parseShape(ctx context.Context, schema Value) (shape, error) {
@@ -380,7 +393,7 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 		if err != nil {
 			return typ{}, err
 		}
-		return typ{kind: kindObject, fields: fields, extra: extra}, nil
+		return objectType(fields, extra), nil
 	}
 	return typ{kind: kindUnknown}, nil
 }
