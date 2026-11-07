@@ -122,18 +122,18 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			}
 			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name)}
 			app.resolved.types = p
-			consumer, ok, err := typegen.AppConsumer(app.Name, app.Path)
+			consumer, err := typegen.AppConsumer(app.Name, app.Path)
 			if err != nil {
 				return manifestSpec{}, nil, fmt.Errorf("%s: %w", app.Name, err)
 			}
 			pathApps = append(pathApps, app)
 			byApp[app.Name] = typegen.Source{Path: app.Path}
-			if ok {
+			if consumer != nil {
 				for _, name := range app.resolved.Requires {
 					needed[name] = true
 					consumer.Sources = append(consumer.Sources, typegen.Source{Alias: name})
 				}
-				consumers = append(consumers, consumer)
+				consumers = append(consumers, *consumer)
 			}
 		case app.resolved.Image != "":
 			image, document, err := resolveTypeMetadata(ctx, app.resolved.Image, options)

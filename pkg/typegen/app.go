@@ -11,35 +11,28 @@ import (
 )
 
 // AppConsumer is the consumer for a project app kept in dir, without its dependencies: the slots its
-// SDK dependencies declare and, when dir keeps an MCP server, that server. It reports false for an
-// app with neither, which has nothing to generate or check.
-func AppConsumer(name, dir string) (Consumer, bool, error) {
-	entry, err := ServerEntry(dir)
+// SDK dependencies declare and, when dir keeps an MCP server, that server. It returns nil for an app
+// with neither, which has nothing to generate or check.
+func AppConsumer(name, dir string) (*Consumer, error) {
+	entry, err := SourceEntry(dir)
 	if err != nil {
-		return Consumer{}, false, err
+		return nil, err
 	}
 	targets, err := DeclaredTargets(dir)
 	if err != nil && !errors.Is(err, ErrNoRuntime) {
-		return Consumer{}, false, err
+		return nil, err
 	}
-	c := Consumer{Name: name, Dir: dir, Targets: targets}
-	if entry != "" {
-		c.Server = &Source{Path: filepath.Join(dir, entry)}
+	c := &Consumer{Name: name, Dir: dir, Targets: targets}
+	// JavaScript that never mentions an MCP SDK or holon-sh is not an MCP server. The server is the
+	// directory, so a sibling that depends on this app shares its extraction.
+	javascript := strings.HasSuffix(entry, ".ts") || strings.HasSuffix(entry, ".js")
+	if entry != "" && (!javascript || mentionsMCP(dir)) {
+		c.Server = &Source{Path: dir}
 	}
-	return c, len(targets) != 0 || entry != "", nil
-}
-
-// ServerEntry is the MCP server entry kept in root, or "" for an app that is not an MCP server: one
-// without a server entry, or JavaScript that never mentions an MCP SDK or holon-sh.
-func ServerEntry(root string) (string, error) {
-	entry, err := SourceEntry(root)
-	if err != nil {
-		return "", err
+	if len(targets) == 0 && c.Server == nil {
+		return nil, nil
 	}
-	if (strings.HasSuffix(entry, ".ts") || strings.HasSuffix(entry, ".js")) && !mentionsMCP(root) {
-		return "", nil
-	}
-	return entry, nil
+	return c, nil
 }
 
 // mentionsMCP reports whether any JavaScript or TypeScript source under root imports an MCP SDK or holon-sh.

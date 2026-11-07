@@ -216,9 +216,6 @@ Leverages sh.holon.requires in the publisher-provided metadata field
 (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to
 resolve dependencies, or the -s list for explicit dependencies.
 
-In a directory with a holon.yaml, runs for each of its path apps, as holon dev --check does; a
-dependency named after another app in the file uses that app.
-
 Usage:
   holon types generate [DIR] [flags]
 
@@ -266,9 +263,6 @@ Generate typed clients for MCP servers, then type-check the project's calls to t
 Leverages sh.holon.requires in the publisher-provided metadata field
 (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to
 resolve dependencies, or the -s list for explicit dependencies.
-
-In a directory with a holon.yaml, runs for each of its path apps, as holon dev --check does; a
-dependency named after another app in the file uses that app.
 
 Usage:
   holon types check [DIR] [flags]

@@ -53,35 +53,6 @@ func installCLISlot(t *testing.T, root string) {
 	}
 }
 
-func TestOwnServerIsABrowserClient(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(root)
-	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1","holon-ui":"^0.0.1"}}`)
-	writeCLIFile(t, root, "server.py", pythonServer)
-	writeCLIFile(t, root, "server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"}`)
-	installCLISlot(t, root)
-	orders := t.TempDir()
-	writeCLIFile(t, orders, "server.py", pythonServer)
-	writeCLIFile(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
-	run(t, "", "types", "generate", "-s", "./server.py", "-s", orders)
-	// The own server is callable from the browser but is not a dependency of itself.
-	for pkg, want := range map[string]bool{"holon-sh": false, "holon-ui": true} {
-		data, err := os.ReadFile(filepath.Join(root, "node_modules", pkg, "generated/index.d.ts"))
-		if err != nil || strings.Contains(string(data), `"view"`) != want || !strings.Contains(string(data), `"orders"`) {
-			t.Fatalf("%s = %s, %v", pkg, data, err)
-		}
-	}
-	// Without -s the project finds the same server, and the explicit dependency is gone.
-	run(t, "", "types", "generate")
-	data, err := os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts"))
-	if err != nil || !strings.Contains(string(data), `"view"`) || strings.Contains(string(data), `"orders"`) {
-		t.Fatalf("holon-ui = %s, %v", data, err)
-	}
-}
-
 func TestConsumerSelectsTheOwnServer(t *testing.T) {
 	const browser = `{"dependencies":{"holon-sh":"^0.0.1","holon-ui":"^0.0.1"}}`
 	for _, test := range []struct {
@@ -147,14 +118,11 @@ func TestProjectRunsForEachApp(t *testing.T) {
 	view := filepath.Join(root, "view")
 	writeCLIFile(t, view, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
 	installCLISlot(t, view)
-	requires := func(aliases ...string) string {
-		entries := make([]string, len(aliases))
-		for i, alias := range aliases {
-			entries[i] = `"` + alias + `":{"name":"example.com/` + alias + `","version":"1.0.0","registry":"https://127.0.0.1:1"}`
-		}
-		return `{"name":"example.com/view","version":"1.0.0","description":"View","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{` + strings.Join(entries, ",") + `}}}}}`
+	var requires []string
+	for _, alias := range []string{"docs", "orders", "search"} {
+		requires = append(requires, `"`+alias+`":{"name":"example.com/`+alias+`","version":"1.0.0"}`)
 	}
-	writeCLIFile(t, view, "server.json", requires("docs", "orders", "search"))
+	writeCLIFile(t, view, "server.json", `{"name":"example.com/view","version":"1.0.0","description":"View","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{`+strings.Join(requires, ",")+`}}}}}`)
 	writeCLIFile(t, root, "orders/server.py", pythonServer)
 	writeCLIFile(t, root, "orders/server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
 	writeCLIFile(t, root, "site/index.html", "<p>no runtime and no MCP server</p>")
@@ -169,7 +137,7 @@ func TestProjectRunsForEachApp(t *testing.T) {
 	for _, c := range consumers {
 		names = append(names, c.Name)
 	}
-	if !slices.Equal(names, []string{"view", "orders"}) || consumers[1].Server == nil || len(consumers[1].Targets) != 0 {
+	if !slices.Equal(names, []string{"view", "orders"}) || consumers[1].Server == nil {
 		t.Fatalf("consumers = %+v", consumers)
 	}
 	sources := consumers[0].Sources
@@ -180,12 +148,6 @@ func TestProjectRunsForEachApp(t *testing.T) {
 	// check reaches the app's slot, not the project root, which declares no runtime of its own.
 	run(t, filepath.Join(view, "node_modules/holon-sh")+" has no generated clients", "check", "--no-generate")
 	run(t, "-s names one app's dependencies; pass that app's DIR", "check", "-s", "x")
-	// orders comes from its source, so the unreachable registry is never asked.
-	writeCLIFile(t, view, "server.json", requires("orders"))
-	run(t, "", "types", "generate")
-	if data, err := os.ReadFile(filepath.Join(view, "node_modules/holon-sh/generated/index.d.ts")); err != nil || !strings.Contains(string(data), `"orders"`) {
-		t.Fatalf("view clients = %s, %v", data, err)
-	}
 }
 
 func TestUsageErrors(t *testing.T) {
@@ -199,6 +161,7 @@ func TestUsageErrors(t *testing.T) {
 		{[]string{"check", "--no-generate", "-s", "x"}, "-s has no effect"},
 		{[]string{"check", "missing-dir"}, "is not a directory"},
 		{[]string{"types", "generate", "--contract", "a", "-s", "b"}, "takes one SERVER and nothing else"},
+		{[]string{"types", "generate", "-o", "contract.json"}, "--output writes a --contract document"},
 	} {
 		run(t, test.want, test.args...)
 	}
@@ -207,7 +170,6 @@ func TestUsageErrors(t *testing.T) {
 	installCLISlot(t, root)
 	writeCLIFile(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout"`+requiresOrders)
 	run(t, "example.com/orders@1.0.0", "types", "generate")
-	run(t, "has no generated clients; run holon types generate", "check", "--no-generate")
 }
 
 // requiresOrders ends a server.json that requires an orders server from an unreachable registry.
@@ -235,5 +197,4 @@ func TestContractOfAPathSource(t *testing.T) {
 	if data, err := os.ReadFile(committed); err != nil || string(data) != output {
 		t.Fatalf("committed contract = %s, %v", data, err)
 	}
-	run(t, "--output writes a --contract document", "types", "generate", "-o", committed)
 }

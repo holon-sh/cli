@@ -48,13 +48,18 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 	if err := yaml.Unmarshal(data, &project); err != nil {
 		return nil, fmt.Errorf("%s: %w", file, err)
 	}
+	// The apps a dependency can name: each path app's resolved directory, or a remote app's endpoint.
 	apps := map[string]typegen.Source{}
 	for _, app := range project.Apps {
 		switch {
 		case filepath.IsAbs(app.Path):
 			return nil, fmt.Errorf("%s: %s path must be a relative directory", file, app.Name)
 		case app.Path != "":
-			apps[app.Name] = typegen.Source{Path: filepath.Join(dir, app.Path)}
+			path, err := clientDir(filepath.Join(dir, app.Path))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %s: %w", file, app.Name, err)
+			}
+			apps[app.Name] = typegen.Source{Path: path}
 		case app.Remote != nil:
 			apps[app.Name] = typegen.Source{Endpoint: app.Remote.URL}
 		}
@@ -65,14 +70,11 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 			continue
 		}
 		path := apps[app.Name].Path
-		if info, err := os.Stat(path); err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("%s: %s path %s is not a directory", file, app.Name, app.Path)
-		}
-		c, ok, err := typegen.AppConsumer(app.Name, path)
+		c, err := typegen.AppConsumer(app.Name, path)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
-		if !ok {
+		if c == nil {
 			continue
 		}
 		requires, err := typegen.DeclaredSources(path)
@@ -86,7 +88,7 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 			}
 			c.Sources = append(c.Sources, source)
 		}
-		consumers = append(consumers, c)
+		consumers = append(consumers, *c)
 	}
 	if len(consumers) == 0 {
 		return nil, fmt.Errorf("%s: no path app declares a Holon SDK runtime or keeps an MCP server", file)
