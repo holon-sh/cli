@@ -122,26 +122,18 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			}
 			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name)}
 			app.resolved.types = p
-			entry, err := typeServer(app.Path)
+			consumer, err := typegen.AppConsumer(app.Name, app.Path)
 			if err != nil {
-				return manifestSpec{}, nil, fmt.Errorf("%s: %w", app.Name, err)
-			}
-			targets, err := typegen.DeclaredTargets(app.Path)
-			if err != nil && !errors.Is(err, typegen.ErrNoRuntime) {
 				return manifestSpec{}, nil, fmt.Errorf("%s: %w", app.Name, err)
 			}
 			pathApps = append(pathApps, app)
 			byApp[app.Name] = typegen.Source{Path: app.Path}
-			if len(targets) != 0 || entry != "" {
-				consumer := typegen.Consumer{Name: app.Name, Dir: app.Path, Targets: targets}
-				if entry != "" {
-					consumer.Server = &typegen.Source{Path: filepath.Join(app.Path, entry)}
-				}
+			if consumer != nil {
 				for _, name := range app.resolved.Requires {
 					needed[name] = true
 					consumer.Sources = append(consumer.Sources, typegen.Source{Alias: name})
 				}
-				consumers = append(consumers, consumer)
+				consumers = append(consumers, *consumer)
 			}
 		case app.resolved.Image != "":
 			image, document, err := resolveTypeMetadata(ctx, app.resolved.Image, options)
@@ -259,19 +251,6 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		}
 	}
 	return manifest, remove, nil
-}
-
-// typeServer is the path app's own MCP server entry, or "" for an app that is not an MCP server: one
-// without a server entry, or JavaScript that never mentions an MCP SDK or holon-sh.
-func typeServer(root string) (string, error) {
-	entry, err := typegen.SourceEntry(root)
-	if err != nil {
-		return "", err
-	}
-	if (strings.HasSuffix(entry, ".ts") || strings.HasSuffix(entry, ".js")) && !mentionsMCP(root) {
-		return "", nil
-	}
-	return entry, nil
 }
 
 func currentTypeSources(manifest manifestSpec) error {
