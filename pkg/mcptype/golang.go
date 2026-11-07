@@ -46,6 +46,8 @@ func unique(names map[string]bool, preferred string) string {
 
 func renderGo(value typ, input bool) string {
 	switch value.kind {
+	case kindRecursive:
+		return value.ref.name
 	case kindString:
 		return "string"
 	case kindInteger, kindNumber:
@@ -86,10 +88,11 @@ func renderGo(value typ, input bool) string {
 			member := value.fields[name]
 			rendered := renderGo(member.value, input)
 			tagName := name
+			// A struct cannot contain a recursive type by value, since that type may contain the struct.
+			if (!member.required || member.value.kind == kindRecursive) && rendered != "json.RawMessage" {
+				rendered = "*" + rendered
+			}
 			if !member.required {
-				if rendered != "json.RawMessage" {
-					rendered = "*" + rendered
-				}
 				tagName += ",omitempty"
 			}
 			fmt.Fprintf(&out, "\t%s %s %s\n", unique(names, typeIdentifier(name)), rendered, quoted("json:"+quoted(tagName)))
@@ -120,10 +123,23 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 			}{{"Input", tool.input}, {"Output", tool.output}} {
 				input := index == 0
 				symbol := unique(names, client+method+part.suffix)
+				part.shape.nameRecursive(names, symbol)
+				for _, ref := range part.shape.recursive {
+					format := "type %s = %s\n\n"
+					// Arrays and objects can contain themselves, which only a defined type allows. The
+					// rest are json.RawMessage, whose methods a defined type would lose, or another name.
+					if ref.value.kind == kindArray || ref.value.kind == kindObject {
+						format = "type %s %s\n\n"
+					}
+					fmt.Fprintf(&declarations, format, ref.name, renderGo(ref.value, input))
+				}
 				fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(part.shape.value, input))
 				for _, definition := range sortedKeys(part.shape.named) {
-					named := unique(names, symbol+typeIdentifier(definition))
-					fmt.Fprintf(&declarations, "type %s = %s\n\n", named, renderGo(part.shape.named[definition], input))
+					value, preferred := part.shape.named[definition], symbol+typeIdentifier(definition)
+					if value.kind == kindRecursive && value.ref.name == preferred {
+						continue
+					}
+					fmt.Fprintf(&declarations, "type %s = %s\n\n", unique(names, preferred), renderGo(value, input))
 				}
 				symbols = append(symbols, symbol)
 			}

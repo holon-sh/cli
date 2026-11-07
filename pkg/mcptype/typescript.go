@@ -10,6 +10,8 @@ import (
 // server that ignores it. Outputs stay open, and an object that names no fields is a free-form one.
 func renderTypeScript(value typ, input bool) string {
 	switch value.kind {
+	case kindRecursive:
+		return value.ref.name
 	case kindNever:
 		return "never"
 	case kindString:
@@ -51,7 +53,13 @@ func renderTypeScript(value typ, input bool) string {
 		case extraImplicit:
 			items = append(items, "...unknown[]")
 		case extraOpen:
-			items = append(items, fmt.Sprintf("...Array<%s>", renderTypeScript(*value.extra.value, input)))
+			rest := renderTypeScript(*value.extra.value, input)
+			if value.extra.recursive {
+				// tsc rejects `type T = [A, ...Array<T>]` but accepts this spelling.
+				items = append(items, "..."+rest+"[]")
+			} else {
+				items = append(items, fmt.Sprintf("...Array<%s>", rest))
+			}
 		}
 		return "[" + strings.Join(items, ", ") + "]"
 	case kindObject:
@@ -91,6 +99,8 @@ func joinTypeScript(items []typ, separator string, input bool) string {
 
 // generateTypeScript writes the Inputs, Outputs, InputTypes and OutputTypes interfaces.
 func generateTypeScript(contracts map[string]catalog) string {
+	names := map[string]bool{}
+	var out strings.Builder
 	exports := make([]strings.Builder, 4)
 	for i, name := range []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"} {
 		fmt.Fprintf(&exports[i], "export interface %s {\n", name)
@@ -107,6 +117,10 @@ func generateTypeScript(contracts map[string]catalog) string {
 					continue
 				}
 				input := index == 0
+				shape.nameRecursive(names, typeIdentifier(binding)+typeIdentifier(name)+[]string{"Input", "Output"}[index])
+				for _, ref := range shape.recursive {
+					fmt.Fprintf(&out, "export type %s = %s;\n", ref.name, renderTypeScript(ref.value, input))
+				}
 				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value, input))
 				named := make([]string, 0, len(shape.named))
 				for _, definition := range sortedKeys(shape.named) {
@@ -119,7 +133,6 @@ func generateTypeScript(contracts map[string]catalog) string {
 			exports[i].WriteString("  };\n")
 		}
 	}
-	var out strings.Builder
 	for i := range exports {
 		out.WriteString(exports[i].String())
 		out.WriteString("}\n")

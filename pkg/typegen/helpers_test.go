@@ -94,11 +94,24 @@ func linkTypeScript(t *testing.T, app string) {
 	}
 }
 
-func needPython(t *testing.T) {
+// typeScriptApp makes a project with a stand-in holon-sh and the tooling's compiler.
+func typeScriptApp(t *testing.T) string {
 	t.Helper()
-	if _, err := typeLanguages["python"].localProgram(context.Background()); err != nil {
+	needNode(t)
+	app := t.TempDir()
+	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
+	put(t, slotPackage(t, app, "holon-sh"), "protocol.d.ts", "export type AuthProvider = unknown; export type CallOptions = unknown; export type CallMetadata = unknown; export type ToolResult = unknown; export type ToolClient<I, O, R> = unknown; export declare class ToolCallError {}\n")
+	linkTypeScript(t, app)
+	return app
+}
+
+func needPython(t *testing.T) string {
+	t.Helper()
+	program, err := typeLanguages["python"].localProgram(context.Background())
+	if err != nil {
 		t.Skip(err)
 	}
+	return program
 }
 func needNode(t *testing.T) {
 	t.Helper()
