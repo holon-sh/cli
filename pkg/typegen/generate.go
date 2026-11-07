@@ -3,10 +3,8 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -22,6 +20,9 @@ import (
 	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/opencontainers/go-digest"
 )
+
+// unversioned stands in when no source names a version.
+const unversioned = "0.0.0"
 
 type Options struct {
 	Env            []string
@@ -150,14 +151,14 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 		return nil, err
 	}
 	s := &preparedSource{origin: origin, name: name, entry: entry, language: language, metadata: &mcpcontract.Metadata{}}
-	if data, err := os.ReadFile(filepath.Join(origin, "server.json")); err == nil {
-		descriptor, err := ParseDescriptor(data)
-		if err != nil {
-			return nil, fmt.Errorf("%s/server.json: %w", origin, err)
-		}
+	descriptor, err := readDescriptor(origin)
+	switch {
+	case err != nil:
+		return nil, err
+	case descriptor != nil:
 		s.metadata.Identity, s.server = descriptor.Identity(), descriptor.Server
-	} else if !errors.Is(err, fs.ErrNotExist) || language == "go" {
-		return nil, fmt.Errorf("%s: %w (a Go server source needs a server.json beside its entry)", origin, err)
+	case language == "go":
+		return nil, fmt.Errorf("%s: a Go server source needs a server.json beside its entry", origin)
 	}
 	// The runners import the server where it lives, beside its installed dependencies, so the
 	// fingerprint guards against changes until preparation finishes.
@@ -185,9 +186,6 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			_ = os.RemoveAll(root)
 		}
 	}()
-	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
-		return nil, err
-	}
 	p := &Prepared{paths: map[string]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}, documents: map[string]*Document{}}
 	var paths []*preparedSource
 	for _, c := range consumers {
@@ -215,6 +213,11 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			}
 			p.paths[absolute] = s
 			paths = append(paths, s)
+		}
+	}
+	if len(paths) != 0 {
+		if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
+			return nil, err
 		}
 	}
 	if err = extractSources(ctx, root, paths, o, true); err != nil {
@@ -276,7 +279,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	if c.metadata != nil {
 		return fmt.Errorf("contract dependency cycle at %s", c.Name)
 	}
-	identity := mcpcontract.Identity{Name: c.Name, Version: "0.0.0"}
+	identity := mcpcontract.Identity{Name: c.Name, Version: unversioned}
 	var alias string
 	if c.Server != nil {
 		alias = c.Server.Alias
@@ -286,11 +289,9 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 			return fmt.Errorf("%s: own server %s is outside %s", c.Name, c.server.origin, c.Dir)
 		}
 		identity = c.server.metadata.Identity
-	} else if data, err := os.ReadFile(filepath.Join(c.Dir, "server.json")); err == nil {
-		descriptor, err := ParseDescriptor(data)
-		if err != nil {
-			return fmt.Errorf("%s/server.json: %w", c.Dir, err)
-		}
+	} else if descriptor, err := readDescriptor(c.Dir); err != nil {
+		return err
+	} else if descriptor != nil {
 		identity = descriptor.Identity()
 	}
 	c.metadata = &mcpcontract.Metadata{Identity: identity, Requires: map[string]string{}}

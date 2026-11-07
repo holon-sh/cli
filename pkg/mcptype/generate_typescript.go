@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean; capabilities?: ClientCapabilities; elicit?: ElicitHandler }
+const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
 export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 `
@@ -46,7 +46,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	switch {
 	case request.ProtocolSpecifier != "":
 		specifier := quoted(request.ProtocolSpecifier)
-		protocol = fmt.Sprintf("import type { AuthProvider, ClientCapabilities, ElicitHandler, CallOptions, CallMetadata, ToolResult, ToolClient } from %s;\nexport { ToolCallError } from %s;", specifier, specifier)
+		protocol = fmt.Sprintf("import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } from %s;\nexport { ToolCallError } from %s;", specifier, specifier)
 	case request.Protocol != "":
 		protocol = request.Protocol
 	}

@@ -195,6 +195,13 @@ An endpoint URL. The running server is asked for `tools/list` and `resources/lis
 holon types check -s https://mcp.context7.com/mcp
 ```
 
+If the server requires a token, name it and set `<ALIAS>_MCP_TOKEN`. The token is sent only to that URL's origin, as a bearer token, and is not written anywhere.
+
+```sh
+export DOCS_MCP_TOKEN=...
+holon types check -s docs=https://mcp.example.com/mcp
+```
+
 </details>
 
 ## Reference
@@ -228,6 +235,9 @@ Examples:
   holon types generate -s ../orders/server.py
   holon types generate -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
   holon types generate -s docs=https://mcp.context7.com/mcp
+
+  # A remote MCP server that requires a token: DOCS_MCP_TOKEN is sent to it as a bearer token
+  DOCS_MCP_TOKEN=... holon types generate -s docs=https://mcp.example.com/mcp
 
   # Print one server's contract, or commit it beside its server.json
   holon types generate --contract ../orders
