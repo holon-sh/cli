@@ -23,10 +23,10 @@ type projectApp struct {
 	} `json:"remote"`
 }
 
-// projectConsumers reads the project manifest in dir and returns a consumer for each path app, as
-// holon dev --check selects them. A dependency named after another app in the manifest is that
-// app: a path app's source or a remote app's endpoint. Other dependencies keep their sh.holon.requires
-// registry reference. Without a manifest it returns nil.
+// projectConsumers reads the project manifest in dir and returns the appConsumer of each path app.
+// A dependency named after another app in the manifest is that app: a path app's source or a remote
+// app's endpoint. Other dependencies keep their sh.holon.requires registry reference. Without a
+// manifest it returns nil.
 func projectConsumers(dir string) ([]typegen.Consumer, error) {
 	var file string
 	for _, name := range projectFiles {
@@ -69,24 +69,18 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 		if app.Path == "" {
 			continue
 		}
-		path := apps[app.Name].Path
-		c, err := typegen.AppConsumer(app.Name, path)
+		c, err := appConsumer(app.Name, apps[app.Name].Path)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
 		if c == nil {
 			continue
 		}
-		requires, err := typegen.DeclaredSources(path)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", app.Name, err)
-		}
-		for _, source := range requires {
+		for i, source := range c.Sources {
 			if sibling, declared := apps[source.Alias]; declared {
 				sibling.Alias = source.Alias
-				source = sibling
+				c.Sources[i] = sibling
 			}
-			c.Sources = append(c.Sources, source)
 		}
 		consumers = append(consumers, *c)
 	}

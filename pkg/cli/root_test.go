@@ -54,19 +54,17 @@ func installCLISlot(t *testing.T, root string) {
 }
 
 func TestConsumerSelectsTheOwnServer(t *testing.T) {
-	const browser = `{"dependencies":{"holon-sh":"^0.0.1","holon-ui":"^0.0.1"}}`
 	for _, test := range []struct {
-		name, manifest string
-		servers        []string
-		server, alias  string // the own server's directory, relative to the project
-		sources        []string
-		err            string
+		name          string
+		servers       []string
+		server, alias string // the own server's directory, relative to the project
+		sources       []string
+		err           string
 	}{
-		{name: "a browser project finds its server and the requires beside it", manifest: browser, server: "server", sources: []string{"orders"}},
-		{name: "a project without a browser client does not look", manifest: `{"dependencies":{"holon-sh":"^0.0.1"}}`, err: "declares no requires; pass -s"},
-		{name: "an alias stays on the own server", manifest: browser, servers: []string{"shop=./server"}, server: "server", alias: "shop"},
-		{name: "-s replaces discovery", manifest: browser, servers: []string{"docs=https://mcp.example/mcp"}, sources: []string{"docs"}},
-		{name: "one own server", manifest: browser, servers: []string{"./server", "./server/server.py"}, err: "one own server"},
+		{name: "an app finds its server and the requires beside it", server: "server", sources: []string{"orders"}},
+		{name: "an alias stays on the own server", servers: []string{"shop=./server"}, server: "server", alias: "shop"},
+		{name: "-s replaces the declared requires", servers: []string{"docs=https://mcp.example/mcp"}, server: "server", sources: []string{"docs"}},
+		{name: "one own server", servers: []string{"./server", "./server/server.py"}, err: "one own server"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
@@ -74,7 +72,7 @@ func TestConsumerSelectsTheOwnServer(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Chdir(root)
-			writeCLIFile(t, root, "package.json", test.manifest)
+			writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
 			writeCLIFile(t, root, "server/server.py", pythonServer)
 			writeCLIFile(t, root, "server/server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"`+requiresOrders)
 			c, err := consumer(root, test.servers)

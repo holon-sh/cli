@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -41,6 +42,21 @@ func OwnServer(dir string) (*Source, error) {
 		own = &Source{Path: root}
 	}
 	return own, nil
+}
+
+// AppConsumer is the consumer for the app kept in dir, without its dependencies: the slots its SDK
+// dependencies declare and its OwnServer. It returns nil for an app with neither, which has nothing
+// to generate or check.
+func AppConsumer(name, dir string) (*Consumer, error) {
+	targets, err := DeclaredTargets(dir)
+	if err != nil && !errors.Is(err, ErrNoRuntime) {
+		return nil, err
+	}
+	own, err := OwnServer(dir)
+	if err != nil || (len(targets) == 0 && own == nil) {
+		return nil, err
+	}
+	return &Consumer{Name: name, Dir: dir, Targets: targets, Server: own}, nil
 }
 
 // DeclaredSources returns one registry source per sh.holon.requires entry, sorted by alias.
