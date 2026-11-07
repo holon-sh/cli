@@ -66,6 +66,34 @@ func TestPrepareGeneratesNodeSlotsFromExplicitSources(t *testing.T) {
 	}
 }
 
+func TestAliasedOwnServerIsAClientInEverySlot(t *testing.T) {
+	c, extract := checkoutConsumer(t, TargetTS, TargetUI, TargetPy)
+	c.Server.Alias = "shop"
+	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Run: extract})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.Close()
+	packages := prepared.consumer("checkout").packages
+	if node := string(packages[TargetTS]["index.d.ts"]); !strings.Contains(node, `"shop": {`) {
+		t.Fatalf("node client:\n%s", node)
+	}
+	if python := string(packages[TargetPy]["holon/apps/__init__.py"]); !strings.Contains(python, "shop: ShopApp") {
+		t.Fatalf("python client:\n%s", python)
+	}
+	if browser := string(packages[TargetUI]["index.d.ts"]); !strings.Contains(browser, `type OwnAppKey = "shop"`) || strings.Contains(browser, `"checkout": {`) {
+		t.Fatalf("browser client:\n%s", browser)
+	}
+	// It stays the project's own server, not a dependency of itself.
+	if metadata := prepared.Metadata()["checkout"]; metadata.Requires["shop"] != "" {
+		t.Fatalf("consumer metadata = %+v", metadata)
+	}
+	c.Sources[0].Alias = "shop"
+	if _, err := Prepare(t.Context(), []Consumer{c}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "own client shop conflicts") {
+		t.Fatalf("alias conflict = %v", err)
+	}
+}
+
 func TestServersDescribeEachConsumersOwnServer(t *testing.T) {
 	chat := t.TempDir()
 	put(t, chat, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
@@ -219,27 +247,45 @@ func TestGenerateGivesEachProjectItsOwnNodeSlot(t *testing.T) {
 func TestCheckTypeChecksTheProjectAgainstItsGeneratedClients(t *testing.T) {
 	needNode(t)
 	app := t.TempDir()
-	pkg := filepath.Join(app, "node_modules/holon-sh")
-	put(t, pkg, "package.json", `{"name":"holon-sh","exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
-	put(t, pkg, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, App: filepath.Base(app)})))
-	put(t, pkg, "generated/index.d.ts", `export interface Inputs { orders: { read: { id: string } } }`)
-	compiler, err := filepath.Abs("../../tooling/typescript/node_modules/typescript")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(compiler, filepath.Join(app, "node_modules/typescript")); err != nil {
-		t.Fatal(err)
-	}
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	put(t, app, "src/index.ts", `import type { Inputs } from "holon-sh"; const inputs: Inputs["orders"]["read"] = { id: "A-1" }; export default inputs;`)
+	pkg := slotPackage(t, app, "holon-sh")
+	put(t, pkg, "protocol.d.ts", "export type AuthProvider = unknown; export type CallOptions = unknown; export type CallMetadata = unknown; export type ToolResult = unknown; export type ToolClient<I, O, R> = unknown; export declare class ToolCallError {}\n")
+	linkTypeScript(t, app)
+	metadata := ordersMetadata()
+	metadata.Schema.Tools = []mcpcontract.Tool{{
+		Name: "lookup",
+		Input: json.RawMessage(`{"type":"object","$defs":{"Filter":{"type":"object","properties":{"state":{"type":"string"}}}},"properties":{
+			"ids":{"type":"array","items":{"type":"string"}},
+			"filter":{"$ref":"#/$defs/Filter"},
+			"open":{"type":"object","properties":{"state":{"type":"string"}},"additionalProperties":true},
+			"free":{"type":"object"}}}`),
+		Output: json.RawMessage(`{"type":"object","properties":{"total":{"type":"number"}}}`),
+	}}
+	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, metadata)}}}
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	// An unused @ts-expect-error fails the check too, so each expectation is pinned to its line.
+	put(t, app, "src/index.ts", `import type { Inputs, InputTypes, Outputs } from "holon-sh";
+type Lookup = Inputs["orders"]["lookup"];
+export const declared: Lookup = { ids: ["a"], filter: { state: "open" } };
+export const open: Lookup = { open: { other: 1 }, free: { other: 1 } };
+export const output: Outputs["orders"]["lookup"] = { total: 1, other: true };
+// @ts-expect-error a misspelled argument
+export const misspelled: Lookup = { id: "a" };
+// @ts-expect-error a misspelled nested argument
+export const nested: Lookup = { filter: { stat: "open" } };
+// @ts-expect-error a misspelled field of a named input
+export const named: InputTypes["orders"]["lookup"]["Filter"] = { stat: "open" };
+`)
 	var output bytes.Buffer
 	options := Options{Stdout: &output, Stderr: &output}
 	if err := Check(t.Context(), app, options); err != nil {
 		t.Fatalf("check: %v\n%s", err, &output)
 	}
-	put(t, app, "src/index.ts", `import type { Inputs } from "holon-sh"; const inputs: Inputs["orders"]["read"] = { id: 1 }; export default inputs;`)
+	put(t, app, "src/index.ts", `import type { Inputs } from "holon-sh"; export const input: Inputs["orders"]["lookup"] = { id: "a" };`)
 	if err := Check(t.Context(), app, options); err == nil || !strings.Contains(err.Error(), "does not type-check") {
-		t.Fatalf("check accepted a wrong argument type: %v\n%s", err, &output)
+		t.Fatalf("check accepted a misspelled argument: %v\n%s", err, &output)
 	}
 }
 
@@ -278,7 +324,7 @@ func TestGoConsumerClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	clients := read(t, root, "holon/clients.go")
-	if !strings.Contains(clients, `holon "github.com/holon-sh/sdk/go"`) || !strings.Contains(clients, " Lookup(") {
+	if !strings.Contains(clients, `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(clients, " Lookup(") {
 		t.Fatalf("Go client lacks the default runtime or dependency tool:\n%s", clients)
 	}
 }

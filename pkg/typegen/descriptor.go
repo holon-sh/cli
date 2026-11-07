@@ -7,19 +7,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
 )
 
 const RegistryOrigin = "https://registry.modelcontextprotocol.io"
-const PublisherMetadata = "io.modelcontextprotocol.registry/publisher-provided"
-const MaxDescriptorBytes = 1 << 20
+const publisherMetadata = "io.modelcontextprotocol.registry/publisher-provided"
+const maxDescriptorBytes = 1 << 20
 
 var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`)
 var wildcardVersion = regexp.MustCompile(`(^|\.)[xX](\.|$)`)
@@ -91,7 +94,7 @@ func (d *descriptor) Identity() mcpcontract.Identity {
 }
 func ParseDescriptor(data []byte) (*descriptor, error) {
 	var d descriptor
-	if len(data) > MaxDescriptorBytes {
+	if len(data) > maxDescriptorBytes {
 		return nil, errors.New("server descriptor exceeds 1 MiB")
 	}
 	if err := json.Unmarshal(data, &d); err != nil {
@@ -103,7 +106,7 @@ func ParseDescriptor(data []byte) (*descriptor, error) {
 	if n := utf8.RuneCountInString(d.Description); n < 1 || n > 100 {
 		return nil, errors.New("server description must contain 1 to 100 characters")
 	}
-	if raw := d.Meta[PublisherMetadata]; raw != nil {
+	if raw := d.Meta[publisherMetadata]; raw != nil {
 		if len(raw) > 4096 {
 			return nil, errors.New("publisher-provided metadata exceeds 4096 bytes")
 		}
@@ -132,10 +135,6 @@ func ParseDescriptor(data []byte) (*descriptor, error) {
 	}
 	return &d, nil
 }
-
-type HTTPError int
-
-func (e HTTPError) Error() string { return fmt.Sprintf("HTTP %d", e) }
 
 type Client struct {
 	HTTP   *http.Client
@@ -177,15 +176,24 @@ func fetchJSON(ctx context.Context, client *http.Client, location string) ([]byt
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, HTTPError(response.StatusCode)
+		return nil, fmt.Errorf("HTTP %d", response.StatusCode)
 	}
-	return readLimited(response.Body, MaxDescriptorBytes)
+	return clientutil.ReadLimited(response.Body, maxDescriptorBytes)
 }
 
-func readLimited(r io.Reader, limit int64) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(r, limit+1))
-	if err == nil && int64(len(data)) > limit {
-		err = fmt.Errorf("document exceeds %d bytes", limit)
+// readDescriptor parses dir's server.json, or returns nil when it has none.
+func readDescriptor(dir string) (*descriptor, error) {
+	path := filepath.Join(dir, "server.json")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
-	return data, err
+	if err != nil {
+		return nil, err
+	}
+	d, err := ParseDescriptor(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return d, nil
 }

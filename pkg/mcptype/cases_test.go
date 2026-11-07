@@ -8,6 +8,19 @@ import (
 	"testing"
 )
 
+func writeFiles(t *testing.T, root string, files map[string][]byte) {
+	t.Helper()
+	for name, content := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // generationCase is one package-generation request in its JSON wire form.
 type generationCase struct {
 	name, input string
@@ -104,7 +117,7 @@ func generationCases(t *testing.T) []generationCase {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const protocol = "type AuthProvider = { token(): Promise<string> };\ntype ClientCapabilities = { elicitation?: { form?: object } };\ntype ToolClient<I, O, R> = { tools: { [K in keyof I]: (input: I[K]) => Promise<K extends keyof O ? O[K] : unknown> }; resources: { [U in keyof R]: { read(): Promise<R[U]> } }; callTool<K extends keyof I & string>(request: { name: K; arguments: I[K] }): Promise<unknown> };"
+	const protocol = "type AuthProvider = { token(): Promise<string> };\ntype ToolClient<I, O, R> = { tools: { [K in keyof I]: (input: I[K]) => Promise<K extends keyof O ? O[K] : unknown> }; resources: { [U in keyof R]: { read(): Promise<R[U]> } }; callTool<K extends keyof I & string>(request: { name: K; arguments: I[K] }): Promise<unknown> };"
 	const order = `{"tools": [
         {"name": "get_order", "inputSchema": {"type": "object", "additionalProperties": false,
             "properties": {"orderId": {"type": "string"}, "count": {"type": "integer"}}, "required": ["orderId"]},
@@ -117,6 +130,15 @@ func generationCases(t *testing.T) []generationCase {
 		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "go_module": "example.com/é/runtime", "own": "orders", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
 	}
 	add("empty-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
+	add("inputs-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime", "contracts": {"orders": {"tools": [{"name": "lookup",
+        "inputSchema": {"type": "object", "required": ["id", "rows", "byRegion"],
+            "properties": {
+                "id": {"type": "string"},
+                "rows": {"type": "array", "items": {"$ref": "#/$defs/Row"}},
+                "byRegion": {"type": "object", "additionalProperties": {"type": "object", "properties": {"quantity": {"type": "integer"}}}}
+            },
+            "$defs": {"Row": {"type": "object", "required": ["sku"], "properties": {"sku": {"type": "string"}}}}},
+        "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}}}]}}}`)
 	for _, target := range []string{"node", "python"} {
 		options := ""
 		if target == "node" {

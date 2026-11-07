@@ -35,10 +35,7 @@ func ordersMetadata() *mcpcontract.Metadata {
 // document supplies metadata as a source document: its bytes as marshaled, validated only when resolved.
 func document(t *testing.T, metadata *mcpcontract.Metadata) *Document {
 	t.Helper()
-	data, err := json.Marshal(metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := mustJSON(t, metadata)
 	return &Document{Metadata: metadata, Data: data, Digest: digest.FromBytes(data).String()}
 }
 
@@ -80,9 +77,21 @@ func writeProvider(t *testing.T, root, name, source string) {
 func slotPackage(t *testing.T, app, pkg string) string {
 	t.Helper()
 	dir := filepath.Join(app, "node_modules", pkg)
-	put(t, dir, "package.json", `{"name":"`+pkg+`","holon":{"slot":"generated","contractVersion":1}}`)
+	put(t, dir, "package.json", `{"name":"`+pkg+`","exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
 	put(t, dir, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})))
 	return dir
+}
+
+// linkTypeScript makes the tooling's compiler available to app, whose node_modules must exist.
+func linkTypeScript(t *testing.T, app string) {
+	t.Helper()
+	compiler, err := filepath.Abs("../../tooling/typescript/node_modules/typescript")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(compiler, filepath.Join(app, "node_modules/typescript")); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func needPython(t *testing.T) {

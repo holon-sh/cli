@@ -3,10 +3,8 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -23,6 +21,9 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
+// unversioned stands in when no source names a version.
+const unversioned = "0.0.0"
+
 type Options struct {
 	Env            []string
 	HTTPClient     *http.Client
@@ -32,7 +33,7 @@ type Options struct {
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
 	// runs the server in its own directory and stops it after 30 seconds.
 	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
-	// GoModule is the runtime module that generated Go clients import; it defaults to github.com/holon-sh/sdk/go.
+	// GoModule is the runtime module that generated Go clients import; it defaults to github.com/holon-sh/sdk-go.
 	GoModule string
 	// Measure, when set, is called as Prepare starts a phase and returns the function that ends it.
 	Measure func(phase string) func()
@@ -55,7 +56,7 @@ func validateEnv(env []string) error {
 }
 
 func (o Options) defaults() Options {
-	o.GoModule = cmp.Or(o.GoModule, "github.com/holon-sh/sdk/go")
+	o.GoModule = cmp.Or(o.GoModule, "github.com/holon-sh/sdk-go")
 	o.HTTPClient = cmp.Or(o.HTTPClient, &http.Client{Timeout: 30 * time.Second})
 	o.Stdout = cmp.Or(o.Stdout, io.Discard)
 	o.Stderr = cmp.Or(o.Stderr, io.Discard)
@@ -159,14 +160,14 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 		return nil, err
 	}
 	s := &preparedSource{origin: origin, name: name, entry: entry, language: language, metadata: &mcpcontract.Metadata{}}
-	if data, err := os.ReadFile(filepath.Join(origin, "server.json")); err == nil {
-		descriptor, err := ParseDescriptor(data)
-		if err != nil {
-			return nil, fmt.Errorf("%s/server.json: %w", origin, err)
-		}
+	descriptor, err := readDescriptor(origin)
+	switch {
+	case err != nil:
+		return nil, err
+	case descriptor != nil:
 		s.metadata.Identity, s.server = descriptor.Identity(), descriptor.Server
-	} else if !errors.Is(err, fs.ErrNotExist) || language == "go" {
-		return nil, fmt.Errorf("%s: %w (a Go server source needs a server.json beside its entry)", origin, err)
+	case language == "go":
+		return nil, fmt.Errorf("%s: a Go server source needs a server.json beside its entry", origin)
 	}
 	// The runners import the server where it lives, beside its installed dependencies, so the
 	// fingerprint guards against changes until preparation finishes.
@@ -194,12 +195,6 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			_ = os.RemoveAll(root)
 		}
 	}()
-	unpacked := o.measure("tooling unpack")
-	err = tooling.Unpack(filepath.Join(root, "tooling"))
-	unpacked()
-	if err != nil {
-		return nil, err
-	}
 	p := &Prepared{paths: map[string]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}, documents: map[string]*Document{}}
 	var paths []*preparedSource
 	hashed := o.measure("source hashing")
@@ -231,6 +226,14 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 		}
 	}
 	hashed()
+	if len(paths) != 0 {
+		unpacked := o.measure("tooling unpack")
+		err = tooling.Unpack(filepath.Join(root, "tooling"))
+		unpacked()
+		if err != nil {
+			return nil, err
+		}
+	}
 	extracted := o.measure("contract extraction")
 	err = extractSources(ctx, root, paths, o, true)
 	extracted()
@@ -299,19 +302,19 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	if c.metadata != nil {
 		return fmt.Errorf("contract dependency cycle at %s", c.Name)
 	}
-	identity := mcpcontract.Identity{Name: c.Name, Version: "0.0.0"}
+	identity := mcpcontract.Identity{Name: c.Name, Version: unversioned}
+	var alias string
 	if c.Server != nil {
+		alias = c.Server.Alias
 		absolute, _ := filepath.Abs(c.Server.Path)
 		c.server = p.paths[absolute]
 		if !pathInsideContext(c.server.origin, c.Dir) {
 			return fmt.Errorf("%s: own server %s is outside %s", c.Name, c.server.origin, c.Dir)
 		}
 		identity = c.server.metadata.Identity
-	} else if data, err := os.ReadFile(filepath.Join(c.Dir, "server.json")); err == nil {
-		descriptor, err := ParseDescriptor(data)
-		if err != nil {
-			return fmt.Errorf("%s/server.json: %w", c.Dir, err)
-		}
+	} else if descriptor, err := readDescriptor(c.Dir); err != nil {
+		return err
+	} else if descriptor != nil {
 		identity = descriptor.Identity()
 	}
 	c.metadata = &mcpcontract.Metadata{Identity: identity, Requires: map[string]string{}}
@@ -346,7 +349,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		}
 	}
 	for _, target := range c.Targets {
-		files, err := generateTypes(ctx, target, request, c.metadata, p.options.GoModule)
+		files, err := generateTypes(ctx, target, request, c.metadata, alias, p.options.GoModule)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
 		}
@@ -361,25 +364,28 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	return nil
 }
 
-func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, goModule string) (map[string][]byte, error) {
+// generateTypes generates one target's clients. Browser clients call the own server under its alias
+// or derived name; an alias also makes it a client in every other slot.
+func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, alias, goModule string) (map[string][]byte, error) {
 	switch target {
 	case TargetTS:
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
 	case TargetUI:
 		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "browser", "../runtime.mjs", "holon-sh/protocol"
-		if own.Schema != nil {
-			request.Own = cmp.Or(serverKey(own.Identity.Name), "app")
-			if _, exists := request.Contracts[request.Own]; exists {
-				return nil, fmt.Errorf("own browser client %s conflicts with a dependency alias", request.Own)
-			}
-			request.Requires, request.Contracts = maps.Clone(request.Requires), maps.Clone(request.Contracts)
-			request.Requires[request.Own], request.Contracts[request.Own] = own.Identity, own.Schema
-		}
+		alias = cmp.Or(alias, serverKey(own.Identity.Name), "app")
 	case TargetPy:
 		request.Target = "python"
 	case TargetGo:
 		request.Target = "go"
 		request.GoModule = goModule
+	}
+	if own.Schema != nil && alias != "" {
+		if _, exists := request.Contracts[alias]; exists {
+			return nil, fmt.Errorf("own client %s conflicts with a dependency alias", alias)
+		}
+		request.Own = alias
+		request.Requires, request.Contracts = maps.Clone(request.Requires), maps.Clone(request.Contracts)
+		request.Requires[alias], request.Contracts[alias] = own.Identity, own.Schema
 	}
 	return mcptype.Generate(ctx, request)
 }

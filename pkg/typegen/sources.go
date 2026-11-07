@@ -46,7 +46,8 @@ type Source struct {
 	// Registry is an MCP registry server version. Resolve its OCI package's document,
 	// falling back to its streamable-http remote when the image has no contract.
 	Registry *Reference
-	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract.
+	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract. With an
+	// Alias, the environment variable <ALIAS>_MCP_TOKEN supplies a bearer token for its origin.
 	Endpoint string
 	// Document is an already resolved contract document, with the exact bytes its digest names.
 	Document *Document
@@ -127,7 +128,8 @@ type Consumer struct {
 	// Dir is the absolute project directory.
 	Dir string
 	// Server is the consumer's own MCP server, a path source inside Dir. It supplies the
-	// consumer's identity, contract (Metadata) and check configuration.
+	// consumer's identity, contract (Metadata) and check configuration. Browser clients call it
+	// under its derived name; an Alias replaces that name and adds the client to every other slot.
 	Server *Source
 	// Targets are the slots to write.
 	// A server can have no targets when only its contract is needed.

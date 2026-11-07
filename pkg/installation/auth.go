@@ -56,6 +56,12 @@ var (
 	errNoRefreshToken           = errors.New("authorization did not return a refresh token")
 )
 
+// credentialsLost reports an error that retrying cannot clear, because this process must authenticate again.
+func credentialsLost(err error) bool {
+	return errors.Is(err, errReauthenticationRequired) || errors.Is(err, errNotAuthenticated) ||
+		errors.Is(err, errCredentialChanged) || errors.Is(err, errEndpointChanged)
+}
+
 type ClientConfig struct {
 	Env            []string
 	Origin         string

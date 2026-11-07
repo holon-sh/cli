@@ -135,9 +135,7 @@ func (w *devWatcher) run() {
 				if changed {
 					pending.contexts.Insert(root)
 				}
-				if err != nil {
-					w.output.status("file watcher", fmt.Sprintf("continuing after error: %v", err), progressError)
-				}
+				w.output.problem("file watcher", err)
 			}
 			if pending.firstEvent.IsZero() && (pending.contexts.Len() != 0 || pending.manifest) {
 				pending.firstEvent = w.clock.Now()
@@ -154,7 +152,7 @@ func (w *devWatcher) run() {
 			if !ok {
 				return
 			}
-			w.output.status("file watcher", fmt.Sprintf("continuing after error: %v", err), progressError)
+			w.output.problem("file watcher", err)
 		}
 	}
 }
@@ -219,10 +217,8 @@ func (d *devLoop) renew(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C():
-			err := d.manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: d.name}, nil)
-			if ctx.Err() == nil {
-				d.options.output.retry("session renewal", err)
-			}
+			// A failed renewal needs no report: poll ends the session when the lease expires or credentials are lost.
+			_ = d.manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: d.name}, nil)
 		}
 	}
 }
@@ -241,15 +237,13 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 			AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}}, Event: protocol.MCPCallEvent,
 		}
 		if err := d.manager.StreamLogs(ctx, input, d.options.output.logs(stdout)); ctx.Err() == nil {
-			d.options.output.status("request stream", "stopped: "+err.Error(), progressError)
+			d.options.output.problem("request stream", fmt.Errorf("stopped: %w", err))
 		}
 	})
 	defer func() {
 		cancel()
 		background.Wait()
 	}()
-	pollTicker := d.clock.NewTicker(workflowPoll)
-	defer pollTicker.Stop()
 	d.options.architectures = d.session.BuildArchitectures
 	d.changedImages, d.pending = sets.New[string](), sets.New[string]()
 	for _, app := range d.session.Apps {
@@ -269,19 +263,19 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		if err := d.settle(announce); err != nil {
 			return err
 		}
-		phase, state := "Watching for changes", progressIdle
+		phase, state, interval := "Watching for changes", progressIdle, idlePoll
 		if d.pending.Len() > 0 {
-			phase, state = "Deploying apps", progressWorking
+			phase, state, interval = "Deploying apps", progressWorking, workflowPoll
 		}
 		reportSessionProgress(d.session, d.options.output, phase, state)
 		changes := watcher.changes
 		if lifecyclePending(d.session) {
-			changes = nil
+			changes, interval = nil, workflowPoll
 		}
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-pollTicker.C():
+		case <-d.clock.After(interval):
 			if err := d.poll(ctx); err != nil {
 				return err
 			}
@@ -290,7 +284,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 			err := d.rebuild(ctx, change)
 			finish(err)
 			if err != nil && ctx.Err() == nil {
-				d.options.output.status("app rebuild", fmt.Sprintf("%v; existing service remains available", err), progressError)
+				d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
 			}
 		}
 	}
@@ -312,7 +306,7 @@ func (d *devLoop) settle(announce func() error) error {
 }
 
 func (d *devLoop) poll(ctx context.Context) error {
-	d.options.output.retry("editor imports", d.options.types.prepared.Write())
+	d.options.output.problem("editor imports", d.options.types.prepared.Write())
 	if expiry, err := time.Parse(time.RFC3339Nano, d.session.ExpiresAt); err == nil && !expiry.After(d.clock.Now()) {
 		return errors.New("development session lease expired")
 	}
@@ -320,7 +314,9 @@ func (d *devLoop) poll(ctx context.Context) error {
 	if slices.Contains([]int{http.StatusNotFound, http.StatusGone}, HTTPStatus(err)) {
 		return errors.New("development session is no longer available")
 	}
-	d.options.output.retry("session status", err)
+	if credentialsLost(err) {
+		return err
+	}
 	if err != nil {
 		return nil
 	}
@@ -330,7 +326,7 @@ func (d *devLoop) poll(ctx context.Context) error {
 		return errors.New("development session is no longer active")
 	}
 	if condition.Status == "True" {
-		d.options.output.status("remote deployment", fmt.Sprintf("ready (generation %d)", current.Generation), progressDone)
+		d.options.output.problem("remote deployment", nil)
 	}
 	if !terminalCondition(condition) {
 		return nil
@@ -339,8 +335,8 @@ func (d *devLoop) poll(ctx context.Context) error {
 	if current.Condition(protocol.ConditionAvailable).Status == "True" {
 		message = "remote update failed; existing service remains available"
 	}
-	d.options.output.status("remote deployment",
-		fmt.Sprintf("%s (generation %d): %s: %s", message, current.Generation, condition.Reason, condition.Message), progressError)
+	d.options.output.problem("remote deployment",
+		fmt.Errorf("%s (generation %d): %s: %s", message, current.Generation, condition.Reason, condition.Message))
 	d.options.output.timing().rolloutEnded(condition.Reason + ": " + condition.Message)
 	d.finishPending("deployment failed", progressError)
 	return nil
@@ -435,11 +431,11 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 
 func (d *devLoop) updateManifest(reloaded manifestSpec, change *devChange) bool {
 	if !sameManifestTopology(d.manifest, reloaded) {
-		d.options.output.status("app metadata",
-			"app topology, dependencies, configuration, egress or access rules changed; restart holon dev to apply it", progressBlocked)
+		d.options.output.problem("app metadata",
+			errors.New("app topology, dependencies, configuration, egress or access rules changed; restart holon dev to apply it"))
 		return false
 	}
-	d.options.output.status("app metadata", "ok", progressDone)
+	d.options.output.problem("app metadata", nil)
 	for i, app := range reloaded.Apps {
 		previous := d.manifest.Apps[i]
 		if app.Path != "" && !reflect.DeepEqual(app.resolved.descriptor, previous.resolved.descriptor) {

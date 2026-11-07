@@ -26,6 +26,7 @@ import (
 	"github.com/holon-sh/cli/pkg/typegen"
 	"golang.org/x/oauth2"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	testingclock "k8s.io/utils/clock/testing"
 
@@ -223,6 +224,7 @@ func TestRunDevLifecycle(t *testing.T) {
 	var creates, deletes int
 	var created, served []protocol.App
 	var updates [][]protocol.App
+	outage := sets.New[string]()
 	h := newRunHarness(t)
 	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, protocol.Info{
@@ -289,6 +291,7 @@ func TestRunDevLifecycle(t *testing.T) {
 				}
 				updates = append(updates, input.Desired.Apps)
 			case unavailable:
+				outage.Insert(tool)
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
@@ -350,15 +353,13 @@ func TestRunDevLifecycle(t *testing.T) {
 		unavailable = true
 		mu.Unlock()
 		stepUntil(t, fc, renewalInterval, func() bool {
-			return strings.Contains(stderr.String(), "session status retrying:") && strings.Contains(stderr.String(), "session renewal retrying:")
+			mu.Lock()
+			defer mu.Unlock()
+			return outage.HasAll(protocol.ToolGetSession, protocol.ToolRenewSession)
 		})
-		recovery := len(stderr.String())
 		mu.Lock()
 		unavailable = false
 		mu.Unlock()
-		stepUntil(t, fc, renewalInterval, func() bool {
-			return strings.Contains(stderr.String()[recovery:], "session status ok") && strings.Contains(stderr.String()[recovery:], "session renewal ok")
-		})
 		if err := stop(); err != nil {
 			t.Fatalf("run: %v stderr=%q", err, stderr.String())
 		}
@@ -396,15 +397,9 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 		manager: manager, name: "gentle-otter-482", clock: h.run.clock(),
 		options: buildOptions{output: output, types: &typeWorkspace{prepared: new(typegen.Prepared)}},
 	}
-	for _, step := range []struct {
-		generation int64
-		ready      string
-	}{
-		{1, "False"},
-		{2, "True"},
-	} {
-		responses <- protocol.SessionResponse{Generation: step.generation, Conditions: []protocol.Condition{
-			{Type: protocol.ConditionReady, Status: step.ready, Reason: protocol.ReasonProgressDeadline, Message: "rollout failed"},
+	for _, ready := range []string{"False", "True"} {
+		responses <- protocol.SessionResponse{Generation: 1, Conditions: []protocol.Condition{
+			{Type: protocol.ConditionReady, Status: ready, Reason: protocol.ReasonProgressDeadline, Message: "rollout failed"},
 			{Type: protocol.ConditionAvailable, Status: "True"},
 		}}
 		if err := dev.poll(t.Context()); err != nil {
@@ -412,9 +407,30 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 		}
 	}
 	want := "remote deployment remote update failed; existing service remains available (generation 1): ProgressDeadlineExceeded: rollout failed\n" +
-		"remote deployment ready (generation 2)\n"
+		"remote deployment ok\n"
 	if !strings.HasSuffix(stream.String(), want) {
 		t.Fatalf("deployment reports = %q, want %q", stream.String(), want)
+	}
+}
+
+func TestDevStopsWhenReauthenticationIsRequired(t *testing.T) {
+	t.Parallel()
+	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("grant_type") == "refresh_token" {
+			w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
+			w.WriteHeader(http.StatusBadRequest)
+			installationtest.WriteJSON(w, map[string]string{"error": "invalid_grant"})
+			return
+		}
+		installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access", "refresh_token": "refresh"})
+	})
+	manager := newManager(t, server, t.TempDir())
+	if err := manager.loginInteractive(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	dev := devLoop{manager: manager, name: "gentle-otter-482", options: buildOptions{types: &typeWorkspace{prepared: new(typegen.Prepared)}}}
+	if err := dev.poll(t.Context()); !errors.Is(err, errReauthenticationRequired) {
+		t.Fatalf("poll = %v, want %v", err, errReauthenticationRequired)
 	}
 }
 

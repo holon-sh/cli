@@ -166,7 +166,7 @@ func TestTimingTraceCoversARun(t *testing.T) {
 			}
 			wantPhases(t, trace.timingScope, slices.Concat(tc.phases, []string{
 				"project config", "client config", "info fetch", "token", "graph resolution", "prepare contracts", "source snapshot",
-				"tooling unpack", "source hashing", "contract extraction", "type generation", "upload grant",
+				"source hashing", "contract extraction", "type generation", "upload grant",
 				"stage types", "build and upload", "catalog push", "rollout",
 			})...)
 			if !slices.IsSortedFunc(trace.Phases, func(a, b timingPhase) int { return a.Start.Compare(b.Start) }) {

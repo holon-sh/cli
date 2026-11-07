@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -52,7 +53,7 @@ func installCLISlot(t *testing.T, root string) {
 	}
 }
 
-func TestExplicitOwnServer(t *testing.T) {
+func TestOwnServerIsABrowserClient(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +74,62 @@ func TestExplicitOwnServer(t *testing.T) {
 			t.Fatalf("%s = %s, %v", pkg, data, err)
 		}
 	}
-	run(t, "one own server", "types", "generate", "-s", "./server.py", "-s", "./server.py")
+	// Without -s the project finds the same server, and the explicit dependency is gone.
+	run(t, "", "types", "generate")
+	data, err := os.ReadFile(filepath.Join(root, "node_modules/holon-ui/generated/index.d.ts"))
+	if err != nil || !strings.Contains(string(data), `"view"`) || strings.Contains(string(data), `"orders"`) {
+		t.Fatalf("holon-ui = %s, %v", data, err)
+	}
+}
+
+func TestConsumerSelectsTheOwnServer(t *testing.T) {
+	const browser = `{"dependencies":{"holon-sh":"^0.0.1","holon-ui":"^0.0.1"}}`
+	for _, test := range []struct {
+		name, manifest string
+		servers        []string
+		server, alias  string // the own server's directory, relative to the project
+		sources        []string
+		err            string
+	}{
+		{name: "a browser project finds its server and the requires beside it", manifest: browser, server: "server", sources: []string{"orders"}},
+		{name: "a project without a browser client does not look", manifest: `{"dependencies":{"holon-sh":"^0.0.1"}}`, err: "declares no requires; pass -s"},
+		{name: "an alias stays on the own server", manifest: browser, servers: []string{"shop=./server"}, server: "server", alias: "shop"},
+		{name: "-s replaces discovery", manifest: browser, servers: []string{"docs=https://mcp.example/mcp"}, sources: []string{"docs"}},
+		{name: "one own server", manifest: browser, servers: []string{"./server", "./server/server.py"}, err: "one own server"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(root)
+			writeCLIFile(t, root, "package.json", test.manifest)
+			writeCLIFile(t, root, "server/server.py", pythonServer)
+			writeCLIFile(t, root, "server/server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"`+requiresOrders)
+			c, err := consumer(root, test.servers)
+			if test.err != "" {
+				if err == nil || !strings.Contains(err.Error(), test.err) {
+					t.Fatalf("consumer = %v, want %q", err, test.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var server, alias string
+			if c.Server != nil {
+				server, _ = filepath.Rel(root, c.Server.Path)
+				alias = c.Server.Alias
+			}
+			var sources []string
+			for _, source := range c.Sources {
+				sources = append(sources, source.Alias)
+			}
+			if server != test.server || alias != test.alias || !slices.Equal(sources, test.sources) {
+				t.Fatalf("consumer = %q %q %v, want %q %q %v", server, alias, sources, test.server, test.alias, test.sources)
+			}
+		})
+	}
 }
 
 func TestUsageErrors(t *testing.T) {
@@ -93,11 +149,13 @@ func TestUsageErrors(t *testing.T) {
 	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
 	run(t, "holon-sh is not installed", "check", "--no-generate")
 	installCLISlot(t, root)
-	run(t, "declares no requires; pass -s", "check")
-	writeCLIFile(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0","registry":"https://127.0.0.1:1"}}}}}}`)
+	writeCLIFile(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout"`+requiresOrders)
 	run(t, "example.com/orders@1.0.0", "types", "generate")
 	run(t, "has no generated clients; run holon types generate", "check", "--no-generate")
 }
+
+// requiresOrders ends a server.json that requires an orders server from an unreachable registry.
+const requiresOrders = `,"_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0","registry":"https://127.0.0.1:1"}}}}}}`
 
 const pythonServer = "from mcp.server import MCPServer\nserver = MCPServer('provider')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n"
 

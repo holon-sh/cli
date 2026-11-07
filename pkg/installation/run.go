@@ -28,6 +28,7 @@ import (
 
 const (
 	workflowPoll     = time.Second
+	idlePoll         = 5 * time.Second
 	renewalInterval  = time.Minute
 	maxCommandOutput = 64 << 10
 )

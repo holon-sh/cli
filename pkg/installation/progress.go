@@ -32,6 +32,8 @@ const (
 	progressError   = tea.ProgramStateError
 )
 
+const progressItemsID = "holon/items"
+
 type progressOutput struct {
 	mu       sync.Mutex
 	program  *tea.Program
@@ -59,7 +61,7 @@ func newProgressOutput(stdout, stderr io.Writer, verbose bool, clock clock.Passi
 		_, err := output.program.Run()
 		return err
 	})
-	output.program.Send(tea.RawMsg{Msg: ansi.ClearProgramStatusID("holon")})
+	output.program.Send(tea.RawMsg{Msg: ansi.ClearProgramStatusID(progressStatusID(""))})
 	return output, output, output
 }
 
@@ -74,45 +76,55 @@ func (o *progressOutput) Write(data []byte) (int, error) {
 }
 
 func (o *progressOutput) status(name, phase string, state tea.ProgramState) {
-	o.report(tea.ProgramStatus{Title: name, Message: phase, State: state})
-}
-
-func (o *progressOutput) retry(name string, err error) {
-	if errors.Is(err, context.Canceled) {
-		return
-	}
-	status := tea.ProgramStatus{Title: name, Message: "ok", State: progressDone}
-	if err != nil {
-		status.Message, status.State = "retrying: "+err.Error(), progressWorking
-	}
-	if errors.Is(err, errReauthenticationRequired) {
-		status.Message, status.State, status.Kind = err.Error(), progressBlocked, tea.ProgramStatusKindAuth
-	}
-	o.report(status)
-}
-
-func (o *progressOutput) report(status tea.ProgramStatus) {
 	if o == nil {
 		return
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	status.App, status.ID = "holon", "holon"
-	if status.Title != "" {
-		status.ID += "/items/" + clientutil.HashBytes([]byte(status.Title))[:16]
-	}
-	if o.statuses[status.Title] == status {
+	status := tea.ProgramStatus{App: "holon", ID: progressStatusID(name), Title: name, Message: phase, State: state}
+	if o.statuses[name] == status {
 		return
 	}
-	o.statuses[status.Title] = status
-	if o.program != nil {
-		o.program.Send(slices.SortedFunc(maps.Values(o.statuses), func(a, b tea.ProgramStatus) int {
-			return strings.Compare(a.Title, b.Title)
-		}))
-		o.program.Send(tea.RawMsg{Msg: ansi.SetProgramStatus(status)})
-	} else {
-		_, _ = fmt.Fprintln(o.writer, strings.TrimSpace(status.Title+" "+status.Message))
+	o.statuses[name] = status
+	o.publish(ansi.SetProgramStatus(status), strings.TrimSpace(name+" "+phase))
+}
+
+// problem shows err on the named row, or removes the row when err is nil. A task that never failed stays silent;
+// plain output, which cannot remove a line it already printed, reports the recovery instead.
+func (o *progressOutput) problem(name string, err error) {
+	if err != nil {
+		o.status(name, err.Error(), progressError)
+		return
 	}
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if _, shown := o.statuses[name]; !shown {
+		return
+	}
+	delete(o.statuses, name)
+	o.publish(ansi.ClearProgramStatusID(progressStatusID(name)), name+" ok")
+}
+
+// publish renders a status change: the rows and an OSC report on a terminal, or one line of plain output.
+func (o *progressOutput) publish(report, line string) {
+	if o.program == nil {
+		_, _ = fmt.Fprintln(o.writer, line)
+		return
+	}
+	o.program.Send(slices.SortedFunc(maps.Values(o.statuses), func(a, b tea.ProgramStatus) int {
+		return strings.Compare(a.Title, b.Title)
+	}))
+	o.program.Send(tea.RawMsg{Msg: report})
+}
+
+func progressStatusID(title string) string {
+	if title == "" {
+		return "holon"
+	}
+	return progressItemsID + "/" + clientutil.HashBytes([]byte(title))[:16]
 }
 
 func (o *progressOutput) finish(err error, message string) error {
@@ -126,12 +138,12 @@ func (o *progressOutput) finish(err error, message string) error {
 		}
 		delete(o.statuses, "")
 		for name, item := range o.statuses {
-			if slices.Contains([]progressState{progressWorking, progressBlocked}, item.State) {
+			if item.State == progressWorking {
 				item.State, item.Message = state, message
 				o.statuses[name] = item
 			}
 		}
-		o.program.Send(tea.RawMsg{Msg: ansi.ClearProgramStatusID("holon/items")})
+		o.program.Send(tea.RawMsg{Msg: ansi.ClearProgramStatusID(progressItemsID)})
 		o.status("", message, state)
 		o.program.Send(tea.Quit())
 	}

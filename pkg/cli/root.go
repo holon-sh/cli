@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/spf13/cobra"
@@ -23,11 +24,17 @@ const generateExamples = `  # Generate for the current project
   # Another project
   holon types generate ../checkout
 
+  # Name the project's own server to call it from outside the browser too, as apps.orders
+  holon types generate -s orders=./server
+
   # Explicit dependencies: a server directory, a server entry, an MCP registry server, a remote MCP server named docs
   holon types generate -s ../orders
   holon types generate -s ../orders/server.py
   holon types generate -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
   holon types generate -s docs=https://mcp.context7.com/mcp
+
+  # A remote MCP server that requires a token: DOCS_MCP_TOKEN is sent to it as a bearer token
+  DOCS_MCP_TOKEN=... holon types generate -s docs=https://mcp.example.com/mcp
 
   # Print one server's contract, or commit it beside its server.json
   holon types generate --contract ../orders
@@ -54,8 +61,8 @@ func clientDir(path string) (string, error) {
 	return filepath.EvalSymlinks(dir)
 }
 
-// consumer selects dependencies from -s. A -s path inside dir is the project's own server, which
-// supplies its identity and contract.
+// consumer selects dependencies from -s, or what the project declares without it. A -s path inside
+// dir is the project's own server, which supplies its identity and contract.
 func consumer(dir string, servers []string) (typegen.Consumer, error) {
 	targets, err := typegen.DeclaredTargets(dir)
 	if err != nil {
@@ -77,8 +84,7 @@ func consumer(dir string, servers []string) (typegen.Consumer, error) {
 		c.Sources = append(c.Sources, source)
 	}
 	if len(servers) == 0 {
-		c.Sources, err = typegen.DeclaredSources(dir)
-		if err != nil {
+		if c.Server, c.Sources, err = declared(dir, targets); err != nil {
 			return c, err
 		}
 	}
@@ -86,6 +92,21 @@ func consumer(dir string, servers []string) (typegen.Consumer, error) {
 		return c, fmt.Errorf("%s declares no requires; pass -s", dir)
 	}
 	return c, nil
+}
+
+// declared returns the requires dir declares and, for a project with a browser slot, its own server
+// and the requires declared beside that server.
+func declared(dir string, targets []string) (*typegen.Source, []typegen.Source, error) {
+	sources, err := typegen.DeclaredSources(dir)
+	if err != nil || !slices.Contains(targets, typegen.TargetUI) {
+		return nil, sources, err
+	}
+	own, err := typegen.OwnServer(dir)
+	if err != nil || own == nil || own.Path == dir {
+		return own, sources, err
+	}
+	beside, err := typegen.DeclaredSources(own.Path)
+	return own, append(sources, beside...), err
 }
 
 func insideDir(path, dir string) bool {
@@ -167,7 +188,7 @@ func newCheck(short string) *cobra.Command {
 	return cmd
 }
 
-const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory; repeatable. Without it, sh.holon.requires is used"
+const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory"
 
 // NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string) *cobra.Command {
