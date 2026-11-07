@@ -35,7 +35,7 @@ func buildImage(t *testing.T, marker string) buildApplication {
 		for _, platform := range request.Platforms {
 			children = append(children, addTestImage(t, fixture, strings.TrimPrefix(platform, "linux/"), config, nil))
 		}
-		descriptor := addTestIndex(fixture, children...)
+		descriptor := addAnnotatedTestIndex(fixture, request.annotations, children...)
 		var image string
 		err := request.upload.run(ctx, func(grant protocol.UploadGrant) (err error) {
 			image, err = importImage(ctx, strings.TrimPrefix(source.URL, "https://")+"/source@"+descriptor.Digest.String(),

@@ -64,7 +64,7 @@ func main() {
 	if _, err := os.Stat(filepath.Join(root, "holon", "clients.go")); err != nil {
 		t.Fatal("the Go client package was not written into the app for its editor")
 	}
-	if _, err := stageTypes(p, options.check); err != nil {
+	if _, err := stageTypes(p, true); err != nil {
 		t.Fatal(err)
 	}
 	unchanged, _ := os.ReadFile(filepath.Join(root, "go.mod"))

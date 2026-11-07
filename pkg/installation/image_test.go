@@ -200,8 +200,12 @@ func (r *imageRegistry) upload(w http.ResponseWriter, request *http.Request) {
 }
 
 func addTestIndex(registry *imageRegistry, children ...ocispec.Descriptor) ocispec.Descriptor {
+	return addAnnotatedTestIndex(registry, nil, children...)
+}
+
+func addAnnotatedTestIndex(registry *imageRegistry, annotations map[string]string, children ...ocispec.Descriptor) ocispec.Descriptor {
 	data, _ := json.Marshal(ocispec.Index{
-		Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex, Manifests: children,
+		Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex, Manifests: children, Annotations: annotations,
 	})
 	descriptor := content.NewDescriptorFromBytes(ocispec.MediaTypeImageIndex, data)
 	registry.items["source/manifests/"+descriptor.Digest.String()] = registryItem{mediaType: descriptor.MediaType, data: data}

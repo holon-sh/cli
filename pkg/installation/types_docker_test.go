@@ -97,7 +97,6 @@ export default createMcpHandler(() => {
 	}
 	manifest = typedManifest(t, manifest.Apps...)
 	grant, options := sourceRegistry(t)
-	options.check = true
 	options.catalogTag = appartifact.DevelopmentTag
 	var diagnostics strings.Builder
 	options.Stderr = &buildLog{writer: &diagnostics}
@@ -205,7 +204,6 @@ export default createMcpHandler(() => {
 	if err := os.WriteFile(providerPath, []byte(provider), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	options.check = false
 	sourceFiles(t, filepath.Join(root, "checkout"), map[string]string{
 		"server.ts": strings.Replace(caller, "get_order({id})", "get_order({id:42})", 1),
 	})
@@ -217,10 +215,6 @@ export default createMcpHandler(() => {
 	if workspace.affected(t.Context(), fixed.Apps[index], fixed) {
 		t.Fatal("handler-only edits changed the dependency signature")
 	}
-	if _, err := buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{fixed.Apps[index]}},
-		&imageUpload{grant: grant}, options); err != nil {
-		t.Fatalf("dev caller with a type error did not build: %v", err)
-	}
 	unreadable := strings.Replace(provider, `import {z} from "zod";`,
 		`import {z} from "zod"; import {readFileSync} from "node:fs"; readFileSync("schema.json");`, 1)
 	if err := os.WriteFile(providerPath, []byte(unreadable), 0o644); err != nil {
@@ -229,7 +223,6 @@ export default createMcpHandler(() => {
 	if _, _, err := prepareManifestTypes(t.Context(), manifest, options); err == nil || !strings.Contains(err.Error(), "contract evaluation has no filesystem") {
 		t.Fatalf("unsupported extraction did not fail preparation: %v", err)
 	}
-	options.check = true
 	providerRoot := filepath.Join(root, "orders")
 	var rewritten map[string]any
 	if err := json.Unmarshal(originalFiles[filepath.Join(providerRoot, "package.json")], &rewritten); err != nil {
@@ -302,7 +295,6 @@ async def checkout(id: str) -> float:
 	grant.Repositories = map[string]string{"orders": "apps/orders", "checkout": "apps/checkout"}
 	options.architectures = []string{runtime.GOARCH}
 	options.Env = append(options.Env, "DOCKER_CONTEXT="+os.Getenv("DOCKER_CONTEXT"))
-	options.check = true
 	for _, valid := range []bool{true, false} {
 		if !valid {
 			sourceFiles(t, filepath.Join(root, "checkout"), map[string]string{

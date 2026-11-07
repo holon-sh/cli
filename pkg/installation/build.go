@@ -35,7 +35,6 @@ type buildOptions struct {
 	Env           []string
 	HTTPClient    *http.Client
 	output        *progressOutput
-	check         bool
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
@@ -43,6 +42,12 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 	apps := make([]protocol.App, len(manifest.Apps))
 	group, ctx := errgroup.WithContext(ctx)
 	group.SetLimit(3)
+	fingerprints := map[string]string{}
+	for _, app := range manifest.Apps {
+		if p := app.resolved.types; p != nil {
+			fingerprints[app.Name] = p.fingerprint
+		}
+	}
 	for index, app := range manifest.Apps {
 		declaration := app.resolved.App
 		if app.resolved.Remote != nil {
@@ -75,7 +80,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			}
 			var image string
 			if app.resolved.Image == "" {
-				image, err = buildSource(ctx, app, upload, options)
+				image, err = buildSource(ctx, app, upload, options, promotionKey(app, fingerprints, options.architectures))
 				if err != nil {
 					return err
 				}

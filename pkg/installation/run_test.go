@@ -131,6 +131,10 @@ func newRunHarness(t *testing.T) *runHarness {
 
 func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
+	// After any test's own: deploy looks for development sessions to reuse images from.
+	h.control.Handle([]string{toolListSessions}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, map[string]any{"items": []protocol.SessionResponse{}})
+	})
 	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
 		w.WriteHeader(http.StatusOK)

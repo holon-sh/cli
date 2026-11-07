@@ -79,14 +79,17 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 	var image string
 	err = request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		entries := slices.Clone(manifests)
-		var annotations map[string]string
+		annotations := maps.Clone(request.annotations)
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
 		if p := request.app.resolved.types; p.metadata != nil {
 			metadata, ownDigest, err := pushTypeMetadata(ctx, repository, p.metadata, p.documents)
 			if err != nil {
 				return err
 			}
 			entries = append(entries, metadata)
-			annotations = map[string]string{mcpcontract.DigestAnnotation: ownDigest}
+			annotations[mcpcontract.DigestAnnotation] = ownDigest
 		}
 		data, _ := json.Marshal(ocispec.Index{
 			Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex,

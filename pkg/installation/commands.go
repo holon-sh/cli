@@ -99,7 +99,8 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dev [APP[=SOURCE]...]",
 		Short: "Run a development session",
-		Long:  "Run apps and their required dependencies. Each app uses /<app-name>/ on the session host.\n\n" + appsHelp,
+		Long: "Run apps and their required dependencies. Each app uses /<app-name>/ on the session host. " +
+			"Every image build type-checks the app's calls to the apps it requires.\n\n" + appsHelp,
 		Example: `  # Run every app in holon.yaml
   holon dev
 
@@ -109,9 +110,6 @@ func newDevCommand(config *commandConfig) *cobra.Command {
   # Run an app from a directory, an MCP Registry server version URL, or an https MCP endpoint
   holon dev chat=../chat
   holon dev docs=https://mcp.context7.com/mcp
-
-  # Type-check first
-  holon dev --check
 
   # Keep the session after the command exits and print it as JSON
   holon dev --detach --json`,
@@ -130,7 +128,6 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&detached, "detach", false, "Exit after readiness and retain the session until its fixed expiry")
-	cmd.Flags().BoolVar(&config.check, "check", false, "Type-check apps before starting or updating the session")
 	cmd.Flags().BoolVar(&config.jsonOutput, "json", false, "Write the ready API session as JSON (requires --detach)")
 	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "Detached session lifetime (whole seconds, at most 24h)")
 	return withProject(withProgress(cmd, config, "Done"), config)
@@ -141,7 +138,8 @@ func newDeployCommand(config *commandConfig) *cobra.Command {
 		Use:   "deploy [APP[=SOURCE]...]",
 		Short: "Deploy apps to production",
 		Long: "Deploy every app, or the named apps and their required dependencies, to production. " +
-			"Production apps this deploy does not name keep running; holon app remove removes one.\n\n" + appsHelp,
+			"Production apps this deploy does not name keep running; holon app remove removes one. " +
+			"When a development session runs images built from the same source, deploy reuses them instead of building.\n\n" + appsHelp,
 		Example: `  # Deploy every app in holon.yaml
   holon deploy
 

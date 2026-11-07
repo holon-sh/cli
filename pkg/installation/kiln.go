@@ -28,21 +28,22 @@ type buildApplication func(context.Context, buildRequest, io.Writer) (string, er
 type buildRequest struct {
 	kiln.Request
 
-	Env        []string
-	app        manifestApp
-	upload     *imageUpload
-	httpClient *http.Client
-	builders   *builderConnections
-	output     *progressOutput
+	Env         []string
+	app         manifestApp
+	annotations map[string]string
+	upload      *imageUpload
+	httpClient  *http.Client
+	builders    *builderConnections
+	output      *progressOutput
 }
 
-func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, error) {
+func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions, promotion string) (string, error) {
 	if !protocol.ValidBuildArchitectures(options.architectures) {
 		return "", errors.New("invalid build architectures")
 	}
 	p := app.resolved.types
 	snapshot := p.root
-	config, err := stageTypes(p, options.check)
+	config, err := stageTypes(p, true)
 	if err != nil {
 		return "", err
 	}
@@ -71,7 +72,11 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	}
 	request := buildRequest{
 		Request: kiln.Request{ConfigFilePath: config, Source: snapshot, Start: start}, Env: env, app: app, upload: upload,
-		httpClient: options.HTTPClient, builders: options.builders, output: options.output,
+		annotations: map[string]string{},
+		httpClient:  options.HTTPClient, builders: options.builders, output: options.output,
+	}
+	if promotion != "" {
+		request.annotations[promotionAnnotation] = promotion
 	}
 	for _, arch := range architectures {
 		request.Platforms = append(request.Platforms, "linux/"+arch)

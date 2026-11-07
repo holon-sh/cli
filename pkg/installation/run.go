@@ -39,7 +39,6 @@ type commandConfig struct {
 	file               string
 	apps               []string
 	devTTLSeconds      *int64
-	check              bool
 	builder            buildApplication
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
@@ -161,7 +160,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		types:   new(typeWorkspace),
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient,
 		Stderr: stderr, Env: config.Env, architectures: manager.info.BuildArchitectures, output: config.output,
-		builders: new(builderConnections), check: config.check,
+		builders: new(builderConnections),
 	}
 	defer options.types.close()
 	defer options.builders.close()
@@ -297,12 +296,16 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	}
 	builders := new(builderConnections)
 	defer builders.close()
-	desired, _, err := uploadManifest(ctx, manager, protocol.ProductionName, manifest, buildOptions{
+	options := buildOptions{
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env,
-		output: config.output, builders: builders, architectures: manager.info.BuildArchitectures, check: true,
-	}, selection...)
-	if err != nil {
-		return err
+		output: config.output, builders: builders, architectures: manager.info.BuildArchitectures,
+	}
+	desired, promoted := promoteDevelopment(ctx, manager, manifest, options, selection...)
+	if !promoted {
+		desired, _, err = uploadManifest(ctx, manager, protocol.ProductionName, manifest, options, selection...)
+		if err != nil {
+			return err
+		}
 	}
 	config.output.deploying(desired.Apps)
 	accepted, err := replaceExecution(ctx, manager, protocol.ProductionName, current, desired)
