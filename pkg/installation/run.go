@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/rand"
@@ -415,11 +416,9 @@ func printEndpoints(stdout io.Writer, heading string, session protocol.SessionRe
 	return err
 }
 
+// StreamLogs follows session logs until ctx ends or the server rejects the request. A dropped stream resumes from
+// the last record received, skipping the records the server replays.
 func (m *Client) StreamLogs(ctx context.Context, input protocol.SessionLogsRequest, stdout io.Writer) error {
-	token, err := m.controlToken(ctx)
-	if err != nil {
-		return err
-	}
 	query := url.Values{"follow": {"true"}}
 	for key, value := range map[string]string{
 		"app": input.App, "since": input.Since, "traceId": input.TraceID, "text": input.Text,
@@ -432,6 +431,59 @@ func (m *Client) StreamLogs(ctx context.Context, input protocol.SessionLogsReque
 	if input.Attempt != nil {
 		query.Set("attempt", strconv.FormatInt(*input.Attempt, 10))
 	}
-	logPath := (&url.URL{Path: sessionPath(input.Session, "logs"), RawQuery: query.Encode()}).String()
-	return m.client.Do(ctx, http.MethodGet, logPath, apiRequest{Plane: ControlPlane(input.Session), Token: token, Stream: stdout}, nil)
+	records := &resumingWriter{out: stdout}
+	for delay := time.Second; ; delay = min(2*delay, 30*time.Second) {
+		received := records.last
+		// A token refresh that failed in transit is retried like a dropped stream; lost credentials stay final.
+		token, err := m.controlToken(ctx)
+		if err == nil {
+			logPath := (&url.URL{Path: sessionPath(input.Session, "logs"), RawQuery: query.Encode()}).String()
+			err = m.client.Do(ctx, http.MethodGet, logPath, apiRequest{Plane: ControlPlane(input.Session), Token: token, Stream: records}, nil)
+		} else if !errors.Is(err, errRefreshFailed) {
+			return err
+		}
+		if records.err != nil || !resumable(err) {
+			return err
+		}
+		if !records.last.Equal(received) {
+			delay = time.Second
+			query.Set("since", records.last.Format(time.RFC3339Nano))
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		records.partial = records.partial[:0]
+	}
+}
+
+// resumingWriter writes whole log lines, tracking the timestamp that leads each record. Records not after the last
+// one written, with their continuation lines, are replays and are dropped.
+type resumingWriter struct {
+	out     io.Writer
+	last    time.Time
+	replay  bool
+	partial []byte
+	err     error
+}
+
+func (w *resumingWriter) Write(p []byte) (int, error) {
+	w.partial = append(w.partial, p...)
+	end := bytes.LastIndexByte(w.partial, '\n') + 1
+	for line := range bytes.Lines(w.partial[:end]) {
+		token, _, _ := bytes.Cut(bytes.TrimSpace(line), []byte(" "))
+		if at, err := time.Parse(time.RFC3339Nano, string(token)); err == nil {
+			if w.replay = !at.After(w.last); !w.replay {
+				w.last = at
+			}
+		}
+		if !w.replay {
+			if _, w.err = w.out.Write(line); w.err != nil {
+				return 0, w.err
+			}
+		}
+	}
+	w.partial = append(w.partial[:0], w.partial[end:]...)
+	return len(p), nil
 }

@@ -10,28 +10,48 @@ import (
 )
 
 // shape is one schema's type with the named types from its definitions and $defs sections, and
-// the recursive types they mention.
+// the types to declare with it: as parsed, the recursive types it mentions; once shared, every type
+// rendered by name that its binding uses first here.
 type shape struct {
-	value     typ
-	named     map[string]typ
-	recursive []*recursive
+	value    typ
+	named    map[string]typ
+	declared []*declaration
 }
 
-// nameRecursive gives each recursive type an identifier within scope and returns them to declare.
-// Every name is assigned first, because recursive types can refer to each other in any order.
-func (s shape) nameRecursive(names map[string]bool, scope string) []*recursive {
-	for _, ref := range s.recursive {
-		ref.name = unique(names, scope+typeIdentifier(ref.pointer[strings.LastIndexByte(ref.pointer, '/')+1:]))
+// name gives each declaration that declares accepts an identifier and returns them to declare. tool
+// scopes a name to the tool and binding to the binding's inputs or outputs. Every name is assigned
+// first, because declarations can refer to each other in any order.
+func (s shape) name(names map[string]bool, tool, binding string, declares func(*declaration) bool) []*declaration {
+	var result []*declaration
+	for _, ref := range s.declared {
+		if declares(ref) {
+			if ref.name == "" {
+				ref.name = unique(names, ref.preferred(tool, binding))
+			}
+			result = append(result, ref)
+		}
 	}
-	return s.recursive
+	return result
 }
 
-// recursive is a type that refers to itself, which only a declared name can express.
-type recursive struct {
-	pointer string
-	value   typ
-	name    string // Assigned by nameRecursive.
-	cyclic  bool
+// preferred is the identifier a declaration would like within tool and binding.
+func (d *declaration) preferred(tool, binding string) string {
+	if d.definition != "" {
+		return binding + typeIdentifier(d.definition)
+	}
+	return tool + d.local
+}
+
+// declaration is a type rendered by name: one that refers to itself, which only a declared name can
+// express, or a shape that several places in a binding's inputs or outputs share.
+type declaration struct {
+	value  typ
+	cyclic bool
+	// Once shared, definition names it for the whole binding when every use names that definition
+	// and several tools use it; otherwise local names it within the tool that first mentions it. As
+	// parsed, both come from the definition it is declared from.
+	definition, local string
+	name              string // Assigned by name.
 }
 
 type typeKind uint8
@@ -50,28 +70,30 @@ const (
 	kindObject
 	kindUnion
 	kindIntersection
-	kindRecursive
+	kindDeclared
 )
 
 // typ is the type a schema describes.
 type typ struct {
-	kind    typeKind
-	literal Value            // kindLiteral
-	item    *typ             // kindArray
-	prefix  []typ            // kindTuple
-	min     int              // kindTuple: required prefix length
-	fields  map[string]field // kindObject
-	extra   extra            // kindTuple rest, kindObject additional properties
-	items   []typ            // kindUnion, kindIntersection
-	ref     *recursive       // kindRecursive
+	kind       typeKind
+	literal    Value            // kindLiteral
+	item       *typ             // kindArray
+	prefix     []typ            // kindTuple
+	min        int              // kindTuple: required prefix length
+	fields     map[string]field // kindObject
+	definition string           // kindObject: the definition a reference to it named, until shared
+	extra      extra            // kindTuple rest, kindObject additional properties
+	items      []typ            // kindUnion, kindIntersection
+	ref        *declaration     // kindDeclared
 }
 
 type extraKind uint8
 
+// extraKind is what a schema says of properties or items beyond the named ones.
 const (
-	extraImplicit extraKind = iota
-	extraClosed
-	extraOpen
+	extraImplicit extraKind = iota // Nothing: a tuple takes any rest, and an object is free-form.
+	extraClosed                    // None.
+	extraOpen                      // A schema for them.
 )
 
 type extra struct {
@@ -85,8 +107,20 @@ type field struct {
 	required bool
 }
 
+// objectType is the type of an object schema. One that names fields without declaring a schema for
+// others is closed, since the generated types take the named fields to be all there are: a
+// misspelled argument fails excess-property checks rather than reaching a server that ignores it,
+// and a result keeps its fields under Omit, which an index signature would reduce to unknown. An
+// implicit object therefore names no fields.
+func objectType(fields map[string]field, extra extra) typ {
+	if len(fields) > 0 && extra.kind == extraImplicit {
+		extra.kind = extraClosed
+	}
+	return typ{kind: kindObject, fields: fields, extra: extra}
+}
+
 func parseShape(ctx context.Context, schema Value) (shape, error) {
-	parser := &parser{ctx: ctx, root: schema, references: map[string]*recursive{}}
+	parser := &parser{ctx: ctx, root: schema, references: map[string]*declaration{}}
 	value, err := parser.reference("#", schema, 0)
 	if err != nil {
 		return shape{}, err
@@ -102,7 +136,7 @@ func parseShape(ctx context.Context, schema Value) (shape, error) {
 		}
 	}
 	for _, reference := range sortedKeys(parser.references) {
-		result.recursive = append(result.recursive, parser.references[reference])
+		result.declared = append(result.declared, parser.references[reference])
 	}
 	return result, nil
 }
@@ -110,8 +144,8 @@ func parseShape(ctx context.Context, schema Value) (shape, error) {
 type parser struct {
 	ctx        context.Context
 	root       Value
-	references map[string]*recursive // Being parsed, or found to be recursive.
-	mentions   int                   // Times a recursive type has been named.
+	references map[string]*declaration // Being parsed, or found to be recursive.
+	mentions   int                     // Times a recursive type has been named.
 }
 
 // resolve finds the schema a reference points at.
@@ -133,7 +167,7 @@ func (p *parser) reference(reference string, target Value, depth int) (typ, erro
 	if known, ok := p.references[reference]; ok {
 		known.cyclic = true
 		p.mentions++
-		return typ{kind: kindRecursive, ref: known}, nil
+		return typ{kind: kindDeclared, ref: known}, nil
 	}
 	if p.selfDefined(target, reference, map[string]bool{}) {
 		return typ{kind: kindUnknown}, nil
@@ -141,7 +175,8 @@ func (p *parser) reference(reference string, target Value, depth int) (typ, erro
 	if alias(target) {
 		return p.parse(target, depth) // The schema it names is declared instead, if that one recurs.
 	}
-	current := &recursive{pointer: reference}
+	definition := definitionName(reference)
+	current := &declaration{definition: definition, local: typeIdentifier(definition)}
 	p.references[reference] = current
 	value, err := p.parse(target, depth)
 	if err != nil {
@@ -149,10 +184,21 @@ func (p *parser) reference(reference string, target Value, depth int) (typ, erro
 	}
 	if !current.cyclic {
 		delete(p.references, reference)
+		if value.kind == kindObject {
+			value.definition = definition
+		}
 		return value, nil
 	}
 	current.value = value
-	return typ{kind: kindRecursive, ref: current}, nil
+	return typ{kind: kindDeclared, ref: current}, nil
+}
+
+// definitionName is the name a reference gives its target: the last segment of its pointer.
+func definitionName(reference string) string {
+	if reference == "#" {
+		return ""
+	}
+	return reference[strings.LastIndexByte(reference, '/')+1:]
 }
 
 // selfDefined reports whether schema reaches reference through other references and combinators
@@ -254,7 +300,7 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 			if err != nil {
 				return typ{}, err
 			}
-			if len(types) == 1 && types[0].kind == kindRecursive {
+			if len(types) == 1 && types[0].kind == kindDeclared {
 				return types[0], nil
 			}
 			return typ{kind: combinator.kind, items: types}, nil
@@ -347,7 +393,7 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 		if err != nil {
 			return typ{}, err
 		}
-		return typ{kind: kindObject, fields: fields, extra: extra}, nil
+		return objectType(fields, extra), nil
 	}
 	return typ{kind: kindUnknown}, nil
 }

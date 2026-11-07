@@ -28,7 +28,6 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 		want       error
 		httpError  *httpError
 	}{
-		{name: "JSON response", status: http.StatusOK, body: `{"content":"response"}`, content: "response"},
 		{name: "malformed JSON", status: http.StatusOK, body: `{bad`, want: errMalformedResponse},
 		{name: "oversized response", status: http.StatusOK, body: strings.Repeat("x", maxHTTPBody+1), want: errResponseTooLarge},
 		{

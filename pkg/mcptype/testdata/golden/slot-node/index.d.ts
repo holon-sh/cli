@@ -1,10 +1,8 @@
 // holon-generated-apps-v1 app=checkout
-import type { Outputs as Resources } from "./resources.js";
 import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } from "../protocol.js";
 export { ToolCallError } from "../protocol.js";
-export type { Resources };
-export type SchemasKitchenSinkInputValue = { "1starts"?: string; "Dash-Key"?: string; "all"?: ({ "a": string; } & { "b"?: number; }); "allConflict"?: ({ "a"?: string; } & { "a"?: number; }); "allNonObject"?: (string & { [key: string]: unknown; }); "annotated"?: string; "arrayRef"?: string; "closedEmpty"?: {  }; "constNum"?: 1e+21; "constObj"?: unknown; "constString"?: "it's \"quoted\"\n"; "cycle"?: SchemasKitchenSinkInputNode; "dash-key"?: string; "emptyAll"?: unknown; "emptyAny"?: never; "falseSchema"?: never; "implicitTuple"?: ["x"?, ...unknown[]]; "literals": ("a" | 1 | 2.5 | -3 | true | null | unknown | unknown | 1.0 | 1e+21 | -0.0); "mapOf"?: { [key: string]: string; }; "multi"?: (string | null | Array<number> | unknown); "nested"?: Array<Array<{ "deep"?: null; }>>; "noType": { "p": boolean; }; "nodes"?: Array<SchemasKitchenSinkInputNode>; "numericType"?: { "p"?: boolean; }; "odd key with spaces"?: string; "oneOf"?: (string | number); "openObj"?: { "x"?: string; [key: string]: unknown; }; "openTuple"?: [boolean?, ...Array<number>]; "plainArray"?: Array<unknown>; "pointerEscape"?: number; "rootRef"?: SchemasKitchenSinkInputValue; "trueObj"?: { "x"?: string; [key: string]: unknown; }; "trueSchema"?: unknown; "tuple": [string, number?]; "unknownKeyword"?: unknown; };
-export type SchemasKitchenSinkInputNode = { "next"?: SchemasKitchenSinkInputNode; "value": number; };
+export type Resources = import("./resources.js").Outputs;
+export type * from "./resources.js";
 export interface Inputs {
   "empty": {
   };
@@ -14,18 +12,6 @@ export interface Inputs {
   "orders": {
     "get_order": { "count"?: number; "orderId": string; };
     "then": {  };
-  };
-  "schemas": {
-    "-": { [key: string]: unknown; };
-    "123": { [key: string]: unknown; };
-    "CallTool": { [key: string]: unknown; };
-    "call_tool": { "a"?: number; "b": string; };
-    "class": { "opt"?: { "n"?: number; }; };
-    "get-order": { "id": string; };
-    "get_order": { "id": string; };
-    "kitchen-sink": SchemasKitchenSinkInputValue;
-    "weird-keys": { "": null; "-"?: boolean; "x\"quote"?: string; "ünïcode"?: number; };
-    "émoji🎉": { "é"?: string; };
   };
   "with-hyphen": {
     "get_order": { "count"?: number; "orderId": string; };
@@ -39,16 +25,10 @@ export interface Outputs {
     "select": { "columns": Array<{ "value": number; }>; };
   };
   "orders": {
-    "get_order": { "total": number; [key: string]: unknown; };
-  };
-  "schemas": {
-    "call_tool": { "x": boolean; };
-    "class": Array<unknown>;
-    "weird-keys": { "a.b"?: string; "nl\nname"?: string; "tab\tname": string; };
-    "émoji🎉": string;
+    "get_order": { "total": number; };
   };
   "with-hyphen": {
-    "get_order": { "total": number; [key: string]: unknown; };
+    "get_order": { "total": number; };
   };
 }
 export interface InputTypes {
@@ -60,18 +40,6 @@ export interface InputTypes {
   "orders": {
     "get_order": {  };
     "then": {  };
-  };
-  "schemas": {
-    "-": {  };
-    "123": {  };
-    "CallTool": {  };
-    "call_tool": {  };
-    "class": {  };
-    "get-order": {  };
-    "get_order": {  };
-    "kitchen-sink": { "9lives": string; "Legacy": number; "Node": SchemasKitchenSinkInputNode; "Nodes": Array<SchemasKitchenSinkInputNode>; "_private": boolean; "a/b~c": number; "for": string; "list": [string?, ...unknown[]]; };
-    "weird-keys": {  };
-    "émoji🎉": {  };
   };
   "with-hyphen": {
     "get_order": {  };
@@ -86,12 +54,6 @@ export interface OutputTypes {
   };
   "orders": {
     "get_order": {  };
-  };
-  "schemas": {
-    "call_tool": {  };
-    "class": {  };
-    "weird-keys": {  };
-    "émoji🎉": {  };
   };
   "with-hyphen": {
     "get_order": {  };

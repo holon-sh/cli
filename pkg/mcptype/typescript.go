@@ -5,12 +5,11 @@ import (
 	"strings"
 )
 
-// renderTypeScript writes a type. An input object that names its fields without declaring additional
-// properties is closed, so a misspelled argument fails excess-property checks rather than reaching a
-// server that ignores it. Outputs stay open, and an object that names no fields is a free-form one.
-func renderTypeScript(value typ, input bool) string {
+// renderTypeScript writes a type. A free-form object is an index signature of unknown, and so is an
+// open object that names fields, which would otherwise have to fit the signature's type.
+func renderTypeScript(value typ) string {
 	switch value.kind {
-	case kindRecursive:
+	case kindDeclared:
 		return value.ref.name
 	case kindNever:
 		return "never"
@@ -29,17 +28,17 @@ func renderTypeScript(value typ, input bool) string {
 		}
 		return string(encode(value.literal))
 	case kindArray:
-		return fmt.Sprintf("Array<%s>", renderTypeScript(*value.item, input))
+		return fmt.Sprintf("Array<%s>", renderTypeScript(*value.item))
 	case kindUnion:
 		if len(value.items) == 0 {
 			return "never"
 		}
-		return "(" + joinTypeScript(value.items, " | ", input) + ")"
+		return "(" + joinTypeScript(value.items, " | ") + ")"
 	case kindIntersection:
 		if len(value.items) == 0 {
 			return "unknown"
 		}
-		return "(" + joinTypeScript(value.items, " & ", input) + ")"
+		return "(" + joinTypeScript(value.items, " & ") + ")"
 	case kindTuple:
 		items := make([]string, 0, len(value.prefix)+1)
 		for i, item := range value.prefix {
@@ -47,13 +46,13 @@ func renderTypeScript(value typ, input bool) string {
 			if i >= value.min {
 				optional = "?"
 			}
-			items = append(items, renderTypeScript(item, input)+optional)
+			items = append(items, renderTypeScript(item)+optional)
 		}
 		switch value.extra.kind {
 		case extraImplicit:
 			items = append(items, "...unknown[]")
 		case extraOpen:
-			rest := renderTypeScript(*value.extra.value, input)
+			rest := renderTypeScript(*value.extra.value)
 			if value.extra.recursive {
 				// tsc rejects `type T = [A, ...Array<T>]` but accepts this spelling.
 				items = append(items, "..."+rest+"[]")
@@ -70,17 +69,15 @@ func renderTypeScript(value typ, input bool) string {
 			if !field.required {
 				optional = "?"
 			}
-			entries = append(entries, fmt.Sprintf("%s%s: %s;", quoted(name), optional, renderTypeScript(field.value, input)))
+			entries = append(entries, fmt.Sprintf("%s%s: %s;", quoted(name), optional, renderTypeScript(field.value)))
 		}
 		switch value.extra.kind {
 		case extraImplicit:
-			if !input || len(value.fields) == 0 {
-				entries = append(entries, "[key: string]: unknown;")
-			}
+			entries = append(entries, "[key: string]: unknown;")
 		case extraOpen:
 			rendered := "unknown"
 			if len(value.fields) == 0 {
-				rendered = renderTypeScript(*value.extra.value, input)
+				rendered = renderTypeScript(*value.extra.value)
 			}
 			entries = append(entries, fmt.Sprintf("[key: string]: %s;", rendered))
 		}
@@ -89,18 +86,19 @@ func renderTypeScript(value typ, input bool) string {
 	return "unknown"
 }
 
-func joinTypeScript(items []typ, separator string, input bool) string {
+func declaresAll(*declaration) bool { return true }
+
+func joinTypeScript(items []typ, separator string) string {
 	rendered := make([]string, len(items))
 	for i, item := range items {
-		rendered[i] = renderTypeScript(item, input)
+		rendered[i] = renderTypeScript(item)
 	}
 	return strings.Join(rendered, separator)
 }
 
-// generateTypeScript writes the recursive types, then the Inputs, Outputs, InputTypes and OutputTypes
-// interfaces.
-func generateTypeScript(contracts map[string]catalog) string {
-	names := map[string]bool{}
+// generateTypeScript writes the declared types, then the Inputs, Outputs, InputTypes and OutputTypes
+// interfaces. Declared types take identifiers that names does not hold yet, and names keeps them.
+func generateTypeScript(contracts map[string]catalog, names map[string]bool) string {
 	var out strings.Builder
 	exports := make([]strings.Builder, 4)
 	for i, name := range []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"} {
@@ -117,14 +115,14 @@ func generateTypeScript(contracts map[string]catalog) string {
 				if index == 1 && !tool.structured {
 					continue
 				}
-				input := index == 0
-				for _, ref := range shape.nameRecursive(names, typeIdentifier(binding)+typeIdentifier(name)+[]string{"Input", "Output"}[index]) {
-					fmt.Fprintf(&out, "export type %s = %s;\n", ref.name, renderTypeScript(ref.value, input))
+				direction := []string{"Input", "Output"}[index]
+				for _, ref := range shape.name(names, typeIdentifier(binding)+typeIdentifier(name)+direction, typeIdentifier(binding)+direction, declaresAll) {
+					fmt.Fprintf(&out, "export type %s = %s;\n", ref.name, renderTypeScript(ref.value))
 				}
-				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value, input))
+				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value))
 				named := make([]string, 0, len(shape.named))
 				for _, definition := range sortedKeys(shape.named) {
-					named = append(named, fmt.Sprintf("%s: %s;", quoted(definition), renderTypeScript(shape.named[definition], input)))
+					named = append(named, fmt.Sprintf("%s: %s;", quoted(definition), renderTypeScript(shape.named[definition])))
 				}
 				fmt.Fprintf(&exports[index+2], "    %s: { %s };\n", quoted(name), strings.Join(named, " "))
 			}

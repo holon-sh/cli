@@ -1,12 +1,10 @@
 package installation
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,28 +44,6 @@ func (o buildOptions) extractTypes(ctx context.Context, language, tooling string
 		return fmt.Errorf("prepare MCP types: %w", err)
 	}
 	return nil
-}
-
-// mentionsMCP reports whether any JavaScript or TypeScript source under root imports an MCP SDK or holon-sh.
-func mentionsMCP(root string) bool {
-	found := false
-	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || found {
-			return filepath.SkipAll
-		}
-		if entry.IsDir() {
-			if typegen.GeneratedSource(root, path) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if slices.Contains([]string{".ts", ".mts", ".cts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"}, filepath.Ext(path)) {
-			data, err := os.ReadFile(path)
-			found = err == nil && (bytes.Contains(data, []byte("@modelcontextprotocol/")) || bytes.Contains(data, []byte(nodeRuntime)))
-		}
-		return nil
-	})
-	return found
 }
 
 func extractInImage(ctx context.Context, source, tooling string, command []string, stdout io.Writer, env []string, logs io.Writer) error {

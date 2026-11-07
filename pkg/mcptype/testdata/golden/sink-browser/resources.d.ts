@@ -28,7 +28,7 @@ export interface Outputs {
   "orders": {
     "res://plain": string;
     "res://typed": { "items": Array<{ "id": string; }>; };
-    "res://é/ü": { "n"?: number; [key: string]: unknown; };
+    "res://é/ü": { "n"?: number; };
   };
   "orders!": {
   };

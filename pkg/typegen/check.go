@@ -73,7 +73,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 			return fmt.Errorf("%s does not type-check against its typed contracts: %w", filepath.Base(dir), err)
 		}
 	}
-	fmt.Fprintln(o.Stdout, "Typed contracts check passed.")
+	fmt.Fprintf(o.Stdout, "%s: typed contracts check passed.\n", filepath.Base(dir))
 	return nil
 }
 

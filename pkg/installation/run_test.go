@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
@@ -47,16 +48,25 @@ func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 func TestRunRejectsInvalidInputs(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	project := filepath.Join(root, manifestFileName)
 	sourceFiles(t, root, map[string]string{manifestFileName: manifestFixture})
-	for want, args := range map[string][]string{
-		`unknown app "missing"`:                    {"dev", "alpha", "missing", "--project", filepath.Join(root, manifestFileName)},
-		"--env must be dev or prod":                {"config", "set", "--env", "staging", "API_URL", "value"},
-		"--session requires a development session": {"config", "set", "--session", "production", "API_URL", "value"},
-		`invalid variable name "not-valid"`:        {"config", "set", "not-valid", "value"},
+	for _, tc := range []struct {
+		want string
+		args []string
+	}{
+		{`unknown app "missing"`, []string{"dev", "alpha", "missing", "--project", project}},
+		{"--ttl requires --detach", []string{"dev", "--ttl", "24h", "--project", project}},
+		{"--json requires --detach", []string{"dev", "--json", "--project", project}},
+		{"whole seconds", []string{"dev", "--detach", "--ttl", "0s", "--project", project}},
+		{"whole seconds", []string{"dev", "--detach", "--ttl", "1.5s", "--project", project}},
+		{"whole seconds", []string{"dev", "--detach", "--ttl", "25h", "--project", project}},
+		{"--env must be dev or prod", []string{"config", "set", "--env", "staging", "API_URL", "value"}},
+		{"--session requires a development session", []string{"config", "set", "--session", "production", "API_URL", "value"}},
+		{`invalid variable name "not-valid"`, []string{"config", "set", "not-valid", "value"}},
 	} {
 		config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir()}}
-		if err := executeCommand(t.Context(), args, nil, nil, config); err == nil || !strings.Contains(err.Error(), want) {
-			t.Fatalf("invalid command %v: error=%v, want %q", args, err, want)
+		if err := executeCommand(t.Context(), tc.args, nil, nil, config); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("invalid command %v: error=%v, want %q", tc.args, err, tc.want)
 		}
 	}
 }
@@ -305,8 +315,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		if query := r.URL.Query(); query.Get("event") != "holon.mcp.call" || query.Get("follow") != "true" {
 			t.Errorf("request stream query = %s", r.URL.RawQuery)
 		}
-		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
-		_, _ = io.WriteString(w, "2030-01-01T12:00:01Z INFO alpha tools/call echo ok 1ms trace_id=aaaa\n")
+		w.WriteHeader(http.StatusPreconditionFailed)
 	})
 	h.start(t, build)
 	t.Run("ambiguous creation is not retried or deleted", func(t *testing.T) {
@@ -372,7 +381,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
-		if strings.Contains(stdout.String(), "trace_id=aaaa") || strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
+		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}
 	})
@@ -747,4 +756,63 @@ func TestRunDeployLifecycle(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStreamLogsResumesAfterOutages(t *testing.T) {
+	t.Parallel()
+	const (
+		first  = "2026-11-07T10:00:00.1Z INFO alpha started\n"
+		second = "2026-11-07T10:00:00.2Z INFO alpha multi-line\n  continued\n"
+		third  = "2026-11-07T10:00:00.3Z INFO alpha resumed\n"
+	)
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		var refreshes int
+		var since []string
+		mux := http.NewServeMux()
+		installationtest.MountDeviceAuth(t, mux, func() string { return "https://apps.example.test/" }, protocol.AdminPlane, nil, 0, 0,
+			func(w http.ResponseWriter, _ *http.Request) {
+				if refreshes++; refreshes == 1 {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access", "expires_in": 3600})
+			})
+		mux.HandleFunc("GET /sessions/alpha/logs", func(w http.ResponseWriter, r *http.Request) {
+			since = append(since, r.URL.Query().Get("since"))
+			w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
+			body := first + second
+			if len(since) > 1 {
+				body += third // The server replays its backlog from since.
+			}
+			_, _ = io.WriteString(w, body)
+		})
+		transport := installationtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, r)
+			return response.Result(), nil
+		})
+		client, err := NewClient(t.Context(), ClientConfig{Origin: "https://apps.example.test", ConfigDir: t.TempDir(), HTTPClient: transport})
+		if err != nil {
+			t.Fatal(err)
+		}
+		seedAdminCredentials(t, client, oauth2.Token{AccessToken: "expired", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now()})
+		output := &installationtest.ObservedOutput{OnWrite: func(text string) {
+			if strings.HasSuffix(text, third) {
+				cancel()
+			}
+		}}
+		input := protocol.SessionLogsRequest{AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: "alpha"}}, Since: "5m"}
+		start := time.Now()
+		if err := client.StreamLogs(ctx, input, output); !errors.Is(err, context.Canceled) {
+			t.Fatalf("stream error = %v", err)
+		}
+		// One second after the failed refresh, then one after the dropped stream.
+		if elapsed := time.Since(start); elapsed != 2*time.Second || refreshes != 2 || !slices.Equal(since, []string{"5m", "2026-11-07T10:00:00.2Z"}) {
+			t.Fatalf("resumed after %v with %d refreshes and since = %q", elapsed, refreshes, since)
+		}
+		if got := output.String(); got != first+second+third {
+			t.Fatalf("output = %q", got)
+		}
+	})
 }

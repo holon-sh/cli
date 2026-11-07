@@ -36,12 +36,14 @@ func resourceContracts(contracts map[string]contract) map[string]contract {
 }
 
 func generateTypeScriptPackage(ctx context.Context, request generateRequest, catalogs map[string]catalog) (map[string]string, error) {
-	tools := generateTypeScript(catalogs)
+	// Resources take names that tools left free, so index.d.ts can re-export each one they declare.
+	names := map[string]bool{}
+	tools := generateTypeScript(catalogs, names)
 	catalogs, err := compileCatalogs(ctx, resourceContracts(request.contracts))
 	if err != nil {
 		return nil, err
 	}
-	resources := generateTypeScript(catalogs)
+	resources := generateTypeScript(catalogs, names)
 	var protocol string
 	switch {
 	case request.ProtocolSpecifier != "":
@@ -51,7 +53,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		protocol = request.Protocol
 	}
 	identity, contracts := encode(request.caller()), encode(request.contracts)
-	types := fmt.Sprintf("import type { Outputs as Resources } from \"./resources.js\";\n%s\nexport type { Resources };\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", protocol, tools)
+	types := fmt.Sprintf("%s\nexport type Resources = import(\"./resources.js\").Outputs;\nexport type * from \"./resources.js\";\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", protocol, tools)
 	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
 	runtime := quoted(cmp.Or(request.RuntimeSpecifier, "./runtime.mjs"))
 	if request.Target == "browser" {

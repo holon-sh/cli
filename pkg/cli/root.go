@@ -10,13 +10,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/spf13/cobra"
 )
 
-const dependencyHelp = "Leverages sh.holon.requires in the publisher-provided metadata field (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to resolve dependencies, or the -s list for explicit dependencies."
+const dependencyHelp = "Leverages sh.holon.requires in the publisher-provided metadata field (https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing) to resolve dependencies, or the -s list for explicit dependencies.\n\n" +
+	"In a directory with a holon.yaml, runs for each of its path apps, as holon dev does when it builds their images; a dependency named after another app in the file uses that app."
 
 const generateExamples = `  # Generate for the current project
   holon types generate
@@ -61,52 +61,75 @@ func clientDir(path string) (string, error) {
 	return filepath.EvalSymlinks(dir)
 }
 
-// consumer selects dependencies from -s, or what the project declares without it. A -s path inside
-// dir is the project's own server, which supplies its identity and contract.
+// selectConsumers resolves DIR to what holon generates and checks: each app of the holon.yaml there,
+// or else DIR itself.
+func selectConsumers(cmd *cobra.Command, servers []string) ([]typegen.Consumer, error) {
+	dir, err := clientDir(cmd.Flags().Arg(0))
+	if err != nil {
+		return nil, err
+	}
+	consumers, err := projectConsumers(dir)
+	switch {
+	case err != nil:
+		return nil, err
+	case consumers == nil:
+		c, err := consumer(dir, servers)
+		return []typegen.Consumer{c}, err
+	case len(servers) > 0:
+		return nil, errors.New("-s names one app's dependencies; pass that app's DIR")
+	}
+	return consumers, nil
+}
+
+// consumer is the app kept in dir, with -s in place of its declared dependencies. A -s path inside
+// dir names the app's own server instead, which supplies its identity and contract.
 func consumer(dir string, servers []string) (typegen.Consumer, error) {
-	targets, err := typegen.DeclaredTargets(dir)
+	c, err := appConsumer(filepath.Base(dir), dir)
+	if err == nil && (c == nil || len(c.Targets) == 0) {
+		err = fmt.Errorf("%s %w", dir, typegen.ErrNoRuntime)
+	}
 	if err != nil {
 		return typegen.Consumer{}, err
 	}
-	c := typegen.Consumer{Name: filepath.Base(dir), Dir: dir, Targets: targets}
+	if len(servers) > 0 {
+		c.Sources = nil
+	}
+	named := false
 	for _, arg := range servers {
 		source, err := typegen.ParseSource(arg)
-		if err != nil {
-			return c, fmt.Errorf("%s: %w", arg, err)
-		}
-		if source.Path != "" && insideDir(source.Path, dir) {
-			if c.Server != nil {
-				return c, fmt.Errorf("%s: a project has one own server", arg)
-			}
-			c.Server = &source
-			continue
-		}
-		c.Sources = append(c.Sources, source)
-	}
-	if len(servers) == 0 {
-		if c.Server, c.Sources, err = declared(dir, targets); err != nil {
-			return c, err
+		switch {
+		case err != nil:
+			return typegen.Consumer{}, fmt.Errorf("%s: %w", arg, err)
+		case source.Path == "" || !insideDir(source.Path, dir):
+			c.Sources = append(c.Sources, source)
+		case named:
+			return typegen.Consumer{}, fmt.Errorf("%s: a project has one own server", arg)
+		default:
+			c.Server, named = &source, true
 		}
 	}
-	if len(c.Sources) == 0 && c.Server == nil {
-		return c, fmt.Errorf("%s declares no requires; pass -s", dir)
-	}
-	return c, nil
+	return *c, nil
 }
 
-// declared returns the requires dir declares and, for a project with a browser slot, its own server
-// and the requires declared beside that server.
-func declared(dir string, targets []string) (*typegen.Source, []typegen.Source, error) {
-	sources, err := typegen.DeclaredSources(dir)
-	if err != nil || !slices.Contains(targets, typegen.TargetUI) {
-		return nil, sources, err
+// appConsumer is the app kept in dir (see typegen.AppConsumer) with the dependencies sh.holon.requires
+// declares beside it and beside its own server.
+func appConsumer(name, dir string) (*typegen.Consumer, error) {
+	c, err := typegen.AppConsumer(name, dir)
+	if err != nil || c == nil {
+		return c, err
 	}
-	own, err := typegen.OwnServer(dir)
-	if err != nil || own == nil || own.Path == dir {
-		return own, sources, err
+	roots := []string{dir}
+	if c.Server != nil && c.Server.Path != dir {
+		roots = append(roots, c.Server.Path)
 	}
-	beside, err := typegen.DeclaredSources(own.Path)
-	return own, append(sources, beside...), err
+	for _, root := range roots {
+		sources, err := typegen.DeclaredSources(root)
+		if err != nil {
+			return nil, err
+		}
+		c.Sources = append(c.Sources, sources...)
+	}
+	return c, nil
 }
 
 func insideDir(path, dir string) bool {
@@ -140,21 +163,6 @@ func printContract(cmd *cobra.Command, arg, output string) error {
 	return err
 }
 
-// generateProject resolves the client directory and generates its declared slots from -s
-// or server.json requires. It returns the directory for type-checking.
-func generateProject(cmd *cobra.Command, servers []string, progress io.Writer) (string, error) {
-	typed := cmd.Flags().Arg(0)
-	dir, err := clientDir(typed)
-	if err != nil {
-		return "", err
-	}
-	c, err := consumer(dir, servers)
-	if err != nil {
-		return "", err
-	}
-	return dir, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
-}
-
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
 func newCheck(short string) *cobra.Command {
@@ -171,17 +179,23 @@ func newCheck(short string) *cobra.Command {
 		if noGenerate && len(servers) > 0 {
 			return errors.New("--no-generate type-checks the existing clients; -s has no effect")
 		}
-		var dir string
-		var err error
-		if noGenerate {
-			dir, err = clientDir(cmd.Flags().Arg(0))
-		} else {
-			dir, err = generateProject(cmd, servers, io.Discard)
+		consumers, err := selectConsumers(cmd, servers)
+		if err == nil && !noGenerate {
+			err = typegen.Generate(cmd.Context(), consumers, typegen.Options{Stdout: io.Discard, Stderr: cmd.ErrOrStderr()})
 		}
 		if err != nil {
 			return err
 		}
-		return typegen.Check(cmd.Context(), dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()})
+		for _, c := range consumers {
+			// An app with only its own server makes no calls to check.
+			if len(c.Targets) == 0 {
+				continue
+			}
+			if err := typegen.Check(cmd.Context(), c.Dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}}
 	cmd.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
 	cmd.Flags().BoolVar(&noGenerate, "no-generate", false, "Type-check the existing clients only: no network, no install, no writes")
@@ -221,8 +235,11 @@ func NewTypesCommand() *cobra.Command {
 		if verbose {
 			progress = cmd.ErrOrStderr()
 		}
-		_, err := generateProject(cmd, servers, progress)
-		return err
+		consumers, err := selectConsumers(cmd, servers)
+		if err != nil {
+			return err
+		}
+		return typegen.Generate(cmd.Context(), consumers, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
 	}}
 	generate.Flags().StringVar(&contract, "contract", "", "Print one server's MCP contract instead of generating")
 	generate.Flags().StringVarP(&output, "output", "o", "", "Write the --contract document to FILE, such as holon-contract.json")

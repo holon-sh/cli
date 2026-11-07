@@ -40,38 +40,57 @@ func pythonOverloaded(lines []string) []string {
 }
 
 type pythonEmitter struct {
-	shapes []string
-	names  map[string]bool
+	shapes  []string
+	names   map[string]bool
+	emitted map[*declaration]bool // Shared types already written.
 	// Python evaluates TypedDict fields and alias values on import, so while a shape's recursive
-	// types are declared their names may not exist yet. Every other type is rendered after them.
+	// types are declared their names may not exist yet. Every other type is rendered after them, and
+	// a shared type is written when first rendered, before whatever uses it.
 	declaring bool
 	merging   bool // Rendering an intersection whose recursive members are inlined.
 }
 
 // pythonTypedDict reports whether an object renders as a TypedDict rather than a dict.
 func pythonTypedDict(value typ) bool {
-	return value.kind == kindObject && value.extra.kind != extraOpen && (len(value.fields) > 0 || value.extra.kind != extraImplicit)
+	return value.kind == kindObject && value.extra.kind == extraClosed
 }
 
-// declare writes a shape's recursive types.
-func (e *pythonEmitter) declare(s shape, scope string) {
+// pythonDeclares reports whether a type is declared, which a shared dict is not.
+func pythonDeclares(ref *declaration) bool { return ref.cyclic || pythonTypedDict(ref.value) }
+
+// declare names a shape's declarations and writes its recursive types.
+func (e *pythonEmitter) declare(s shape, tool, binding string) {
 	e.declaring = true
 	defer func() { e.declaring = false }()
-	for _, ref := range s.nameRecursive(e.names, scope) {
-		if pythonTypedDict(ref.value) {
-			delete(e.names, ref.name) // Rendering the TypedDict claims its name back.
-			e.render(ref.value, ref.name)
-		} else {
-			rendered := e.render(ref.value, ref.name)
-			e.shapes = append(e.shapes, fmt.Sprintf("%s: _typing.TypeAlias = %s", ref.name, rendered))
+	for _, ref := range s.name(e.names, tool, binding, pythonDeclares) {
+		if ref.cyclic {
+			e.emit(ref)
 		}
+	}
+}
+
+// emit writes a declaration.
+func (e *pythonEmitter) emit(ref *declaration) {
+	e.emitted[ref] = true
+	if pythonTypedDict(ref.value) {
+		delete(e.names, ref.name) // Rendering the TypedDict claims its name back.
+		e.render(ref.value, ref.name)
+	} else {
+		rendered := e.render(ref.value, ref.name)
+		e.shapes = append(e.shapes, fmt.Sprintf("%s: _typing.TypeAlias = %s", ref.name, rendered))
 	}
 }
 
 func (e *pythonEmitter) render(value typ, name string) string {
 	switch value.kind {
-	case kindRecursive:
-		if e.declaring {
+	case kindDeclared:
+		if !pythonDeclares(value.ref) {
+			return e.render(value.ref.value, name)
+		}
+		if !value.ref.cyclic && !e.emitted[value.ref] {
+			e.emit(value.ref)
+		}
+		if e.declaring && value.ref.cyclic {
 			return quoted(value.ref.name)
 		}
 		return value.ref.name
@@ -118,12 +137,13 @@ func (e *pythonEmitter) render(value typ, name string) string {
 			rendered[i] = e.render(item, name)
 		}
 		// A quoted name does not support | at runtime.
-		if e.declaring && slices.ContainsFunc(value.items, func(item typ) bool { return item.kind == kindRecursive }) {
+		if e.declaring && slices.ContainsFunc(value.items, func(item typ) bool { return item.kind == kindDeclared && item.ref.cyclic }) {
 			return "_typing.Union[" + strings.Join(rendered, ", ") + "]"
 		}
 		return strings.Join(rendered, " | ")
 	case kindIntersection:
 		// Only the outermost intersection inlines its recursive members, so that each renders once.
+		// Shared members are inlined like any object.
 		inline := !e.merging
 		if inline {
 			e.merging = true
@@ -131,7 +151,7 @@ func (e *pythonEmitter) render(value typ, name string) string {
 		}
 		combined := map[string]field{}
 		for _, item := range value.items {
-			if item.kind == kindRecursive && inline {
+			if item.kind == kindDeclared && (inline || !item.ref.cyclic) {
 				item = item.ref.value
 			}
 			if item.kind != kindObject {
@@ -145,7 +165,7 @@ func (e *pythonEmitter) render(value typ, name string) string {
 				combined[key] = member
 			}
 		}
-		return e.render(typ{kind: kindObject, fields: combined, extra: extra{kind: extraImplicit}}, name)
+		return e.render(objectType(combined, extra{kind: extraImplicit}), name)
 	case kindObject:
 		if !pythonTypedDict(value) {
 			rendered := "_builtins.object"
@@ -173,7 +193,7 @@ func (e *pythonEmitter) render(value typ, name string) string {
 // input renders one input type and its keyword signatures. Unpack requires a
 // TypedDict, so unions become overloads and open objects use their value type.
 func (e *pythonEmitter) input(value typ, name string) (string, []string) {
-	for value.kind == kindRecursive && !pythonTypedDict(value.ref.value) {
+	for value.kind == kindDeclared && !pythonTypedDict(value.ref.value) {
 		value = value.ref.value
 	}
 	if value.kind == kindUnion && len(value.items) > 0 {
@@ -196,7 +216,7 @@ func (e *pythonEmitter) input(value typ, name string) (string, []string) {
 
 // generatePython writes the typing-only module body: shapes, export classes, protocols and _Clients.
 func generatePython(contracts map[string]catalog) string {
-	emitter := &pythonEmitter{names: map[string]bool{"Inputs": true, "Outputs": true, "InputTypes": true, "OutputTypes": true}}
+	emitter := &pythonEmitter{names: map[string]bool{"Inputs": true, "Outputs": true, "InputTypes": true, "OutputTypes": true}, emitted: map[*declaration]bool{}}
 	var clients []string
 	exportNames := []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"}
 	exports := make([][]string, 4)
@@ -211,8 +231,8 @@ func generatePython(contracts map[string]catalog) string {
 			tool := tools[name]
 			shapes := []shape{tool.input, tool.output}
 			prefix := typeIdentifier(binding) + typeIdentifier(name)
-			emitter.declare(shapes[0], prefix+"Input")
-			emitter.declare(shapes[1], prefix+"Output")
+			emitter.declare(shapes[0], prefix+"Input", typeIdentifier(binding)+"Input")
+			emitter.declare(shapes[1], prefix+"Output", typeIdentifier(binding)+"Output")
 			input, arguments := emitter.input(shapes[0].value, prefix+"Input")
 			output := emitter.render(shapes[1].value, prefix+"Output")
 			returned := output

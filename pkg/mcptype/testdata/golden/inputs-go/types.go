@@ -16,5 +16,7 @@ type OrdersLookupInputRow = struct {
 	Sku string "json:\"sku\""
 }
 
-type OrdersLookupOutput = map[string]json.RawMessage
+type OrdersLookupOutput = struct {
+	Total *json.Number "json:\"total,omitempty\""
+}
 
