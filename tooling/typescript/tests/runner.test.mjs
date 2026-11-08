@@ -167,12 +167,18 @@ test("check uses the application's compiler CLI and honors project file selectio
   run("check", config);
 });
 
-test("without a tsconfig, check compiles the project's sources but not installed or generated ones", t => {
+test("check finds a tsconfig as tsc does, and needs one unless it is named an entry", t => {
   const { root, run } = unpackTooling(t);
-  const wrong = 'export const wrong: number = "wrong";';
-  const app = application(root, { "package.json": '{"type":"module"}', "src/nested/wrong.ts": wrong, "node_modules/pkg/wrong.ts": wrong, ".holon/wrong.ts": wrong, ".holon-types/wrong.ts": wrong });
+  const app = application(root, { "package.json": '{"type":"module"}', "packages/api/package.json": '{"type":"module"}', "packages/api/wrong.ts": 'export const wrong: number = "wrong";' });
   installCompiler(app);
+  const project = join(app, "packages", "api");
   const config = join(root, "check.json");
-  writeFileSync(config, JSON.stringify({ root: app }));
-  assert.throws(() => run("check", config), error => error.stdout.match(/wrong\.ts/g)?.join() === "wrong.ts" && error.stdout.includes("src/nested/wrong.ts"));
+  const reportsWrong = error => error.stdout.includes("wrong.ts");
+  writeFileSync(config, JSON.stringify({ root: project }));
+  assert.throws(() => run("check", config), error => error.stderr.includes("no tsconfig.json"));
+  writeFileSync(config, JSON.stringify({ root: project, entry: "wrong.ts" }));
+  assert.throws(() => run("check", config), reportsWrong);
+  writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2023", module: "NodeNext", moduleResolution: "NodeNext", types: [] } }));
+  writeFileSync(config, JSON.stringify({ root: project }));
+  assert.throws(() => run("check", config), reportsWrong);
 });
