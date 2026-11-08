@@ -160,7 +160,7 @@ func (d *devLoop) buildOverlay(app manifestApp, snapshot, archive string) (ocisp
 	}
 	types := *d.options.types.accepted[app.Name]
 	types.root = snapshot
-	if _, _, err := stageSnapshot(app, &types, false); err != nil {
+	if _, _, err := stageSnapshot(app, &types); err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	if !types.hosted {

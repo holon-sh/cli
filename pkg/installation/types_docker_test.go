@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -36,7 +35,7 @@ func TestDockerAutomaticTypes(t *testing.T) {
 export default createMcpHandler(() => {
   const server=new McpServer({name:"io.github.example/orders",version:"1.0.0",title:"Orders",description:"Orders by id"});
   server.registerTool("get_order", {inputSchema:z.object({id:z.string()}),outputSchema:z.object({total:z.number()})},
-    ({id}) => ({content:[{type:"text",text:id}],structuredContent:{total:5}}));
+    ({id}) => ({content:[{type:"text",text:String(id)}],structuredContent:{total:5}}));
   return server;
 });`
 	caller := `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; import {z} from "zod"; import {apps} from "holon-sh";
@@ -119,7 +118,7 @@ export default createMcpHandler(() => {
 	options.types = workspace
 	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\n%s", err, &diagnostics)
 	}
 	defer cleanup()
 	apps, err := buildAndPush(t.Context(), prepared, &imageUpload{grant: grant}, options)
@@ -180,8 +179,18 @@ export default createMcpHandler(() => {
 	checkout := prepared.Apps[slices.IndexFunc(prepared.Apps, func(app manifestApp) bool { return app.Name == "checkout" })]
 	before := editor(checkout, "index.d.ts")
 	workspace.accept(prepared)
-	providerPath := filepath.Join(root, "orders/server.ts")
+	providerPath, callerPath := filepath.Join(root, "orders/server.ts"), filepath.Join(root, "checkout/server.ts")
 	if err := os.WriteFile(providerPath, []byte(strings.Replace(provider, "id:z.string()", "id:z.number()", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := prepareManifestTypes(t.Context(), manifest, options); err == nil ||
+		!strings.Contains(err.Error(), "checkout does not type-check") || !strings.Contains(err.Error(), "error TS2322") {
+		t.Fatalf("expected incompatible argument diagnostic: %v", err)
+	}
+	if editor(checkout, "index.d.ts") == before {
+		t.Fatal("editor declarations did not update")
+	}
+	if err := os.WriteFile(callerPath, []byte(strings.Replace(caller, "get_order({id})", "get_order({id:Number(id)})", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	changed, cleanupChanged, err := prepareManifestTypes(t.Context(), manifest, options)
@@ -193,20 +202,12 @@ export default createMcpHandler(() => {
 	if !workspace.affected(t.Context(), changed.Apps[index], changed) {
 		t.Fatal("signature edit did not include caller")
 	}
-	if editor(changed.Apps[index], "index.d.ts") == before {
-		t.Fatal("editor declarations did not update")
-	}
-	diagnostics.Reset()
-	_, err = buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{changed.Apps[index]}}, &imageUpload{grant: grant}, options)
-	if err == nil || !strings.Contains(diagnostics.String(), "error TS2322") {
-		t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, diagnostics.String())
-	}
-	if err := os.WriteFile(providerPath, []byte(provider), 0o644); err != nil {
+	if err := os.WriteFile(providerPath, []byte(strings.Replace(provider, "total:5", "total:6", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sourceFiles(t, filepath.Join(root, "checkout"), map[string]string{
-		"server.ts": strings.Replace(caller, "get_order({id})", "get_order({id:42})", 1),
-	})
+	if err := os.WriteFile(callerPath, []byte(caller), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	fixed, cleanupFixed, err := prepareManifestTypes(t.Context(), manifest, options)
 	if err != nil {
 		t.Fatal(err)
@@ -222,31 +223,6 @@ export default createMcpHandler(() => {
 	}
 	if _, _, err := prepareManifestTypes(t.Context(), manifest, options); err == nil || !strings.Contains(err.Error(), "contract evaluation has no filesystem") {
 		t.Fatalf("unsupported extraction did not fail preparation: %v", err)
-	}
-	providerRoot := filepath.Join(root, "orders")
-	var rewritten map[string]any
-	if err := json.Unmarshal(originalFiles[filepath.Join(providerRoot, "package.json")], &rewritten); err != nil {
-		t.Fatal(err)
-	}
-	rewritten["scripts"] = map[string]string{"build": "node rewrite.mjs"}
-	if err := writeTypeJSON(filepath.Join(providerRoot, "package.json"), rewritten); err != nil {
-		t.Fatal(err)
-	}
-	sourceFiles(t, providerRoot, map[string]string{
-		"server.ts": provider,
-		"rewrite.mjs": `import {readFileSync,writeFileSync} from "node:fs";
-writeFileSync("server.ts",readFileSync("server.ts","utf8").replace("id:z.string()","id:z.number()"));`,
-	})
-	mutated, cleanupMutated, err := prepareManifestTypes(t.Context(), manifest, options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanupMutated()
-	providerIndex := slices.IndexFunc(mutated.Apps, func(app manifestApp) bool { return app.Name == "orders" })
-	diagnostics.Reset()
-	_, err = buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{mutated.Apps[providerIndex]}}, &imageUpload{grant: grant}, options)
-	if err == nil || !strings.Contains(diagnostics.String(), "refusing to publish stale types") {
-		t.Fatalf("expected build-time contract mutation rejection: %v\n%s", err, diagnostics.String())
 	}
 }
 
@@ -301,25 +277,24 @@ async def checkout(id: str) -> float:
 				"server.py": strings.Replace(caller, `read(id=id)`, `read(id=42)`, 1),
 			})
 		}
-		prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer cleanup()
-		selected := manifestSpec{Apps: []manifestApp{prepared.Apps[1]}}
 		var progress strings.Builder
 		options.Stderr = &progress
-		apps, err := buildAndPush(t.Context(), selected, &imageUpload{grant: grant}, options)
+		prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options)
 		if !valid {
-			if err == nil || !strings.Contains(strings.ToLower(progress.String()), "incompatible type") {
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "incompatible type") {
 				t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, progress.String())
 			}
-			steps := regexp.MustCompile(`(?m)^(#[0-9]+) .*/opt/holon-check/bin/pip install .*`).FindAllStringSubmatch(progress.String(), -1)
-			if !slices.ContainsFunc(steps, func(step []string) bool { return strings.Contains(progress.String(), step[1]+" CACHED\n") }) {
+			if strings.Contains(progress.String(), "Collecting mypy") || !strings.Contains(progress.String(), checkerInstall) {
 				t.Fatalf("source edit reinstalled the type checker: %v\n%s", err, progress.String())
 			}
 			continue
 		}
+		if err != nil {
+			t.Fatalf("%v\n%s", err, progress.String())
+		}
+		defer cleanup()
+		selected := manifestSpec{Apps: []manifestApp{prepared.Apps[1]}}
+		apps, err := buildAndPush(t.Context(), selected, &imageUpload{grant: grant}, options)
 		if err != nil {
 			t.Fatalf("build Python caller: %v\n%s", err, progress.String())
 		}

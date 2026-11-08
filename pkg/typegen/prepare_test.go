@@ -29,7 +29,7 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 	put(t, checkout, "server.json", string(mustJSON(t, map[string]any{"name": "example.com/checkout", "version": "1.0.0", "description": "Checkout"})))
 	own := mcpcontract.Tool{Name: "status", Input: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
 	results := map[string]any{
-		"example.com/checkout": extraction{Tools: []mcpcontract.Tool{own}, Sources: map[string]string{"server.ts": "sha256:checkout"}},
+		"example.com/checkout": extraction{Tools: []mcpcontract.Tool{own}},
 		"example.com/orders":   extraction{Tools: []mcpcontract.Tool{lookupTool}},
 	}
 	c := Consumer{Name: "checkout", Dir: checkout, Targets: targets, Server: &Source{Path: filepath.Join(checkout, "server.ts")}, Sources: []Source{{Path: orders}}}
@@ -321,7 +321,6 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(orders, "holon/apps")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("extraction wrote the generated slot: %v", err)
 	}
-	// Check verifies the application files the server loaded, not the slot an image build replaces.
 	c := Consumer{Name: "orders", Dir: orders, Server: &Source{Path: orders}, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
 	if err := os.MkdirAll(filepath.Join(orders, "holon/apps/__pycache__"), 0o755); err != nil {
 		t.Fatal(err)
@@ -329,14 +328,8 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 		t.Fatalf("generate beside a holon/apps directory without a module: %v", err)
 	}
-	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prepared.Close()
-	check, _ := prepared.CheckConfig("orders")
-	if sources := check["sources"].(map[string]string); sources["server.py"] == "" || sources["holon/apps/__init__.py"] != "" || !strings.Contains(read(t, orders, "holon/apps/__init__.py"), "async def lookup(") {
-		t.Fatalf("check sources = %v", sources)
+	if !strings.Contains(read(t, orders, "holon/apps/__init__.py"), "async def lookup(") {
+		t.Fatal("generate wrote no client module")
 	}
 }
 

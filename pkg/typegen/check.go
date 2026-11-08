@@ -3,7 +3,6 @@ package typegen
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -61,7 +60,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 			program = pythonEnvironment(dir, program)
 		}
 		config := filepath.Join(root, language+"-check.json")
-		if err = writeJSON(config, map[string]any{"root": dir, "entry": "", "sources": map[string]string{}, "check": true}); err != nil {
+		if err = writeJSON(config, map[string]any{"root": dir, "entry": ""}); err != nil {
 			return err
 		}
 		command := l.command(ctx, program, filepath.Join(root, "tooling"), language, l.checker, config)
@@ -77,18 +76,16 @@ func Check(ctx context.Context, dir string, options Options) error {
 	return nil
 }
 
-// CheckConfig is the runner's check configuration ({entry, sources, check}) for the consumer's own
-// server, for a type check inside an image build against the dependencies installed there. Paths are
-// relative to the consumer directory. It reports false for consumers without an extracted server.
-func (p *Prepared) CheckConfig(consumer string) (map[string]any, bool) {
+// CheckEntry is the consumer's own server entry, relative to the consumer directory, and its language, for a
+// type check against the dependencies installed in its image. It reports false for consumers without an
+// extracted server.
+func (p *Prepared) CheckEntry(consumer string) (entry, language string, ok bool) {
 	c := p.consumer(consumer)
 	if c == nil || c.server == nil || c.server.metadata.Schema == nil {
-		return nil, false
+		return "", "", false
 	}
-	sources := map[string]string{}
-	maps.Copy(sources, c.server.sources)
-	entry, _ := filepath.Rel(c.Dir, filepath.Join(c.server.origin, c.server.entry))
-	return map[string]any{"entry": filepath.ToSlash(entry), "sources": sources, "check": true}, true
+	entry, _ = filepath.Rel(c.Dir, filepath.Join(c.server.origin, c.server.entry))
+	return filepath.ToSlash(entry), c.server.language, true
 }
 
 func pythonEnvironment(dir, fallback string) string {

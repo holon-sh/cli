@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,49 +14,102 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/holon-sh/cli/pkg/typegen"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
 )
 
-var contractRunners = map[string]struct{ program, runner string }{
-	"typescript": {"node", "runner.mjs"},
-	"python":     {"python", "extract.py"},
+// contractRunners are each language's interpreter, contract runner and checker, in its tooling directory.
+var contractRunners = map[string]struct{ program, runner, checker string }{
+	"typescript": {"node", "runner.mjs", "runner.mjs"},
+	"python":     {"python", "extract.py", "runner.py"},
 }
 
-var finalStage = regexp.MustCompile(`(?m)^FROM \S+ AS (\S+)$`)
+var finalStage = regexp.MustCompile(`(?m)^FROM (\S+) AS (\S+)$`)
 
-// extractTypes is typegen's contract-runner hook. It builds the app's image with Kiln, without the app's
-// build step, which may need the clients being prepared, and runs the runner there without network
-// access, so the server's imports resolve against the dependencies its image installs.
-func (o buildOptions) extractTypes(ctx context.Context, language, tooling string, args []string, stdout io.Writer) error {
+// checkerInstall installs the Python type checker on the runtime's base image alone, so its layer survives
+// source and dependency changes. A check imports it from PYTHONPATH with the app's own interpreter.
+const checkerInstall = "python -m pip install --disable-pip-version-check --no-cache-dir --root-user-action=ignore --target /opt/holon-check mypy==2.4.0"
+
+// extractTypes is typegen's contract-runner hook. It runs the runner in the app's extraction image without
+// network access, so the server's imports resolve against the dependencies its image installs.
+func (o buildOptions) extractTypes(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error {
 	runner := contractRunners[language]
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
-		return err
-	}
-	logs := o.output.logs(o.Stderr)
 	command := slices.Concat([]string{runner.program, "/holon-tooling/" + language + "/" + runner.runner, args[0], "/app"}, args[2:])
-	if err := extractInImage(ctx, args[1], tooling, command, stdout, env, logs); err != nil {
-		if !errors.As(err, new(*typegen.RunnerError)) {
-			logs.failed("MCP types")
-		}
+	if err := o.runInImage(ctx, args[1], toolingDir, "", false, command, stdout); err != nil {
 		return fmt.Errorf("prepare MCP types: %w", err)
 	}
 	return nil
 }
 
-func extractInImage(ctx context.Context, source, tooling string, command []string, stdout io.Writer, env []string, logs io.Writer) error {
+// checkTypes type-checks each path app that serves a contract against its generated clients, in the image
+// its contract was extracted in, so that the checker sees the dependencies installed there.
+func (o buildOptions) checkTypes(ctx context.Context, apps []*manifestApp) error {
+	group, ctx := errgroup.WithContext(ctx)
+	for _, app := range apps {
+		p := app.resolved.types
+		if entry, language, ok := p.prepared.CheckEntry(p.name); ok {
+			group.Go(func() error { return o.checkInImage(ctx, p, entry, language) })
+		}
+	}
+	return group.Wait()
+}
+
+func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry, language string) error {
+	generated, err := os.MkdirTemp("", "holon-types-check-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(generated)
+	directory := filepath.Join(generated, ".holon-types")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		return err
+	}
+	if err := writeClients(p, generated); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(directory, "stage.sh"), []byte(stageRuntimeSlots), 0o755); err != nil {
+		return err
+	}
+	if err := writeTypeJSON(filepath.Join(directory, "check.json"), map[string]string{"entry": entry}); err != nil {
+		return err
+	}
+	runner := contractRunners[language]
+	command := []string{runner.program, "/holon-tooling/" + language + "/" + runner.checker, "check", "/app/.holon-types/check.json"}
+	if language == "python" {
+		command = slices.Concat([]string{"env", "PYTHONPATH=/opt/holon-check", "MYPY_CACHE_DIR=/tmp/mypy"}, command)
+	}
+	var output bytes.Buffer
+	err = o.runInImage(ctx, p.root, p.prepared.Tooling(), generated, language == "python", command, &output)
+	if failed := (*typegen.RunnerError)(nil); errors.As(err, &failed) {
+		return fmt.Errorf("%s does not type-check against its typed contracts:\n%s", p.name, strings.TrimSpace(output.String()+failed.Stderr))
+	}
+	return err
+}
+
+// runInImage builds source's image for this machine with Kiln, without the app's build step, which may need
+// the clients being prepared, and runs command there without network access, with the tooling at
+// /holon-tooling. It copies what the command printed to stdout. With generated, it first stages those
+// clients as an image build does; with checker, the Python type checker is at /opt/holon-check.
+func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdout io.Writer) error {
+	env, err := commandenv.Environ(o.Env)
+	if err != nil {
+		return err
+	}
 	config, err := railpackConfig(filepath.Join(source, "railpack.json"))
 	if err != nil {
 		return err
 	}
 	objectField(objectField(config, "steps"), "build")["commands"] = []any{}
-	if err := os.Mkdir(filepath.Join(source, ".holon-types"), 0o755); err != nil {
+	directory := filepath.Join(source, ".holon-types")
+	if err := os.Mkdir(directory, 0o755); err != nil {
 		return fmt.Errorf(".holon-types is reserved: %w", err)
 	}
-	if err := writeTypeJSON(filepath.Join(source, ".holon-types", "railpack.json"), config); err != nil {
+	defer os.RemoveAll(directory)
+	if err := writeTypeJSON(filepath.Join(directory, "railpack.json"), config); err != nil {
 		return err
 	}
 	plan, err := kiln.Plan(ctx, kiln.Request{
@@ -65,14 +119,25 @@ func extractInImage(ctx context.Context, source, tooling string, command []strin
 		return err
 	}
 	stages := finalStage.FindAllStringSubmatch(plan.Dockerfile, -1)
+	base, final := stages[len(stages)-1][1], stages[len(stages)-1][2]
 	words := make([]string, len(command))
 	for i, word := range command {
 		words[i] = "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
 	}
-	recipe := plan.Dockerfile + fmt.Sprintf("FROM %s AS contract\n"+
-		"RUN --network=none --mount=type=bind,from=tooling,target=/holon-tooling,readonly mkdir /tmp/contract && "+
+	args := []string{"--build-context", "tooling=" + toolingDir}
+	recipe, mounts := plan.Dockerfile, "--mount=type=bind,from=tooling,target=/holon-tooling,readonly"
+	if checker {
+		recipe += "FROM " + base + " AS checker\nRUN " + checkerInstall + "\n"
+		mounts += " --mount=type=bind,from=checker,source=/opt/holon-check,target=/opt/holon-check,readonly"
+	}
+	recipe += "FROM " + final + " AS contract\n"
+	if generated != "" {
+		args = append(args, "--build-context", "generated="+generated)
+		recipe += "COPY --from=generated --chmod=755 . /app/\nRUN sh .holon-types/stage.sh\n"
+	}
+	recipe += fmt.Sprintf("RUN --network=none %s mkdir /tmp/contract && "+
 		"{ %s >/tmp/contract/stdout 2>/tmp/contract/stderr; echo $? >/tmp/contract/status; }\n"+
-		"FROM scratch\nCOPY --from=contract /tmp/contract/ /\n", stages[len(stages)-1][1], strings.Join(words, " "))
+		"FROM scratch\nCOPY --from=contract /tmp/contract/ /\n", mounts, strings.Join(words, " "))
 	work, err := os.MkdirTemp("", "holon-types-run-")
 	if err != nil {
 		return err
@@ -86,11 +151,20 @@ func extractInImage(ctx context.Context, source, tooling string, command []strin
 	if err != nil {
 		return err
 	}
-	args := []string{
-		"buildx", "build", "--builder", builder, "--provenance=false", "-f", dockerfile,
-		"--build-context", "tooling=" + tooling, "--output", "type=local,dest=" + exported, source,
-	}
+	args = slices.Concat([]string{"buildx", "build", "--builder", builder, "--provenance=false", "-f", dockerfile,
+		"--output", "type=local,dest=" + exported}, args, []string{source})
+	logs := o.output.logs(o.Stderr)
 	if err := commandenv.RunStreaming(ctx, "docker", args, nil, env, logs, logs); err != nil {
+		if ctx.Err() == nil {
+			logs.failed("MCP types")
+		}
+		return err
+	}
+	result, err := os.ReadFile(filepath.Join(exported, "stdout"))
+	if err != nil {
+		return err
+	}
+	if _, err := stdout.Write(result); err != nil {
 		return err
 	}
 	status, err := os.ReadFile(filepath.Join(exported, "status"))
@@ -98,20 +172,12 @@ func extractInImage(ctx context.Context, source, tooling string, command []strin
 		return err
 	}
 	code, err := strconv.Atoi(strings.TrimSpace(string(status)))
+	if err != nil || code == 0 {
+		return err
+	}
+	stderr, err := os.ReadFile(filepath.Join(exported, "stderr"))
 	if err != nil {
 		return err
 	}
-	if code != 0 {
-		stderr, err := os.ReadFile(filepath.Join(exported, "stderr"))
-		if err != nil {
-			return err
-		}
-		return &typegen.RunnerError{Status: code, Stderr: string(stderr)}
-	}
-	result, err := os.ReadFile(filepath.Join(exported, "stdout"))
-	if err != nil {
-		return err
-	}
-	_, err = stdout.Write(result)
-	return err
+	return &typegen.RunnerError{Status: code, Stderr: string(stderr)}
 }

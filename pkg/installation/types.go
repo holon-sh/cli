@@ -84,8 +84,9 @@ func (w *typeWorkspace) acquire(manifest manifestSpec) error {
 }
 
 // prepareManifestTypes snapshots each path app for its image build and prepares its typed contract and
-// clients with typegen: extraction (on the host or in a container), dependency contract resolution and
-// generation. With a workspace it also writes the clients into the apps for their editors.
+// clients with typegen: extraction in each app's image, dependency contract resolution and generation.
+// With a workspace it also writes the clients into the apps for their editors. Last, it type-checks each
+// app against its clients in the image its contract was extracted in.
 func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options buildOptions) (_ manifestSpec, _ func(), err error) {
 	finish := options.output.measure("apps", "prepare contracts")
 	defer finish()
@@ -247,6 +248,9 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 					name, app.Name, strings.Join(texts, ", "), name, app.Name)
 			}
 		}
+	}
+	if err := options.checkTypes(ctx, pathApps); err != nil {
+		return manifestSpec{}, nil, err
 	}
 	return manifest, remove, nil
 }

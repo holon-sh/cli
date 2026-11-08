@@ -3,7 +3,6 @@ import { readFileSync, existsSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import ts from "typescript";
 import { contract } from "./extract.mjs";
 
@@ -19,14 +18,9 @@ if (mode === "contract" && !vm.SourceTextModule) {
   const result = await contract(resolve(args[0]), args[1]);
   if (result.diagnostic) process.stderr.write(`${result.diagnostic}\n${result.missing ? `${result.missing}\n` : ""}`, () => process.exit(result.missing ? 3 : 2));
   else process.stdout.write(JSON.stringify(result), () => process.exit(0));
-} else if (mode === "check" || mode === "verify") {
+} else if (mode === "check") {
   const config = JSON.parse(readFileSync(args[0], "utf8"));
   const root = resolve(config.root ?? ".");
-  for (const [path, expected] of Object.entries(config.sources ?? {})) {
-    const actual = createHash("sha256").update(readFileSync(join(root, path))).digest("hex");
-    if (actual !== expected) throw new Error(`${path}: application install/build changed a source file used for its MCP contract; refusing to publish stale types.`);
-  }
-  if (mode === "verify") process.exit(0);
   const require = createRequire(join(root, "package.json"));
   const compilerPackage = require.resolve("typescript/package.json");
   const tsconfig = join(root, "tsconfig.json");

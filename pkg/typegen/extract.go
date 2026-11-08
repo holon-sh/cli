@@ -18,16 +18,13 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
-	"github.com/opencontainers/go-digest"
 )
 
-// extraction is the contract a runner prints: the server's catalog and the application files it
-// loaded, with their SHA-256 digests.
+// extraction is the contract a runner prints: the server's catalog and its own description.
 type extraction struct {
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`
 	ServerInfo json.RawMessage        `json:"serverInfo"`
-	Sources    map[string]string      `json:"sources"`
 }
 
 // RunnerError is a contract runner's failure: the status it exited with and what it wrote to
@@ -134,7 +131,6 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 				return fmt.Errorf("%s: %s is not installed; install the application's dependencies, or commit its contract (holon types generate --contract %s -o %s)\n%s", s.origin, missing.name, s.origin, filepath.Join(s.origin, ContractFile), missing.diagnostic)
 			}
 			s.metadata.Identity, s.metadata.Schema = document.Identity, document.Schema
-			s.sources = map[string]string{ContractFile: digest.FromBytes(document.Data).Encoded()}
 			continue
 		}
 		if failures[i] != nil {

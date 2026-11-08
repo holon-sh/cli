@@ -38,8 +38,8 @@ function application(root, files) {
   return app;
 }
 
-test("a server with only schema imports extracts with nothing installed and records every file served", t => {
-  const { root, run, extract } = unpackTooling(t);
+test("a server with only schema imports extracts with nothing installed", t => {
+  const { root, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
     "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@schemas/*": ["./schemas/*"] } } }),
@@ -67,16 +67,7 @@ export default createMcpHandler(() => {
   assert.deepEqual(extracted.orders.tools.map(tool => tool.name), ["list", "read"]);
   assert.deepEqual(Object.keys(extracted.orders.tools[1].outputSchema.properties), ["id", "status"]);
   assert.deepEqual(extracted.orders.resources, [{ uri: "orders://latest", outputSchema: { type: "object" } }, { uri: "ui://orders/app.html", outputSchema: {} }]);
-  assert.deepEqual(Object.keys(extracted.orders.sources), ["meta.json", "schemas/order.ts", "server.ts", "tools.ts"]);
   assert.deepEqual(extracted.plain.tools, []);
-
-  const config = join(root, "verify.json");
-  writeFileSync(config, JSON.stringify({ root: app, sources: extracted.orders.sources }));
-  run("verify", config);
-  writeFileSync(join(app, "schemas/order.ts"), "export const status = null;");
-  for (const mode of ["check", "verify"]) {
-    assert.throws(() => run(mode, config), { stderr: /schemas\/order\.ts:.*stale/ });
-  }
 });
 
 test("installed packages resolve from the application: its own Zod, CommonJS packages and the MCP client", t => {
@@ -108,7 +99,6 @@ export default createMcpHandler(() => {
   symlinkSync(fileURLToPath(new URL("../node_modules/@modelcontextprotocol/client", import.meta.url)), join(app, "node_modules/@modelcontextprotocol/client"));
   const { units } = extract([{ name: "units", path: app, entry: "server.ts" }]);
   assert.deepEqual(units.tools, [{ name: "convert", inputSchema: { type: "object", description: "zod 9.9.9", properties: { unit: { type: "string", enum: ["cm", "in"] } } } }]);
-  assert.deepEqual(Object.keys(units.sources), ["server.ts"]);
 });
 
 test("module-scope reads of the environment, clock and randomness give one contract", t => {
