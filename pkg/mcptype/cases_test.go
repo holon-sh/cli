@@ -93,6 +93,9 @@ const kitchenSink = `{
     {"name": "CallTool", "inputSchema": {"type": "object"}},
     {"name": "get-order", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "additionalProperties": false, "required": ["id"]}},
     {"name": "get_order", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "additionalProperties": false, "required": ["id"]}},
+    {"name": "runtime.run", "inputSchema": {"type": "object", "properties": {"code": {"type": "string"}}, "additionalProperties": false, "required": ["code"]}, "outputSchema": {"type": "object", "properties": {"stdout": {"type": "string"}}, "additionalProperties": false, "required": ["stdout"]}},
+    {"name": "runtime/run", "inputSchema": {"type": "object"}},
+    {"name": "_hidden", "inputSchema": {"type": "object"}},
     {"name": "123", "inputSchema": {"type": "object"}},
     {"name": "-", "inputSchema": {"type": "object"}},
     {"name": "émoji🎉", "inputSchema": {"type": "object", "properties": {"é": {"type": "string"}}}, "outputSchema": {"type": "string", "description": "é"}}

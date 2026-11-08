@@ -19,6 +19,10 @@ type OrdersCallTool2Input = map[string]json.RawMessage
 
 type OrdersCallTool2Output = json.RawMessage
 
+type OrdersHiddenInput = map[string]json.RawMessage
+
+type OrdersHiddenOutput = json.RawMessage
+
 type OrdersCallTool3Input = struct {
 	A *json.Number "json:\"a,omitempty\""
 	B string "json:\"b\""
@@ -114,6 +118,18 @@ type OrdersInputList = json.RawMessage
 type OrdersKitchenSinkInput = OrdersInputX1startsDashKeyAllEtc
 
 type OrdersKitchenSinkOutput = json.RawMessage
+
+type OrdersRuntimeRunInput = struct {
+	Code string "json:\"code\""
+}
+
+type OrdersRuntimeRunOutput = struct {
+	Stdout string "json:\"stdout\""
+}
+
+type OrdersRuntimeRun2Input = map[string]json.RawMessage
+
+type OrdersRuntimeRun2Output = json.RawMessage
 
 type OrdersWeirdKeysInput = map[string]json.RawMessage
 

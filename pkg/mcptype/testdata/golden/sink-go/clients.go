@@ -43,6 +43,10 @@ var Orders = _Orders{&holon.Dependency{Name: "orders", Tools: map[string]holon.T
 		Input:  "{\"type\":\"object\"}",
 		Output: "",
 	},
+	"_hidden": {
+		Input:  "{\"type\":\"object\"}",
+		Output: "",
+	},
 	"call_tool": {
 		Input:  "{\"additionalProperties\":false,\"properties\":{\"a\":{\"type\":\"integer\"},\"b\":{\"type\":\"string\"}},\"required\":[\"b\"],\"type\":\"object\"}",
 		Output: "{\"additionalProperties\":false,\"properties\":{\"x\":{\"type\":\"boolean\"}},\"required\":[\"x\"],\"type\":\"object\"}",
@@ -61,6 +65,14 @@ var Orders = _Orders{&holon.Dependency{Name: "orders", Tools: map[string]holon.T
 	},
 	"kitchen-sink": {
 		Input:  "{\"$defs\":{\"9lives\":{\"type\":\"string\"},\"Node\":{\"additionalProperties\":false,\"properties\":{\"next\":{\"$ref\":\"#/$defs/Node\"},\"value\":{\"type\":\"integer\"}},\"required\":[\"value\"],\"type\":\"object\"},\"Nodes\":{\"items\":{\"$ref\":\"#/$defs/Node\"},\"type\":\"array\"},\"_private\":{\"type\":\"boolean\"},\"a/b~c\":{\"type\":\"integer\"},\"for\":{\"type\":\"string\"},\"list\":{\"prefixItems\":[{\"type\":\"string\"}],\"type\":\"array\"}},\"additionalProperties\":false,\"definitions\":{\"Legacy\":{\"type\":\"number\"},\"Node\":{\"type\":\"string\"}},\"properties\":{\"1starts\":{\"type\":\"string\"},\"Dash-Key\":{\"type\":\"string\"},\"all\":{\"allOf\":[{\"properties\":{\"a\":{\"type\":\"string\"}},\"required\":[\"a\"],\"type\":\"object\"},{\"properties\":{\"b\":{\"type\":\"integer\"}},\"type\":\"object\"}]},\"allConflict\":{\"allOf\":[{\"properties\":{\"a\":{\"type\":\"string\"}},\"type\":\"object\"},{\"properties\":{\"a\":{\"type\":\"integer\"}},\"type\":\"object\"}]},\"allNonObject\":{\"allOf\":[{\"type\":\"string\"},{\"type\":\"object\"}]},\"annotated\":{\"$comment\":\"c\",\"description\":\"gone\",\"examples\":[1],\"title\":\"t\",\"type\":\"string\"},\"arrayRef\":{\"$ref\":\"#/$defs/list/prefixItems/0\"},\"closedEmpty\":{\"additionalProperties\":false,\"type\":\"object\"},\"constNum\":{\"const\":1e+21},\"constObj\":{\"const\":{\"deep\":[1,2]}},\"constString\":{\"const\":\"it's \\\"quoted\\\"\\n\"},\"cycle\":{\"$ref\":\"#/$defs/Node\"},\"dash-key\":{\"type\":\"string\"},\"emptyAll\":{\"allOf\":[]},\"emptyAny\":{\"anyOf\":[]},\"falseSchema\":false,\"implicitTuple\":{\"minItems\":2.0,\"prefixItems\":[{\"const\":\"x\"}],\"type\":\"array\"},\"literals\":{\"enum\":[\"a\",1,2.5,-3,true,null,[1],{\"k\":\"v\"},1.0,1e+21,-0.0]},\"mapOf\":{\"additionalProperties\":{\"type\":\"string\"},\"type\":\"object\"},\"multi\":{\"items\":{\"type\":\"integer\"},\"type\":[\"string\",\"null\",\"array\",5]},\"nested\":{\"items\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"deep\":{\"type\":\"null\"}},\"type\":\"object\"},\"type\":\"array\"},\"type\":\"array\"},\"noType\":{\"properties\":{\"p\":{\"type\":\"boolean\"}},\"required\":[\"p\",7]},\"nodes\":{\"$ref\":\"#/$defs/Nodes\"},\"numericType\":{\"properties\":{\"p\":{\"type\":\"boolean\"}},\"type\":7},\"odd key with spaces\":{\"type\":\"string\"},\"oneOf\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"number\"}]},\"openObj\":{\"additionalProperties\":{\"type\":\"integer\"},\"properties\":{\"x\":{\"type\":\"string\"}},\"type\":\"object\"},\"openTuple\":{\"additionalItems\":{\"type\":\"number\"},\"items\":[{\"type\":\"boolean\"}],\"type\":\"array\"},\"plainArray\":{\"type\":\"array\"},\"pointerEscape\":{\"$ref\":\"#/$defs/a~1b~0c\"},\"rootRef\":{\"$ref\":\"#\"},\"trueObj\":{\"additionalProperties\":true,\"properties\":{\"x\":{\"type\":\"string\"}},\"type\":\"object\"},\"trueSchema\":true,\"tuple\":{\"items\":false,\"minItems\":1,\"prefixItems\":[{\"type\":\"string\"},{\"type\":\"integer\"}],\"type\":\"array\"},\"unknownKeyword\":{\"format\":\"email\"}},\"required\":[\"tuple\",\"literals\",\"noType\"],\"type\":\"object\"}",
+		Output: "",
+	},
+	"runtime.run": {
+		Input:  "{\"additionalProperties\":false,\"properties\":{\"code\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"}",
+		Output: "{\"additionalProperties\":false,\"properties\":{\"stdout\":{\"type\":\"string\"}},\"required\":[\"stdout\"],\"type\":\"object\"}",
+	},
+	"runtime/run": {
+		Input:  "{\"type\":\"object\"}",
 		Output: "",
 	},
 	"weird-keys": {
@@ -87,6 +99,10 @@ func (client _Orders) CallTool2(ctx context.Context, input OrdersCallTool2Input)
 	return holon.Call[OrdersCallTool2Output](ctx, client._dependency, "CallTool", input)
 }
 
+func (client _Orders) Hidden(ctx context.Context, input OrdersHiddenInput) (OrdersHiddenOutput, error) {
+	return holon.Call[OrdersHiddenOutput](ctx, client._dependency, "_hidden", input)
+}
+
 func (client _Orders) CallTool3(ctx context.Context, input OrdersCallTool3Input) (OrdersCallTool3Output, error) {
 	return holon.Call[OrdersCallTool3Output](ctx, client._dependency, "call_tool", input)
 }
@@ -105,6 +121,14 @@ func (client _Orders) GetOrder2(ctx context.Context, input OrdersGetOrder2Input)
 
 func (client _Orders) KitchenSink(ctx context.Context, input OrdersKitchenSinkInput) (OrdersKitchenSinkOutput, error) {
 	return holon.Call[OrdersKitchenSinkOutput](ctx, client._dependency, "kitchen-sink", input)
+}
+
+func (client _Orders) RuntimeRun(ctx context.Context, input OrdersRuntimeRunInput) (OrdersRuntimeRunOutput, error) {
+	return holon.Call[OrdersRuntimeRunOutput](ctx, client._dependency, "runtime.run", input)
+}
+
+func (client _Orders) RuntimeRun2(ctx context.Context, input OrdersRuntimeRun2Input) (OrdersRuntimeRun2Output, error) {
+	return holon.Call[OrdersRuntimeRun2Output](ctx, client._dependency, "runtime/run", input)
 }
 
 func (client _Orders) WeirdKeys(ctx context.Context, input OrdersWeirdKeysInput) (OrdersWeirdKeysOutput, error) {

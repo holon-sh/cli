@@ -59,16 +59,19 @@ Call the server. A wrong tool name or argument is a type error.
 <details open>
 <summary><h4>Python</h4></summary>
 
+A tool whose name is not a Python identifier gets a method named after its words, so `resolve-library-id` is `resolve_library_id`. Names that would collide take a numeric suffix in sorted order, as in Go, and `call_tool("resolve-library-id", ...)` still works.
+
 ```python
 from holon.apps import apps
 
-await apps.context7.call_tool("resolve-library-id", libraryName="Next.js", query="app router")
+libraries = await apps.context7.tools.resolve_library_id(libraryName="Next.js", query="app router")
+libraries.content  # Context7 declares no output schema, so the complete result is returned
 
-await apps.context7.call_tool("resolve-library-id", libraryName=1, query="app router")
-# error: No overload variant of "call_tool" of "Context7App" matches argument types "str", "int", "str"  [call-overload]
+await apps.context7.tools.resolve_library_id(libraryName=1, query="app router")
+# error: Argument "libraryName" to "resolve_library_id" of "Context7Tools" has incompatible type "int"; expected "str"  [arg-type]
 
-await apps.context7.call_tool("resolve-library", libraryName="Next.js", query="app router")
-# error: No overload variant of "call_tool" of "Context7App" matches argument types "str", "str", "str"  [call-overload]
+await apps.context7.tools.resolve_library(libraryName="Next.js", query="app router")
+# error: "Context7Tools" has no attribute "resolve_library"; maybe "resolve_library_id"?  [attr-defined]
 ```
 
 </details>

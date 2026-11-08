@@ -1,6 +1,7 @@
 package mcptype
 
 import (
+	"cmp"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -20,6 +21,40 @@ var pythonName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 // pythonIdentifier reports whether name is a public ASCII identifier that is not a keyword.
 func pythonIdentifier(name string) bool {
 	return pythonName.MatchString(name) && !strings.HasPrefix(name, "_") && !slices.Contains(pythonKeywords, name)
+}
+
+// pythonMethod derives a method name for a tool whose name is not an identifier: its ASCII words
+// joined by underscores, as Go joins them into a method name, with a prefix before a leading digit
+// and a suffix after a keyword.
+func pythonMethod(tool string) string {
+	method := cmp.Or(strings.Join(goWords.FindAllString(tool, -1), "_"), "value")
+	if method[0] >= '0' && method[0] <= '9' {
+		method = "x" + method
+	}
+	if slices.Contains(pythonKeywords, method) {
+		method += "_"
+	}
+	return method
+}
+
+// pythonMethods names each tool's method. A tool named as an identifier keeps its name, and the others
+// take derived names in sorted order, with Go's numeric suffix on a collision. The runtime does not
+// expose a tool whose name starts with an underscore, so it has no method.
+func pythonMethods(tools catalog) map[string]string {
+	taken := map[string]bool{}
+	methods := map[string]string{}
+	for name := range tools {
+		if pythonIdentifier(name) {
+			taken[name] = true
+			methods[name] = name
+		}
+	}
+	for _, name := range sortedKeys(tools) {
+		if methods[name] == "" && !strings.HasPrefix(name, "_") {
+			methods[name] = unique(taken, pythonMethod(name))
+		}
+	}
+	return methods
 }
 
 func pythonBlock(header string, lines []string, indent string) string {
@@ -217,12 +252,14 @@ func (e *pythonEmitter) input(value typ, name string) (string, []string) {
 }
 
 // generatePython writes the typing-only module body: shapes, export classes, protocols and _Clients.
-func generatePython(contracts map[string]catalog) string {
+// It also returns, per binding, the tools whose methods are not named after them, by method name.
+func generatePython(contracts map[string]catalog) (string, map[string]map[string]string) {
 	emitter := &pythonEmitter{names: map[string]bool{"Inputs": true, "Outputs": true, "InputTypes": true, "OutputTypes": true}, emitted: map[*declaration]bool{}}
 	var clients []string
 	exportNames := []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"}
 	exports := make([][]string, 4)
 	var fields, indices []string
+	renamed := map[string]map[string]string{}
 	for _, binding := range sortedKeys(contracts) {
 		appName := unique(emitter.names, typeIdentifier(binding)+"App")
 		toolsName := unique(emitter.names, typeIdentifier(binding)+"Tools")
@@ -230,8 +267,9 @@ func generatePython(contracts map[string]catalog) string {
 		appExports := make([][]string, 4)
 		tools := contracts[binding]
 		nameDeclarations(emitter.names, binding, tools, pythonDeclares)
+		toolMethods := pythonMethods(tools)
 		for _, name := range sortedKeys(tools) {
-			tool := tools[name]
+			tool, method := tools[name], toolMethods[name]
 			shapes := []shape{tool.input, tool.output}
 			prefix := typeIdentifier(binding) + typeIdentifier(name)
 			emitter.declare(shapes[0])
@@ -242,27 +280,33 @@ func generatePython(contracts map[string]catalog) string {
 			if !tool.structured {
 				returned = "_CompleteResult[_builtins.object]"
 			}
-			var toolMethods []string
+			var signatures []string
 			for _, argument := range arguments {
 				calls = append(calls, fmt.Sprintf("    async def call_tool(self, name: _typing.Literal[%s], options: _CallOptions | None = ..., /, **arguments: %s) -> _ToolResult[%s]: ...", quoted(name), argument, output))
-				toolMethods = append(toolMethods, fmt.Sprintf("    async def %s(self, options: _CallOptions | None = ..., /, **arguments: %s) -> %s: ...", name, argument, returned))
+				signatures = append(signatures, fmt.Sprintf("    async def %s(self, options: _CallOptions | None = ..., /, **arguments: %s) -> %s: ...", method, argument, returned))
 			}
-			if !pythonIdentifier(name) {
+			if method == "" {
 				continue
 			}
-			methods = append(methods, pythonOverloaded(toolMethods)...)
+			if method != name {
+				if renamed[binding] == nil {
+					renamed[binding] = map[string]string{}
+				}
+				renamed[binding][method] = name
+			}
+			methods = append(methods, pythonOverloaded(signatures)...)
 			for i, rendered := range []string{input, output} {
 				if i == 1 && !tool.structured {
 					continue
 				}
-				appExports[i] = append(appExports[i], fmt.Sprintf("        %s: _typing.TypeAlias = %s", name, rendered))
+				appExports[i] = append(appExports[i], fmt.Sprintf("        %s: _typing.TypeAlias = %s", method, rendered))
 				var types []string
 				for _, definition := range sortedKeys(shapes[i].named) {
 					if pythonIdentifier(definition) {
 						types = append(types, fmt.Sprintf("            %s: _typing.TypeAlias = %s", definition, emitter.render(shapes[i].named[definition], prefix+exportNames[i]+typeIdentifier(definition))))
 					}
 				}
-				appExports[i+2] = append(appExports[i+2], pythonBlock(fmt.Sprintf("        class %s:", name), types, "            "))
+				appExports[i+2] = append(appExports[i+2], pythonBlock(fmt.Sprintf("        class %s:", method), types, "            "))
 			}
 		}
 		var app []string
@@ -286,5 +330,5 @@ func generatePython(contracts map[string]catalog) string {
 	sections = append(sections, clients...)
 	fields = append(fields, pythonOverloaded(indices)...)
 	sections = append(sections, pythonBlock("class _Clients(_typing.Protocol):", fields, "    "))
-	return strings.Join(sections, "\n\n") + "\n"
+	return strings.Join(sections, "\n\n") + "\n", renamed
 }
