@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -275,4 +276,53 @@ func TestDevStartup(t *testing.T) {
 		defer f.mu.Unlock()
 		return slices.Equal(f.reads, []string{"0", "1"})
 	})
+}
+
+// A save while the last save's types are still being prepared reloads at once, and stops that preparation.
+func TestDevSaveStopsTheLastPreparation(t *testing.T) {
+	bin, work := t.TempDir(), t.TempDir()
+	gate, backup, started := filepath.Join(work, "gate"), filepath.Join(work, "holon-sh"), filepath.Join(work, "started")
+	// Stands in for npm installing the missing SDK runtime: it records its process and waits while the gate exists.
+	sourceFiles(t, bin, map[string]string{"npm": "#!/bin/sh\necho $$ >> '" + started + "'\n" +
+		"while [ -e '" + gate + "' ]; do sleep 0.05; done\nmv '" + backup + "' node_modules/holon-sh\n"})
+	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f := startReloadFixture(t, true)
+	alpha := filepath.Join(f.root, "alpha")
+	installRuntime(t, alpha)
+	if err := os.RemoveAll(filepath.Join(alpha, ".holon-types")); err != nil {
+		t.Fatal(err)
+	}
+	from := len(f.stderr.String())
+	sourceFiles(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
+	f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha ready") })
+	sourceFiles(t, work, map[string]string{"gate": ""})
+	if err := os.Rename(filepath.Join(alpha, "node_modules", nodeRuntime), backup); err != nil {
+		t.Fatal(err)
+	}
+	runs := func() []string {
+		data, _ := os.ReadFile(started)
+		return strings.Fields(string(data))
+	}
+	for i, content := range []string{"second", "third"} {
+		from := len(f.stderr.String())
+		sourceFiles(t, f.root, map[string]string{"alpha/tools.py": content})
+		f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha reloaded") && len(runs()) == i+1 })
+	}
+	pid, err := strconv.Atoi(runs()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if process, _ := os.FindProcess(pid); process.Signal(syscall.Signal(0)) == nil {
+		t.Fatal("the first save's preparation still runs")
+	}
+	if err := os.Remove(gate); err != nil {
+		t.Fatal(err)
+	}
+	f.await(func() bool { _, err := os.Stat(filepath.Join(alpha, "node_modules", nodeRuntime)); return err == nil })
+	if err := f.stop(); err != nil || strings.Contains(f.stderr.String(), "MCP types") {
+		t.Fatalf("run: %v stderr=%q", err, f.stderr.String())
+	}
 }

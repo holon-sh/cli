@@ -18,10 +18,10 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"oras.land/oras-go/v2/registry/remote"
 
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
 
@@ -73,46 +73,76 @@ func (d *devLoop) changedApps(change devChange) []manifestApp {
 	})
 }
 
-// reload restarts each changed app in place and returns the build contexts of those it could not
-// reload, and whether a new contract left another app's compiled clients stale. Contract extraction and
-// client generation run alongside, so that typed clients still update without delaying the restart.
-func (d *devLoop) reload(ctx context.Context, change devChange) (sets.Set[string], bool) {
-	var extraction errgroup.Group
-	var prepared manifestSpec
-	extraction.Go(func() error {
-		result, cleanup, err := prepareManifestTypes(ctx, d.manifest, d.options)
-		if err != nil {
-			return err
+// preparation is what the contract preparation a reload starts produced: contracts and clients, and the
+// clients it wrote into the apps, if it got that far.
+type preparation struct {
+	contexts sets.Set[string]
+	prepared manifestSpec
+	clients  *typegen.Prepared
+	err      error
+}
+
+// reload restarts each changed app in place and returns the build contexts of those it could not reload.
+// Contract preparation runs alongside without delaying the restart: the loop accepts what it prepares, and
+// the next change stops it.
+func (d *devLoop) reload(ctx context.Context, change devChange) sets.Set[string] {
+	d.stopPreparation()
+	prepare, cancel := context.WithCancel(ctx)
+	result := make(chan preparation, 1)
+	manifest, options := d.manifest, d.options
+	options.types = new(typeWorkspace) // its own, so that the loop goes on writing the last clients meanwhile
+	go func() {
+		prepared, cleanup, err := prepareManifestTypes(prepare, manifest, options)
+		if err == nil {
+			cleanup()
 		}
-		cleanup()
-		prepared = result
-		return nil
-	})
+		result <- preparation{change.contexts, prepared, options.types.prepared, err}
+	}()
+	d.preparing, d.cancelPreparation = result, cancel
 	failed := sets.New[string]()
-	apps := d.changedApps(change)
-	for _, app := range apps {
+	for _, app := range d.changedApps(change) {
 		d.options.output.status(app.Name, "reloading", progressWorking)
 		if err := d.reloadApp(ctx, app); err != nil {
 			d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v; rebuilding", err), progressWorking)
 			failed.Insert(app.Path)
 		}
 	}
-	err := extraction.Wait()
-	if failed.Len() != 0 || ctx.Err() != nil {
-		// The rebuild prepares again and reports its own failure.
-		return failed, false
+	return failed
+}
+
+// stopPreparation cancels the preparation a reload left running and waits for it, dropping what it prepared.
+func (d *devLoop) stopPreparation() {
+	if d.preparing != nil {
+		d.cancelPreparation()
+		<-d.preparing
+		d.preparing = nil
 	}
-	d.options.output.problem("MCP types", err)
-	if err != nil {
-		return failed, false
+}
+
+// acceptPreparation accepts what a reload's preparation prepared and rebuilds the apps whose compiled clients
+// it left stale.
+func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) error {
+	d.cancelPreparation()
+	d.preparing = nil
+	if ctx.Err() != nil {
+		return nil
 	}
-	accepted := prepared
-	accepted.Apps = slices.DeleteFunc(slices.Clone(prepared.Apps), func(app manifestApp) bool { return !change.contexts.Has(app.Path) })
+	d.options.types.prepared = cmp.Or(result.clients, d.options.types.prepared)
+	d.options.output.problem("MCP types", result.err)
+	if result.err != nil {
+		return nil
+	}
+	accepted := result.prepared
+	accepted.Apps = slices.DeleteFunc(slices.Clone(result.prepared.Apps), func(app manifestApp) bool { return !result.contexts.Has(app.Path) })
 	for _, app := range accepted.Apps {
 		app.resolved.types.hosted = true // each reloaded, so its overlay staged the launcher
 	}
 	d.options.types.accept(accepted)
-	return failed, slices.ContainsFunc(prepared.Apps, func(app manifestApp) bool { return d.options.types.affected(ctx, app, prepared) })
+	if !slices.ContainsFunc(result.prepared.Apps, func(app manifestApp) bool { return d.options.types.affected(ctx, app, result.prepared) }) {
+		return nil
+	}
+	// An empty change still rebuilds the apps whose clients went stale.
+	return d.buildImages(ctx, devChange{})
 }
 
 func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
