@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"k8s.io/utils/ptr"
@@ -30,16 +30,32 @@ type preparedTypes struct {
 	name        string
 	root        string
 	fingerprint string
-	imageInputs string // the fingerprint of what a reload cannot replace
+	inputs      string
 	metadata    *mcpcontract.Metadata
 	documents   map[string]*typegen.Document
-	hosted      bool // its entry runs under the SDK launcher, so a source overlay can restart it
 }
 
 type typeWorkspace struct {
+	mu       sync.Mutex // guards prepared and its writes, which a reload's preparation makes beside the loop
 	prepared *typegen.Prepared
 	accepted map[string]*preparedTypes
 	release  func()
+}
+
+func (w *typeWorkspace) publish(prepared *typegen.Prepared) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := prepared.Write(); err != nil {
+		return err
+	}
+	w.prepared = prepared
+	return nil
+}
+
+func (w *typeWorkspace) repair() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.prepared.Write()
 }
 
 func (w *typeWorkspace) close() {
@@ -86,8 +102,9 @@ func (w *typeWorkspace) acquire(manifest manifestSpec) error {
 }
 
 // prepareManifestTypes snapshots each path app for its image build and prepares its typed contract and
-// clients with typegen: extraction (on the host or in a container), dependency contract resolution and
-// generation. With a workspace it also writes the clients into the apps for their editors.
+// clients with typegen: extraction in each app's image, dependency contract resolution and generation.
+// With a workspace it also writes the clients into the apps for their editors. Last, it type-checks each
+// app against its clients in the image its contract was extracted in.
 func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options buildOptions) (_ manifestSpec, _ func(), err error) {
 	finish := options.output.measure("apps", "prepare contracts")
 	defer finish()
@@ -194,18 +211,6 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		if p.fingerprint, err = snapshotSource(*app, p.root); err != nil {
 			return manifestSpec{}, nil, err
 		}
-		if !app.resolved.stdio {
-			entry, err := sourceEntry(p.root)
-			if err != nil {
-				return manifestSpec{}, nil, err
-			}
-			p.hosted = hostedEntry(entry)
-		}
-		if p.hosted {
-			if p.imageInputs, err = imageInputs(p.root); err != nil {
-				return manifestSpec{}, nil, err
-			}
-		}
 	}
 	prepared, err = typegen.Prepare(ctx, consumers, typeOptions)
 	if err != nil {
@@ -226,9 +231,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		p.documents = documents
 		p.metadata = metadata[app.Name]
 		if s, ok := servers[app.Name]; ok && app.resolved.descriptor == nil {
-			app.resolved.descriptor = &mcpregistry.Descriptor{
-				Name: s.Name, Version: s.Version, Title: s.Title, Description: s.Description, WebsiteURL: s.WebsiteURL, Repository: s.Repository,
-			}
+			app.resolved.descriptor = s
 		}
 		if d := app.resolved.descriptor; d != nil && p.metadata == nil {
 			p.metadata = &mcpcontract.Metadata{Identity: d.Identity()}
@@ -236,10 +239,9 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		metadata[app.Name] = p.metadata
 	}
 	if w := options.types; w != nil {
-		if err := prepared.Write(); err != nil {
+		if err := w.publish(prepared); err != nil {
 			return manifestSpec{}, nil, err
 		}
-		w.prepared = prepared
 	}
 
 	for _, app := range manifest.Apps {
@@ -263,6 +265,9 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 					name, app.Name, strings.Join(texts, ", "), name, app.Name)
 			}
 		}
+	}
+	if err := options.checkTypes(ctx, pathApps); err != nil {
+		return manifestSpec{}, nil, err
 	}
 	return manifest, remove, nil
 }

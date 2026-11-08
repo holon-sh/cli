@@ -96,12 +96,13 @@ func joinTypeScript(items []typ, separator string) string {
 	return strings.Join(rendered, separator)
 }
 
-// generateTypeScript writes the declared types, then the Inputs, Outputs, InputTypes and OutputTypes
-// interfaces. Declared types take identifiers that names does not hold yet, and names keeps them.
-func generateTypeScript(contracts map[string]catalog, names map[string]bool) string {
+// generateTypeScript writes the declared types, then the interfaces of inputs, outputs, input
+// definitions and output definitions under the names given, leaving out any named "". Declared types
+// take identifiers that names does not hold yet, and names keeps them.
+func generateTypeScript(contracts map[string]catalog, names map[string]bool, interfaces [4]string) string {
 	var out strings.Builder
 	exports := make([]strings.Builder, 4)
-	for i, name := range []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"} {
+	for i, name := range interfaces {
 		fmt.Fprintf(&exports[i], "export interface %s {\n", name)
 	}
 	for _, binding := range sortedKeys(contracts) {
@@ -109,14 +110,14 @@ func generateTypeScript(contracts map[string]catalog, names map[string]bool) str
 			fmt.Fprintf(&exports[i], "  %s: {\n", quoted(binding))
 		}
 		tools := contracts[binding]
+		nameDeclarations(names, binding, tools, declaresAll)
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
 			for index, shape := range []shape{tool.input, tool.output} {
 				if index == 1 && !tool.structured {
 					continue
 				}
-				direction := []string{"Input", "Output"}[index]
-				for _, ref := range shape.name(names, typeIdentifier(binding)+typeIdentifier(name)+direction, typeIdentifier(binding)+direction, declaresAll) {
+				for _, ref := range shape.declarations(declaresAll) {
 					fmt.Fprintf(&out, "export type %s = %s;\n", ref.name, renderTypeScript(ref.value))
 				}
 				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value))
@@ -132,8 +133,10 @@ func generateTypeScript(contracts map[string]catalog, names map[string]bool) str
 		}
 	}
 	for i := range exports {
-		out.WriteString(exports[i].String())
-		out.WriteString("}\n")
+		if interfaces[i] != "" {
+			out.WriteString(exports[i].String())
+			out.WriteString("}\n")
+		}
 	}
 	return out.String()
 }

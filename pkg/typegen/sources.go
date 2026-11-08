@@ -15,6 +15,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/protocol"
 )
 
 const dockerignoreFile = ".dockerignore"
@@ -27,7 +30,7 @@ const (
 	TargetTS = "ts" // node_modules/holon-sh/generated, resolved upward from the consumer
 	TargetUI = "ui"
 	TargetPy = "py" // holon/apps/__init__.py in the consumer
-	TargetGo = "go" // holon/ Go package in the consumer; needs Options.GoModule
+	TargetGo = "go" // holon/ Go package in the consumer
 )
 
 var targets = []string{TargetTS, TargetUI, TargetPy, TargetGo}
@@ -45,12 +48,13 @@ type Source struct {
 	Path string
 	// Registry is an MCP registry server version. Resolve its OCI package's document,
 	// falling back to its streamable-http remote when the image has no contract.
-	Registry *Reference
+	Registry *protocol.RegistryRef
 	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract. With an
 	// Alias, the environment variable <ALIAS>_MCP_TOKEN supplies a bearer token for its origin.
 	Endpoint string
 	// Document is an already resolved contract document, with the exact bytes its digest names.
 	Document *Document
+	from     string
 }
 
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
@@ -68,7 +72,7 @@ func ParseSource(arg string) (Source, error) {
 		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
 			name, _ := url.PathUnescape(m[1])
 			version, _ := url.PathUnescape(m[2])
-			source.Registry = &Reference{Name: name, Version: version, Registry: u.Scheme + "://" + u.Host}
+			source.Registry = &protocol.RegistryRef{Name: name, Version: version, Registry: u.Scheme + "://" + u.Host}
 			return source, nil
 		}
 		source.Endpoint = arg
@@ -116,12 +120,16 @@ func (s Source) validate() error {
 		return fmt.Errorf("alias %q must be a DNS label of at most 49 characters", s.Alias)
 	}
 	if s.Registry != nil {
-		return s.Registry.Validate()
+		return validRegistryRef(*s.Registry)
 	}
-	if s.Endpoint != "" {
-		return validEndpoint(s.Endpoint)
+	if s.Endpoint == "" {
+		return nil
 	}
-	return nil
+	err := mcpregistry.ValidateEndpoint(s.Endpoint)
+	if err != nil && s.from != "" {
+		err = fmt.Errorf("%s: %w", s.from, err)
+	}
+	return err
 }
 
 // Consumer is a project directory that receives typed clients.
@@ -223,11 +231,13 @@ func serverEntry(path string) (root, entry, language string, err error) {
 	return root, filepath.ToSlash(entry), language, nil
 }
 
+var notKey = regexp.MustCompile(`[^a-z0-9-]+`)
+
 // serverKey is the client name derived from a server name: its last segment, lower-cased, with
 // runs of other characters as hyphens, trimmed to a 49-character label.
 func serverKey(serverName string) string {
 	key := serverName[strings.LastIndex(serverName, "/")+1:]
-	key = strings.Trim(regexp.MustCompile(`[^a-z0-9-]+`).ReplaceAllString(strings.ToLower(key), "-"), "-")
+	key = strings.Trim(notKey.ReplaceAllString(strings.ToLower(key), "-"), "-")
 	return strings.TrimRight(key[:min(len(key), 49)], "-")
 }
 

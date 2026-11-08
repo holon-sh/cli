@@ -19,13 +19,12 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 
-	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/protocol"
+	"github.com/opencontainers/go-digest"
 )
 
 const (
@@ -93,7 +92,6 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 	return manifest, nil
 }
 
-// resolveManifest resolves the apps a command runs, with their dependencies, and checks their access rules.
 func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec, output *progressOutput, apps ...string) (manifestSpec, error) {
 	if _, err := manager.controlToken(ctx); err != nil {
 		return manifestSpec{}, err
@@ -160,7 +158,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		types:   new(typeWorkspace),
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient,
 		Stderr: stderr, Env: config.Env, architectures: manager.info.BuildArchitectures, output: config.output,
-		builders: new(builderConnections),
+		builders: new(builderConnections), development: true,
 	}
 	defer options.types.close()
 	defer options.builders.close()
@@ -171,20 +169,18 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err := options.types.acquire(resolved); err != nil {
 		return err
 	}
-	record := manager.leftSession(resolved)
+	recordPath := manager.sessionRecordPath(resolved)
 	var previous protocol.SessionResponse
+	first := options
 	if config.devTTLSeconds == nil {
-		previous = previousSession(ctx, manager, record)
+		previous, first.kept = previousSession(ctx, manager, recordPath)
 	}
 	if previous.Name != "" {
-		if err := printStartingEndpoints(stdout, manager.client.baseURL, previous); err != nil {
+		if err := printStartingEndpoints(stdout, config.output, manager.client.baseURL, previous); err != nil {
 			return err
 		}
 	}
-	// Only the first build reuses the previous session's images; devLoop.run reloads the apps that kept one.
-	start := options
-	start.reusable, start.reuseBy = sessionImages(previous), imageInputsAnnotation
-	request, err := uploadManifest(ctx, manager, "", resolved, start)
+	request, err := uploadManifest(ctx, manager, "", resolved, first)
 	if err != nil {
 		return err
 	}
@@ -192,20 +188,15 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	config.output.deploying(request.Apps)
 	var session protocol.SessionResponse
 	if previous.Name != "" {
-		if session, err = replaceExecution(ctx, manager, previous.Name, previous, request); err != nil {
-			return err
-		}
-	} else {
-		if err := manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &session); err != nil {
-			if status := HTTPStatus(err); status >= http.StatusBadRequest && status < http.StatusInternalServerError {
-				return err
-			}
-			console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
-			return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
-		}
-		if err := printStartingEndpoints(stdout, manager.client.baseURL, session); err != nil {
-			return err
-		}
+		session, err = replaceExecution(ctx, manager, previous.Name, previous, request)
+	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &session); err == nil {
+		err = printStartingEndpoints(stdout, config.output, manager.client.baseURL, session)
+	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
+		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
+		err = fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
+	}
+	if err != nil {
+		return err
 	}
 	if request.TTLSeconds != nil {
 		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
@@ -215,60 +206,55 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(ready)
 		}
-		if err := printEndpoints(stdout, "Ready", ready); err != nil {
+		if err := config.output.endpoints(stdout, "Ready", ready, false); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
 		return err
 	}
 	dev := &devLoop{manager: manager, name: session.Name, manifest: resolved, apps: apps, clock: config.clock(), options: options, session: session}
-	err = dev.run(ctx, stdout, keptImages(resolved, start.reusable, request.Apps))
-	// Without the record, the next holon dev starts a new session, as it would with none to pick up.
-	_ = writePrivateFile(record, []byte(session.Name))
+	err = dev.run(ctx, stdout)
+	inputs := map[string]string{}
+	for name, types := range options.types.accepted {
+		inputs[name] = types.inputs
+	}
+	data, _ := json.Marshal(sessionRecord{Session: session.Name, Inputs: inputs})
+	_ = writePrivateFile(recordPath, data)
 	return err
 }
 
-// leftSession is where holon dev records the session it leaves, for the next holon dev of the same apps from the
-// same directories against this installation. A run elsewhere, or of other apps, keeps to its own session.
-func (m *Client) leftSession(manifest manifestSpec) string {
+type sessionRecord struct {
+	Session string            `json:"session"`
+	Inputs  map[string]string `json:"inputs"`
+}
+
+type keptImage struct {
+	inputs, image, overlay string
+}
+
+func (m *Client) sessionRecordPath(manifest manifestSpec) string {
 	key := m.client.baseURL
 	for _, app := range manifest.Apps {
 		key += "\x00" + app.Name + "\x00" + app.Path
 	}
-	return filepath.Join(filepath.Dir(m.statePath), clientutil.HashBytes([]byte(key))+".session")
+	return filepath.Join(filepath.Dir(m.statePath), digest.FromString(key).Encoded()+".session")
 }
 
-// previousSession renews and returns the session recorded in record, or none. Renewal fails unless the
-// session is still the caller's, not detached and unexpired.
-func previousSession(ctx context.Context, manager *Client, record string) protocol.SessionResponse {
+func previousSession(ctx context.Context, manager *Client, recordPath string) (protocol.SessionResponse, map[string]keptImage) {
+	var record sessionRecord
 	var session protocol.SessionResponse
-	name, err := readPrivateFile(record)
-	if err != nil || manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: string(name)}, &session) != nil {
-		return protocol.SessionResponse{}
+	data, err := readPrivateFile(recordPath)
+	if err != nil || json.Unmarshal(data, &record) != nil ||
+		manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: record.Session}, &session) != nil {
+		return protocol.SessionResponse{}, nil
 	}
-	return session
-}
-
-// keptImages are the build contexts of the apps whose image, apps[i], is one that reusable offered.
-func keptImages(manifest manifestSpec, reusable map[string][]string, apps []protocol.App) sets.Set[string] {
-	kept := sets.New[string]()
-	for i, app := range manifest.Apps {
-		if app.Path != "" && slices.Contains(reusable[app.Name], apps[i].Image) {
-			kept.Insert(app.Path)
+	kept := map[string]keptImage{}
+	for _, app := range session.Apps {
+		if inputs := record.Inputs[app.Name]; inputs != "" {
+			kept[app.Name] = keptImage{inputs: inputs, image: app.Image, overlay: app.Overlay}
 		}
 	}
-	return kept
-}
-
-// sessionImages are the images that sessions run, by app, which a build reuses when they match its source.
-func sessionImages(sessions ...protocol.SessionResponse) map[string][]string {
-	images := map[string][]string{}
-	for _, session := range sessions {
-		for _, app := range session.Apps {
-			images[app.Name] = append(images[app.Name], app.Image)
-		}
-	}
-	return images
+	return session, kept
 }
 
 func sessionPath(name, suffix string) string {
@@ -354,15 +340,13 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	}
 	builders := new(builderConnections)
 	defer builders.close()
-	// Without the session list, deploy builds every image, as it would with no development session.
-	sessions, _ := scopeSessions(ctx, manager, "")
 	resolved, err := resolveManifest(ctx, manager, manifest, config.output, selection...)
 	if err != nil {
 		return err
 	}
 	desired, err := uploadManifest(ctx, manager, protocol.ProductionName, resolved, buildOptions{
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env, output: config.output,
-		builders: builders, architectures: manager.info.BuildArchitectures, reusable: sessionImages(sessions...), reuseBy: promotionAnnotation,
+		builders: builders, architectures: manager.info.BuildArchitectures,
 	})
 	if err != nil {
 		return err
@@ -377,7 +361,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 		return err
 	}
 	config.output.apps(desired.Apps, "ready", progressDone)
-	return printEndpoints(stdout, "Ready", ready)
+	return config.output.endpoints(stdout, "Ready", ready, false)
 }
 
 func waitSessionReady(
@@ -435,28 +419,34 @@ func reportSessionProgress(
 	output.status(name, phase, state)
 }
 
-// printStartingEndpoints prints the session and where its apps will be. The API publishes endpoints only once
-// their apps are up, but the URLs follow from the session's name.
-func printStartingEndpoints(stdout io.Writer, origin string, session protocol.SessionResponse) error {
-	base, err := protocol.SessionAudience(origin, protocol.ModeDevelopment, session.Name)
+func printStartingEndpoints(stdout io.Writer, output *progressOutput, origin string, session protocol.SessionResponse) error {
+	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
+		return err
+	}
+	starting, err := startingSession(origin, session)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
-		return err
+	return output.endpoints(stdout, "Starting", starting, true)
+}
+
+func startingSession(origin string, session protocol.SessionResponse) (protocol.SessionResponse, error) {
+	base, err := protocol.SessionAudience(origin, protocol.ModeDevelopment, session.Name)
+	if err != nil {
+		return session, err
 	}
 	session.Endpoints = make([]protocol.SessionEndpoint, 0, len(session.Apps))
 	for _, app := range session.Apps {
 		session.Endpoints = append(session.Endpoints, protocol.SessionEndpoint{Name: app.Name, URL: base + protocol.AppPath(app.Name)})
 	}
-	if len(session.Endpoints) == 0 {
-		return nil
-	}
-	return printEndpoints(stdout, "Starting", session)
+	return session, nil
 }
 
-func printEndpoints(stdout io.Writer, heading string, session protocol.SessionResponse) error {
-	output := []byte("\n" + heading + "\n")
+func formatEndpoints(session protocol.SessionResponse) (string, error) {
+	if len(session.Endpoints) == 0 {
+		return "", nil
+	}
+	var output []byte
 	mode := protocol.ModeDevelopment
 	if session.Name == protocol.ProductionName {
 		mode = protocol.ModeProduction
@@ -464,7 +454,7 @@ func printEndpoints(stdout io.Writer, heading string, session protocol.SessionRe
 	for i, endpoint := range session.Endpoints {
 		website, err := url.Parse(endpoint.URL)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if i == 0 {
 			website.Path = protocol.MCPPath
@@ -477,8 +467,7 @@ func printEndpoints(stdout io.Writer, heading string, session protocol.SessionRe
 		website.Path = strings.TrimSuffix(protocol.AppBrowserMount(app, mode), "/") + "/"
 		output = fmt.Appendf(output, "\n  %s\n    Browser  %s\n    MCP      %s\n", endpoint.Name, website.String(), endpoint.URL)
 	}
-	_, err := stdout.Write(append(output, '\n'))
-	return err
+	return string(append(output, '\n')), nil
 }
 
 // StreamLogs follows session logs until ctx ends or the server rejects the request. A dropped stream resumes from

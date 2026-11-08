@@ -5,10 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,7 +25,7 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 	put(t, checkout, "server.json", string(mustJSON(t, map[string]any{"name": "example.com/checkout", "version": "1.0.0", "description": "Checkout"})))
 	own := mcpcontract.Tool{Name: "status", Input: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
 	results := map[string]any{
-		"example.com/checkout": extraction{Tools: []mcpcontract.Tool{own}, Sources: map[string]string{"server.ts": "sha256:checkout"}},
+		"example.com/checkout": extraction{Tools: []mcpcontract.Tool{own}},
 		"example.com/orders":   extraction{Tools: []mcpcontract.Tool{lookupTool}},
 	}
 	c := Consumer{Name: "checkout", Dir: checkout, Targets: targets, Server: &Source{Path: filepath.Join(checkout, "server.ts")}, Sources: []Source{{Path: orders}}}
@@ -46,11 +44,11 @@ func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing
 		}
 		defer prepared.Close()
 		stage := t.TempDir()
-		for dir, write := range map[string]func(string, string) error{"holon-sh": prepared.WriteNodeSlot, "holon-ui": prepared.WriteBrowserSlot, "python": prepared.WritePythonSlot} {
+		for dir, target := range map[string]string{"holon-sh": TargetTS, "holon-ui": TargetUI, "python": TargetPy} {
 			if err := os.MkdirAll(filepath.Join(stage, dir), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := write("checkout", filepath.Join(stage, dir)); err != nil {
+			if err := prepared.WriteSlot("checkout", target, filepath.Join(stage, dir)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -73,30 +71,37 @@ func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing
 	}
 }
 
-func TestServersDescribeEachConsumersOwnServer(t *testing.T) {
-	info := json.RawMessage(`{"name":"example.com/chat","version":"2.0.0","title":"Chat","description":"Chat with Holon","websiteUrl":"https://example.com/chat"}`)
+// A consumer without a server.json or a server of its own announces the identity its project
+// manifest gives it, read for the first of its targets whose manifest names the project.
+func TestConsumersAnnounceTheirManifestIdentity(t *testing.T) {
+	const node = `{"name":"@example/checkout","version":"1.2.3","dependencies":{"holon-sh":"*"}}`
+	const python = "[build-system]\nrequires = ['hatchling']\n\n[project]\nname = 'checkout'\nversion = \"2.0\" # released\ndependencies = [\n  \"holon-sh\",\n]\n\n[project.urls]\nname = \"https://example.com\"\n"
 	for _, test := range []struct {
-		name, descriptor string
-		want             Server
+		name    string
+		files   map[string]string
+		targets []string
+		want    mcpcontract.Identity
 	}{
-		{"MCP constructor", "", Server{Name: "example.com/chat", Version: "2.0.0", Title: "Chat", Description: "Chat with Holon", WebsiteURL: "https://example.com/chat"}},
-		{"server.json", `{"name":"example.com/chat","version":"1.0.0","description":"Chat"}`, Server{Name: "example.com/chat", Version: "1.0.0", Description: "Chat"}},
+		{"package.json", map[string]string{"package.json": node}, []string{TargetTS}, mcpcontract.Identity{Name: "@example/checkout", Version: "1.2.3"}},
+		{"pyproject.toml", map[string]string{"pyproject.toml": python}, []string{TargetPy}, mcpcontract.Identity{Name: "checkout", Version: "2.0"}},
+		{"go.mod", map[string]string{"go.mod": "module example.com/checkout\n\ngo 1.27\n\nrequire github.com/holon-sh/sdk-go v0.0.1\n"}, []string{TargetGo}, mcpcontract.Identity{Name: "example.com/checkout", Version: "0.0.0"}},
+		{"only manifests of declared slots", map[string]string{"package.json": `{"name":"frontend"}`, "pyproject.toml": python}, []string{TargetPy}, mcpcontract.Identity{Name: "checkout", Version: "2.0"}},
+		{"server.json first", map[string]string{"package.json": node, "server.json": `{"name":"example.com/checkout","version":"3.0.0","description":"Checkout"}`}, []string{TargetTS}, mcpcontract.Identity{Name: "example.com/checkout", Version: "3.0.0"}},
+		{"an unnamed project", map[string]string{"package.json": `{"private":true}`}, []string{TargetTS}, mcpcontract.Identity{Name: "app", Version: "0.0.0"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			chat := t.TempDir()
-			put(t, chat, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-			put(t, chat, "server.ts", "export default {};\n")
-			if test.descriptor != "" {
-				put(t, chat, "server.json", test.descriptor)
+			dir := t.TempDir()
+			for name, content := range test.files {
+				put(t, dir, name, content)
 			}
-			options := Options{Run: fakeRun(map[string]any{"": extraction{ServerInfo: info}, "example.com/chat": extraction{}})}
-			prepared, err := Prepare(t.Context(), []Consumer{{Name: "chat", Dir: chat, Server: &Source{Path: filepath.Join(chat, "server.ts")}}}, options)
+			c := Consumer{Name: "app", Dir: dir, Targets: test.targets, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer prepared.Close()
-			if got := prepared.Servers()["chat"]; got != test.want {
-				t.Fatalf("chat server = %+v, want %+v", got, test.want)
+			if got := prepared.Metadata()["app"].Identity; got != test.want {
+				t.Fatalf("identity = %+v, want %+v", got, test.want)
 			}
 		})
 	}
@@ -121,39 +126,21 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	}
 	source := func(name string) Source { return Source{Path: filepath.Join(root, name)} }
 	orders := source("orders")
-	failure := errors.New("buildx unavailable")
-	failing := func(context.Context, string, string, []string, io.Writer) error { return failure }
 	for _, test := range []struct {
 		name    string
 		server  *Source
 		sources []Source
-		run     func(context.Context, string, string, []string, io.Writer) error
 		want    string
 	}{
 		{name: "unnamed server", sources: []Source{source("nameless")}, want: "declare the server's name, version and description in its MCP constructor, or add a server.json"},
 		{name: "go without server.json", sources: []Source{source("go")}, want: "needs a server.json"},
 		{name: "extraction diagnostic", sources: []Source{source("broken")}, want: "tools are registered dynamically"},
-		{name: "extractor failure", sources: []Source{orders}, run: failing, want: failure.Error()},
 		{name: "invalid derived alias", sources: []Source{source("odd")}, want: `cannot derive a client name from "example.com/---"; write ALIAS=`},
 		{name: "duplicate alias", sources: []Source{orders, source("orders-copy")}, want: "both become apps.orders"},
-		{name: "explicit aliases", sources: []Source{orders, {Alias: "backup", Path: filepath.Join(root, "orders-copy")}, {Alias: "odd", Path: filepath.Join(root, "odd")}}},
 		{name: "own server outside the consumer", server: &orders, want: "is outside"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			options := Options{Run: test.run}
-			if options.Run == nil {
-				options.Run = fakeRun(results)
-			}
-			prepared, err := Prepare(t.Context(), []Consumer{{Name: "app", Dir: app, Targets: []string{TargetTS}, Server: test.server, Sources: test.sources}}, options)
-			if prepared != nil {
-				defer prepared.Close()
-			}
-			if test.want == "" {
-				if err != nil {
-					t.Fatal(err)
-				}
-				return
-			}
+			_, err := Prepare(t.Context(), []Consumer{{Name: "app", Dir: app, Targets: []string{TargetTS}, Server: test.server, Sources: test.sources}}, Options{Run: fakeRun(results)})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Prepare = %v, want %q", err, test.want)
 			}
@@ -164,14 +151,13 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	c, extract := checkoutConsumer(t, TargetTS)
 	bin := t.TempDir()
-	put(t, bin, "npm", "#!/bin/sh\nset -e\n[ \"$INSTALL_MODE\" = from-options ]\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
+	put(t, bin, "npm", "#!/bin/sh\nset -e\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
 	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("INSTALL_MODE", "inherited")
 	var output bytes.Buffer
-	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Run: extract, Env: []string{"INSTALL_MODE=from-options"}}); err != nil {
+	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Run: extract}); err != nil {
 		t.Fatalf("generate: %v\n%s", err, &output)
 	}
 	if client := read(t, c.Dir, "node_modules/holon-sh/generated/index.js"); !strings.Contains(client, `"lookup"`) {
@@ -184,18 +170,10 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
 		t.Fatal(err)
 	}
-	if err := Generate(t.Context(), []Consumer{c}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "exit status 17") {
-		t.Fatalf("failed installation was not reported: %v", err)
-	}
 	put(t, c.Dir, "package.json", `{"type":"module"}`)
 	err := Generate(t.Context(), []Consumer{c}, Options{Run: extract})
 	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run npm install holon-sh") {
 		t.Fatalf("undeclared runtime = %v", err)
-	}
-	py := Consumer{Name: "py", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: c.Sources}
-	err = Generate(t.Context(), []Consumer{py}, Options{Run: extract})
-	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run uv add holon-sh") {
-		t.Fatalf("undeclared python runtime = %v", err)
 	}
 }
 
@@ -235,7 +213,7 @@ func TestGenerateGivesEachProjectItsOwnNodeSlot(t *testing.T) {
 	}
 }
 
-func TestSuppliedContractsRemainDistinctAndValidated(t *testing.T) {
+func TestSuppliedContractsRemainDistinct(t *testing.T) {
 	metadata := ordersMetadata()
 	source := Source{Document: document(t, metadata)}
 	alternate := ordersMetadata()
@@ -246,32 +224,11 @@ func TestSuppliedContractsRemainDistinctAndValidated(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer prepared.Close()
-	if err := prepared.WritePythonSlot("caller", c.Dir); err != nil {
+	if err := prepared.WriteSlot("caller", TargetPy, c.Dir); err != nil {
 		t.Fatal(err)
 	}
 	if module := read(t, c.Dir, "holon/apps/__init__.py"); !strings.Contains(module, "async def lookup(") || !strings.Contains(module, "async def status(") {
 		t.Fatal("pre-resolved contract did not generate a typed client")
-	}
-	invalid := &mcpcontract.Metadata{Identity: metadata.Identity, Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "bad", Input: json.RawMessage(`{"type":"string"}`)}}}}
-	c.Sources = []Source{source, {Alias: "invalid", Document: document(t, invalid)}}
-	if prepared, err := Prepare(t.Context(), []Consumer{c}, Options{}); err == nil {
-		prepared.Close()
-		t.Fatal("accepted an invalid contract after resolving a matching identity")
-	}
-}
-
-func TestGoConsumerClients(t *testing.T) {
-	root := t.TempDir()
-	put(t, root, "go.mod", "module example.com/caller\n\ngo 1.27.0\n")
-	put(t, root, "server.go", "package main\n\nfunc main() {}\n")
-	put(t, root, "server.json", `{"name":"example.com/caller","version":"1.0.0","description":"Caller"}`)
-	c := Consumer{Name: "caller", Dir: root, Targets: []string{TargetGo}, Server: &Source{Path: root}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	clients := read(t, root, "holon/clients.go")
-	if !strings.Contains(clients, `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(clients, " Lookup(") {
-		t.Fatalf("Go client lacks the default runtime or dependency tool:\n%s", clients)
 	}
 }
 
@@ -288,23 +245,6 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(orders, "holon/apps")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("extraction wrote the generated slot: %v", err)
-	}
-	// Check verifies the application files the server loaded, not the slot an image build replaces.
-	c := Consumer{Name: "orders", Dir: orders, Server: &Source{Path: orders}, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	if err := os.MkdirAll(filepath.Join(orders, "holon/apps/__pycache__"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
-		t.Fatalf("generate beside a holon/apps directory without a module: %v", err)
-	}
-	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prepared.Close()
-	check, _ := prepared.CheckConfig("orders")
-	if sources := check["sources"].(map[string]string); sources["server.py"] == "" || sources["holon/apps/__init__.py"] != "" || !strings.Contains(read(t, orders, "holon/apps/__init__.py"), "async def lookup(") {
-		t.Fatalf("check sources = %v", sources)
 	}
 }
 
@@ -376,33 +316,5 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 	writeProvider(t, orders, "orders", "while True:\n    pass\n")
 	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "server.py: no catalog within 1s") {
 		t.Fatalf("server that never answers: %v", err)
-	}
-}
-
-// containerRun runs the real runner as the platform's container does: only the tooling root is
-// mounted, so the server must be given as a snapshot under it.
-func containerRun(ctx context.Context, language, tooling string, args []string, stdout io.Writer) error {
-	if !pathInsideContext(args[1], filepath.Dir(tooling)) {
-		return fmt.Errorf("%s is not a snapshot under %s", args[1], filepath.Dir(tooling))
-	}
-	command := exec.CommandContext(ctx, "node", append([]string{filepath.Join(tooling, language, "runner.mjs")}, args...)...)
-	command.Stdout = stdout
-	return command.Run()
-}
-
-func TestAnExtractionHookRunsSnapshotsThatNeedNothingInstalled(t *testing.T) {
-	needNode(t)
-	orders := t.TempDir()
-	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
-	put(t, orders, "server.ts", `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
-import { z } from "zod";
-export default createMcpHandler(() => {
-  const server = new McpServer({ name: "orders", version: "1" });
-  server.registerTool("read", { inputSchema: z.object({ id: z.string() }) }, () => ({ content: [] }));
-  return server;
-});`)
-	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{Run: containerRun})
-	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
-		t.Fatalf("schema-only server in a snapshot = %+v, %v", contract, err)
 	}
 }

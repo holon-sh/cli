@@ -19,6 +19,7 @@ type Request struct {
 	Source         string   `json:"source"`
 	Platforms      []string `json:"platforms"`
 	Start          []string `json:"start,omitempty"`
+	Development    bool     `json:"development,omitempty"`
 }
 
 type Result struct {

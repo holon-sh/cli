@@ -141,10 +141,6 @@ func newRunHarness(t *testing.T) *runHarness {
 
 func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
-	// After any test's own: deploy looks for development sessions to reuse images from.
-	h.control.Handle([]string{toolListSessions}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, map[string]any{"items": []protocol.SessionResponse{}})
-	})
 	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
 		w.WriteHeader(http.StatusOK)
@@ -285,6 +281,9 @@ func TestRunDevLifecycle(t *testing.T) {
 		}
 		_ = connection.Close()
 	})
+	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, r *http.Request) {
+		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 0.5})
+	})
 	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession},
 		map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
 			installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
@@ -354,7 +353,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		await(stderr, "restart holon dev")
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
 		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "superseded"})
-		await(stderr, "discarding the superseded update", "remote update requested")
+		await(stderr, "remote update requested")
 		mu.Lock()
 		unavailable = true
 		mu.Unlock()
@@ -454,18 +453,18 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 	selection := "apps:\n- name: unused\n  path: ./not-checked-out\n  access: {server: {}}\n"
 	var dependency *protocol.RegistrySource
 	var dependencyName string
+	requires := map[string]any{"delta": map[string]string{"url": "https://upstream.example/mcp"}}
 	for _, name := range []string{"gamma", "beta", "alpha"} {
 		document := descriptorDocument(name)
 		delete(document, "packages")
 		document["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://upstream.example/mcp"}}
+		document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": requires}}}
 		if dependency != nil {
-			document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
-				"requires": map[string]protocol.RegistryRef{dependencyName: dependency.RegistryRef},
-			}}}
 			data, _ := json.Marshal(dependency)
 			selection += fmt.Sprintf("- name: %s\n  registry: %s\n  access: {server: {}}\n", dependencyName, data)
 		}
 		dependency, dependencyName = descriptorRegistry(t, document), name
+		requires = map[string]any{name: dependency.RegistryRef}
 	}
 	alpha := "alpha=" + dependency.Registry + "/v0.1/servers/" + url.PathEscape(dependency.Name) + "/versions/" + dependency.Version
 	for _, tc := range []struct {
@@ -662,6 +661,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 	mu.Lock()
 	initial := slices.Clone(desired.Apps)
 	mu.Unlock()
+	if slices.ContainsFunc(initial, func(app protocol.App) bool { return app.Overlay != "" }) {
+		t.Fatalf("deploy carries an overlay: %+v", initial)
+	}
 	if strings.Contains(diagnostics.String(), "fixture build output") ||
 		strings.Contains(diagnostics.String(), "Timing ") ||
 		!strings.Contains(diagnostics.String(), "prod ready") || strings.ContainsAny(diagnostics.String(), "\x1b\r") {

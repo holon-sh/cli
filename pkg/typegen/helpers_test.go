@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/protocol"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
@@ -100,7 +101,8 @@ func typeScriptApp(t *testing.T) string {
 	needNode(t)
 	app := t.TempDir()
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	put(t, slotPackage(t, app, "holon-sh"), "protocol.d.ts", "export type AuthProvider = unknown; export type CallOptions = unknown; export type CallMetadata = unknown; export type ToolResult = unknown; export type ToolClient<I, O, R> = unknown; export declare class ToolCallError {}\n")
+	put(t, app, "tsconfig.json", `{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true,"allowJs":true,"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext","allowImportingTsExtensions":true}}`)
+	put(t, slotPackage(t, app, "holon-sh"), "runtime.d.ts", "export type ToolClient<I, O, R> = unknown;\nexport declare class ToolCallError {}\nexport type EndpointBinding = unknown;\nexport type CreateOptions = unknown;\n")
 	linkTypeScript(t, app)
 	return app
 }
@@ -123,10 +125,10 @@ func needNode(t *testing.T) {
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
 // snapshot's server.json name, printing an extraction or returning an error as the runner's failure.
 func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
-	return func(_ context.Context, _, _ string, args []string, stdout io.Writer) error {
+	return func(_ context.Context, _, tooling string, args []string, stdout io.Writer) error {
 		root, entry := args[1], args[2]
-		if !isFile(filepath.Join(root, entry)) {
-			return fmt.Errorf("entry %s is not in its snapshot %s", entry, root)
+		if !pathInsideContext(root, filepath.Dir(tooling)) || !isFile(filepath.Join(root, entry)) {
+			return fmt.Errorf("entry %s is not in a snapshot under %s: %s", entry, filepath.Dir(tooling), root)
 		}
 		var descriptor struct{ Name string }
 		if err := readTypeJSON(filepath.Join(root, "server.json"), &descriptor); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -210,7 +212,7 @@ func registryImageSource(t *testing.T, image *http.Client) (Source, *http.Client
 		_, _ = w.Write([]byte(`{"server":{"name":"example.com/orders","version":"1.0.0","description":"Orders","packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]}}`))
 	}))
 	t.Cleanup(server.Close)
-	source := Source{Registry: &Reference{Name: "example.com/orders", Version: "1.0.0", Registry: server.URL}}
+	source := Source{Registry: &protocol.RegistryRef{Name: "example.com/orders", Version: "1.0.0", Registry: server.URL}}
 	client := &http.Client{Transport: hostTransport{
 		strings.TrimPrefix(server.URL, "https://"): server.Client().Transport,
 		"images.example": image.Transport,

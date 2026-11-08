@@ -17,14 +17,14 @@ type goTool struct {
 	name, input, output string
 }
 
-var goWords = regexp.MustCompile(`[a-zA-Z0-9]+`)
+var asciiWords = regexp.MustCompile(`[a-zA-Z0-9]+`)
 
 // goTagName matches ASCII JSON struct-tag names; "-" alone means omission.
 var goTagName = regexp.MustCompile(`^[a-zA-Z0-9` + regexp.QuoteMeta(" !#$%&()*+./:;<=>?@[]^_{|}~") + `-]+$`)
 
 // typeIdentifier turns any name into a capitalized ASCII identifier.
 func typeIdentifier(value string) string {
-	words := goWords.FindAllString(value, -1)
+	words := asciiWords.FindAllString(value, -1)
 	for i, word := range words {
 		words[i] = strings.ToUpper(word[:1]) + word[1:]
 	}
@@ -64,10 +64,18 @@ func goStruct(value typ) bool {
 	return true
 }
 
-// goDeclares reports whether a type is declared. A shared map is not, since maps of one type are
-// interchangeable anyway.
+// goDeclares reports whether a type is declared. A shared map that nothing names is not, since maps
+// of one type are interchangeable anyway.
 func goDeclares(ref *declaration) bool {
-	return ref.cyclic || goStruct(ref.value)
+	return ref.cyclic || ref.definition != "" || goStruct(ref.value)
+}
+
+// goRawJSON reports whether a type decodes as raw JSON, by whatever name.
+func goRawJSON(value typ) bool {
+	for value.kind == kindDeclared && !value.ref.cyclic {
+		value = value.ref.value
+	}
+	return renderGo(value) == "json.RawMessage"
 }
 
 func renderGo(value typ) string {
@@ -76,7 +84,7 @@ func renderGo(value typ) string {
 		if !goDeclares(value.ref) {
 			return renderGo(value.ref.value)
 		}
-		if !goRecursive(value.ref.value) {
+		if value.ref.cyclic && !goRecursive(value.ref.value) {
 			return "json.RawMessage"
 		}
 		return value.ref.name
@@ -116,7 +124,7 @@ func renderGo(value typ) string {
 			rendered := renderGo(member.value)
 			tagName := name
 			// A struct cannot contain a recursive type by value, since that type may contain the struct.
-			if (!member.required || member.value.kind == kindDeclared && member.value.ref.cyclic) && rendered != "json.RawMessage" {
+			if (!member.required || member.value.kind == kindDeclared && member.value.ref.cyclic) && !goRawJSON(member.value) {
 				rendered = "*" + rendered
 			}
 			if !member.required {
@@ -140,6 +148,7 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 		methods := map[string]bool{"CallTool": true}
 		tools := map[string]goTool{}
 		catalog := contracts[binding]
+		nameDeclarations(names, binding, catalog, goDeclares)
 		for _, name := range sortedKeys(catalog) {
 			tool := catalog[name]
 			method := unique(methods, typeIdentifier(name))
@@ -150,11 +159,7 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 			}{{"Input", tool.input}, {"Output", tool.output}} {
 				symbol := unique(names, client+method+part.suffix)
 				root := part.shape.value
-				// A type that this tool uses first as its whole input or output is declared as that.
-				if root.kind == kindDeclared && root.ref.name == "" && goDeclares(root.ref) && root.ref.preferred(symbol, client+part.suffix) == symbol {
-					root.ref.name = symbol
-				}
-				for _, ref := range part.shape.name(names, symbol, client+part.suffix, goDeclares) {
+				for _, ref := range part.shape.declarations(goDeclares) {
 					// Only a defined type can contain itself, but one defined from json.RawMessage would
 					// lose its methods.
 					format := "type %s = %s\n\n"
@@ -163,16 +168,7 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 					}
 					fmt.Fprintf(&declarations, format, ref.name, renderGo(ref.value))
 				}
-				if root.kind != kindDeclared || root.ref.name != symbol {
-					fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(root))
-				}
-				for _, definition := range sortedKeys(part.shape.named) {
-					value, preferred := part.shape.named[definition], symbol+typeIdentifier(definition)
-					if value.kind == kindDeclared && value.ref.name == preferred {
-						continue
-					}
-					fmt.Fprintf(&declarations, "type %s = %s\n\n", unique(names, preferred), renderGo(value))
-				}
+				fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(root))
 				symbols = append(symbols, symbol)
 			}
 			tools[name] = goTool{name: method, input: symbols[0], output: symbols[1]}

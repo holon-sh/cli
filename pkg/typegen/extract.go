@@ -18,16 +18,13 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
-	"github.com/opencontainers/go-digest"
 )
 
-// extraction is the contract a runner prints: the server's catalog and the application files it
-// loaded, with their SHA-256 digests.
+// extraction is the contract a runner prints: the server's catalog and its own description.
 type extraction struct {
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`
 	ServerInfo json.RawMessage        `json:"serverInfo"`
-	Sources    map[string]string      `json:"sources"`
 }
 
 // RunnerError is a contract runner's failure: the status it exited with and what it wrote to
@@ -46,24 +43,17 @@ func (e *RunnerError) Error() string {
 var serverTimeout = 30 * time.Second
 
 // typeLanguage is how one language's tooling runs: the contract runner's interpreter flags and
-// script, the checker command, relative to the language's tooling directory, and the host
+// script, the checker script, relative to the language's tooling directory, and the host
 // interpreters that can run them.
 type typeLanguage struct {
 	flags           []string
-	runner          string
-	checker         []string
+	runner, checker string
 	programs, probe []string
 }
 
 var typeLanguages = map[string]typeLanguage{
-	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", []string{"runner.mjs", "check"}, []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
-	"python":     {nil, "extract.py", []string{"runner.py", "check"}, []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
-}
-
-// command runs step, one of the language's tooling commands, unpacked under tooling, with args.
-func (l typeLanguage) command(ctx context.Context, program, tooling, language string, step []string, args ...string) *exec.Cmd {
-	arguments := append([]string{filepath.Join(tooling, language, step[0])}, step[1:]...)
-	return exec.CommandContext(ctx, program, append(arguments, args...)...)
+	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", "check.mjs", []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
+	"python":     {nil, "extract.py", "runner.py", []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
 }
 
 func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
@@ -134,7 +124,6 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 				return fmt.Errorf("%s: %s is not installed; install the application's dependencies, or commit its contract (holon types generate --contract %s -o %s)\n%s", s.origin, missing.name, s.origin, filepath.Join(s.origin, ContractFile), missing.diagnostic)
 			}
 			s.metadata.Identity, s.metadata.Schema = document.Identity, document.Schema
-			s.sources = map[string]string{ContractFile: digest.FromBytes(document.Data).Encoded()}
 			continue
 		}
 		if failures[i] != nil {
@@ -144,15 +133,11 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			return err
 		}
 		if drift && document != nil {
-			answered, err := mcptype.Canonical(ctx, map[string]any{"contract": s.metadata.Schema})
+			same, err := mcptype.SameContract(ctx, s.metadata.Schema, document.Schema)
 			if err != nil {
 				return err
 			}
-			recorded, err := mcptype.Canonical(ctx, map[string]any{"contract": document.Schema})
-			if err != nil {
-				return err
-			}
-			if answered.Digest != recorded.Digest || document.Identity != s.metadata.Identity {
+			if !same || document.Identity != s.metadata.Identity {
 				contract := filepath.Join(s.origin, ContractFile)
 				return fmt.Errorf("%s is stale: the server answers a different contract; regenerate it with holon types generate --contract %s -o %s", contract, s.origin, contract)
 			}
@@ -212,58 +197,51 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	return result, nil
 }
 
-// runLocal runs a contract runner with the host's interpreter. A Python server (args[1]) runs in its
-// own environment when that imports mcp and pydantic.
+// runLocal runs a contract runner on the host. A Python server (args[1]) runs in its own environment; the
+// host's interpreter, whose mcp and pydantic serve a server that needs nothing else, runs one with no
+// environment or one whose environment is too old or lacks them.
 func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
 	if err := validateEnv(env); err != nil {
 		return err
 	}
 	l := typeLanguages[language]
+	run := func(program string) error {
+		limited, cancel := context.WithTimeout(ctx, serverTimeout)
+		defer cancel()
+		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
+		command.Env = append(command.Environ(), env...)
+		var stderr bytes.Buffer
+		command.Stdout, command.Stderr = stdout, &stderr
+		err := command.Run()
+		if errors.Is(limited.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			return fmt.Errorf("%s: no catalog within %s", args[2], serverTimeout)
+		}
+		if exit := (*exec.ExitError)(nil); errors.As(err, &exit) {
+			return &RunnerError{Status: exit.ExitCode(), Stderr: stderr.String()}
+		}
+		return err
+	}
+	if language == "python" {
+		if own := pythonEnvironment(args[1], ""); own != "" && exec.CommandContext(ctx, own, l.probe...).Run() == nil {
+			if err := run(own); !lacksSchemaLibraries(err) {
+				return err
+			}
+		}
+	}
 	program, err := l.localProgram(ctx)
 	if err != nil {
 		return err
 	}
-	if language == "python" {
-		if program = pythonProgram(ctx, args[1], program); program == "" {
-			return &RunnerError{Status: 3, Stderr: "no Python environment here imports mcp and pydantic\nmcp\n"}
-		}
-	}
-	limited, cancel := context.WithTimeout(ctx, serverTimeout)
-	defer cancel()
-	command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
-	command.Env = append(command.Environ(), env...)
-	var stderr bytes.Buffer
-	command.Stdout, command.Stderr = stdout, &stderr
-	err = command.Run()
-	if errors.Is(limited.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-		return fmt.Errorf("%s: no catalog within %s", args[2], serverTimeout)
-	}
-	if exit := (*exec.ExitError)(nil); errors.As(err, &exit) {
-		return &RunnerError{Status: exit.ExitCode(), Stderr: stderr.String()}
-	}
-	return err
+	return run(program)
 }
 
-// pythonProgram is the interpreter that runs a Python server: its own environment's when that
-// imports mcp and pydantic, else the host's, whose copies serve a server that needs nothing else.
-// It is "" when neither can.
-func pythonProgram(ctx context.Context, dir, host string) string {
-	for _, program := range slices.Compact([]string{pythonEnvironment(dir, host), host}) {
-		if exec.CommandContext(ctx, program, "-c", "import mcp.server, pydantic").Run() == nil {
-			return program
-		}
-	}
-	return ""
+// lacksSchemaLibraries reports a contract runner that stopped on an uninstalled mcp or pydantic.
+func lacksSchemaLibraries(err error) bool {
+	var failed *RunnerError
+	return errors.As(err, &failed) && failed.Status == 3 && (strings.HasSuffix(failed.Stderr, "\nmcp\n") || strings.HasSuffix(failed.Stderr, "\npydantic\n"))
 }
 
 func isFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
-}
-func writeJSON(path string, value any) error {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
 }

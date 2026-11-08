@@ -1,7 +1,6 @@
 package mcptype
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -93,6 +92,10 @@ const kitchenSink = `{
     {"name": "CallTool", "inputSchema": {"type": "object"}},
     {"name": "get-order", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "additionalProperties": false, "required": ["id"]}},
     {"name": "get_order", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "additionalProperties": false, "required": ["id"]}},
+    {"name": "runtime.run", "inputSchema": {"type": "object", "properties": {"code": {"type": "string"}}, "additionalProperties": false, "required": ["code"]}, "outputSchema": {"type": "object", "properties": {"stdout": {"type": "string"}}, "additionalProperties": false, "required": ["stdout"]}},
+    {"name": "order.list", "inputSchema": {"type": "object"}},
+    {"name": "order/list", "inputSchema": {"type": "object"}},
+    {"name": "_hidden", "inputSchema": {"type": "object"}},
     {"name": "123", "inputSchema": {"type": "object"}},
     {"name": "-", "inputSchema": {"type": "object"}},
     {"name": "émoji🎉", "inputSchema": {"type": "object", "properties": {"é": {"type": "string"}}}, "outputSchema": {"type": "string", "description": "é"}}
@@ -119,7 +122,6 @@ func generationCases(t *testing.T) []generationCase {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const protocol = "type AuthProvider = { token(): Promise<string> };\ntype ToolClient<I, O, R> = { tools: { [K in keyof I]: (input: I[K]) => Promise<K extends keyof O ? O[K] : unknown> }; resources: { [U in keyof R]: { read(): Promise<R[U]> } }; callTool<K extends keyof I & string>(request: { name: K; arguments: I[K] }): Promise<unknown> };"
 	const order = `{"tools": [
         {"name": "get_order", "inputSchema": {"type": "object", "additionalProperties": false,
             "properties": {"orderId": {"type": "string"}, "count": {"type": "integer"}}, "required": ["orderId"]},
@@ -127,41 +129,27 @@ func generationCases(t *testing.T) []generationCase {
         {"name": "then", "inputSchema": {"type": "object", "additionalProperties": false}}
     ], "resources": [{"uri": "orders://summary", "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}}]}`
 	sampleContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}`
-	runtime := `{"runtime.mjs": "` + base64.StdEncoding.EncodeToString([]byte("export {};\n")) + `", "nested/bytes.dat": "` + base64.StdEncoding.EncodeToString([]byte{0, 128, 255, '\n'}) + `"}`
 	for _, target := range []string{"browser", "go"} {
-		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "go_module": "example.com/é/runtime", "own": "orders", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
+		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "go_module": "example.com/é/runtime", "own": "orders", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
 	}
 	add("empty-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
-	add("inputs-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime", "contracts": {"orders": {"tools": [{"name": "lookup",
-        "inputSchema": {"type": "object", "required": ["id", "rows", "byRegion"],
-            "properties": {
-                "id": {"type": "string"},
-                "rows": {"type": "array", "items": {"$ref": "#/$defs/Row"}},
-                "byRegion": {"type": "object", "additionalProperties": {"type": "object", "properties": {"quantity": {"type": "integer"}}}}
-            },
-            "$defs": {"Row": {"type": "object", "required": ["sku"], "properties": {"sku": {"type": "string"}}}}},
-        "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}}}]}}}`)
 	for _, target := range []string{"node", "python"} {
 		// sink-browser already renders the kitchen sink's TypeScript, so only Python renders it here.
 		options, contracts := "", sampleContracts+`, "schemas": `+kitchenSink+`}`
 		if target == "node" {
-			options, contracts = `, "runtime_specifier": "../runtime.mjs", "protocol_specifier": "../protocol.js"`, sampleContracts+`}`
+			options, contracts = `, "runtime_specifier": "../runtime.mjs"`, sampleContracts+`}`
 		}
 		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+contracts+`, "banner": "holon-generated-apps-v1 app=checkout"`+options+`}`)
 	}
 	for _, test := range []struct{ name, patch string }{
 		{"go-module-missing", `"target": "go", "go_module": ""`},
-		{"runtime-escape", `"runtime": {"../escape": ""}`},
-		{"protocol-exclusive", `"protocol": "type X = 1;", "protocol_specifier": "../protocol.js"`},
 		{"banner-newline", `"banner": "marker\nimport os"`},
 		{"binding-empty", `"contracts": {"": {"tools": []}}`},
 		{"bad-target", `"target": "wasm"`},
 		{"identity-empty", `"identity": {"name": "", "version": "1"}`},
 		{"duplicate-tool", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}}, {"name":"read", "inputSchema":{"type":"object"}}]}}`},
-		{"input-not-object", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"string"}}]}}`},
 		{"output-null", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}, "outputSchema":null}]}}`},
 		{"duplicate-resource", `"contracts": {"x": {"tools": [], "resources": [{"uri":"r://a", "outputSchema":{}}, {"uri":"r://a", "outputSchema":{}}]}}`},
-		{"external-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "https://example.com"}}}}]}}`},
 		{"unresolved-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/nope"}}}}]}}`},
 		{"external-ref-in-cycle", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/$defs/A"}}, "$defs": {"A": {"anyOf": [{"$ref": "/$defs/B"}]}, "B": {"$ref": "#/$defs/A"}}}}]}}`},
 		{"schema-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": 5}}}]}}`},

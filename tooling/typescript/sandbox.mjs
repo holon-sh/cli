@@ -51,7 +51,7 @@ export function createSandbox(root, vendor) {
     globalThis.process = Object.freeze({ env: {}, platform: "linux", arch: "x64", versions: Object.freeze({ node }), cwd: () => cwd, exit: control("exit"), on: control("on"), nextTick: control("nextTick") });
   }`, context, { filename: "holon:stub" })(stub, root, process.versions.node);
   const parse = vm.runInContext("JSON.parse", context);
-  const modules = new Map(), files = new Map(), commonjs = new Map(), builtins = new Map(), maps = new Map(), served = new Set();
+  const modules = new Map(), files = new Map(), commonjs = new Map(), builtins = new Map(), maps = new Map();
   const paths = tsconfigPaths(root);
 
   function resolveSpecifier(specifier, referrer, conditions) {
@@ -87,7 +87,6 @@ export function createSandbox(root, vendor) {
   function load(file) {
     if (modules.has(file)) return modules.get(file);
     const url = pathToFileURL(file).href;
-    served.add(file);
     let created;
     const format = formatOf(file);
     if (format === "json") {
@@ -145,7 +144,6 @@ export function createSandbox(root, vendor) {
   // require evaluates a CommonJS file in the context, resolving its requires through the loader.
   function require(file) {
     if (commonjs.has(file)) return commonjs.get(file).exports;
-    served.add(file);
     const record = { exports: {} };
     commonjs.set(file, record);
     if (formatOf(file) === "json") return (record.exports = parse(readFileSync(file, "utf8")));
@@ -177,7 +175,6 @@ export function createSandbox(root, vendor) {
 
   return {
     context,
-    served,
     import: async file => (await evaluate(load(realpathSync(file)))).namespace,
     resolve: (specifier, referrer) => resolveSpecifier(specifier, realpathSync(referrer), ["import", "node"]).file,
     // diagnostic rewrites transpiled positions to the original source and names missing capabilities.
@@ -242,13 +239,14 @@ function conditional(value, match, conditions) {
   }
 }
 
-// tsconfigPaths maps a specifier through the application's tsconfig.json paths, if any.
+// tsconfigPaths maps a specifier through the paths of the tsconfig.json tsc finds from root, if any.
+// Only the options matter, so a config high in the tree does not cost a walk of everything under it.
 function tsconfigPaths(root) {
-  const file = join(root, "tsconfig.json");
-  if (!existsSync(file)) return () => [];
+  const file = ts.findConfigFile(root, ts.sys.fileExists);
+  if (!file) return () => [];
   const { config } = ts.readConfigFile(file, ts.sys.readFile);
-  const { options } = ts.parseJsonConfigFileContent(config ?? {}, ts.sys, root);
-  const base = options.baseUrl ?? options.pathsBasePath ?? root;
+  const { options } = ts.parseJsonConfigFileContent(config ?? {}, { ...ts.sys, readDirectory: () => [] }, dirname(file));
+  const base = options.baseUrl ?? options.pathsBasePath;
   const entries = Object.entries(options.paths ?? {});
   return specifier => entries.flatMap(([pattern, targets]) => {
     const [prefix, suffix = ""] = pattern.split("*");

@@ -15,14 +15,15 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
 	github.com/holon-sh/mcp-bridge v0.0.4
-	github.com/holon-sh/protocol v0.0.1-dev.10.0.20261107201219-617df8bcb614
-	github.com/holon-sh/runtime v0.0.1-dev.3
+	github.com/holon-sh/protocol v0.0.1-dev.12
+	github.com/holon-sh/runtime v0.0.1-dev.4
 	github.com/klauspost/compress v1.19.2
 	github.com/moby/buildkit v0.33.1
 	github.com/moby/patternmatcher v0.6.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
 	github.com/swaggest/jsonschema-go v0.3.78
@@ -30,6 +31,7 @@ require (
 	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd
 	github.com/tonistiigi/fsutil v0.0.0-20260819142231-83cac42c1c52
 	github.com/zitadel/oidc/v3 v3.51.11
+	golang.org/x/mod v0.41.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.23.0
 	golang.org/x/term v0.46.0

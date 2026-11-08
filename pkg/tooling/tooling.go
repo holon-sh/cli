@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	_ "embed"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -26,4 +27,16 @@ func Unpack(root string) error {
 		return err
 	}
 	return os.CopyFS(filepath.Join(root, "python"), python.Files)
+}
+
+// File reads one of a language's files without unpacking the rest.
+func File(language, name string) ([]byte, error) {
+	if language == "python" {
+		return python.Files.ReadFile(name)
+	}
+	archive, err := zip.NewReader(bytes.NewReader(typescript), int64(len(typescript)))
+	if err != nil {
+		return nil, err
+	}
+	return fs.ReadFile(archive, name)
 }

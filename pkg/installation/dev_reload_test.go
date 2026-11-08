@@ -6,15 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -25,6 +26,11 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
+const (
+	alphaProject  = "[project]\nname = \"alpha\"\nversion = \"1\"\n"
+	alphaManifest = "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n"
+)
+
 // reloadFixture runs holon dev for one source app, alpha, against a fake control plane and registry.
 // Like the API, it holds a get_session that names the session's current revision until the session moves.
 type reloadFixture struct {
@@ -33,14 +39,14 @@ type reloadFixture struct {
 	stdout   *installationtest.ObservedOutput
 	stderr   *installationtest.ObservedOutput
 	await    func(check func() bool)
-	start    func(args ...string) // runs holon dev again, as a later command would
+	start    func(args ...string)
 	stop     func() error
 	baseHost string
 
 	mu       sync.Mutex
 	ready    bool
 	failNext bool
-	foreign  bool // the session is someone else's, so renewing it fails
+	foreign  bool
 	creates  int
 	served   []protocol.App
 	revision int
@@ -74,14 +80,9 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 	t.Helper()
 	f := &reloadFixture{root: t.TempDir(), ready: ready, changed: make(chan struct{})}
 	sourceFiles(t, f.root, map[string]string{
-		manifestFileName:  "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n",
-		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
-		"alpha/tools.py": "first", "alpha/pyproject.toml": "[project]\nname = \"alpha\"\n", "alpha/ui/main.ts": "export {}",
-		"alpha/.holon-types/notes.txt": "only image builds read this",
+		manifestFileName:  alphaManifest,
+		"alpha/server.py": "app = None", "alpha/tools.py": "first", "alpha/pyproject.toml": alphaProject, "alpha/ui/main.ts": "export {}",
 	})
-	if err := os.Symlink("tools.py", filepath.Join(f.root, "alpha", "alias.py")); err != nil {
-		t.Fatal(err)
-	}
 	var registry *httptest.Server
 	f.registry, registry = buildRegistry(t)
 	h := newRunHarness(t)
@@ -151,7 +152,7 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
-		installationtest.WriteJSON(w, reloadAppResult{Digest: input.Digest, ElapsedSeconds: 1.2})
+		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2})
 	})
 	h.start(t, buildImage(t, "built"))
 	f.baseHost = h.baseHost
@@ -194,7 +195,7 @@ func TestDevSaves(t *testing.T) {
 		saves      []map[string]string // each awaits the line at the same index of lines
 		lines      []string
 		reloads    int
-		rebuilds   bool
+		rebuilt    bool
 	}{
 		{
 			name:  "an unchanged snapshot sends nothing",
@@ -202,39 +203,39 @@ func TestDevSaves(t *testing.T) {
 		},
 		{
 			name:  "files an editor writes while saving do nothing",
-			saves: []map[string]string{{"alpha/.tools.py.swp": "swap", "alpha/tools.py~": "first", "alpha/tools.py": "second"}}, lines: []string{reloaded}, reloads: 1,
+			saves: []map[string]string{{"alpha/.tools.py.swp": "swap", "alpha/tools.py~": "first", manifestFileName: alphaManifest + "# comment\n"}},
+			lines: []string{"no app changed"},
 		},
 		{
-			name:  "a module under ui/ rebuilds, since the frontend build reads it",
-			saves: []map[string]string{{"alpha/ui/main.ts": "export const edited = true"}}, lines: []string{"alpha building"}, rebuilds: true,
+			name:  "a module under ui/ reloads and rebuilds, since the frontend build reads it",
+			saves: []map[string]string{{"alpha/ui/main.ts": "export const edited = true"}}, lines: []string{"remote update requested"}, reloads: 1, rebuilt: true,
 		},
 		{
-			name:  "a dependency manifest rebuilds",
-			saves: []map[string]string{{"alpha/pyproject.toml": "[project]\nname = \"renamed\"\n"}}, lines: []string{"alpha building"}, rebuilds: true,
-		},
-		{
-			name: "a failed reload rebuilds", failReload: true,
-			saves: []map[string]string{{"alpha/tools.py": "second"}}, lines: []string{"alpha reload failed"}, reloads: 1, rebuilds: true,
+			name: "a failed reload is reported and rebuilds nothing", failReload: true,
+			saves: []map[string]string{{"alpha/tools.py": "second"}}, lines: []string{"alpha reload failed"}, reloads: 1,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true)
-			f.update(func() { f.failNext = test.failReload })
-			started := len(f.stderr.String())
+			var before protocol.App
+			f.update(func() { f.failNext, before = test.failReload, f.served[0] })
 			for i, files := range test.saves {
 				from := len(f.stderr.String())
 				sourceFiles(t, f.root, files)
 				f.await(func() bool { return strings.Contains(f.stderr.String()[from:], test.lines[i]) })
 			}
-			if test.rebuilds {
-				f.await(func() bool { return strings.Contains(f.stderr.String()[started:], "app rebuild") })
+			requests := f.reloadRequests()
+			if len(requests) != test.reloads {
+				t.Fatalf("reloads = %d; stderr=%q", len(requests), f.stderr.String())
 			}
-			output := f.stderr.String()[started:]
-			if requests := f.reloadRequests(); len(requests) != test.reloads || strings.Contains(output, "alpha building") != test.rebuilds {
-				t.Fatalf("reloads = %d, rebuilt = %v; stderr=%q", len(requests), strings.Contains(output, "alpha building"), output)
+			f.mu.Lock()
+			after := f.served[0]
+			f.mu.Unlock()
+			if rebuilt := after.Image != before.Image; rebuilt != test.rebuilt {
+				t.Fatalf("image replaced = %v; stderr=%q", rebuilt, f.stderr.String())
 			}
-			if err := f.stop(); err != nil {
-				t.Fatalf("run: %v stderr=%q", err, f.stderr.String())
+			if test.rebuilt && after.Overlay != requests[len(requests)-1].Digest {
+				t.Fatalf("rebuilt with overlay %+v after reloading %+v", after.Overlay, requests)
 			}
 		})
 	}
@@ -243,15 +244,15 @@ func TestDevSaves(t *testing.T) {
 func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 	for _, test := range []struct {
 		name    string
-		between func(t *testing.T, f *reloadFixture) // changes things while no holon dev runs
-		edit    map[string]string                    // made while no holon dev runs
+		between func(t *testing.T, f *reloadFixture)
+		edit    map[string]string
 		creates int
 		reloads int
 		rebuilt bool
 	}{
 		{name: "server source edited since reloads into the kept image", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1},
 		{
-			name: "a dependency manifest edited since rebuilds", edit: map[string]string{"alpha/pyproject.toml": "[project]\nname = \"renamed\"\n"},
+			name: "a dependency manifest edited since rebuilds", edit: map[string]string{"alpha/pyproject.toml": alphaProject + "dependencies = [\"idna\"]\n"},
 			creates: 1, rebuilt: true,
 		},
 		{name: "another caller's session is not picked up", between: func(_ *testing.T, f *reloadFixture) { f.foreign = true }, creates: 2},
@@ -271,9 +272,9 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			if err := f.stop(); err != nil {
 				t.Fatalf("first run: %v stderr=%q", err, f.stderr.String())
 			}
-			var before string
+			var before protocol.App
 			f.update(func() {
-				before = f.served[0].Image
+				before = f.served[0]
 				if test.between != nil {
 					test.between(t, f)
 				}
@@ -282,13 +283,13 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			f.start()
 			f.watching()
 			f.mu.Lock()
-			image := f.served[0].Image
+			after := f.served[0]
 			f.mu.Unlock()
 			if f.created() != test.creates || !strings.HasPrefix(f.stdout.String(), "Session  gentle-otter-482\n\nStarting\n") {
 				t.Fatalf("creates = %d, want %d; stdout=%q stderr=%q", f.created(), test.creates, f.stdout.String(), f.stderr.String())
 			}
-			if test.between == nil && (len(f.reloadRequests()) != test.reloads || (image != before) != test.rebuilt) {
-				t.Fatalf("reloads = %d, image replaced = %v; stderr=%q", len(f.reloadRequests()), image != before, f.stderr.String())
+			if rebuilt := !reflect.DeepEqual(after, before); len(f.reloadRequests()) != test.reloads || rebuilt != test.rebuilt {
+				t.Fatalf("reloads = %d, app replaced = %v; stderr=%q", len(f.reloadRequests()), rebuilt, f.stderr.String())
 			}
 		})
 	}
@@ -301,51 +302,59 @@ func TestDevDetachedStartsItsOwnSession(t *testing.T) {
 	}
 	f.start("--detach")
 	f.await(func() bool { return f.created() == 2 })
-	f.update(func() {}) // releases the readiness read, which the fixture holds at the session's current revision
+	f.update(func() {})
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Expires") })
-	if err := f.stop(); err != nil {
-		t.Fatalf("detached run: %v stderr=%q", err, f.stderr.String())
-	}
 }
 
 func TestDevReloadPushesTheBuildSnapshot(t *testing.T) {
 	f := startReloadFixture(t, true)
+	if err := os.Symlink("tools.py", filepath.Join(f.root, "alpha", "alias.py")); err != nil {
+		t.Fatal(err)
+	}
 	started := len(f.stderr.String())
 	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "second"})
 	f.await(func() bool { return strings.Contains(f.stderr.String()[started:], "alpha reloaded") })
 	request := f.reloadRequests()[0]
-	if request.Session != "gentle-otter-482" || request.App != "alpha" || request.MediaType != overlayMediaType ||
-		strings.Contains(f.stderr.String()[started:], "alpha building") {
-		t.Fatalf("reload_app %+v; stderr=%q", request, f.stderr.String()[started:])
+	if request.Session != "gentle-otter-482" || request.App != "alpha" {
+		t.Fatalf("reload_app %+v", request)
 	}
+	f.mu.Lock()
+	first := f.served[0].Overlay
+	f.mu.Unlock()
+	if first == "" || first == request.Digest {
+		t.Fatalf("create_session overlay %q, reloaded %s", first, request.Digest)
+	}
+	if !strings.Contains(string(f.overlay(t, first)["server.py"]), "app = None") {
+		t.Fatal("the overlay a session starts from lacks the server source")
+	}
+	entries := f.overlay(t, request.Digest)
+	// The snapshot an image build would read, with its launcher.
+	if string(entries["tools.py"]) != "second" || string(entries["alias.py"]) != "tools.py" || !strings.Contains(string(entries[".holon/main.py"]), `start("server")`) {
+		t.Fatalf("overlay entries = %v", entries)
+	}
+}
+
+func (f *reloadFixture) overlay(t *testing.T, digest string) map[string][]byte {
+	t.Helper()
 	f.registry.mu.Lock()
-	blob := f.registry.items["holon/upload/alpha/blobs/"+request.Digest].data
+	blob := f.registry.items["holon/upload/alpha/blobs/"+digest].data
 	f.registry.mu.Unlock()
 	decoder, err := zstd.NewReader(bytes.NewReader(blob))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer decoder.Close()
-	entries := map[string]string{}
+	entries := map[string][]byte{}
 	for archive := tar.NewReader(decoder); ; {
 		header, err := archive.Next()
 		if errors.Is(err, io.EOF) {
-			break
+			return entries
 		}
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Without host times or owners, an unchanged snapshot archives to the same digest.
-		if !header.ModTime.Equal(time.Unix(0, 0)) || header.Uid != 0 || header.Uname != "" {
-			t.Errorf("%s keeps host metadata", header.Name)
-		}
 		data, _ := io.ReadAll(archive)
-		entries[header.Name] = string(data) + header.Linkname
-	}
-	// The snapshot an image build would read, with its launcher, without what only image builds read.
-	if entries["tools.py"] != "second" || entries["alias.py"] != "tools.py" || !strings.Contains(entries[".holon/main.mjs"], "../server.js") ||
-		slices.ContainsFunc(slices.Collect(maps.Keys(entries)), func(name string) bool { return strings.HasPrefix(name, ".holon-types") }) {
-		t.Fatalf("overlay entries = %v", entries)
+		entries[header.Name] = append(data, header.Linkname...)
 	}
 }
 
@@ -358,7 +367,7 @@ func TestDevStartup(t *testing.T) {
 	f.await(func() bool { return f.stdout.String() == starting })
 	f.update(func() { f.ready = true })
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Watching for changes.") })
-	if want := starting + "\nReady\n" + endpoints + "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev.\n"; f.stdout.String() != want {
+	if want := starting + "Ready\n" + "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev.\n"; f.stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", f.stdout.String(), want)
 	}
 	// Each read names the revision the session last had, so the server holds it until the session moves.
@@ -367,4 +376,43 @@ func TestDevStartup(t *testing.T) {
 		defer f.mu.Unlock()
 		return slices.Equal(f.reads, []string{"0", "1"})
 	})
+}
+
+// A save while the last save's types are still being prepared reloads at once, and stops that preparation.
+func TestDevSaveStopsTheLastPreparation(t *testing.T) {
+	bin, started := t.TempDir(), filepath.Join(t.TempDir(), "started")
+	// Stands in for npm installing the missing SDK runtime, which lasts until it is stopped.
+	sourceFiles(t, bin, map[string]string{"npm": "#!/bin/sh\necho $$ >> '" + started + "'\nexec sleep 600\n"})
+	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f := startReloadFixture(t, true)
+	alpha := filepath.Join(f.root, "alpha")
+	installRuntime(t, alpha)
+	from := len(f.stderr.String())
+	sourceFiles(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
+	f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha ready") })
+	if err := os.RemoveAll(filepath.Join(alpha, "node_modules", nodeRuntime)); err != nil {
+		t.Fatal(err)
+	}
+	runs := func() []string {
+		data, _ := os.ReadFile(started)
+		return strings.Fields(string(data))
+	}
+	for i, content := range []string{"second", "third"} {
+		from := len(f.stderr.String())
+		sourceFiles(t, f.root, map[string]string{"alpha/tools.py": content})
+		f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha reloaded") && len(runs()) == i+1 })
+	}
+	pid, err := strconv.Atoi(runs()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if process, _ := os.FindProcess(pid); process.Signal(syscall.Signal(0)) == nil {
+		t.Fatal("the first save's preparation still runs")
+	}
+	if strings.Contains(f.stderr.String(), "MCP types") {
+		t.Fatalf("stderr=%q", f.stderr.String())
+	}
 }

@@ -8,10 +8,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+
+	"golang.org/x/mod/modfile"
 )
 
 type packageJSON struct {
+	Name, Version                                                         string
 	PackageManager                                                        string `json:"packageManager"`
 	Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
 }
@@ -98,7 +102,10 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 }
 
 // ErrNoRuntime identifies a project without a declared Holon SDK runtime.
-var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh or holon-ui in package.json, on holon-sh in pyproject.toml, or on github.com/holon-sh/sdk-go in go.mod")
+var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh or holon-ui in package.json, on holon-sh in pyproject.toml, or on " + goRuntimeModule + " in go.mod")
+
+// goRuntimeModule is the runtime module that generated Go clients import.
+const goRuntimeModule = "github.com/holon-sh/sdk-go"
 
 // DeclaredTargets are the slots a project's SDK dependencies declare. None is an error.
 func DeclaredTargets(dir string) ([]string, error) {
@@ -115,7 +122,7 @@ func DeclaredTargets(dir string) ([]string, error) {
 	if ensurePythonRuntime(dir) == nil {
 		targets = append(targets, TargetPy)
 	}
-	if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil && goRuntime.Match(data) {
+	if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil && requiresGoRuntime(data) {
 		targets = append(targets, TargetGo)
 	}
 	if len(targets) == 0 {
@@ -124,7 +131,10 @@ func DeclaredTargets(dir string) ([]string, error) {
 	return targets, nil
 }
 
-var goRuntime = regexp.MustCompile(`(?m)^\s*(?:require\s+)?github\.com/holon-sh/sdk-go\s+v[^\s]+`)
+func requiresGoRuntime(data []byte) bool {
+	file, err := modfile.ParseLax("go.mod", data, nil)
+	return err == nil && slices.ContainsFunc(file.Require, func(require *modfile.Require) bool { return require.Mod.Path == goRuntimeModule })
+}
 
 var pythonRuntime = regexp.MustCompile(`(?im)(?:^|["'\s])holon[-_]sh(?:\[|[\s"'<=>!~;]|$)`)
 

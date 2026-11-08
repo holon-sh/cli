@@ -62,13 +62,13 @@ Call the server. A wrong tool name or argument is a type error.
 ```python
 from holon.apps import apps
 
-await apps.context7.call_tool("resolve-library-id", libraryName="Next.js", query="app router")
+await apps.context7.tools.resolve_library_id(libraryName="Next.js", query="app router")
 
-await apps.context7.call_tool("resolve-library-id", libraryName=1, query="app router")
-# error: No overload variant of "call_tool" of "Context7App" matches argument types "str", "int", "str"  [call-overload]
+await apps.context7.tools.resolve_library_id(libraryName=1, query="app router")
+# error: Argument "libraryName" to "resolve_library_id" of "Context7Tools" has incompatible type "int"; expected "str"  [arg-type]
 
-await apps.context7.call_tool("resolve-library", libraryName="Next.js", query="app router")
-# error: No overload variant of "call_tool" of "Context7App" matches argument types "str", "str", "str"  [call-overload]
+await apps.context7.tools.resolve_library(libraryName="Next.js", query="app router")
+# error: "Context7Tools" has no attribute "resolve_library"; maybe "resolve_library_id"?  [attr-defined]
 ```
 
 </details>
@@ -160,7 +160,7 @@ greeting.text;
 
 ## Dependencies
 
-A dependency is an MCP server your project calls. For each one `holon` obtains a contract—the JSON Schemas of the server's tools and resources—and writes a typed client `apps.<alias>` into the SDK package your project declares. `holon types check` then runs the language's type checker over your code against those clients.
+A dependency is an MCP server your project calls. For each one `holon` obtains a contract—the JSON Schemas of the server's tools and resources—and writes a typed client `apps.<alias>` into the SDK package your project declares. `holon types check` then runs the language's type checker over your code against those clients. A TypeScript project needs a `tsconfig.json`, found as `tsc` finds it.
 
 A dependency is written in one of three ways.
 

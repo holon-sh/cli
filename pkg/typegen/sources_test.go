@@ -2,6 +2,7 @@ package typegen
 
 import (
 	"errors"
+	"github.com/holon-sh/protocol"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -49,7 +50,7 @@ func TestPrepareRejectsInvalidConsumers(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "file")
 	put(t, dir, "file", "")
-	ref := &Reference{Name: "example.com/orders", Version: "1.0.0"}
+	ref := &protocol.RegistryRef{Name: "example.com/orders", Version: "1.0.0"}
 	for _, test := range []struct {
 		name string
 		c    Consumer
@@ -64,7 +65,7 @@ func TestPrepareRejectsInvalidConsumers(t *testing.T) {
 		{"server by endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Server: &Source{Endpoint: "https://x.example/mcp"}}, "must be a path source"},
 		{"contract and endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata()), Endpoint: "https://x.example/mcp"}}}, "exactly one of"},
 		{"bad alias", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Alias: "Bad_Alias", Registry: ref}}}, "must be a DNS label"},
-		{"bad version", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Registry: &Reference{Name: "example.com/orders", Version: "latest"}}}}, "exact"},
+		{"bad version", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Registry: &protocol.RegistryRef{Name: "example.com/orders", Version: "latest"}}}}, "exact"},
 		{"bad endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Endpoint: "https://user:secret@x.example/mcp"}}}, "without credentials"},
 	} {
 		prepared, err := Prepare(t.Context(), []Consumer{test.c}, Options{})
@@ -136,8 +137,8 @@ func TestParseSource(t *testing.T) {
 	}{
 		{arg: "../orders", want: Source{Path: filepath.Join(cwd, "../orders")}},
 		{arg: "orders=../orders/server.py", want: Source{Alias: "orders", Path: filepath.Join(cwd, "../orders/server.py")}},
-		{arg: "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4", want: Source{Registry: &Reference{Name: "io.github.upstash/context7", Version: "4.4.4", Registry: "https://registry.modelcontextprotocol.io"}}},
-		{arg: "docs=https://registry.example/v0/servers/example.com%2Fdocs/versions/1.0.0", want: Source{Alias: "docs", Registry: &Reference{Name: "example.com/docs", Version: "1.0.0", Registry: "https://registry.example"}}},
+		{arg: "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4", want: Source{Registry: &protocol.RegistryRef{Name: "io.github.upstash/context7", Version: "4.4.4", Registry: "https://registry.modelcontextprotocol.io"}}},
+		{arg: "docs=https://registry.example/v0/servers/example.com%2Fdocs/versions/1.0.0", want: Source{Alias: "docs", Registry: &protocol.RegistryRef{Name: "example.com/docs", Version: "1.0.0", Registry: "https://registry.example"}}},
 		{arg: "https://mcp.context7.com/mcp", want: Source{Endpoint: "https://mcp.context7.com/mcp"}},
 	} {
 		got, err := ParseSource(test.arg)

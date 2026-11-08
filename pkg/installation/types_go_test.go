@@ -28,11 +28,9 @@ func TestGoDependencyPreparation(t *testing.T) {
 	}
 	image := publishTypeMetadata(t, fixture, name, metadata, options, nil)
 	root := t.TempDir()
-	const module = "module example.org/caller\n\ngo 1.27.0\n\n" +
-		"require github.com/holon-sh/sdk-go v0.0.1-dev.1\n"
 	sourceFiles(t, root, map[string]string{
-		"go.mod": module, dockerignoreFile: "holon\nholon/**\n",
-		"server.go": `package main
+		"go.mod": "module example.org/caller\n\ngo 1.27.0\n\nrequire github.com/holon-sh/sdk-go v0.0.1-dev.1\n", dockerignoreFile: "holon\nholon/**\n",
+		"server.go": `package main // an MCP server
 import (
  "context"
  apps "example.org/caller/holon"
@@ -42,8 +40,8 @@ func main() {
 }
 `,
 	})
-	descriptor := &mcpregistry.Descriptor{Name: "example.org/caller", Version: "1.0.0", Requires: map[string]protocol.RegistryRef{
-		"orders": {Name: metadata.Identity.Name, Version: metadata.Identity.Version},
+	descriptor := &mcpregistry.Descriptor{Name: "example.org/caller", Version: "1.0.0", Requires: map[string]mcpregistry.Requirement{
+		"orders": {RegistryRef: protocol.RegistryRef{Name: metadata.Identity.Name, Version: metadata.Identity.Version}},
 	}}
 	manifest := typedManifest(t,
 		manifestApp{Name: "orders", resolved: resolvedApp{App: protocol.App{Name: "orders", Image: image}}},
@@ -61,14 +59,11 @@ func main() {
 	}
 	defer cleanup()
 	p := prepared.Apps[1].resolved.types
-	if _, err := os.Stat(filepath.Join(root, "holon", "clients.go")); err != nil {
-		t.Fatal("the Go client package was not written into the app for its editor")
+	clients, err := os.ReadFile(filepath.Join(root, "holon", "clients.go"))
+	if err != nil || !strings.Contains(string(clients), `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(string(clients), " GetOrder(") {
+		t.Fatalf("the app's Go clients for its editor: %v\n%s", err, clients)
 	}
-	if _, err := stageTypes(p, true); err != nil {
+	if _, err := stageTypes(p); err != nil {
 		t.Fatal(err)
-	}
-	unchanged, _ := os.ReadFile(filepath.Join(root, "go.mod"))
-	if string(unchanged) != module {
-		t.Fatal("generation or import changed module dependencies")
 	}
 }

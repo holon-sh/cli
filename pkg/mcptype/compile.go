@@ -44,20 +44,16 @@ func parseCatalog(ctx context.Context, contract contract) (catalog, error) {
 	return result, nil
 }
 
-// share declares each object that several places in shapes have in common once, and each recursive
-// type once however many shapes declare it. Every other type stays where it is used.
+// share declares each type that a definition or title names, each object that several places in
+// shapes have in common, and each recursive type, once however many shapes mention it. Every other
+// type stays where it is used.
 func share(shapes []*shape) {
 	s := &sharing{shapes: shapes, types: map[string]*sharedType{}, keys: map[*declaration]string{}}
 	for i, shape := range shapes {
 		s.current = i
-		s.count(shape.value, "", false)
+		s.count(shape.value, false)
 		for _, name := range sortedKeys(shape.named) {
-			s.count(shape.named[name], typeIdentifier(name), true)
-		}
-	}
-	for _, shared := range s.types {
-		if !shared.agree || !shared.several {
-			shared.declaration.definition = ""
+			s.count(shape.named[name], true)
 		}
 	}
 	for _, shape := range shapes {
@@ -86,7 +82,7 @@ type sharing struct {
 	keys    map[*declaration]string
 }
 
-// sharedType is a recursive type, or an object that might be shared.
+// sharedType is a recursive or named type, or an object that might be shared.
 type sharedType struct {
 	declaration *declaration
 	source      typ // The type as parsed, rewritten when first referenced.
@@ -95,72 +91,71 @@ type sharedType struct {
 	// to index them, so they share a type only with other tools.
 	uses, values int
 	several      bool // Whether other shapes mention it.
-	agree        bool // Whether every mention names declaration.definition.
 	attached     bool
 	built        bool
 }
 
 // declared reports whether the type is declared rather than written where it is used.
 func (t *sharedType) declared() bool {
-	return t.declaration.cyclic || t.values > 1 || t.uses > 1 && t.several
+	return t.declaration.cyclic || t.declaration.definition != "" || t.values > 1 || t.uses > 1 && t.several
 }
 
-// count records the uses of value and the types it contains. path names value within its tool, and
-// a shape's named definitions are not values.
-func (s *sharing) count(value typ, path string, named bool) {
-	switch value.kind {
-	case kindDeclared:
-		if s.mention(s.recursiveKey(value.ref), value.ref.value, value.ref.definition, value.ref.local, true, named) {
-			s.countWithin(value.ref.value, value.ref.local)
+// candidate reports whether a type that is not recursive might be declared.
+func candidate(value typ) bool {
+	return value.definition != "" || value.kind == kindObject && len(value.fields) > 0
+}
+
+// count records the uses of value and the types it contains. A shape's named definitions are not
+// values.
+func (s *sharing) count(value typ, named bool) {
+	switch {
+	case value.kind == kindDeclared:
+		if s.mention(s.recursiveKey(value.ref), value.ref.value, value.ref.definition, true, named) {
+			s.countWithin(value.ref.value)
 		}
 		return
-	case kindObject:
-		if len(value.fields) > 0 {
-			if value.definition != "" {
-				path = typeIdentifier(value.definition)
-			}
-			if !s.mention(s.key(value), value, value.definition, path, false, named) {
-				return
-			}
+	case candidate(value):
+		if !s.mention(s.key(value), value, value.definition, false, named) {
+			return
 		}
 	}
-	s.countWithin(value, path)
+	s.countWithin(value)
 }
 
-func (s *sharing) countWithin(value typ, path string) {
+func (s *sharing) countWithin(value typ) {
 	switch value.kind {
 	case kindArray:
-		s.count(*value.item, path+"Item", false)
+		s.count(*value.item, false)
 	case kindTuple:
 		for _, item := range value.prefix {
-			s.count(item, path+"Item", false)
-		}
-		if value.extra.value != nil {
-			s.count(*value.extra.value, path+"Item", false)
+			s.count(item, false)
 		}
 	case kindObject:
 		for _, name := range sortedKeys(value.fields) {
-			s.count(value.fields[name].value, path+typeIdentifier(name), false)
-		}
-		if value.extra.value != nil {
-			s.count(*value.extra.value, path+"Value", false)
+			s.count(value.fields[name].value, false)
 		}
 	case kindUnion, kindIntersection:
 		for _, item := range value.items {
-			s.count(item, path, false)
+			s.count(item, false)
 		}
+	}
+	if value.extra.value != nil {
+		s.count(*value.extra.value, false)
 	}
 }
 
 // mention records a use of the type with key and reports whether it is the first.
-func (s *sharing) mention(key string, source typ, definition, local string, cyclic, named bool) bool {
+func (s *sharing) mention(key string, source typ, definition string, cyclic, named bool) bool {
 	shared, seen := s.types[key]
 	if !seen {
-		shared = &sharedType{declaration: &declaration{cyclic: cyclic, local: local, definition: definition}, source: source, shape: s.current, agree: true}
+		label := definition
+		if label == "" {
+			label = structuralLabel(source)
+		}
+		shared = &sharedType{declaration: &declaration{cyclic: cyclic, definition: definition, label: label, key: key}, source: source, shape: s.current}
 		s.types[key] = shared
 	}
 	shared.several = shared.several || shared.shape != s.current
-	shared.agree = shared.agree && shared.declaration.definition == definition
 	shared.uses++
 	if !named {
 		shared.values++
@@ -168,13 +163,35 @@ func (s *sharing) mention(key string, source typ, definition, local string, cycl
 	return !seen
 }
 
+// structuralLabel names an object that no definition or title names after its first three fields in
+// key order, then Etc if it has more. A field is named by the definition or title that names its
+// type, or else by its own name.
+func structuralLabel(value typ) string {
+	var label strings.Builder
+	for i, name := range sortedKeys(value.fields) {
+		if i == 3 {
+			label.WriteString("Etc")
+			break
+		}
+		member := value.fields[name].value
+		switch {
+		case member.kind == kindDeclared && member.ref.definition != "":
+			name = member.ref.definition
+		case member.definition != "":
+			name = member.definition
+		}
+		label.WriteString(typeIdentifier(name))
+	}
+	return label.String()
+}
+
 // rewrite copies value, naming each shared type it contains.
 func (s *sharing) rewrite(value typ) typ {
 	switch value.kind {
 	case kindDeclared:
 		return s.reference(s.types[s.recursiveKey(value.ref)])
-	case kindObject:
-		if len(value.fields) > 0 {
+	default:
+		if candidate(value) {
 			if shared := s.types[s.key(value)]; shared.declared() {
 				return s.reference(shared)
 			}
@@ -184,6 +201,7 @@ func (s *sharing) rewrite(value typ) typ {
 }
 
 func (s *sharing) rewriteWithin(value typ) typ {
+	value.definition = ""
 	switch value.kind {
 	case kindArray:
 		item := s.rewrite(*value.item)
@@ -200,7 +218,7 @@ func (s *sharing) rewriteWithin(value typ) typ {
 			member := value.fields[name]
 			fields[name] = field{value: s.rewrite(member.value), required: member.required}
 		}
-		value.fields, value.definition = fields, ""
+		value.fields = fields
 	case kindUnion, kindIntersection:
 		items := make([]typ, len(value.items))
 		for i, item := range value.items {
@@ -249,10 +267,11 @@ func (s *sharing) key(value typ) string {
 	return out.String()
 }
 
-// spell writes value. A recursive type is spelled out where it is first reached and numbered after
-// that, which spells equal types alike since everything is visited in order.
+// spell writes value with the names its definitions and titles give it, so that types named apart
+// stay apart. A recursive type is spelled out where it is first reached and numbered after that,
+// which spells equal types alike since everything is visited in order.
 func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
-	fmt.Fprintf(out, "(%d", value.kind)
+	fmt.Fprintf(out, "(%d%s", value.kind, quoted(value.definition))
 	defer out.WriteByte(')')
 	switch value.kind {
 	case kindDeclared:
@@ -261,6 +280,7 @@ func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
 			return
 		}
 		seen[value.ref] = len(seen)
+		out.WriteString(quoted(value.ref.definition))
 		spell(out, value.ref.value, seen)
 	case kindLiteral:
 		out.Write(encode(value.literal))

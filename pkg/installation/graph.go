@@ -56,7 +56,7 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 				err = nil
 			}
 		} else if app.Registry != nil {
-			app.resolved.descriptor, err = mcpregistry.Fetch(ctx, app.Registry.RegistryRef)
+			app.resolved.descriptor, err = mcpregistry.Fetch(ctx, nil, app.Registry.RegistryRef)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s descriptor: %w", app.Name, err)
@@ -78,7 +78,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	}
 	resolved := manifest
 	resolved.Apps = nil
-	selections := map[string]protocol.RegistryRef{}
+	selections := map[string]mcpregistry.Requirement{}
 	envTypes := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(nodes)) {
 		app := nodes[name]
@@ -92,12 +92,8 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 				return manifestSpec{}, fmt.Errorf("conflicting references for dependency %s", dependency)
 			}
 			selections[dependency] = ref
-			selected := nodes[dependency]
-			if selected.resolved.descriptor == nil || selected.resolved.descriptor.Identity() != (mcpcontract.Identity{Name: ref.Name, Version: ref.Version}) {
-				return manifestSpec{}, fmt.Errorf("%s requires %s to be %s@%s; declared app does not match", name, dependency, ref.Name, ref.Version)
-			}
-			if selected.Registry != nil && selected.Registry.RegistryURL() != ref.Registry {
-				return manifestSpec{}, fmt.Errorf("conflicting registries for dependency %s", dependency)
+			if !satisfies(nodes[dependency], ref) {
+				return manifestSpec{}, fmt.Errorf("%s requires %s to be %s; declared app does not match", name, dependency, cmp.Or(ref.URL, ref.Name+"@"+ref.Version))
 			}
 		}
 		declaration := app.resolved.App
@@ -120,6 +116,15 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 		return manifestSpec{}, errors.New(strings.Join(problems, "; "))
 	}
 	return resolved, nil
+}
+
+func satisfies(app *manifestApp, requirement mcpregistry.Requirement) bool {
+	if requirement.URL != "" {
+		return app.Remote != nil && app.Remote.URL == requirement.URL
+	}
+	d := app.resolved.descriptor
+	return d != nil && d.Identity() == mcpcontract.Identity{Name: requirement.Name, Version: requirement.Version} &&
+		(app.Registry == nil || app.Registry.RegistryURL() == requirement.Registry)
 }
 
 func resolveApp(app *manifestApp) error {

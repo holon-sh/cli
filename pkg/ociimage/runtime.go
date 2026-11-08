@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/containerd/containerd/v2/core/images"
 	"github.com/klauspost/compress/zstd"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -134,7 +135,7 @@ func checkLayer(ctx context.Context, repository oras.Target, checkedLayers *sync
 	verified := content.NewVerifyReader(stream, descriptor)
 	var reader io.Reader = verified
 	switch descriptor.MediaType {
-	case ocispec.MediaTypeImageLayerGzip, "application/vnd.docker.image.rootfs.diff.tar.gzip":
+	case ocispec.MediaTypeImageLayerGzip, images.MediaTypeDockerSchema2LayerGzip:
 		zipper, err := gzip.NewReader(verified)
 		if err != nil {
 			return err
