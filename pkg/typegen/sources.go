@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 )
 
 const dockerignoreFile = ".dockerignore"
@@ -119,7 +121,7 @@ func (s Source) validate() error {
 		return s.Registry.Validate()
 	}
 	if s.Endpoint != "" {
-		return validEndpoint(s.Endpoint)
+		return mcpregistry.ValidateEndpoint(s.Endpoint)
 	}
 	return nil
 }

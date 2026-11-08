@@ -1,7 +1,6 @@
 package typegen
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -9,6 +8,7 @@ import (
 	"fmt"
 	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"io/fs"
 	"net"
 	"net/http"
@@ -21,7 +21,6 @@ import (
 )
 
 const RegistryOrigin = "https://registry.modelcontextprotocol.io"
-const publisherMetadata = "io.modelcontextprotocol.registry/publisher-provided"
 const maxDescriptorBytes = 1 << 20
 
 var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`)
@@ -57,29 +56,6 @@ func (r Reference) Validate() error {
 	return errors.New("MCP registry must be an HTTPS URL (loopback HTTP is allowed)")
 }
 
-type requirement struct {
-	Reference
-	URL string `json:"url,omitempty"`
-}
-
-func (r requirement) validate() error {
-	switch {
-	case r.URL == "":
-		return r.Reference.Validate()
-	case r.Reference != (Reference{}):
-		return errors.New("a url names the server; leave out name, version and registry")
-	default:
-		return validEndpoint(r.URL)
-	}
-}
-
-func (r requirement) source(alias string) Source {
-	if r.URL != "" {
-		return Source{Alias: alias, Endpoint: r.URL}
-	}
-	return Source{Alias: alias, Registry: &r.Reference}
-}
-
 // Server is how a server describes itself, in its server.json or the serverInfo it answers.
 type Server struct {
 	Name        string `json:"name"`
@@ -94,10 +70,10 @@ type Server struct {
 
 type descriptor struct {
 	Server
-	Packages []registryPackage          `json:"packages"`
-	Remotes  []transport                `json:"remotes"`
-	Meta     map[string]json.RawMessage `json:"_meta"`
-	Requires map[string]requirement     `json:"-"`
+	Packages []registryPackage                  `json:"packages"`
+	Remotes  []transport                        `json:"remotes"`
+	Meta     map[string]json.RawMessage         `json:"_meta"`
+	Requires map[string]mcpregistry.Requirement `json:"-"`
 }
 type registryPackage struct {
 	RegistryType string `json:"registryType"`
@@ -106,10 +82,6 @@ type registryPackage struct {
 type transport struct {
 	Type string `json:"type"`
 	URL  string `json:"url"`
-}
-type holonMetadata struct {
-	Requires map[string]requirement `json:"requires"`
-	Egress   json.RawMessage        `json:"egress,omitempty"`
 }
 
 func (d *descriptor) Identity() mcpcontract.Identity {
@@ -129,33 +101,14 @@ func ParseDescriptor(data []byte) (*descriptor, error) {
 	if n := utf8.RuneCountInString(d.Description); n < 1 || n > 100 {
 		return nil, errors.New("server description must contain 1 to 100 characters")
 	}
-	if raw := d.Meta[publisherMetadata]; raw != nil {
-		if len(raw) > 4096 {
-			return nil, errors.New("publisher-provided metadata exceeds 4096 bytes")
-		}
-		var publisher map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &publisher); err != nil {
-			return nil, err
-		}
-		if extension := publisher["sh.holon"]; extension != nil {
-			var h holonMetadata
-			// Unmarshal above already guarantees a single JSON value.
-			decoder := json.NewDecoder(bytes.NewReader(extension))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&h); err != nil {
-				return nil, fmt.Errorf("sh.holon metadata: %w", err)
-			}
-			d.Requires = h.Requires
-		}
+	if len(d.Meta[mcpregistry.PublisherMetadata]) > 4096 {
+		return nil, errors.New("publisher-provided metadata exceeds 4096 bytes")
 	}
-	for name, ref := range d.Requires {
-		if len(name) > 49 || !appName.MatchString(name) {
-			return nil, fmt.Errorf("invalid dependency name %q", name)
-		}
-		if err := ref.validate(); err != nil {
-			return nil, fmt.Errorf("dependency %s: %w", name, err)
-		}
+	holon, err := mcpregistry.ParseHolonMetadata(d.Meta)
+	if err != nil {
+		return nil, err
 	}
+	d.Requires = holon.Requires
 	return &d, nil
 }
 

@@ -42,8 +42,8 @@ func main() {
 }
 `,
 	})
-	descriptor := &mcpregistry.Descriptor{Name: "example.org/caller", Version: "1.0.0", Requires: map[string]protocol.RegistryRef{
-		"orders": {Name: metadata.Identity.Name, Version: metadata.Identity.Version},
+	descriptor := &mcpregistry.Descriptor{Name: "example.org/caller", Version: "1.0.0", Requires: map[string]mcpregistry.Requirement{
+		"orders": {RegistryRef: protocol.RegistryRef{Name: metadata.Identity.Name, Version: metadata.Identity.Version}},
 	}}
 	manifest := typedManifest(t,
 		manifestApp{Name: "orders", resolved: resolvedApp{App: protocol.App{Name: "orders", Image: image}}},

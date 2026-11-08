@@ -537,6 +537,62 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 	}
 }
 
+func TestRunDevPathAppRequiringRemote(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	alpha := descriptorDocument("alpha")
+	alpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
+		"requires": map[string]any{"docs": map[string]any{"url": "https://docs.example/mcp"}},
+	}}}
+	sourceFiles(t, root, map[string]string{"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage})
+	writeDescriptor(t, filepath.Join(root, "alpha", "server.json"), alpha)
+	h := newRunHarness(t)
+	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, protocol.Info{
+			Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}, BuildArchitectures: []string{"arm64"},
+		})
+	})
+	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, protocol.UploadGrant{
+			Grant: "grant-secret", Registry: "registry.example", Repositories: map[string]string{"alpha": "holon/upload/alpha", "docs": "holon/upload/docs"},
+		})
+	})
+	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolDeleteSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+		switch installationtest.ToolName(r) {
+		case protocol.ToolDeleteSession:
+			installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+			return
+		case protocol.ToolCreateSession:
+			var input protocol.AppsRequestFor[protocol.App]
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Error(err)
+			}
+			if len(input.Apps) != 2 || input.Apps[0].Name != "alpha" || !slices.Equal(input.Apps[0].Requires, []string{"docs"}) ||
+				input.Apps[1].Remote == nil || input.Apps[1].Remote.URL != "https://docs.example/mcp" {
+				t.Errorf("unexpected session: %#v", input.Apps)
+			}
+		}
+		installationtest.WriteJSON(w, apiSession(h, "alpha", "docs"))
+	})
+	h.start(t, buildImage(t, "alpha"))
+	app := "- name: alpha\n  path: ./alpha\n  access: {server: {}}\n- name: docs\n  remote: {url: %s}\n  access: {server: {}}\n"
+	t.Run("a remote at another URL does not satisfy it", func(t *testing.T) {
+		sourceFiles(t, root, map[string]string{manifestFileName: "apps:\n" + fmt.Sprintf(app, "https://elsewhere.example/mcp")})
+		err := executeCommand(t.Context(), []string{"dev"}, io.Discard, io.Discard, h.run)
+		if err == nil || !strings.Contains(err.Error(), "alpha requires docs to be https://docs.example/mcp; declared app does not match") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	sourceFiles(t, root, map[string]string{manifestFileName: "apps:\n" + fmt.Sprintf(app, "https://docs.example/mcp")})
+	fc := testingclock.NewFakeClock(time.Now())
+	h.run.Clock = fc
+	stdout, _, stop := startDev(t, h.run)
+	stepUntil(t, fc, workflowPoll, func() bool { return strings.Contains(stdout.String(), "/mcp/alpha") })
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunDeployLifecycle(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
