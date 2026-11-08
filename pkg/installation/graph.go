@@ -56,7 +56,7 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 				err = nil
 			}
 		} else if app.Registry != nil {
-			app.resolved.descriptor, err = mcpregistry.Fetch(ctx, app.Registry.RegistryRef)
+			app.resolved.descriptor, err = mcpregistry.Fetch(ctx, nil, app.Registry.RegistryRef)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s descriptor: %w", app.Name, err)

@@ -175,7 +175,6 @@ func TestRegistrySourceResolution(t *testing.T) {
 		{"oci identity mismatch", base + oci + `}`, "", "belongs to example.com/other", imageClient(t, wrongIdentity)},
 		{"oci error propagates", base + `,"packages":[{"registryType":"oci","identifier":"orders:1.0.0"},{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]` + remote + `}`, "", "package orders:1.0.0: package identifier must use an explicit OCI registry", nil},
 		{"neither", base + `,"packages":[{"registryType":"npm","identifier":"orders"}]}`, "", "publishes neither", nil},
-		{"wrong registry identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "different server name", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			record = test.record

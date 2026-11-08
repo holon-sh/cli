@@ -14,13 +14,17 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-func Fetch(ctx context.Context, ref protocol.RegistryRef) (*Descriptor, error) {
-	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+func Fetch(ctx context.Context, httpClient *http.Client, ref protocol.RegistryRef) (*Descriptor, error) {
+	client := http.Client{Timeout: 30 * time.Second}
+	if httpClient != nil {
+		client = *httpClient
+	}
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return errors.New("too many MCP registry redirects")
 		}
 		return protocol.ValidateRegistry(req.URL.String())
-	}}
+	}
 	address := ref.RegistryURL() + "/v0.1/servers/" + url.PathEscape(ref.Name) + "/versions/" + url.PathEscape(ref.Version)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {

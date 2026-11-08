@@ -107,7 +107,7 @@ func (t endpointTransport) RoundTrip(request *http.Request) (*http.Response, err
 // A package error is an error; a package without a contract artifact falls through to the remote.
 func resolveRegistry(ctx context.Context, ref protocol.RegistryRef, o Options) (*Document, error) {
 	label := ref.Name + "@" + ref.Version
-	d, err := (Client{HTTP: o.HTTPClient, Origin: ref.RegistryURL()}).Get(ctx, ref.Name, ref.Version)
+	d, err := mcpregistry.Fetch(ctx, o.HTTPClient, ref)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", label, err)
 	}
