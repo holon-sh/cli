@@ -147,7 +147,7 @@ func (o *progressOutput) endpoints(stdout io.Writer, heading string, session pro
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.program != nil && stdout == io.Writer(o) {
+	if o.program != nil {
 		if !provisional {
 			_, _ = o.Write([]byte(text))
 			text = ""
