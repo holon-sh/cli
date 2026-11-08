@@ -40,8 +40,9 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 		request := buildRequest{
 			app: manifestApp{Name: "alpha", Path: value}, upload: &imageUpload{grant: grant},
 			Env: options.Env, httpClient: options.HTTPClient, builders: options.builders,
+			dockerfile: "FROM scratch\nCOPY value /value\nENV RECIPE=" + value + "\n",
 		}
-		descriptor, err := publishPlatform(t.Context(), "linux/"+runtime.GOARCH, request, source, "FROM scratch\nCOPY value /value\nENV RECIPE="+value+"\n", io.Discard)
+		descriptor, err := publishPlatform(t.Context(), "linux/"+runtime.GOARCH, request, source, io.Discard)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -130,7 +131,7 @@ func TestDockerSourceBuild(t *testing.T) {
 		want := errors.New("progress writer failed")
 		failed := options
 		failed.Stderr = progressFunc(func([]byte) (int, error) { return 0, want })
-		if _, err := buildSource(t.Context(), prepareBuild(t, manifest).Apps[0], upload, failed, nil); !errors.Is(err, want) {
+		if _, _, err := buildSource(t.Context(), prepareBuild(t, manifest).Apps[0], upload, failed); !errors.Is(err, want) {
 			t.Fatalf("progress error: %v", err)
 		}
 	})

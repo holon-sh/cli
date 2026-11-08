@@ -45,18 +45,11 @@ import (
 
 	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/internal/commandenv"
-	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/cli/pkg/ociimage"
 	"github.com/holon-sh/protocol"
 )
 
 func publishSource(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
-	planned := request.output.measure(request.app.Name, "plan")
-	plan, err := kiln.Plan(ctx, request.Request)
-	planned()
-	if err != nil {
-		return "", err
-	}
 	source, err := fsutil.NewFS(request.Source)
 	if err != nil {
 		return "", err
@@ -65,7 +58,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 	group, buildCtx := errgroup.WithContext(ctx)
 	for index, platform := range request.Platforms {
 		group.Go(func() error {
-			manifest, err := publishPlatform(buildCtx, platform, request, source, plan.Dockerfile, progress)
+			manifest, err := publishPlatform(buildCtx, platform, request, source, progress)
 			manifests[index] = manifest
 			return err
 		})
@@ -80,7 +73,6 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 	err = request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		entries := slices.Clone(manifests)
 		annotations := map[string]string{}
-		maps.Copy(annotations, request.keys)
 		if p := request.app.resolved.types; p.metadata != nil {
 			metadata, ownDigest, err := pushTypeMetadata(ctx, repository, p.metadata, p.documents)
 			if err != nil {
@@ -159,12 +151,12 @@ func (b *builderConnections) close() {
 }
 
 func publishPlatform(
-	ctx context.Context, platform string, request buildRequest, source fsutil.FS, dockerfile string, progress io.Writer,
+	ctx context.Context, platform string, request buildRequest, source fsutil.FS, progress io.Writer,
 ) (ocispec.Descriptor, error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(context.Canceled)
 	recipe := staticfs.NewFS()
-	recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(dockerfile))
+	recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(request.dockerfile))
 	var runtimeKey string
 	if len(request.Start) != 0 {
 		arch := strings.TrimPrefix(platform, "linux/")

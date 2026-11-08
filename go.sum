@@ -131,6 +131,8 @@ github.com/holon-sh/protocol v0.0.1-dev.10.0.20261107201219-617df8bcb614 h1:iyEo
 github.com/holon-sh/protocol v0.0.1-dev.10.0.20261107201219-617df8bcb614/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
 github.com/holon-sh/runtime v0.0.1-dev.3 h1:a/3GoAQDaYNOaQzbLVDIeK+OhpBj/BeeK4KnkjBzqYw=
 github.com/holon-sh/runtime v0.0.1-dev.3/go.mod h1:7wNtRIOJIGYwl1M6zzNb1aXiZFNZ9T+OmPa6w+wG4T4=
+github.com/holon-sh/runtime v0.0.1-dev.3.0.20261108155919-706e05e56067 h1:zLzkO+LYGL9s/u9vy2/PgMtqLVfmCi3k1FItdA05quk=
+github.com/holon-sh/runtime v0.0.1-dev.3.0.20261108155919-706e05e56067/go.mod h1:7wNtRIOJIGYwl1M6zzNb1aXiZFNZ9T+OmPa6w+wG4T4=
 github.com/iancoleman/orderedmap v0.3.0 h1:5cbR2grmZR/DiVt+VJopEhtVs9YGInGIxAoMJn+Ichc=
 github.com/iancoleman/orderedmap v0.3.0/go.mod h1:XuLcCUkdL5owUCQeF2Ue9uuw1EptkJDkXXS7VoV7XGE=
 github.com/in-toto/attestation v1.2.0 h1:aPRUZ3azbqD7yEBD5fP3TD8Dszf+YHo284SOcpahjQk=

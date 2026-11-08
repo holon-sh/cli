@@ -3,17 +3,22 @@ package installation
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/tonistiigi/fsutil"
+	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
@@ -30,42 +35,119 @@ type buildRequest struct {
 
 	Env        []string
 	app        manifestApp
-	keys       map[string]string // the imageKeys published with the image
+	dockerfile string // kiln's plan for Request
 	upload     *imageUpload
 	httpClient *http.Client
 	builders   *builderConnections
 	output     *progressOutput
 }
 
-func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions, keys map[string]string) (string, error) {
+// buildSource builds app's image from its prepared snapshot and returns it with the overlay that carries its
+// server source in development. An image that a picked-up session already runs is kept when it would be built
+// from the same inputs.
+func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, string, error) {
 	if !protocol.ValidBuildArchitectures(options.architectures) {
-		return "", errors.New("invalid build architectures")
+		return "", "", errors.New("invalid build architectures")
 	}
 	p := app.resolved.types
-	config, start, err := stageSnapshot(app, p)
+	request, err := options.planSource(ctx, app, p)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	env, err := commandenv.Environ(options.Env)
-	if err != nil {
-		return "", err
+	if kept, ok := options.kept[app.Name]; ok && kept.inputs == p.inputs {
+		return kept.image, kept.overlay, nil
 	}
-	request := buildRequest{
-		Request: kiln.Request{ConfigFilePath: config, Source: p.root, Start: start}, Env: env, app: app, keys: keys,
-		upload: upload, httpClient: options.HTTPClient, builders: options.builders, output: options.output,
-	}
-	for _, arch := range buildArchitectures(options.architectures) {
-		request.Platforms = append(request.Platforms, "linux/"+arch)
-	}
+	request.upload = upload
 	build := options.builder
 	if build == nil {
 		build = publishSource
 	}
 	image, err := build(ctx, request, options.Stderr)
 	if err != nil {
-		return "", fmt.Errorf("build %s: %w", app.Name, err)
+		return "", "", fmt.Errorf("build %s: %w", app.Name, err)
 	}
-	return image, nil
+	if !request.Development {
+		return image, "", nil
+	}
+	overlay, err := request.writeOverlay(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	if err := request.pushOverlay(ctx, overlay); err != nil {
+		return "", "", err
+	}
+	return image, overlay.Digest.String(), nil
+}
+
+// planSource stages p's snapshot and plans its image with Kiln. In development an app the launcher runs is
+// planned without its server source, and the plan says what the image is built from.
+func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *preparedTypes) (buildRequest, error) {
+	config, start, err := stageSnapshot(app, p)
+	if err != nil {
+		return buildRequest{}, err
+	}
+	env, err := commandenv.Environ(o.Env)
+	if err != nil {
+		return buildRequest{}, err
+	}
+	request := buildRequest{
+		Request: kiln.Request{ConfigFilePath: config, Source: p.root, Start: start, Development: o.development && start != nil},
+		Env:     env, app: app, httpClient: o.HTTPClient, builders: o.builders, output: o.output,
+	}
+	for _, arch := range buildArchitectures(o.architectures) {
+		request.Platforms = append(request.Platforms, "linux/"+arch)
+	}
+	planned := o.output.measure(app.Name, "plan")
+	plan, err := kiln.Plan(ctx, request.Request)
+	planned()
+	if err != nil {
+		return buildRequest{}, err
+	}
+	request.dockerfile = plan.Dockerfile
+	if request.Development {
+		p.inputs, err = imageInputs(ctx, plan.Dockerfile, p.root)
+	}
+	return request, err
+}
+
+// contextCopy matches a COPY that Kiln writes from the build context, capturing its exclusions and its JSON
+// list of sources and destination.
+var contextCopy = regexp.MustCompile(`(?m)^COPY ((?:--exclude=\S+ )*)(\[.*\])$`)
+
+// imageInputs hashes what a development image is built from: Kiln's Dockerfile and the context files it copies.
+func imageInputs(ctx context.Context, dockerfile, root string) (string, error) {
+	source, err := fsutil.NewFS(root)
+	if err != nil {
+		return "", err
+	}
+	digester := digest.SHA256.Digester()
+	_, _ = io.WriteString(digester.Hash(), dockerfile)
+	for _, match := range contextCopy.FindAllStringSubmatch(dockerfile, -1) {
+		var paths []string
+		if err := json.Unmarshal([]byte(match[2]), &paths); err != nil {
+			return "", err
+		}
+		filter := &fsutil.FilterOpt{IncludePatterns: paths[:len(paths)-1], Map: func(path string, s *fstypes.Stat) fsutil.MapResult {
+			if s.IsDir() {
+				return fsutil.MapResultExclude
+			}
+			return stableStat(path, s)
+		}}
+		if slices.Contains(filter.IncludePatterns, ".") {
+			filter.IncludePatterns = nil
+		}
+		for exclusion := range strings.FieldsSeq(match[1]) {
+			filter.ExcludePatterns = append(filter.ExcludePatterns, strings.TrimPrefix(exclusion, "--exclude="))
+		}
+		copied, err := fsutil.NewFilterFS(source, filter)
+		if err != nil {
+			return "", err
+		}
+		if err := fsutil.WriteTar(ctx, copied, digester.Hash()); err != nil {
+			return "", err
+		}
+	}
+	return digester.Digest().Encoded(), nil
 }
 
 // buildArchitectures are the architectures images are built for: the installation's, or both by default.

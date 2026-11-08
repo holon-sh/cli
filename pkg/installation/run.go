@@ -160,7 +160,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		types:   new(typeWorkspace),
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient,
 		Stderr: stderr, Env: config.Env, architectures: manager.info.BuildArchitectures, output: config.output,
-		builders: new(builderConnections),
+		builders: new(builderConnections), development: true,
 	}
 	defer options.types.close()
 	defer options.builders.close()
@@ -171,20 +171,18 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err := options.types.acquire(resolved); err != nil {
 		return err
 	}
-	record := manager.leftSession(resolved)
+	recordPath := manager.sessionRecordPath(resolved)
 	var previous protocol.SessionResponse
+	first := options
 	if config.devTTLSeconds == nil {
-		previous = previousSession(ctx, manager, record)
+		previous, first.kept = previousSession(ctx, manager, recordPath)
 	}
 	if previous.Name != "" {
 		if err := printStartingEndpoints(stdout, manager.client.baseURL, previous); err != nil {
 			return err
 		}
 	}
-	// Only the first build reuses the previous session's images; devLoop.run reloads the apps that kept one.
-	start := options
-	start.reusable, start.reuseBy = sessionImages(previous), imageInputsAnnotation
-	request, err := uploadManifest(ctx, manager, "", resolved, start)
+	request, err := uploadManifest(ctx, manager, "", resolved, first)
 	if err != nil {
 		return err
 	}
@@ -222,15 +220,32 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	dev := &devLoop{manager: manager, name: session.Name, manifest: resolved, apps: apps, clock: config.clock(), options: options, session: session}
-	err = dev.run(ctx, stdout, keptImages(resolved, start.reusable, request.Apps))
+	err = dev.run(ctx, stdout, keptContexts(resolved, first.kept, request.Apps))
 	// Without the record, the next holon dev starts a new session, as it would with none to pick up.
-	_ = writePrivateFile(record, []byte(session.Name))
+	inputs := map[string]string{}
+	for name, types := range options.types.accepted {
+		inputs[name] = types.inputs
+	}
+	data, _ := json.Marshal(sessionRecord{Session: session.Name, Inputs: inputs})
+	_ = writePrivateFile(recordPath, data)
 	return err
 }
 
-// leftSession is where holon dev records the session it leaves, for the next holon dev of the same apps from the
-// same directories against this installation. A run elsewhere, or of other apps, keeps to its own session.
-func (m *Client) leftSession(manifest manifestSpec) string {
+// sessionRecord is what holon dev records about the session it leaves: its name and what each app's image was
+// built from.
+type sessionRecord struct {
+	Session string            `json:"session"`
+	Inputs  map[string]string `json:"inputs"`
+}
+
+// keptImage is what an app of a picked-up session runs, which a build keeps while its inputs still match.
+type keptImage struct {
+	inputs, image, overlay string
+}
+
+// sessionRecordPath is where holon dev records the session it leaves, for the next holon dev of the same apps from
+// the same directories against this installation. A run elsewhere, or of other apps, keeps to its own session.
+func (m *Client) sessionRecordPath(manifest manifestSpec) string {
 	key := m.client.baseURL
 	for _, app := range manifest.Apps {
 		key += "\x00" + app.Name + "\x00" + app.Path
@@ -238,37 +253,34 @@ func (m *Client) leftSession(manifest manifestSpec) string {
 	return filepath.Join(filepath.Dir(m.statePath), clientutil.HashBytes([]byte(key))+".session")
 }
 
-// previousSession renews and returns the session recorded in record, or none. Renewal fails unless the
-// session is still the caller's, not detached and unexpired.
-func previousSession(ctx context.Context, manager *Client, record string) protocol.SessionResponse {
-	var session protocol.SessionResponse
-	name, err := readPrivateFile(record)
-	if err != nil || manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: string(name)}, &session) != nil {
-		return protocol.SessionResponse{}
-	}
-	return session
-}
-
-// keptImages are the build contexts of the apps whose image, apps[i], is one that reusable offered.
-func keptImages(manifest manifestSpec, reusable map[string][]string, apps []protocol.App) sets.Set[string] {
-	kept := sets.New[string]()
+// keptContexts returns the build contexts of the apps still on their picked-up image; apps holds manifest's apps in order.
+func keptContexts(manifest manifestSpec, kept map[string]keptImage, apps []protocol.App) sets.Set[string] {
+	contexts := sets.New[string]()
 	for i, app := range manifest.Apps {
-		if app.Path != "" && slices.Contains(reusable[app.Name], apps[i].Image) {
-			kept.Insert(app.Path)
+		if app.Path != "" && kept[app.Name].image == apps[i].Image {
+			contexts.Insert(app.Path)
 		}
 	}
-	return kept
+	return contexts
 }
 
-// sessionImages are the images that sessions run, by app, which a build reuses when they match its source.
-func sessionImages(sessions ...protocol.SessionResponse) map[string][]string {
-	images := map[string][]string{}
-	for _, session := range sessions {
-		for _, app := range session.Apps {
-			images[app.Name] = append(images[app.Name], app.Image)
+// previousSession renews and returns the session recorded in record, with what its apps run, or none.
+// Renewal fails unless the session is still the caller's, not detached and unexpired.
+func previousSession(ctx context.Context, manager *Client, recordPath string) (protocol.SessionResponse, map[string]keptImage) {
+	var record sessionRecord
+	var session protocol.SessionResponse
+	data, err := readPrivateFile(recordPath)
+	if err != nil || json.Unmarshal(data, &record) != nil ||
+		manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: record.Session}, &session) != nil {
+		return protocol.SessionResponse{}, nil
+	}
+	kept := map[string]keptImage{}
+	for _, app := range session.Apps {
+		if inputs := record.Inputs[app.Name]; inputs != "" {
+			kept[app.Name] = keptImage{inputs: inputs, image: app.Image, overlay: app.Overlay}
 		}
 	}
-	return images
+	return session, kept
 }
 
 func sessionPath(name, suffix string) string {
@@ -354,15 +366,13 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	}
 	builders := new(builderConnections)
 	defer builders.close()
-	// Without the session list, deploy builds every image, as it would with no development session.
-	sessions, _ := scopeSessions(ctx, manager, "")
 	resolved, err := resolveManifest(ctx, manager, manifest, config.output, selection...)
 	if err != nil {
 		return err
 	}
 	desired, err := uploadManifest(ctx, manager, protocol.ProductionName, resolved, buildOptions{
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env, output: config.output,
-		builders: builders, architectures: manager.info.BuildArchitectures, reusable: sessionImages(sessions...), reuseBy: promotionAnnotation,
+		builders: builders, architectures: manager.info.BuildArchitectures,
 	})
 	if err != nil {
 		return err

@@ -100,7 +100,7 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 		Use:   "dev [APP[=SOURCE]...]",
 		Short: "Run a development session",
 		Long: "Run apps and their required dependencies. Each app uses /<app-name>/ on the session host. " +
-			"Every change type-checks the app's calls to the apps it requires. Without --detach, the session lasts about " +
+			"Every change type-checks the app's calls to the apps it requires. Without --detach, the session lasts five to " +
 			"ten minutes after the command exits, for the next holon dev of the same apps to pick up.\n\n" + appsHelp,
 		Example: `  # Run every app in holon.yaml
   holon dev
@@ -139,8 +139,7 @@ func newDeployCommand(config *commandConfig) *cobra.Command {
 		Use:   "deploy [APP[=SOURCE]...]",
 		Short: "Deploy apps to production",
 		Long: "Deploy every app, or the named apps and their required dependencies, to production. " +
-			"Production apps this deploy does not name keep running; holon app remove removes one. " +
-			"When a development session runs images built from the same source, deploy reuses them instead of building.\n\n" + appsHelp,
+			"Production apps this deploy does not name keep running; holon app remove removes one.\n\n" + appsHelp,
 		Example: `  # Deploy every app in holon.yaml
   holon deploy
 

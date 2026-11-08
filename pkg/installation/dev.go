@@ -25,9 +25,8 @@ import (
 const devDebounce = 250 * time.Millisecond
 
 type devChange struct {
-	contexts    sets.Set[string]
-	manifest    bool
-	imageInputs bool // a changed file is not server source, so an image build may read it
+	contexts sets.Set[string]
+	manifest bool
 }
 
 type devWatcher struct {
@@ -148,8 +147,6 @@ func (w *devWatcher) run() {
 				changed, err := w.observe(root, path, event.Op)
 				if changed {
 					pending.contexts.Insert(root)
-					relative, _ := filepath.Rel(root, path)
-					pending.imageInputs = pending.imageInputs || !serverSource(relative)
 				}
 				w.output.problem("file watcher", err)
 			}
@@ -205,7 +202,7 @@ func patchSessionImages(
 			return protocol.SessionResponse{}, errors.New("application removed during rebuild")
 		}
 		updated := current.Apps[index]
-		updated.Image = app.Image
+		updated.Image, updated.Overlay = app.Image, app.Overlay
 		rebuilt = append(rebuilt, updated)
 	}
 	return replaceExecution(ctx, manager, name, current, protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(rebuilt)})
@@ -263,12 +260,10 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer, kept sets.Set[strin
 	}()
 	d.options.architectures = d.session.BuildArchitectures
 	d.changedImages, d.pending, d.reloaded = sets.New[string](), sets.New[string](), map[string]string{}
-	if kept.Len() != 0 {
-		d.rebuild(ctx, devChange{contexts: kept})
-	}
 	for _, app := range d.session.Apps {
 		d.pending.Insert(app.Name)
 	}
+	d.reload(ctx, kept)
 	announce := sync.OnceValue(func() error {
 		if err := printEndpoints(stdout, "Ready", d.session); err != nil {
 			return err
@@ -394,65 +389,42 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 	d.pending.Clear()
 }
 
-// rebuild applies a change: in place when its apps can reload, and through new images otherwise.
+// rebuild applies a saved change: every changed app restarts from an overlay of its source at once, and the work
+// behind it, which the next save stops, prepares contracts and refreshes any image the change outdated.
 func (d *devLoop) rebuild(ctx context.Context, change devChange) {
-	if d.reloadable(change) {
-		failed := d.reload(ctx, change)
-		if failed.Len() == 0 {
-			return
-		}
-		change.contexts = failed
+	d.reload(ctx, change.contexts)
+	contexts := change.contexts.Union(d.stopPreparation())
+	if change.manifest && !d.reloadManifest(ctx) {
+		return
 	}
-	if err := d.buildImages(ctx, change); err != nil && ctx.Err() == nil {
-		d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
+	if contexts.Len() == 0 && d.changedImages.Len() == 0 {
+		d.options.output.status("app rebuild", "no app changed; continuing to watch", progressDone)
+		return
 	}
+	d.prepare(ctx, contexts)
 }
 
-func (d *devLoop) buildImages(ctx context.Context, change devChange) error {
-	if change.manifest {
-		reloaded, err := resolveManifestFile(d.manifest.file)
-		if err == nil {
-			reloaded.sources, reloaded.access = d.manifest.sources, d.manifest.access
-			reloaded, err = resolveManifestGraph(ctx, reloaded, d.apps...)
-		}
-		if err != nil {
-			return fmt.Errorf("metadata resolution failed: %w", err)
-		}
-		if !d.updateManifest(reloaded, &change) {
-			return nil
-		}
-		if change.contexts.Len() == 0 && d.changedImages.Len() == 0 {
-			d.options.output.status("app rebuild", "no app changed; continuing to watch", progressDone)
-			return nil
-		}
-	}
-	d.stopPreparation()
-	if _, err := d.manager.controlToken(ctx); err != nil {
-		return fmt.Errorf("authentication failed: %w", err)
-	}
-	prepared, cleanup, err := prepareManifestTypes(ctx, d.manifest, d.options)
-	if err != nil {
-		return fmt.Errorf("remote image preparation failed: %w", err)
-	}
-	dirty := prepared
-	dirty.Apps = slices.DeleteFunc(slices.Clone(prepared.Apps), func(app manifestApp) bool {
-		if app.Path == "" {
-			return !d.changedImages.Has(app.Name)
-		}
-		return !d.options.types.affected(ctx, app, prepared) && !change.contexts.Has(app.Path)
-	})
-	d.options.output.status("", "Preparing apps", progressWorking)
-	apps, err := buildManifestImages(ctx, d.manager, d.name, dirty, d.options)
+// reloadManifest adopts a saved manifest and reports whether it could.
+func (d *devLoop) reloadManifest(ctx context.Context) bool {
+	reloaded, err := resolveManifestFile(d.manifest.file)
 	if err == nil {
-		err = currentTypeSources(prepared)
+		reloaded.sources, reloaded.access = d.manifest.sources, d.manifest.access
+		reloaded, err = resolveManifestGraph(ctx, reloaded, d.apps...)
 	}
-	cleanup()
 	if err != nil {
-		return fmt.Errorf("remote image preparation failed: %w", err)
+		if ctx.Err() == nil {
+			d.options.output.problem("app rebuild", fmt.Errorf("metadata resolution failed: %w; existing service remains available", err))
+		}
+		return false
 	}
-	apps = slices.DeleteFunc(apps, func(app protocol.App) bool {
+	return d.updateManifest(reloaded)
+}
+
+// rollOut updates the session to the images a save's background work built, unless it already runs them.
+func (d *devLoop) rollOut(ctx context.Context, result preparation) error {
+	apps := slices.DeleteFunc(result.images, func(app protocol.App) bool {
 		if !slices.ContainsFunc(d.session.Apps, func(current protocol.App) bool {
-			return current.Name == app.Name && current.Image == app.Image
+			return current.Name == app.Name && current.Image == app.Image && current.Overlay == app.Overlay
 		}) {
 			return false
 		}
@@ -464,28 +436,28 @@ func (d *devLoop) buildImages(ctx context.Context, change devChange) error {
 		}
 		return true
 	})
-	if len(apps) == 0 {
-		d.options.output.status("app rebuild", "remote image is unchanged; continuing to watch", progressDone)
-		return nil
+	message := "remote image is unchanged; continuing to watch"
+	if len(apps) != 0 {
+		d.options.output.deploying(apps)
+		updated, err := patchSessionImages(ctx, d.manager, d.name, apps)
+		if err != nil {
+			d.options.output.apps(apps, "deployment failed", progressError)
+			return fmt.Errorf("remote update failed: %w", err)
+		}
+		for _, app := range apps {
+			d.pending.Insert(app.Name)
+			d.changedImages.Delete(app.Name)
+			delete(d.reloaded, app.Name)
+		}
+		d.session = updated
+		message = fmt.Sprintf("remote update requested (generation %d)", updated.Generation)
 	}
-	d.options.output.deploying(apps)
-	updated, err := patchSessionImages(ctx, d.manager, d.name, apps)
-	if err != nil {
-		d.options.output.apps(apps, "deployment failed", progressError)
-		return fmt.Errorf("remote update failed: %w", err)
-	}
-	for _, app := range apps {
-		d.pending.Insert(app.Name)
-		d.changedImages.Delete(app.Name)
-		delete(d.reloaded, app.Name)
-	}
-	d.options.types.accept(dirty)
-	d.session = updated
-	d.options.output.status("app rebuild", fmt.Sprintf("remote update requested (generation %d)", updated.Generation), progressDone)
+	d.options.types.accept(result.built)
+	d.options.output.status("app rebuild", message, progressDone)
 	return nil
 }
 
-func (d *devLoop) updateManifest(reloaded manifestSpec, change *devChange) bool {
+func (d *devLoop) updateManifest(reloaded manifestSpec) bool {
 	if !sameManifestTopology(d.manifest, reloaded) {
 		d.options.output.problem("app metadata",
 			errors.New("app topology, dependencies, configuration, egress or access rules changed; restart holon dev to apply it"))
@@ -494,10 +466,8 @@ func (d *devLoop) updateManifest(reloaded manifestSpec, change *devChange) bool 
 	d.options.output.problem("app metadata", nil)
 	for i, app := range reloaded.Apps {
 		previous := d.manifest.Apps[i]
-		if app.Path != "" && !reflect.DeepEqual(app.resolved.descriptor, previous.resolved.descriptor) {
-			change.contexts.Insert(app.Path)
-		}
-		if app.resolved.Image != previous.resolved.Image || !reflect.DeepEqual(app.Registry, previous.Registry) {
+		if app.resolved.Image != previous.resolved.Image || !reflect.DeepEqual(app.Registry, previous.Registry) ||
+			app.Path != "" && !reflect.DeepEqual(app.resolved.descriptor, previous.resolved.descriptor) {
 			d.changedImages.Insert(app.Name)
 		}
 	}
