@@ -5,6 +5,8 @@ import (
 	"archive/zip"
 	"bytes"
 	_ "embed"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -16,14 +18,21 @@ import (
 //go:embed cli-tooling-ts.zip
 var typescript []byte
 
-// Unpack writes each language's runner to its own directory, which must not exist yet.
-func Unpack(root string) error {
-	archive, err := zip.NewReader(bytes.NewReader(typescript), int64(len(typescript)))
-	if err != nil {
-		return err
+// Unpack writes one language's runners, "typescript" or "python", to root/<language>, which must not
+// exist yet.
+func Unpack(root, language string) error {
+	var files fs.FS
+	switch language {
+	case "typescript":
+		archive, err := zip.NewReader(bytes.NewReader(typescript), int64(len(typescript)))
+		if err != nil {
+			return err
+		}
+		files = archive
+	case "python":
+		files = python.Files
+	default:
+		return fmt.Errorf("no %s tooling", language)
 	}
-	if err := os.CopyFS(filepath.Join(root, "typescript"), archive); err != nil {
-		return err
-	}
-	return os.CopyFS(filepath.Join(root, "python"), python.Files)
+	return os.CopyFS(filepath.Join(root, language), files)
 }

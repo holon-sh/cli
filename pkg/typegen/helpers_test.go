@@ -108,7 +108,7 @@ func typeScriptApp(t *testing.T) string {
 
 func needPython(t *testing.T) string {
 	t.Helper()
-	program, err := typeLanguages["python"].localProgram(context.Background())
+	program, err := new(Tooling).host(context.Background(), "python")
 	if err != nil {
 		t.Skip(err)
 	}
@@ -116,7 +116,7 @@ func needPython(t *testing.T) string {
 }
 func needNode(t *testing.T) {
 	t.Helper()
-	if _, err := typeLanguages["typescript"].localProgram(context.Background()); err != nil {
+	if _, err := new(Tooling).host(context.Background(), "typescript"); err != nil {
 		t.Skip(err)
 	}
 }

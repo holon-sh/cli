@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-
-	"github.com/holon-sh/cli/pkg/tooling"
 )
 
 func Check(ctx context.Context, dir string, options Options) error {
@@ -44,27 +42,33 @@ func Check(ctx context.Context, dir string, options Options) error {
 		return err
 	}
 	defer os.RemoveAll(root)
-	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
-		return err
-	}
 	if err := validateEnv(o.Env); err != nil {
 		return err
 	}
+	tools, release := o.tools()
+	defer release()
 	slices.Sort(languages)
 	for _, language := range slices.Compact(languages) {
 		l := typeLanguages[language]
-		program, err := l.localProgram(ctx)
+		toolingDir, err := tools.dir(language)
 		if err != nil {
 			return err
 		}
+		// mypy checks a Python project in its own environment, so the host's matters only without one.
+		program := ""
 		if language == "python" {
-			program = pythonEnvironment(dir, program)
+			program = pythonEnvironment(dir)
+		}
+		if program == "" {
+			if program, err = tools.host(ctx, language); err != nil {
+				return err
+			}
 		}
 		config := filepath.Join(root, language+"-check.json")
 		if err = writeJSON(config, map[string]any{"root": dir, "entry": "", "sources": map[string]string{}, "check": true}); err != nil {
 			return err
 		}
-		command := l.command(ctx, program, filepath.Join(root, "tooling"), language, l.checker, config)
+		command := l.command(ctx, program, toolingDir, language, l.checker, config)
 		command.Dir = dir
 		command.Env = append(append(command.Environ(), o.Env...), "PYTHONDONTWRITEBYTECODE=1")
 		command.Stdout = o.Stdout
@@ -91,7 +95,9 @@ func (p *Prepared) CheckConfig(consumer string) (map[string]any, bool) {
 	return map[string]any{"entry": filepath.ToSlash(entry), "sources": sources, "check": true}, true
 }
 
-func pythonEnvironment(dir, fallback string) string {
+// pythonEnvironment is the interpreter of the project's virtual environment: the nearest .venv or
+// venv from dir up, else the active one, else "".
+func pythonEnvironment(dir string) string {
 	for current := dir; ; current = filepath.Dir(current) {
 		for _, venv := range []string{".venv", "venv"} {
 			if python := filepath.Join(current, venv, "bin", "python"); isFile(python) {
@@ -105,5 +111,5 @@ func pythonEnvironment(dir, fallback string) string {
 	if active := os.Getenv("VIRTUAL_ENV"); active != "" && isFile(filepath.Join(active, "bin", "python")) {
 		return filepath.Join(active, "bin", "python")
 	}
-	return fallback
+	return ""
 }

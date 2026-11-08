@@ -2,6 +2,7 @@ package typegen
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
@@ -213,7 +214,7 @@ export const owner: InputTypes["files"]["stat"]["Owner"] = { lgn: "a" };
 	t.Run("python", func(t *testing.T) {
 		t.Parallel()
 		app := t.TempDir()
-		python := pythonEnvironment(app, needPython(t))
+		python := cmp.Or(pythonEnvironment(app), needPython(t))
 		if exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
 			t.Skip("mypy is not installed")
 		}

@@ -18,7 +18,7 @@ function unpackTooling(t) {
     mkdirSync(dirname(join(tooling, name)), { recursive: true });
     writeFileSync(join(tooling, name), bytes);
   }
-  const run = (mode, ...args) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), mode, ...args], { encoding: "utf8", stdio: "pipe" });
+  const run = (mode, ...args) => execFileSync(process.execPath, [join(tooling, "check.mjs"), mode, ...args], { encoding: "utf8", stdio: "pipe" });
   // extract returns each app's contract, or its diagnostic and the package it missed.
   const extract = (apps, env = process.env) => Object.fromEntries(apps.map(({ name, path, entry }) => {
     const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "contract", path, entry], { encoding: "utf8", env });
@@ -143,16 +143,21 @@ test("module-scope effects fail with the capability, file and line; missing pack
   assert.equal(extracted.missing.missing, "left-pad");
 });
 
+// installCompiler gives app a compiler package that exposes bin.tsc without a JavaScript API, as
+// TypeScript 7 does.
+function installCompiler(app) {
+  const compiler = join(app, "node_modules/typescript");
+  mkdirSync(compiler, { recursive: true });
+  writeFileSync(join(compiler, "package.json"), JSON.stringify({ bin: { tsc: "compiler.cjs" }, exports: { "./package.json": "./package.json" } }));
+  writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url)))});`);
+}
+
 test("check uses the application's compiler CLI and honors project file selection", t => {
   const { root, run, extract } = unpackTooling(t);
   const app = join(root, "application");
   mkdirSync(app);
   writeFileSync(join(app, "package.json"), '{"type":"module"}');
-  // A compiler package can expose bin.tsc without a JavaScript API, as TypeScript 7 does.
-  const compiler = join(app, "node_modules/typescript");
-  mkdirSync(compiler, { recursive: true });
-  writeFileSync(join(compiler, "package.json"), JSON.stringify({ bin: { tsc: "compiler.cjs" }, exports: { "./package.json": "./package.json" } }));
-  writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url)))});`);
+  installCompiler(app);
   writeFileSync(join(app, "check.ts"), "export const total = 1;");
   const config = join(root, "check.json");
   writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));
@@ -160,4 +165,14 @@ test("check uses the application's compiler CLI and honors project file selectio
   writeFileSync(join(app, "excluded.ts"), 'export const wrong: number = "excluded";');
   writeFileSync(config, JSON.stringify({ root: app, entry: "excluded.ts" }));
   run("check", config);
+});
+
+test("without a tsconfig, check compiles the project's sources but not installed or generated ones", t => {
+  const { root, run } = unpackTooling(t);
+  const wrong = 'export const wrong: number = "wrong";';
+  const app = application(root, { "package.json": '{"type":"module"}', "src/nested/wrong.ts": wrong, "node_modules/pkg/wrong.ts": wrong, ".holon/wrong.ts": wrong, ".holon-types/wrong.ts": wrong });
+  installCompiler(app);
+  const config = join(root, "check.json");
+  writeFileSync(config, JSON.stringify({ root: app }));
+  assert.throws(() => run("check", config), error => error.stdout.match(/wrong\.ts/g)?.join() === "wrong.ts" && error.stdout.includes("src/nested/wrong.ts"));
 });

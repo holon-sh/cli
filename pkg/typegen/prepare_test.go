@@ -411,15 +411,17 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 	}
 }
 
-// containerRun runs the real runner as the platform's container does: only the tooling root is
-// mounted, so the server must be given as a snapshot under it.
-func containerRun(ctx context.Context, language, tooling string, args []string, stdout io.Writer) error {
-	if !pathInsideContext(args[1], filepath.Dir(tooling)) {
-		return fmt.Errorf("%s is not a snapshot under %s", args[1], filepath.Dir(tooling))
+// containerRun runs the real runner as an image build does: the server's own directory is not
+// visible there, so it must be given a snapshot of it.
+func containerRun(origin string) func(context.Context, string, string, []string, io.Writer) error {
+	return func(ctx context.Context, language, tooling string, args []string, stdout io.Writer) error {
+		if pathInsideContext(args[1], origin) {
+			return fmt.Errorf("%s is not a snapshot of %s", args[1], origin)
+		}
+		command := exec.CommandContext(ctx, "node", append([]string{filepath.Join(tooling, language, "runner.mjs")}, args...)...)
+		command.Stdout = stdout
+		return command.Run()
 	}
-	command := exec.CommandContext(ctx, "node", append([]string{filepath.Join(tooling, language, "runner.mjs")}, args...)...)
-	command.Stdout = stdout
-	return command.Run()
 }
 
 func TestAnExtractionHookRunsSnapshotsThatNeedNothingInstalled(t *testing.T) {
@@ -433,7 +435,7 @@ export default createMcpHandler(() => {
   server.registerTool("read", { inputSchema: z.object({ id: z.string() }) }, () => ({ content: [] }));
   return server;
 });`)
-	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{Run: containerRun})
+	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{Run: containerRun(orders)})
 	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
 		t.Fatalf("schema-only server in a snapshot = %+v, %v", contract, err)
 	}

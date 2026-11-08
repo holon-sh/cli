@@ -18,6 +18,7 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
+	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/opencontainers/go-digest"
 )
 
@@ -42,6 +43,15 @@ func (e *RunnerError) Error() string {
 	return fmt.Sprintf("contract runner exited with status %d: %s", e.Status, strings.TrimSpace(e.Stderr))
 }
 
+// missing is the uninstalled package that a status 3 names, or nil.
+func (e *RunnerError) missing() *missingPackage {
+	if e.Status != 3 {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(e.Stderr, "\n"), "\n")
+	return &missingPackage{name: lines[len(lines)-1], diagnostic: strings.Join(lines[:len(lines)-1], "\n")}
+}
+
 // serverTimeout is how long a server may take to answer.
 var serverTimeout = 30 * time.Second
 
@@ -56,7 +66,7 @@ type typeLanguage struct {
 }
 
 var typeLanguages = map[string]typeLanguage{
-	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", []string{"runner.mjs", "check"}, []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
+	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", []string{"check.mjs", "check"}, []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
 	"python":     {nil, "extract.py", []string{"runner.py", "check"}, []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
 }
 
@@ -66,9 +76,68 @@ func (l typeLanguage) command(ctx context.Context, program, tooling, language st
 	return exec.CommandContext(ctx, program, append(arguments, args...)...)
 }
 
-func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
+// Tooling is the embedded tooling and the host interpreters that the calls of one command share:
+// each language's tooling is unpacked when a call first needs it, and each interpreter is probed
+// once. The zero Tooling is ready to use; Close removes what it unpacked.
+type Tooling struct {
+	mu       sync.Mutex
+	root     string
+	unpacked map[string]error
+	probed   map[string]bool
+}
+
+// Close removes the unpacked tooling.
+func (t *Tooling) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	root := t.root
+	t.root, t.unpacked = "", nil
+	if root == "" {
+		return nil
+	}
+	return os.RemoveAll(root)
+}
+
+// dir returns a directory that holds only the language's tooling, under dir/<language>.
+func (t *Tooling) dir(language string) (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.root == "" {
+		root, err := os.MkdirTemp("", "holon-types-")
+		if err != nil {
+			return "", err
+		}
+		t.root, t.unpacked = root, map[string]error{}
+	}
+	dir := filepath.Join(t.root, language)
+	if _, done := t.unpacked[language]; !done {
+		t.unpacked[language] = tooling.Unpack(dir, language)
+	}
+	return dir, t.unpacked[language]
+}
+
+// supports reports whether program is an interpreter that runs the language's tooling.
+func (t *Tooling) supports(ctx context.Context, language, program string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if supported, probed := t.probed[program]; probed {
+		return supported
+	}
+	supported := exec.CommandContext(ctx, program, typeLanguages[language].probe...).Run() == nil
+	if ctx.Err() == nil {
+		if t.probed == nil {
+			t.probed = map[string]bool{}
+		}
+		t.probed[program] = supported
+	}
+	return supported
+}
+
+// host returns the first of the language's host interpreters that runs its tooling.
+func (t *Tooling) host(ctx context.Context, language string) (string, error) {
+	l := typeLanguages[language]
 	for _, program := range l.programs {
-		if exec.CommandContext(ctx, program, l.probe...).Run() == nil {
+		if t.supports(ctx, language, program) {
 			return program, nil
 		}
 	}
@@ -76,6 +145,15 @@ func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
 		return "", ctx.Err()
 	}
 	return "", fmt.Errorf("install a supported interpreter (%s)", strings.Join(l.programs, ", "))
+}
+
+// tools returns the command's shared tooling, or tooling of the call's own that release removes.
+func (o Options) tools() (t *Tooling, release func()) {
+	if o.Tooling != nil {
+		return o.Tooling, func() {}
+	}
+	t = &Tooling{}
+	return t, func() { _ = t.Close() }
 }
 
 // ContractFile is a server's committed contract document, beside its server.json: what
@@ -88,10 +166,10 @@ type missingPackage struct{ name, diagnostic string }
 
 func (m *missingPackage) Error() string { return m.name + " is not installed" }
 
-// extractSources obtains each non-Go path source's contract by running its server, or from its
-// committed ContractFile when a package the server imports is not installed. With drift, a
+// extractSources obtains each non-Go path source's contract by running its server with tools, or
+// from its committed ContractFile when a package the server imports is not installed. With drift, a
 // committed contract that differs from what the server answers is an error.
-func extractSources(ctx context.Context, root string, sources []*preparedSource, o Options, drift bool) error {
+func extractSources(ctx context.Context, root string, tools *Tooling, sources []*preparedSource, o Options, drift bool) error {
 	var run []*preparedSource
 	committed := map[*preparedSource]*Document{}
 	directories := map[*preparedSource]string{}
@@ -105,9 +183,9 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 		}
 		committed[s], directories[s] = document, s.origin
 		if o.Run != nil {
-			// A hook may run servers where only root is visible, such as a container without network
-			// access, so it gets a snapshot there: a server that needs only its schema libraries
-			// extracts with the tooling's copies, and others report the package they miss.
+			// A hook may run servers where their own directories are not visible, such as a container
+			// without network access, so it gets a snapshot under root: a server that needs only its
+			// schema libraries extracts with the tooling's copies, and others report the package they miss.
 			directories[s] = filepath.Join(root, "sources", s.name)
 			fingerprint, err := SnapshotSource(s.name, s.origin, directories[s])
 			if err != nil {
@@ -123,7 +201,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 	failures := make([]error, len(run))
 	var group sync.WaitGroup
 	for i, s := range run {
-		group.Go(func() { results[i], failures[i] = runServer(ctx, filepath.Join(root, "tooling"), directories[s], s, o) })
+		group.Go(func() { results[i], failures[i] = runServer(ctx, tools, directories[s], s, o) })
 	}
 	group.Wait()
 	for i, s := range run {
@@ -182,20 +260,22 @@ func (s *preparedSource) committedContract(ctx context.Context) (*Document, erro
 
 // runServer runs the source's server, in dir, through its language's contract runner and parses
 // the contract it prints.
-func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Options) (*extraction, error) {
+func runServer(ctx context.Context, tools *Tooling, dir string, s *preparedSource, o Options) (*extraction, error) {
+	toolingDir, err := tools.dir(s.language)
+	if err != nil {
+		return nil, err
+	}
 	args := []string{"contract", dir, s.entry}
 	var stdout bytes.Buffer
-	var err error
 	if o.Run != nil {
-		err = o.Run(ctx, s.language, tooling, args, &stdout)
+		err = o.Run(ctx, s.language, toolingDir, args, &stdout)
 	} else {
-		err = runLocal(ctx, tooling, s.language, args, &stdout, o.Env)
+		err = runLocal(ctx, tools, toolingDir, s.language, args, &stdout, o.Env)
 	}
 	var failed *RunnerError
 	switch {
-	case errors.As(err, &failed) && failed.Status == 3:
-		lines := strings.Split(strings.TrimRight(failed.Stderr, "\n"), "\n")
-		return nil, &missingPackage{name: lines[len(lines)-1], diagnostic: strings.Join(lines[:len(lines)-1], "\n")}
+	case errors.As(err, &failed) && failed.missing() != nil:
+		return nil, failed.missing()
 	case errors.As(err, &failed) && failed.Status == 2:
 		return nil, fmt.Errorf("%s: %s", s.origin, strings.TrimSpace(failed.Stderr))
 	case err != nil:
@@ -208,29 +288,42 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	return result, nil
 }
 
-// runLocal runs a contract runner with the host's interpreter. A Python server (args[1]) runs in its
-// own environment when that imports mcp and pydantic.
-func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
+// runLocal runs a contract runner, unpacked under toolingDir, on the host. A Python server (args[1])
+// runs in its own environment first, and with the host's interpreter, whose copies of mcp and
+// pydantic serve a server that needs nothing else, when it has none or that lacks them.
+func runLocal(ctx context.Context, tools *Tooling, toolingDir, language string, args []string, stdout io.Writer, env []string) error {
 	if err := validateEnv(env); err != nil {
 		return err
 	}
-	l := typeLanguages[language]
-	program, err := l.localProgram(ctx)
+	if language == "python" {
+		if own := pythonEnvironment(args[1]); own != "" && tools.supports(ctx, language, own) {
+			if err := runRunner(ctx, own, toolingDir, language, args, stdout, env); !lacksSchemaLibraries(err) {
+				return err
+			}
+		}
+	}
+	program, err := tools.host(ctx, language)
 	if err != nil {
 		return err
 	}
-	if language == "python" {
-		if program = pythonProgram(ctx, args[1], program); program == "" {
-			return &RunnerError{Status: 3, Stderr: "no Python environment here imports mcp and pydantic\nmcp\n"}
-		}
+	err = runRunner(ctx, program, toolingDir, language, args, stdout, env)
+	if language == "python" && lacksSchemaLibraries(err) {
+		return &RunnerError{Status: 3, Stderr: "no Python environment here imports mcp and pydantic\nmcp\n"}
 	}
+	return err
+}
+
+// runRunner runs the language's contract runner with program, stopping the server after
+// serverTimeout.
+func runRunner(ctx context.Context, program, toolingDir, language string, args []string, stdout io.Writer, env []string) error {
+	l := typeLanguages[language]
 	limited, cancel := context.WithTimeout(ctx, serverTimeout)
 	defer cancel()
-	command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
+	command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(toolingDir, language, l.runner)}, args)...)
 	command.Env = append(command.Environ(), env...)
 	var stderr bytes.Buffer
 	command.Stdout, command.Stderr = stdout, &stderr
-	err = command.Run()
+	err := command.Run()
 	if errors.Is(limited.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
 		return fmt.Errorf("%s: no catalog within %s", args[2], serverTimeout)
 	}
@@ -240,16 +333,14 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdo
 	return err
 }
 
-// pythonProgram is the interpreter that runs a Python server: its own environment's when that
-// imports mcp and pydantic, else the host's, whose copies serve a server that needs nothing else.
-// It is "" when neither can.
-func pythonProgram(ctx context.Context, dir, host string) string {
-	for _, program := range slices.Compact([]string{pythonEnvironment(dir, host), host}) {
-		if exec.CommandContext(ctx, program, "-c", "import mcp.server, pydantic").Run() == nil {
-			return program
-		}
+// lacksSchemaLibraries reports a Python runner's stop on an uninstalled mcp or pydantic.
+func lacksSchemaLibraries(err error) bool {
+	var failed *RunnerError
+	if !errors.As(err, &failed) {
+		return false
 	}
-	return ""
+	missing := failed.missing()
+	return missing != nil && (missing.name == "mcp" || missing.name == "pydantic")
 }
 
 func isFile(path string) bool {

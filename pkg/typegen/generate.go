@@ -19,7 +19,6 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/mcptype"
-	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/opencontainers/go-digest"
 )
 
@@ -35,6 +34,9 @@ type Options struct {
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
 	// runs the server in its own directory and stops it after 30 seconds.
 	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
+	// Tooling, when set, is shared by every call that a command makes with it, so the tooling is
+	// unpacked and each interpreter probed once. Without it each call has its own.
+	Tooling *Tooling
 }
 
 func validateEnv(env []string) error {
@@ -97,8 +99,8 @@ type preparedConsumer struct {
 	document *Document
 }
 
-// Prepared owns a temporary directory for tooling and documents. Close releases it; preparation
-// never modifies consumers.
+// Prepared owns a temporary directory for the snapshots that an Options.Run hook extracts. Close
+// releases it; preparation never modifies consumers.
 type Prepared struct {
 	consumers []*preparedConsumer
 	paths     map[string]*preparedSource
@@ -248,12 +250,9 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			paths = append(paths, s)
 		}
 	}
-	if len(paths) != 0 {
-		if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
-			return nil, err
-		}
-	}
-	if err = extractSources(ctx, root, paths, o, true); err != nil {
+	tools, release := o.tools()
+	defer release()
+	if err = extractSources(ctx, root, tools, paths, o, true); err != nil {
 		return nil, err
 	}
 	p.fetched = fetched()

@@ -84,19 +84,19 @@ func stageTypes(p *preparedTypes, check bool) (string, error) {
 		before = append(before, "sh .holon-types/stage.sh")
 	}
 	if config, ok := p.prepared.CheckConfig(p.name); ok && check {
-		if err := tooling.Unpack(directory); err != nil {
-			return "", err
-		}
 		if err := writeTypeJSON(filepath.Join(directory, "check.json"), config); err != nil {
 			return "", err
 		}
-		runner := "node .holon-types/typescript/runner.mjs"
+		language, runner := "typescript", "node .holon-types/typescript/check.mjs"
 		if slices.Contains(targets, typegen.TargetPy) {
-			runner = "python .holon-types/check.py"
+			language, runner = "python", "python .holon-types/check.py"
 			if err := os.WriteFile(filepath.Join(directory, "check.py"), []byte(checkPython), 0o644); err != nil {
 				return "", err
 			}
 			install = checkerInstall
+		}
+		if err := tooling.Unpack(directory, language); err != nil {
+			return "", err
 		}
 		before = append(before, runner+" check .holon-types/check.json")
 		after = append(after, runner+" verify .holon-types/check.json")

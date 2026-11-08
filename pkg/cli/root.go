@@ -179,9 +179,12 @@ func newCheck(short string) *cobra.Command {
 		if noGenerate && len(servers) > 0 {
 			return errors.New("--no-generate type-checks the existing clients; -s has no effect")
 		}
+		// Generation and every app's check share one copy of the tooling and its interpreters.
+		var tools typegen.Tooling
+		defer tools.Close()
 		consumers, err := selectConsumers(cmd, servers)
 		if err == nil && !noGenerate {
-			err = typegen.Generate(cmd.Context(), consumers, typegen.Options{Stdout: io.Discard, Stderr: cmd.ErrOrStderr()})
+			err = typegen.Generate(cmd.Context(), consumers, typegen.Options{Stdout: io.Discard, Stderr: cmd.ErrOrStderr(), Tooling: &tools})
 		}
 		if err != nil {
 			return err
@@ -191,7 +194,7 @@ func newCheck(short string) *cobra.Command {
 			if len(c.Targets) == 0 {
 				continue
 			}
-			if err := typegen.Check(cmd.Context(), c.Dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}); err != nil {
+			if err := typegen.Check(cmd.Context(), c.Dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr(), Tooling: &tools}); err != nil {
 				return err
 			}
 		}
