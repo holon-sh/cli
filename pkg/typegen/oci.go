@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/containerd/containerd/v2/core/images"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/ociimage"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -65,7 +66,7 @@ func imageRepository(name string, extraEnv []string, client *http.Client) (*remo
 // The contract manifest remains in the index for copying and garbage collection;
 // it is not part of the read path.
 func ReadDocument(ctx context.Context, repository *remote.Repository, descriptor ocispec.Descriptor) (*Document, error) {
-	if descriptor.MediaType != ocispec.MediaTypeImageIndex && descriptor.MediaType != "application/vnd.docker.distribution.manifest.list.v2+json" {
+	if !images.IsIndexType(descriptor.MediaType) {
 		return nil, nil
 	}
 	var index ocispec.Index
