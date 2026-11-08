@@ -39,7 +39,6 @@ type HolonMetadata struct {
 	Egress wire.Egress `description:"Outbound TCP destinations: DNS names or IP addresses; {NAME} is a non-secret input." json:"egress,omitzero" nullable:"false"`
 }
 
-// Requirement is one sh.holon.requires entry: a registry record, or the URL of a running server.
 type Requirement struct {
 	wire.RegistryRef
 
@@ -57,7 +56,6 @@ func (r Requirement) Validate() error {
 	}
 }
 
-// ValidateEndpoint accepts the URL of a running MCP server.
 func ValidateEndpoint(location string) error {
 	u, err := url.Parse(location)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" {
@@ -100,7 +98,6 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 	return &descriptor, err
 }
 
-// ParseHolonMetadata reads and validates the sh.holon publisher metadata in a server.json _meta.
 func ParseHolonMetadata(meta map[string]json.RawMessage) (HolonMetadata, error) {
 	var holon HolonMetadata
 	value := meta[PublisherMetadata]

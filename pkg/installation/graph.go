@@ -120,8 +120,6 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	return resolved, nil
 }
 
-// satisfies reports whether a declared app is the server a requirement names: the remote at its
-// URL, or a server whose descriptor has its identity, from its registry when the app names one.
 func satisfies(app *manifestApp, requirement mcpregistry.Requirement) bool {
 	if requirement.URL != "" {
 		return app.Remote != nil && app.Remote.URL == requirement.URL
