@@ -18,7 +18,7 @@ function unpackTooling(t) {
     mkdirSync(dirname(join(tooling, name)), { recursive: true });
     writeFileSync(join(tooling, name), bytes);
   }
-  const check = (cwd, entry) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), "check", entry], { cwd, encoding: "utf8", stdio: "pipe" });
+  const check = (cwd, entry) => execFileSync(process.execPath, [join(tooling, "check.mjs"), "check", entry], { cwd, encoding: "utf8", stdio: "pipe" });
   // extract returns each app's contract, or its diagnostic and the package it missed.
   const extract = (apps, env = process.env) => Object.fromEntries(apps.map(({ name, path, entry }) => {
     const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "contract", path, entry], { encoding: "utf8", env });
@@ -26,6 +26,15 @@ function unpackTooling(t) {
     return [name, status === 0 ? JSON.parse(stdout) : { diagnostic: stderr, missing: status === 3 ? stderr.trimEnd().split("\n").at(-1) : undefined }];
   }));
   return { root, check, extract };
+}
+
+// installCompiler gives app a compiler package that exposes bin.tsc without a JavaScript API, as
+// TypeScript 7 does.
+function installCompiler(app) {
+  const compiler = join(app, "node_modules/typescript");
+  mkdirSync(compiler, { recursive: true });
+  writeFileSync(join(compiler, "package.json"), JSON.stringify({ bin: { tsc: "compiler.cjs" }, exports: { "./package.json": "./package.json" } }));
+  writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url)))});`);
 }
 
 // An application directory holding files, including any node_modules it has installed.
@@ -68,6 +77,24 @@ export default createMcpHandler(() => {
   assert.deepEqual(Object.keys(extracted.orders.tools[1].outputSchema.properties), ["id", "status"]);
   assert.deepEqual(extracted.orders.resources, [{ uri: "orders://latest", outputSchema: { type: "object" } }, { uri: "ui://orders/app.html", outputSchema: {} }]);
   assert.deepEqual(extracted.plain.tools, []);
+});
+
+test("extraction uses the paths of a tsconfig in a parent directory, relative to that config", t => {
+  const { root, extract } = unpackTooling(t);
+  const app = application(root, {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@schemas/*": ["./packages/schemas/*"] } } }),
+    "packages/schemas/order.ts": 'import { z } from "zod"; export const order = z.object({ id: z.string() });',
+    "packages/api/package.json": '{"type":"module"}',
+    "packages/api/server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { order } from "@schemas/order";
+export default createMcpHandler(() => {
+  const server = new McpServer({ name: "orders", version: "1" });
+  server.registerTool("read", { inputSchema: order }, () => ({ content: [] }));
+  return server;
+}, { legacy: "reject" });`,
+  });
+  const { api } = extract([{ name: "api", path: join(app, "packages", "api"), entry: "server.ts" }]);
+  assert.deepEqual(Object.keys(api.tools?.[0].inputSchema.properties ?? {}), ["id"], api.diagnostic);
 });
 
 test("installed packages resolve from the application: its own Zod, CommonJS packages and the MCP client", t => {
@@ -138,14 +165,22 @@ test("check uses the application's compiler CLI and honors project file selectio
   const app = join(root, "application");
   mkdirSync(app);
   writeFileSync(join(app, "package.json"), '{"type":"module"}');
-  // A compiler package can expose bin.tsc without a JavaScript API, as TypeScript 7 does.
-  const compiler = join(app, "node_modules/typescript");
-  mkdirSync(compiler, { recursive: true });
-  writeFileSync(join(compiler, "package.json"), JSON.stringify({ bin: { tsc: "compiler.cjs" }, exports: { "./package.json": "./package.json" } }));
-  writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url)))});`);
+  installCompiler(app);
   writeFileSync(join(app, "check.ts"), "export const total = 1;");
   writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));
   // The application's file selection takes precedence over entry/discovery.
   writeFileSync(join(app, "excluded.ts"), 'export const wrong: number = "excluded";');
   check(app, "excluded.ts");
+});
+
+test("check finds a tsconfig as tsc does, and needs one unless it is named an entry", t => {
+  const { root, check } = unpackTooling(t);
+  const app = application(root, { "package.json": '{"type":"module"}', "packages/api/package.json": '{"type":"module"}', "packages/api/wrong.ts": 'export const wrong: number = "wrong";' });
+  installCompiler(app);
+  const project = join(app, "packages", "api");
+  const reportsWrong = error => error.stdout.includes("wrong.ts");
+  assert.throws(() => check(project, ""), error => error.stderr.includes("no tsconfig.json"));
+  assert.throws(() => check(project, "wrong.ts"), reportsWrong);
+  writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, target: "ES2023", module: "NodeNext", moduleResolution: "NodeNext", types: [] } }));
+  assert.throws(() => check(project, ""), reportsWrong);
 });

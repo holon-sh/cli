@@ -32,6 +32,7 @@ import (
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/moby/buildkit/util/staticfs"
+	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/tonistiigi/fsutil"
@@ -43,7 +44,6 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	registryauth "oras.land/oras-go/v2/registry/remote/auth"
 
-	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/ociimage"
 	"github.com/holon-sh/protocol"
@@ -165,7 +165,7 @@ func publishPlatform(
 			return ocispec.Descriptor{}, err
 		}
 		recipe.Add(arch, &fstypes.Stat{Mode: 0o755}, binary)
-		runtimeKey = clientutil.HashBytes(binary)
+		runtimeKey = digest.FromBytes(binary).Encoded()
 	}
 	name := request.app.Name + " " + platform
 	connected := request.output.measure(name, "connect builder")
@@ -211,14 +211,14 @@ func publishPlatform(
 	hostname, _ := os.Hostname()
 	solved := request.output.measure(name, "solve")
 	response, err := c.Build(ctx, client.SolveOpt{
-		SharedKey:   clientutil.HashBytes([]byte(hostname + "\x00" + platform)),
+		SharedKey:   digest.FromBytes([]byte(hostname + "\x00" + platform)).Encoded(),
 		LocalMounts: map[string]fsutil.FS{"context": source, "dockerfile": recipe, "runtime": recipe},
 		Session:     []session.Attachable{authentication},
 		Exports: []client.ExportEntry{{Type: client.ExporterOCI, OutputStore: &sourceExport{Store: store, request: request}, Attrs: map[string]string{
 			"tar": "false", "source-date-epoch": "0", "oci-mediatypes": "true", "compression": "zstd", "compression-level": "1",
 		}}},
 	}, "holon", func(ctx context.Context, g gateway.Client) (*gateway.Result, error) {
-		input, err := llb.Local("context", llb.SharedKeyHint(clientutil.HashBytes([]byte(request.app.Path)))).Marshal(ctx)
+		input, err := llb.Local("context", llb.SharedKeyHint(digest.FromBytes([]byte(request.app.Path)).Encoded())).Marshal(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -408,7 +408,7 @@ func sourceBuilder(ctx context.Context, env []string) (string, error) {
 			}
 		}
 	}
-	name := prefix + clientutil.HashBytes([]byte(endpoint))[:12]
+	name := prefix + digest.FromBytes([]byte(endpoint)).Encoded()[:12]
 	if _, err := run("buildx", "inspect", name); err != nil {
 		if _, err := run("buildx", "create", "--name", name, "--driver", driver, endpoint); err != nil {
 			if _, inspectErr := run("buildx", "inspect", name); inspectErr != nil {

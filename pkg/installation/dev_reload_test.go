@@ -369,7 +369,7 @@ func TestDevStartup(t *testing.T) {
 	f.await(func() bool { return f.stdout.String() == starting })
 	f.update(func() { f.ready = true })
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Watching for changes.") })
-	if want := starting + "\nReady\n" + endpoints + "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev.\n"; f.stdout.String() != want {
+	if want := starting + "Ready\n" + "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev.\n"; f.stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", f.stdout.String(), want)
 	}
 	// Each read names the revision the session last had, so the server holds it until the session moves.
