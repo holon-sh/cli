@@ -63,10 +63,7 @@ func AppConsumer(name, dir string) (*Consumer, error) {
 	return &Consumer{Name: name, Dir: dir, Targets: targets, Server: own}, nil
 }
 
-// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias. A url entry's
-// address gives way to <ALIAS>_MCP_URL, read from env and then the process environment, for a
-// server that picks its port at startup. A registry entry keeps its record's address, which comes
-// with the server's identity; a local stand-in is declared as a url entry or given with -s.
+// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias.
 func DeclaredSources(dir string, env []string) ([]Source, error) {
 	d, err := readDescriptor(dir)
 	if err != nil || d == nil {

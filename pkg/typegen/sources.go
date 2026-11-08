@@ -54,8 +54,7 @@ type Source struct {
 	Endpoint string
 	// Document is an already resolved contract document, with the exact bytes its digest names.
 	Document *Document
-	// from names the variable that replaced a declared Endpoint (see DeclaredSources).
-	from string
+	from     string
 }
 
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)

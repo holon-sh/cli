@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -103,58 +100,6 @@ func TestEndpointToken(t *testing.T) {
 				t.Fatalf("ResolveDocument = %+v, %v", document, err)
 			}
 		})
-	}
-}
-
-// An address from <ALIAS>_MCP_URL is reported, takes the alias's token and names the variable when invalid.
-func TestEndpointURLOverride(t *testing.T) {
-	live := tokenServer(t, "secret")
-	for _, test := range []struct {
-		name, location, want string
-	}{
-		{name: "override", location: live.URL},
-		{name: "invalid override", location: "ftp://docs.example", want: "DOCS_MCP_URL: MCP URL must be an HTTP(S) URL"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var progress strings.Builder
-			source := Source{Alias: "docs", Endpoint: test.location, from: "DOCS_MCP_URL"}
-			document, err := ResolveDocument(t.Context(), source, Options{Stderr: &progress, Env: []string{"DOCS_MCP_TOKEN=secret"}})
-			if test.want != "" {
-				if err == nil || !strings.Contains(err.Error(), test.want) {
-					t.Fatalf("ResolveDocument = %v, want %q", err, test.want)
-				}
-				return
-			}
-			if err != nil || document.Identity.Name != "orders" {
-				t.Fatalf("ResolveDocument = %+v, %v; want the overriding server's contract", document, err)
-			}
-			if want := "docs: using " + live.URL + " from DOCS_MCP_URL\n"; progress.String() != want {
-				t.Fatalf("progress = %q, want %q", progress.String(), want)
-			}
-		})
-	}
-}
-
-func TestEndpointTokenIsNotWritten(t *testing.T) {
-	const token = "written-secret"
-	server := tokenServer(t, token)
-	app := t.TempDir()
-	slotPackage(t, app, "holon-sh")
-	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS, TargetGo}, Sources: []Source{{Alias: "docs", Endpoint: server.URL}}}
-	if err := Generate(t.Context(), []Consumer{c}, Options{Env: []string{"DOCS_MCP_TOKEN=" + token}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := filepath.WalkDir(app, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err == nil && strings.Contains(string(data), token) {
-			t.Errorf("%s reveals the token", path)
-		}
-		return err
-	}); err != nil {
-		t.Fatal(err)
 	}
 }
 

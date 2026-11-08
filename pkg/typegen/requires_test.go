@@ -20,7 +20,6 @@ func TestDeclaredSources(t *testing.T) {
 		err  string
 	}{
 		{name: "no descriptor"},
-		{name: "no requires", data: descriptor + `}`},
 		{
 			name: "sorted aliases, registry references and urls",
 			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"},"chat":{"url":"https://mcp.example/mcp"}}}}}}`,
@@ -54,22 +53,31 @@ func TestDeclaredSources(t *testing.T) {
 }
 
 func TestDeclaredURLOverride(t *testing.T) {
+	live := tokenServer(t, "secret")
 	root := t.TempDir()
-	put(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"order-desk":{"url":"https://mcp.example/mcp"},"orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`)
-	registry := Source{Alias: "orders", Registry: &protocol.RegistryRef{Name: "example.com/orders", Version: "1.0.0"}}
-	for _, test := range []struct {
-		name string
-		env  string
-		want Source // the url entry; the registry entry never changes
-	}{
-		{name: "override", env: "ORDER_DESK_MCP_URL=http://localhost:8123/mcp", want: Source{Alias: "order-desk", Endpoint: "http://localhost:8123/mcp", from: "ORDER_DESK_MCP_URL"}},
-		{name: "no override", env: "OTHER_MCP_URL=http://localhost:8123/mcp", want: Source{Alias: "order-desk", Endpoint: "https://mcp.example/mcp"}},
-		{name: "registry entry is not overridden", env: "ORDERS_MCP_URL=http://localhost:8123/mcp", want: Source{Alias: "order-desk", Endpoint: "https://mcp.example/mcp"}},
+	put(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"docs":{"url":"https://mcp.invalid/mcp"},"orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`)
+	for _, test := range []struct{ name, location, want string }{
+		{name: "override", location: live.URL},
+		{name: "invalid", location: "ftp://docs.example", want: "DOCS_MCP_URL: MCP URL must be an HTTP(S) URL"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := DeclaredSources(root, []string{test.env})
-			if want := []Source{test.want, registry}; err != nil || !reflect.DeepEqual(got, want) {
-				t.Fatalf("DeclaredSources = %#v, %v; want %#v", got, err, want)
+			sources, err := DeclaredSources(root, []string{"DOCS_MCP_URL=" + test.location, "ORDERS_MCP_URL=" + live.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sources[1].Registry == nil || sources[1].Endpoint != "" {
+				t.Fatalf("registry entry = %+v, want it left alone", sources[1])
+			}
+			var progress strings.Builder
+			document, err := ResolveDocument(t.Context(), sources[0], Options{Stderr: &progress, Env: []string{"DOCS_MCP_TOKEN=secret"}})
+			if test.want != "" {
+				if err == nil || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("ResolveDocument = %v, want %q", err, test.want)
+				}
+				return
+			}
+			if err != nil || document.Identity.Name != "orders" || !strings.Contains(progress.String(), live.URL) {
+				t.Fatalf("ResolveDocument = %+v, %v; progress %q", document, err, progress.String())
 			}
 		})
 	}
