@@ -160,7 +160,7 @@ greeting.text;
 
 ## Dependencies
 
-A dependency is an MCP server your project calls. For each one `holon` obtains a contract—the JSON Schemas of the server's tools and resources—and writes a typed client `apps.<alias>` into the SDK package your project declares. `holon types check` then runs the language's type checker over your code against those clients.
+A dependency is an MCP server your project calls. For each one `holon` obtains a contract—the JSON Schemas of the server's tools and resources—and writes a typed client `apps.<alias>` into the SDK package your project declares. `holon types check` then runs the language's type checker over your code against those clients. A TypeScript project needs a `tsconfig.json`, found as `tsc` finds it.
 
 A dependency is written in one of three ways.
 
