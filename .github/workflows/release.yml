@@ -1,15 +1,21 @@
 name: Release
+# Every push to main releases the next 0.0.1-dev.N prerelease; a stable
+# release is a deliberate dispatch with its version.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
-        description: Version to release (without the leading v); creates the tag
+        description: Version to release (without the leading v), such as 0.0.1
         type: string
         required: true
 permissions:
   contents: read
+# One release at a time, so each run numbers itself after the previous tag.
+# GitHub keeps one pending run per group: merges that land during a release
+# are released together by the newest one.
+concurrency: release
 jobs:
   version:
     runs-on: ubuntu-24.04
@@ -17,19 +23,38 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - id: version
         env:
-          TAG: ${{ github.ref_name }}
           INPUT: ${{ inputs.version }}
         run: |
-          version="${INPUT:-${TAG#v}}"
-          case "$version" in
-            [0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "::error::'$version' is not a semantic version"; exit 1 ;;
-          esac
+          if [ -n "$INPUT" ]; then
+            version=$INPUT
+            python3 -c 'import sys; sys.path[0] = "scripts"; from package_cli import VERSION_PATTERN; sys.exit(not VERSION_PATTERN.fullmatch(sys.argv[1]))' "$version" \
+              || { echo "::error::'$version' is not X.Y.Z or X.Y.Z-{alpha,beta,rc,dev}.N"; exit 1; }
+            if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+              echo "::error::v$version is already released"
+              exit 1
+            fi
+          else
+            released=$(git tag --points-at HEAD --list 'v*')
+            if [ -n "$released" ]; then
+              echo "::notice::$GITHUB_SHA is already released as $released"
+              exit 0
+            fi
+            latest=$(git -c versionsort.suffix=- tag --list 'v*' --sort=-v:refname | head -n1)
+            latest=${latest#v}
+            case "$latest" in
+              *-dev.*) version="${latest%-dev.*}-dev.$((${latest##*-dev.} + 1))" ;;
+              *) IFS=. read -r major minor patch <<< "$latest"; version="$major.$minor.$((patch + 1))-dev.1" ;;
+            esac
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
   build:
     needs: version
+    if: needs.version.outputs.version
     uses: ./.github/workflows/ci.yml
     with:
       version: ${{ needs.version.outputs.version }}
@@ -45,27 +70,21 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: holon-types-*
-          path: artifacts
-      - name: Collect the binaries
-        run: |
-          mkdir release
-          for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
-            cp "artifacts/holon-types-$target/holon_${VERSION}_$target.tar.gz" release/
-          done
-          (cd release && sha256sum holon_*.tar.gz > SHA256SUMS && cat SHA256SUMS)
+          path: release
+          merge-multiple: true
+      - run: cd release && sha256sum holon_*.tar.gz > SHA256SUMS && cat SHA256SUMS
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', inputs.version) }}
+          GH_REPO: ${{ github.repository }}
         run: |
           prerelease=""
           case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$TAG" --repo "$REPO" --title "holon $VERSION" --target "$GITHUB_SHA" $prerelease \
+          gh release create "v$VERSION" --title "holon $VERSION" --target "$GITHUB_SHA" $prerelease \
             --notes "Install with \`curl -fsSL https://holon-labs.dev/install.sh | HOLON_VERSION=$VERSION sh\`, or download the archive for your platform below." \
             release/holon_*.tar.gz release/SHA256SUMS
   publish-pypi:
-    needs: [version, release]
+    needs: release
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: pypi
@@ -90,7 +109,6 @@ jobs:
     timeout-minutes: 10
     environment: npm
     permissions:
-      contents: read
       id-token: write
     env:
       VERSION: ${{ needs.version.outputs.version }}

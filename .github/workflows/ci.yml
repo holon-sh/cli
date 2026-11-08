@@ -1,16 +1,17 @@
 name: CI
+# Pull requests run it here; release.yml runs it on main with the version.
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_call:
     inputs:
       version:
         description: Version stamped into the binaries
         type: string
-        default: "0.0.1"
+        required: true
 permissions:
   contents: read
+env:
+  VERSION: ${{ inputs.version || '0.0.1' }}
 jobs:
   tooling:
     runs-on: ubuntu-24.04
@@ -46,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests run Linux only; main pushes and releases add macOS.
+        # Pull requests run Linux only; releases add macOS.
         runner: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04","macos-15"]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -76,12 +77,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests run Linux only; main pushes and releases add macOS.
+        # Pull requests run Linux only; releases add macOS.
         target: ${{ fromJSON(github.event_name == 'pull_request' && '["linux_amd64","linux_arm64"]' || '["linux_amd64","linux_arm64","darwin_arm64","darwin_amd64"]') }}
     runs-on: ${{ fromJSON('{"linux_amd64":"ubuntu-24.04","linux_arm64":"ubuntu-24.04-arm","darwin_arm64":"macos-15","darwin_amd64":"macos-15-intel"}')[matrix.target] }}
     timeout-minutes: 90
-    env:
-      VERSION: ${{ inputs.version || '0.0.1' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -131,7 +130,7 @@ jobs:
         with:
           node-version: 22
       - run: python3 -m unittest discover -s packaging/tests
-      - run: python3 scripts/package_cli.py --version '${{ inputs.version || '0.0.1' }}' --format npm-launcher
+      - run: python3 scripts/package_cli.py --version "$VERSION" --format npm-launcher
       - uses: actions/upload-artifact@v4
         with:
           name: holon-types-launcher
