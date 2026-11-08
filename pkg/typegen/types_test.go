@@ -278,7 +278,7 @@ func TestDecodesEveryDepth(t *testing.T) {
 	var named FilesWalkOutputFileInfo = *walk.Root
 	var input FilesWalkInput
 	var inputRoot *FilesWalkInputFileInfo = input.Root
-	var self *FilesWalkOutputValue = walk.Self
+	var self *FilesWalkOutput = walk.Self
 	// Go types are nominal, so these compile only if walk and stat share their types.
 	var file FilesStatOutputFileInfo = named
 	_, _, _ = FilesStatOutput{File: &file}, FilesStatInput{File: inputRoot}, self

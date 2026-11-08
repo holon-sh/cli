@@ -3,11 +3,15 @@ import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } 
 export { ToolCallError } from "../protocol.js";
 export type Resources = import("./resources.js").Outputs;
 export type * from "./resources.js";
+export type MysqlInputLabeledColumn = { "column": string; "label": string; };
+export type MysqlInputDirection = ("asc" | "desc");
+export type MysqlOutputRoot = { "columns": Array<MysqlOutputLabeledColumn>; };
+export type MysqlOutputLabeledColumn = { "value": number; };
 export interface Inputs {
   "empty": {
   };
   "mysql": {
-    "select": { "columns"?: (Array<string> | Array<{ "column": string; "label": string; }> | null); "direction"?: ("asc" | "desc"); "table": string; };
+    "select": { "columns"?: (Array<string> | Array<MysqlInputLabeledColumn> | null); "direction"?: MysqlInputDirection; "table": string; };
   };
   "orders": {
     "get_order": { "count"?: number; "orderId": string; };
@@ -22,7 +26,7 @@ export interface Outputs {
   "empty": {
   };
   "mysql": {
-    "select": { "columns": Array<{ "value": number; }>; };
+    "select": MysqlOutputRoot;
   };
   "orders": {
     "get_order": { "total": number; };
@@ -35,7 +39,7 @@ export interface InputTypes {
   "empty": {
   };
   "mysql": {
-    "select": { "Direction": ("asc" | "desc"); "LabeledColumn": { "column": string; "label": string; }; };
+    "select": { "Direction": MysqlInputDirection; "LabeledColumn": MysqlInputLabeledColumn; };
   };
   "orders": {
     "get_order": {  };
@@ -50,7 +54,7 @@ export interface OutputTypes {
   "empty": {
   };
   "mysql": {
-    "select": { "LabeledColumn": { "value": number; }; "Root": { "columns": Array<{ "value": number; }>; }; };
+    "select": { "LabeledColumn": MysqlOutputLabeledColumn; "Root": MysqlOutputRoot; };
   };
   "orders": {
     "get_order": {  };

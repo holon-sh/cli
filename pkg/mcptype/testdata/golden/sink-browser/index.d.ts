@@ -3,9 +3,16 @@ type AuthProvider = { token(): Promise<string> };
 type ToolClient<I, O, R> = { tools: { [K in keyof I]: (input: I[K]) => Promise<K extends keyof O ? O[K] : unknown> }; resources: { [U in keyof R]: { read(): Promise<R[U]> } }; callTool<K extends keyof I & string>(request: { name: K; arguments: I[K] }): Promise<unknown> };
 export type Resources = import("./resources.js").Outputs;
 export type * from "./resources.js";
-export type OrdersGetOrderInput = { "id": string; };
-export type OrdersKitchenSinkInputValue = { "1starts"?: string; "Dash-Key"?: string; "all"?: ({ "a": string; } & { "b"?: number; }); "allConflict"?: ({ "a"?: string; } & { "a"?: number; }); "allNonObject"?: (string & { [key: string]: unknown; }); "annotated"?: string; "arrayRef"?: string; "closedEmpty"?: {  }; "constNum"?: 1e+21; "constObj"?: unknown; "constString"?: "it's \"quoted\"\n"; "cycle"?: OrdersKitchenSinkInputNode; "dash-key"?: string; "emptyAll"?: unknown; "emptyAny"?: never; "falseSchema"?: never; "implicitTuple"?: ["x"?, ...unknown[]]; "literals": ("a" | 1 | 2.5 | -3 | true | null | unknown | unknown | 1.0 | 1e+21 | -0.0); "mapOf"?: { [key: string]: string; }; "multi"?: (string | null | Array<number> | unknown); "nested"?: Array<Array<{ "deep"?: null; }>>; "noType": { "p": boolean; }; "nodes"?: Array<OrdersKitchenSinkInputNode>; "numericType"?: { "p"?: boolean; }; "odd key with spaces"?: string; "oneOf"?: (string | number); "openObj"?: { "x"?: string; [key: string]: unknown; }; "openTuple"?: [boolean?, ...Array<number>]; "plainArray"?: Array<unknown>; "pointerEscape"?: number; "rootRef"?: OrdersKitchenSinkInputValue; "trueObj"?: { "x"?: string; [key: string]: unknown; }; "trueSchema"?: unknown; "tuple": [string, number?]; "unknownKeyword"?: unknown; };
-export type OrdersKitchenSinkInputNode = { "next"?: OrdersKitchenSinkInputNode; "value": number; };
+export type OrdersInputId = { "id": string; };
+export type OrdersInputX1startsDashKeyAllEtc = { "1starts"?: string; "Dash-Key"?: string; "all"?: ({ "a": string; } & { "b"?: number; }); "allConflict"?: ({ "a"?: string; } & { "a"?: number; }); "allNonObject"?: (string & { [key: string]: unknown; }); "annotated"?: string; "arrayRef"?: string; "closedEmpty"?: {  }; "constNum"?: 1e+21; "constObj"?: unknown; "constString"?: "it's \"quoted\"\n"; "cycle"?: OrdersInputNode; "dash-key"?: string; "emptyAll"?: unknown; "emptyAny"?: never; "falseSchema"?: never; "implicitTuple"?: ["x"?, ...unknown[]]; "literals": ("a" | 1 | 2.5 | -3 | true | null | unknown | unknown | 1.0 | 1e+21 | -0.0); "mapOf"?: { [key: string]: string; }; "multi"?: (string | null | Array<number> | unknown); "nested"?: Array<Array<{ "deep"?: null; }>>; "noType": { "p": boolean; }; "nodes"?: OrdersInputNodes; "numericType"?: { "p"?: boolean; }; "odd key with spaces"?: string; "oneOf"?: (string | number); "openObj"?: { "x"?: string; [key: string]: unknown; }; "openTuple"?: [boolean?, ...Array<number>]; "plainArray"?: Array<unknown>; "pointerEscape"?: OrdersInputABC; "rootRef"?: OrdersInputX1startsDashKeyAllEtc; "trueObj"?: { "x"?: string; [key: string]: unknown; }; "trueSchema"?: unknown; "tuple": [string, number?]; "unknownKeyword"?: unknown; };
+export type OrdersInputNode = { "next"?: OrdersInputNode; "value": number; };
+export type OrdersInputNodes = Array<OrdersInputNode>;
+export type OrdersInputABC = number;
+export type OrdersInputX9lives = string;
+export type OrdersInputLegacy = number;
+export type OrdersInputPrivate = boolean;
+export type OrdersInputFor = string;
+export type OrdersInputList = [string?, ...unknown[]];
 export interface Inputs {
   "123": {
   };
@@ -20,9 +27,9 @@ export interface Inputs {
     "CallTool": { [key: string]: unknown; };
     "call_tool": { "a"?: number; "b": string; };
     "class": { "opt"?: { "n"?: number; }; };
-    "get-order": OrdersGetOrderInput;
-    "get_order": OrdersGetOrderInput;
-    "kitchen-sink": OrdersKitchenSinkInputValue;
+    "get-order": OrdersInputId;
+    "get_order": OrdersInputId;
+    "kitchen-sink": OrdersInputX1startsDashKeyAllEtc;
     "weird-keys": { "": null; "-"?: boolean; "x\"quote"?: string; "ünïcode"?: number; };
     "émoji🎉": { "é"?: string; };
   };
@@ -73,7 +80,7 @@ export interface InputTypes {
     "class": {  };
     "get-order": {  };
     "get_order": {  };
-    "kitchen-sink": { "9lives": string; "Legacy": number; "Node": OrdersKitchenSinkInputNode; "Nodes": Array<OrdersKitchenSinkInputNode>; "_private": boolean; "a/b~c": number; "for": string; "list": [string?, ...unknown[]]; };
+    "kitchen-sink": { "9lives": OrdersInputX9lives; "Legacy": OrdersInputLegacy; "Node": OrdersInputNode; "Nodes": OrdersInputNodes; "_private": OrdersInputPrivate; "a/b~c": OrdersInputABC; "for": OrdersInputFor; "list": OrdersInputList; };
     "weird-keys": {  };
     "émoji🎉": {  };
   };

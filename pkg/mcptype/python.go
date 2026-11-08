@@ -55,14 +55,16 @@ func pythonTypedDict(value typ) bool {
 	return value.kind == kindObject && value.extra.kind == extraClosed
 }
 
-// pythonDeclares reports whether a type is declared, which a shared dict is not.
-func pythonDeclares(ref *declaration) bool { return ref.cyclic || pythonTypedDict(ref.value) }
+// pythonDeclares reports whether a type is declared, which a shared dict that nothing names is not.
+func pythonDeclares(ref *declaration) bool {
+	return ref.cyclic || ref.definition != "" || pythonTypedDict(ref.value)
+}
 
-// declare names a shape's declarations and writes its recursive types.
-func (e *pythonEmitter) declare(s shape, tool, binding string) {
+// declare writes a shape's recursive types.
+func (e *pythonEmitter) declare(s shape) {
 	e.declaring = true
 	defer func() { e.declaring = false }()
-	for _, ref := range s.name(e.names, tool, binding, pythonDeclares) {
+	for _, ref := range s.declarations(pythonDeclares) {
 		if ref.cyclic {
 			e.emit(ref)
 		}
@@ -227,14 +229,24 @@ func generatePython(contracts map[string]catalog) string {
 		var methods, calls []string
 		appExports := make([][]string, 4)
 		tools := contracts[binding]
+		nameDeclarations(emitter.names, binding, tools, pythonDeclares)
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
 			shapes := []shape{tool.input, tool.output}
 			prefix := typeIdentifier(binding) + typeIdentifier(name)
-			emitter.declare(shapes[0], prefix+"Input", typeIdentifier(binding)+"Input")
-			emitter.declare(shapes[1], prefix+"Output", typeIdentifier(binding)+"Output")
+			emitter.declare(shapes[0])
+			emitter.declare(shapes[1])
 			input, arguments := emitter.input(shapes[0].value, prefix+"Input")
 			output := emitter.render(shapes[1].value, prefix+"Output")
+			// A tool whose whole input or output is declared keeps its own name for it, as Go does.
+			for i, rendered := range []string{input, output} {
+				if root := shapes[i].value; root.kind == kindDeclared && rendered == root.ref.name {
+					if alias := prefix + []string{"Input", "Output"}[i]; !emitter.names[alias] {
+						emitter.names[alias] = true
+						emitter.shapes = append(emitter.shapes, fmt.Sprintf("%s: _typing.TypeAlias = %s", alias, rendered))
+					}
+				}
+			}
 			returned := output
 			if !tool.structured {
 				returned = "_CompleteResult[_builtins.object]"
