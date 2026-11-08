@@ -124,4 +124,3 @@ require (
 )
 
 tool github.com/holon-sh/runtime/cmd/holon-mcp-runtime
-
