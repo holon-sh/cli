@@ -54,6 +54,7 @@ type Source struct {
 	Endpoint string
 	// Document is an already resolved contract document, with the exact bytes its digest names.
 	Document *Document
+	from     string
 }
 
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
@@ -121,10 +122,14 @@ func (s Source) validate() error {
 	if s.Registry != nil {
 		return validRegistryRef(*s.Registry)
 	}
-	if s.Endpoint != "" {
-		return mcpregistry.ValidateEndpoint(s.Endpoint)
+	if s.Endpoint == "" {
+		return nil
 	}
-	return nil
+	err := mcpregistry.ValidateEndpoint(s.Endpoint)
+	if err != nil && s.from != "" {
+		err = fmt.Errorf("%s: %w", s.from, err)
+	}
+	return err
 }
 
 // Consumer is a project directory that receives typed clients.

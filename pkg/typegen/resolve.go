@@ -27,6 +27,9 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	if err := source.validate(); err != nil {
 		return nil, err
 	}
+	if source.from != "" {
+		fmt.Fprintf(o.Stderr, "%s: using %s from %s\n", source.Alias, source.Endpoint, source.from)
+	}
 	switch {
 	case source.Path != "":
 		prepared, err := prepareSource(ctx, "source", source.Path)
