@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 )
 
 func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, []string, io.Writer) error) {
@@ -77,10 +79,10 @@ func TestServersDescribeEachConsumersOwnServer(t *testing.T) {
 	info := json.RawMessage(`{"name":"example.com/chat","version":"2.0.0","title":"Chat","description":"Chat with Holon","websiteUrl":"https://example.com/chat"}`)
 	for _, test := range []struct {
 		name, descriptor string
-		want             Server
+		want             *mcpregistry.Descriptor
 	}{
-		{"MCP constructor", "", Server{Name: "example.com/chat", Version: "2.0.0", Title: "Chat", Description: "Chat with Holon", WebsiteURL: "https://example.com/chat"}},
-		{"server.json", `{"name":"example.com/chat","version":"1.0.0","description":"Chat"}`, Server{Name: "example.com/chat", Version: "1.0.0", Description: "Chat"}},
+		{"MCP constructor", "", &mcpregistry.Descriptor{Name: "example.com/chat", Version: "2.0.0", Title: "Chat", Description: "Chat with Holon", WebsiteURL: "https://example.com/chat"}},
+		{"server.json", `{"name":"example.com/chat","version":"1.0.0","description":"Chat"}`, &mcpregistry.Descriptor{Name: "example.com/chat", Version: "1.0.0", Description: "Chat"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			chat := t.TempDir()
@@ -95,7 +97,7 @@ func TestServersDescribeEachConsumersOwnServer(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer prepared.Close()
-			if got := prepared.Servers()["chat"]; got != test.want {
+			if got := prepared.Servers()["chat"]; !reflect.DeepEqual(got, test.want) {
 				t.Fatalf("chat server = %+v, want %+v", got, test.want)
 			}
 		})

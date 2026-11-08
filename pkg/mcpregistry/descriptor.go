@@ -93,34 +93,29 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 	if err := (wire.RegistryRef{Name: descriptor.Name, Version: descriptor.Version}).Validate(); err != nil {
 		return &descriptor, err
 	}
-	holon, err := ParseHolonMetadata(descriptor.Meta)
-	descriptor.Requires, descriptor.Egress = holon.Requires, holon.Egress
-	return &descriptor, err
-}
-
-func ParseHolonMetadata(meta map[string]json.RawMessage) (HolonMetadata, error) {
-	var holon HolonMetadata
-	value := meta[PublisherMetadata]
-	var publisher map[string]json.RawMessage
-	if value != nil {
+	if value := descriptor.Meta[PublisherMetadata]; value != nil {
+		var publisher map[string]json.RawMessage
 		if err := json.Unmarshal(value, &publisher); err != nil {
-			return HolonMetadata{}, err
+			return &descriptor, err
+		}
+		if extension := publisher["sh.holon"]; extension != nil {
+			var holon HolonMetadata
+			if err := wire.DecodeJSONStrict(extension, &holon); err != nil {
+				return &descriptor, fmt.Errorf("sh.holon metadata: %w", err)
+			}
+			descriptor.Requires = holon.Requires
+			descriptor.Egress = holon.Egress
 		}
 	}
-	if extension := publisher["sh.holon"]; extension != nil {
-		if err := wire.DecodeJSONStrict(extension, &holon); err != nil {
-			return HolonMetadata{}, fmt.Errorf("sh.holon metadata: %w", err)
-		}
-	}
-	for name, requirement := range holon.Requires {
+	for name, ref := range descriptor.Requires {
 		if !wire.ValidAppName(name) {
-			return HolonMetadata{}, fmt.Errorf("dependency name %q must produce a valid endpoint environment variable", name)
+			return &descriptor, fmt.Errorf("dependency name %q must produce a valid endpoint environment variable", name)
 		}
-		if err := requirement.Validate(); err != nil {
-			return HolonMetadata{}, fmt.Errorf("dependency %s: %w", name, err)
+		if err := ref.Validate(); err != nil {
+			return &descriptor, fmt.Errorf("dependency %s: %w", name, err)
 		}
 	}
-	return holon, nil
+	return &descriptor, nil
 }
 
 type InputFields wire.Input

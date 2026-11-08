@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-
-	"github.com/holon-sh/cli/pkg/mcpregistry"
 )
 
 // serverMention is what an MCP server's entry names: the protocol, an SDK or holon-sh.
@@ -67,13 +65,9 @@ func DeclaredSources(dir string) ([]Source, error) {
 	if err != nil || d == nil {
 		return nil, err
 	}
-	holon, err := mcpregistry.ParseHolonMetadata(d.Meta)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", filepath.Join(dir, "server.json"), err)
-	}
 	var sources []Source
-	for _, alias := range slices.Sorted(maps.Keys(holon.Requires)) {
-		requirement := holon.Requires[alias]
+	for _, alias := range slices.Sorted(maps.Keys(d.Requires)) {
+		requirement := d.Requires[alias]
 		source := Source{Alias: alias, Endpoint: requirement.URL}
 		if requirement.URL == "" {
 			source.Registry = &requirement.RegistryRef

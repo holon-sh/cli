@@ -1,10 +1,8 @@
 package typegen
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/protocol"
 	"io/fs"
@@ -29,32 +27,14 @@ func validRegistryRef(r protocol.RegistryRef) error {
 	return r.Validate()
 }
 
-// Server is how a server describes itself, in its server.json or the serverInfo it answers.
-type Server struct {
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	WebsiteURL  string `json:"websiteUrl"`
-	Repository  struct {
-		URL string `json:"url"`
-	} `json:"repository"`
-}
-
-type descriptor struct {
-	Server
-	Meta map[string]json.RawMessage `json:"_meta"`
-}
-
-func (d *descriptor) Identity() mcpcontract.Identity {
-	return mcpcontract.Identity{Name: d.Name, Version: d.Version}
-}
-func ParseDescriptor(data []byte) (*descriptor, error) {
-	var d descriptor
+// ParseDescriptor reads a server.json or serverInfo, which must also have a name, an exact version
+// and a description that the MCP Registry accepts.
+func ParseDescriptor(data []byte) (*mcpregistry.Descriptor, error) {
 	if len(data) > mcpregistry.MaxDescriptorBytes {
 		return nil, errors.New("server descriptor exceeds 1 MiB")
 	}
-	if err := json.Unmarshal(data, &d); err != nil {
+	d, err := mcpregistry.ParseDescriptor(data)
+	if err != nil {
 		return nil, err
 	}
 	if err := validRegistryRef(protocol.RegistryRef{Name: d.Name, Version: d.Version}); err != nil {
@@ -63,11 +43,11 @@ func ParseDescriptor(data []byte) (*descriptor, error) {
 	if n := utf8.RuneCountInString(d.Description); n < 1 || n > 100 {
 		return nil, errors.New("server description must contain 1 to 100 characters")
 	}
-	return &d, nil
+	return d, nil
 }
 
 // readDescriptor parses dir's server.json, or returns nil when it has none.
-func readDescriptor(dir string) (*descriptor, error) {
+func readDescriptor(dir string) (*mcpregistry.Descriptor, error) {
 	path := filepath.Join(dir, "server.json")
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {

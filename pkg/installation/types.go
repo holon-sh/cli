@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"k8s.io/utils/ptr"
@@ -213,9 +212,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		p.documents = documents
 		p.metadata = metadata[app.Name]
 		if s, ok := servers[app.Name]; ok && app.resolved.descriptor == nil {
-			app.resolved.descriptor = &mcpregistry.Descriptor{
-				Name: s.Name, Version: s.Version, Title: s.Title, Description: s.Description, WebsiteURL: s.WebsiteURL, Repository: s.Repository,
-			}
+			app.resolved.descriptor = s
 		}
 		if d := app.resolved.descriptor; d != nil && p.metadata == nil {
 			p.metadata = &mcpcontract.Metadata{Identity: d.Identity()}

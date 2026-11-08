@@ -86,14 +86,14 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
 		}
 		for _, dependency := range app.resolved.Requires {
-			requirement := app.resolved.descriptor.Requires[dependency]
-			requirement.Registry = requirement.RegistryURL()
-			if prior, exists := selections[dependency]; exists && prior != requirement {
+			ref := app.resolved.descriptor.Requires[dependency]
+			ref.Registry = ref.RegistryURL()
+			if prior, exists := selections[dependency]; exists && prior != ref {
 				return manifestSpec{}, fmt.Errorf("conflicting references for dependency %s", dependency)
 			}
-			selections[dependency] = requirement
-			if !satisfies(nodes[dependency], requirement) {
-				return manifestSpec{}, fmt.Errorf("%s requires %s to be %s; declared app does not match", name, dependency, cmp.Or(requirement.URL, requirement.Name+"@"+requirement.Version))
+			selections[dependency] = ref
+			if !satisfies(nodes[dependency], ref) {
+				return manifestSpec{}, fmt.Errorf("%s requires %s to be %s; declared app does not match", name, dependency, cmp.Or(ref.URL, ref.Name+"@"+ref.Version))
 			}
 		}
 		declaration := app.resolved.App
