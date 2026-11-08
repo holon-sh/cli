@@ -52,7 +52,7 @@ type typeLanguage struct {
 }
 
 var typeLanguages = map[string]typeLanguage{
-	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", "runner.mjs", []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
+	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", "check.mjs", []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
 	"python":     {nil, "extract.py", "runner.py", []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
 }
 
@@ -197,48 +197,48 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	return result, nil
 }
 
-// runLocal runs a contract runner with the host's interpreter. A Python server (args[1]) runs in its
-// own environment when that imports mcp and pydantic.
+// runLocal runs a contract runner on the host. A Python server (args[1]) runs in its own environment; the
+// host's interpreter, whose mcp and pydantic serve a server that needs nothing else, runs one with no
+// environment or one whose environment is too old or lacks them.
 func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
 	if err := validateEnv(env); err != nil {
 		return err
 	}
 	l := typeLanguages[language]
+	run := func(program string) error {
+		limited, cancel := context.WithTimeout(ctx, serverTimeout)
+		defer cancel()
+		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
+		command.Env = append(command.Environ(), env...)
+		var stderr bytes.Buffer
+		command.Stdout, command.Stderr = stdout, &stderr
+		err := command.Run()
+		if errors.Is(limited.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			return fmt.Errorf("%s: no catalog within %s", args[2], serverTimeout)
+		}
+		if exit := (*exec.ExitError)(nil); errors.As(err, &exit) {
+			return &RunnerError{Status: exit.ExitCode(), Stderr: stderr.String()}
+		}
+		return err
+	}
+	if language == "python" {
+		if own := pythonEnvironment(args[1], ""); own != "" && exec.CommandContext(ctx, own, l.probe...).Run() == nil {
+			if err := run(own); !lacksSchemaLibraries(err) {
+				return err
+			}
+		}
+	}
 	program, err := l.localProgram(ctx)
 	if err != nil {
 		return err
 	}
-	if language == "python" {
-		if program = pythonProgram(ctx, args[1], program); program == "" {
-			return &RunnerError{Status: 3, Stderr: "no Python environment here imports mcp and pydantic\nmcp\n"}
-		}
-	}
-	limited, cancel := context.WithTimeout(ctx, serverTimeout)
-	defer cancel()
-	command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
-	command.Env = append(command.Environ(), env...)
-	var stderr bytes.Buffer
-	command.Stdout, command.Stderr = stdout, &stderr
-	err = command.Run()
-	if errors.Is(limited.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-		return fmt.Errorf("%s: no catalog within %s", args[2], serverTimeout)
-	}
-	if exit := (*exec.ExitError)(nil); errors.As(err, &exit) {
-		return &RunnerError{Status: exit.ExitCode(), Stderr: stderr.String()}
-	}
-	return err
+	return run(program)
 }
 
-// pythonProgram is the interpreter that runs a Python server: its own environment's when that
-// imports mcp and pydantic, else the host's, whose copies serve a server that needs nothing else.
-// It is "" when neither can.
-func pythonProgram(ctx context.Context, dir, host string) string {
-	for _, program := range slices.Compact([]string{pythonEnvironment(dir, host), host}) {
-		if exec.CommandContext(ctx, program, "-c", "import mcp.server, pydantic").Run() == nil {
-			return program
-		}
-	}
-	return ""
+// lacksSchemaLibraries reports a contract runner that stopped on an uninstalled mcp or pydantic.
+func lacksSchemaLibraries(err error) bool {
+	var failed *RunnerError
+	return errors.As(err, &failed) && failed.Status == 3 && (strings.HasSuffix(failed.Stderr, "\nmcp\n") || strings.HasSuffix(failed.Stderr, "\npydantic\n"))
 }
 
 func isFile(path string) bool {
