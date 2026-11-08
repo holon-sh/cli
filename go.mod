@@ -15,8 +15,8 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
 	github.com/holon-sh/mcp-bridge v0.0.4
-	github.com/holon-sh/protocol v0.0.1-dev.10.0.20261107201219-617df8bcb614
-	github.com/holon-sh/runtime v0.0.1-dev.3.0.20261108155919-706e05e56067
+	github.com/holon-sh/protocol v0.0.1-dev.12
+	github.com/holon-sh/runtime v0.0.1-dev.4
 	github.com/klauspost/compress v1.19.2
 	github.com/moby/buildkit v0.33.1
 	github.com/moby/patternmatcher v0.6.1
@@ -124,5 +124,3 @@ require (
 )
 
 tool github.com/holon-sh/runtime/cmd/holon-mcp-runtime
-
-replace github.com/holon-sh/protocol => /Users/hughhan/src/hughhan1/protocol-private/.claude/worktrees/app-overlay
