@@ -43,8 +43,8 @@ type progressOutput struct {
 	clock    clock.PassiveClock
 	renderer errgroup.Group
 	statuses map[string]tea.ProgramStatus
-	preview  string // the provisional block in the live area
-	printed  string // the endpoints plain output last printed
+	preview  string
+	printed  string
 }
 
 func newProgressOutput(stdout, stderr io.Writer, verbose bool, clock clock.PassiveClock) (*progressOutput, io.Writer, io.Writer) {
@@ -129,12 +129,8 @@ func progressStatusID(title string) string {
 	return progressItemsID + "/" + clientutil.HashBytes([]byte(title))[:16]
 }
 
-// progressPreview is text the terminal shows above the status rows until another preview replaces it.
 type progressPreview string
 
-// endpoints prints the session's endpoints under heading. A provisional block stays in the terminal's live
-// area until the next block replaces it. Plain output cannot take a block back, so for endpoints it has
-// already printed it repeats only the heading.
 func (o *progressOutput) endpoints(stdout io.Writer, heading string, session protocol.SessionResponse, provisional bool) error {
 	block, err := formatEndpoints(session)
 	if err != nil || block == "" {
@@ -166,7 +162,6 @@ func (o *progressOutput) endpoints(stdout io.Writer, heading string, session pro
 
 func (o *progressOutput) finish(err error, message string) error {
 	if o.program != nil {
-		// Leave a provisional block that nothing replaced in the scrollback.
 		o.mu.Lock()
 		if o.preview != "" {
 			_, _ = o.Write([]byte(o.preview))

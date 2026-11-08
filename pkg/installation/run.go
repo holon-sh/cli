@@ -377,8 +377,6 @@ func reportSessionProgress(
 	output.status(name, phase, state)
 }
 
-// startingSession gives the session the endpoints its apps will have. The API publishes endpoints only once
-// their apps are up, but the URLs follow from the session's name.
 func startingSession(origin string, session protocol.SessionResponse) (protocol.SessionResponse, error) {
 	base, err := protocol.SessionAudience(origin, protocol.ModeDevelopment, session.Name)
 	if err != nil {
