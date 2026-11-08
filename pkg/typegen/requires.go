@@ -59,7 +59,7 @@ func AppConsumer(name, dir string) (*Consumer, error) {
 	return &Consumer{Name: name, Dir: dir, Targets: targets, Server: own}, nil
 }
 
-// DeclaredSources returns one registry source per sh.holon.requires entry, sorted by alias.
+// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias.
 func DeclaredSources(dir string) ([]Source, error) {
 	d, err := readDescriptor(dir)
 	if err != nil || d == nil {
@@ -67,8 +67,7 @@ func DeclaredSources(dir string) ([]Source, error) {
 	}
 	var sources []Source
 	for _, alias := range slices.Sorted(maps.Keys(d.Requires)) {
-		ref := d.Requires[alias]
-		sources = append(sources, Source{Alias: alias, Registry: &ref})
+		sources = append(sources, d.Requires[alias].source(alias))
 	}
 	return sources, nil
 }

@@ -21,15 +21,17 @@ func TestDeclaredSources(t *testing.T) {
 		{name: "no descriptor"},
 		{name: "no requires", data: descriptor + `}`},
 		{
-			name: "sorted aliases and registry references",
-			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"}}}}}}`,
+			name: "sorted aliases, registry references and urls",
+			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"},"chat":{"url":"https://mcp.example/mcp"}}}}}}`,
 			want: []Source{
+				{Alias: "chat", Endpoint: "https://mcp.example/mcp"},
 				{Alias: "docs", Registry: &Reference{Name: "example.com/documentation", Version: "4.4.4", Registry: "https://registry.example"}},
 				{Alias: "orders", Registry: &Reference{Name: "example.com/orders", Version: "1.0.0"}},
 			},
 		},
 		{name: "invalid descriptor", data: `{"name":"checkout","version":"1.0.0","description":"Checkout"}`, err: "namespace/name"},
 		{name: "invalid alias", data: descriptor + metadata + `{"requires":{"Orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`, err: "invalid dependency name"},
+		{name: "a url with a version", data: descriptor + metadata + `{"requires":{"docs":{"url":"https://mcp.example/mcp","version":"1.0.0"}}}}}}`, err: "leave out name, version and registry"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()

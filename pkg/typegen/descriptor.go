@@ -57,6 +57,29 @@ func (r Reference) Validate() error {
 	return errors.New("MCP registry must be an HTTPS URL (loopback HTTP is allowed)")
 }
 
+type requirement struct {
+	Reference
+	URL string `json:"url,omitempty"`
+}
+
+func (r requirement) validate() error {
+	switch {
+	case r.URL == "":
+		return r.Reference.Validate()
+	case r.Reference != (Reference{}):
+		return errors.New("a url names the server; leave out name, version and registry")
+	default:
+		return validEndpoint(r.URL)
+	}
+}
+
+func (r requirement) source(alias string) Source {
+	if r.URL != "" {
+		return Source{Alias: alias, Endpoint: r.URL}
+	}
+	return Source{Alias: alias, Registry: &r.Reference}
+}
+
 // Server is how a server describes itself, in its server.json or the serverInfo it answers.
 type Server struct {
 	Name        string `json:"name"`
@@ -74,7 +97,7 @@ type descriptor struct {
 	Packages []registryPackage          `json:"packages"`
 	Remotes  []transport                `json:"remotes"`
 	Meta     map[string]json.RawMessage `json:"_meta"`
-	Requires map[string]Reference       `json:"-"`
+	Requires map[string]requirement     `json:"-"`
 }
 type registryPackage struct {
 	RegistryType string `json:"registryType"`
@@ -85,8 +108,8 @@ type transport struct {
 	URL  string `json:"url"`
 }
 type holonMetadata struct {
-	Requires map[string]Reference `json:"requires"`
-	Egress   json.RawMessage      `json:"egress,omitempty"`
+	Requires map[string]requirement `json:"requires"`
+	Egress   json.RawMessage        `json:"egress,omitempty"`
 }
 
 func (d *descriptor) Identity() mcpcontract.Identity {
@@ -129,7 +152,7 @@ func ParseDescriptor(data []byte) (*descriptor, error) {
 		if len(name) > 49 || !appName.MatchString(name) {
 			return nil, fmt.Errorf("invalid dependency name %q", name)
 		}
-		if err := ref.Validate(); err != nil {
+		if err := ref.validate(); err != nil {
 			return nil, fmt.Errorf("dependency %s: %w", name, err)
 		}
 	}
