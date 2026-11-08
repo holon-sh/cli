@@ -35,8 +35,8 @@ type buildOptions struct {
 	Env           []string
 	HTTPClient    *http.Client
 	output        *progressOutput
-	reusable      map[string][]string // development session images by app, reused when their reuse annotation matches
-	reuse         string              // promotionAnnotation, or inputsAnnotation when a reload brings the source up to date
+	reusable      map[string][]string // development session images by app
+	reuseBy       string              // the imageKeys annotation a reused image must match
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
@@ -83,7 +83,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			var image string
 			if app.resolved.Image == "" {
 				keys := imageKeys(app, fingerprints, options.architectures)
-				if image = reusableImage(ctx, app, options.reuse, keys[options.reuse], options.reusable[app.Name], upload, options); image != "" {
+				if image = reusableImage(ctx, app, keys, upload, options); image != "" {
 					options.output.status(app.Name, "reusing its development image", progressWorking)
 				} else if image, err = buildSource(ctx, app, upload, options, keys); err != nil {
 					return err

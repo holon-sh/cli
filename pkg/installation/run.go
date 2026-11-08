@@ -176,18 +176,21 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if config.devTTLSeconds == nil {
 		previous = previousSession(ctx, manager, resolved)
 	}
-	// Only the start reuses the previous session's images, for apps whose source the reload below brings up to date.
+	// Only the first build reuses the previous session's images; devLoop.run reloads the apps that kept one.
 	start := options
-	start.reusable, start.reuse = sessionImages(previous), inputsAnnotation
+	start.reusable, start.reuseBy = sessionImages(previous), imageInputsAnnotation
 	request, err := uploadManifest(ctx, manager, "", resolved, start)
 	if err != nil {
 		return err
 	}
 	request.TTLSeconds = config.devTTLSeconds
 	config.output.deploying(request.Apps)
-	session := previous
-	switch {
-	case previous.Name == "":
+	var session protocol.SessionResponse
+	if previous.Name != "" {
+		if session, err = replaceExecution(ctx, manager, previous.Name, previous, request); err != nil {
+			return err
+		}
+	} else {
 		token, err := manager.controlToken(ctx)
 		if err != nil {
 			return err
@@ -198,10 +201,6 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 			}
 			console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
 			return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
-		}
-	case len(protocol.ChangedApps(previous.Apps, request.Apps)) != 0:
-		if session, err = replaceExecution(ctx, manager, previous.Name, previous, request); err != nil {
-			return err
 		}
 	}
 	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
@@ -224,40 +223,38 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
 		return err
 	}
-	dev := &devLoop{
-		manager: manager, name: session.Name, manifest: resolved, apps: apps, clock: config.clock(), options: options, session: session,
-		stale: reusedSources(resolved, previous, request.Apps),
-	}
-	return dev.run(ctx, stdout)
+	dev := &devLoop{manager: manager, name: session.Name, manifest: resolved, apps: apps, clock: config.clock(), options: options, session: session}
+	return dev.run(ctx, stdout, keptImages(resolved, start.reusable, request.Apps))
 }
 
 // previousSession renews and returns the development session an earlier holon dev of exactly manifest's apps
-// left running, or none. Renewal fails unless the session is the caller's, foreground and unexpired.
+// left running, or none. Renewal fails unless the session is the caller's, not detached and unexpired.
 func previousSession(ctx context.Context, manager *Client, manifest manifestSpec) protocol.SessionResponse {
 	// Without the session list, holon dev starts a new session, as it would with none to pick up.
 	sessions, _ := scopeSessions(ctx, manager, "")
 	for _, candidate := range sessions {
-		var session protocol.SessionResponse
-		if slices.EqualFunc(protocol.WritableApps(candidate.Apps), manifest.Apps, func(running protocol.App, app manifestApp) bool {
+		if !slices.EqualFunc(protocol.WritableApps(candidate.Apps), manifest.Apps, func(running protocol.App, app manifestApp) bool {
 			return running.Name == app.Name
-		}) && manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: candidate.Name}, &session) == nil {
+		}) {
+			continue
+		}
+		var session protocol.SessionResponse
+		if manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: candidate.Name}, &session) == nil {
 			return session
 		}
 	}
 	return protocol.SessionResponse{}
 }
 
-// reusedSources are the build contexts of the apps that kept the previous session's image, whose current
-// source the session does not run yet.
-func reusedSources(manifest manifestSpec, previous protocol.SessionResponse, apps []protocol.App) sets.Set[string] {
-	stale := sets.New[string]()
-	for _, app := range manifest.Apps {
-		current := apps[slices.IndexFunc(apps, func(current protocol.App) bool { return current.Name == app.Name })]
-		if app.Path != "" && slices.ContainsFunc(previous.Apps, func(old protocol.App) bool { return old.Name == app.Name && old.Image == current.Image }) {
-			stale.Insert(app.Path)
+// keptImages are the build contexts of the apps whose image, apps[i], is one that reusable offered.
+func keptImages(manifest manifestSpec, reusable map[string][]string, apps []protocol.App) sets.Set[string] {
+	kept := sets.New[string]()
+	for i, app := range manifest.Apps {
+		if app.Path != "" && slices.Contains(reusable[app.Name], apps[i].Image) {
+			kept.Insert(app.Path)
 		}
 	}
-	return stale
+	return kept
 }
 
 // sessionImages are the images that sessions run, by app, which a build reuses when they match its source.
@@ -362,7 +359,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	}
 	desired, err := uploadManifest(ctx, manager, protocol.ProductionName, resolved, buildOptions{
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env, output: config.output,
-		builders: builders, architectures: manager.info.BuildArchitectures, reusable: sessionImages(sessions...), reuse: promotionAnnotation,
+		builders: builders, architectures: manager.info.BuildArchitectures, reusable: sessionImages(sessions...), reuseBy: promotionAnnotation,
 	})
 	if err != nil {
 		return err

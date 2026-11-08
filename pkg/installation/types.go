@@ -30,7 +30,7 @@ type preparedTypes struct {
 	name        string
 	root        string
 	fingerprint string
-	inputs      string // the fingerprint of what a reload cannot replace; see imageInputs
+	imageInputs string // the fingerprint of what a reload cannot replace
 	metadata    *mcpcontract.Metadata
 	documents   map[string]*typegen.Document
 	hosted      bool // its entry runs under the SDK launcher, so a source overlay can restart it
@@ -194,7 +194,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		if p.fingerprint, err = snapshotSource(*app, p.root); err != nil {
 			return manifestSpec{}, nil, err
 		}
-		if p.inputs, err = imageInputs(p.root); err != nil {
+		if p.imageInputs, err = imageInputs(p.root); err != nil {
 			return manifestSpec{}, nil, err
 		}
 		if !app.resolved.stdio {

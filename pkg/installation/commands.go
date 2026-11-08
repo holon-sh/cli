@@ -100,8 +100,8 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 		Use:   "dev [APP[=SOURCE]...]",
 		Short: "Run a development session",
 		Long: "Run apps and their required dependencies. Each app uses /<app-name>/ on the session host. " +
-			"Every image build type-checks the app's calls to the apps it requires. When the command exits, its session stays " +
-			"until its lease expires, about ten minutes, and the next holon dev of the same apps picks it up.\n\n" + appsHelp,
+			"Every image build type-checks the app's calls to the apps it requires. Without --detach, the session lasts about " +
+			"ten minutes after the command exits, for the next holon dev of the same apps to pick up.\n\n" + appsHelp,
 		Example: `  # Run every app in holon.yaml
   holon dev
 
@@ -112,7 +112,7 @@ func newDevCommand(config *commandConfig) *cobra.Command {
   holon dev chat=../chat
   holon dev docs=https://mcp.context7.com/mcp
 
-  # Keep the session after the command exits and print it as JSON
+  # Exit once the session is ready and print it as JSON
   holon dev --detach --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if detached {

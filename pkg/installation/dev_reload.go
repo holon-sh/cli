@@ -61,9 +61,12 @@ func serverSource(relative string) bool {
 func imageInputs(snapshot string) (string, error) {
 	hash := sha256.New()
 	err := filepath.WalkDir(snapshot, func(current string, item fs.DirEntry, walkErr error) error {
-		relative, err := filepath.Rel(snapshot, current)
-		if walkErr != nil || err != nil || item.IsDir() || serverSource(relative) {
-			return cmp.Or(walkErr, err)
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, _ := filepath.Rel(snapshot, current)
+		if item.IsDir() || serverSource(relative) {
+			return nil
 		}
 		info, err := item.Info()
 		if err != nil {
@@ -87,7 +90,7 @@ func imageInputs(snapshot string) (string, error) {
 }
 
 // reloadable reports whether a change can restart its apps in place: only source edits, to apps that
-// run under the Holon launcher and are already running the last accepted build.
+// run under the Holon launcher, while no image change is pending.
 func (d *devLoop) reloadable(change devChange) bool {
 	if change.manifest || change.imageInputs || d.pending.Len() != 0 || d.changedImages.Len() != 0 {
 		return false

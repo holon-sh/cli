@@ -235,7 +235,7 @@ func TestRunDevLifecycle(t *testing.T) {
 	var mu sync.Mutex
 	var ambiguous, unavailable bool
 	var waiting string
-	var creates, deletes int
+	var creates int
 	var created, served []protocol.App
 	var updates [][]protocol.App
 	outage := sets.New[string]()
@@ -285,16 +285,12 @@ func TestRunDevLifecycle(t *testing.T) {
 		}
 		_ = connection.Close()
 	})
-	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession},
+	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession},
 		map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
 			installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 			mu.Lock()
 			defer mu.Unlock()
 			switch tool := installationtest.ToolName(r); {
-			case tool == protocol.ToolDeleteSession:
-				deletes++
-				installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
-				return
 			case tool == protocol.ToolUpdateSession:
 				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -327,8 +323,8 @@ func TestRunDevLifecycle(t *testing.T) {
 		defer mu.Unlock()
 		ambiguous = false
 		if err == nil || !strings.Contains(err.Error(), "outcome is unknown; inspect sessions at https://dev."+h.baseHost+" before retrying") ||
-			creates != 1 || deletes != 0 {
-			t.Fatalf("ambiguous creation: creates=%d deletes=%d error=%v", creates, deletes, err)
+			creates != 1 {
+			t.Fatalf("ambiguous creation: creates=%d error=%v", creates, err)
 		}
 	})
 	t.Run("session survives configuration, failed rebuilds, edits and outages", func(t *testing.T) {
@@ -375,10 +371,6 @@ func TestRunDevLifecycle(t *testing.T) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		// The session outlives the command, for the next holon dev to pick up.
-		if deletes != 0 {
-			t.Fatalf("deletes = %d", deletes)
-		}
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
@@ -498,11 +490,8 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 			sourceFiles(t, root, map[string]string{"holon.yml": "invalid manifest"})
 			sourceFiles(t, root, map[string]string{tc.file: tc.manifest})
 			h := newRunHarness(t)
-			h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolDeleteSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+			h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession}, nil, func(w http.ResponseWriter, r *http.Request) {
 				switch installationtest.ToolName(r) {
-				case protocol.ToolDeleteSession:
-					installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
-					return
 				case protocol.ToolCreateSession:
 					var input protocol.AppsRequestFor[protocol.App]
 					if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

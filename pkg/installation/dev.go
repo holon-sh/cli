@@ -219,7 +219,6 @@ type devLoop struct {
 	clock                  clock.WithTicker
 	options                buildOptions
 	session                protocol.SessionResponse
-	stale                  sets.Set[string] // build contexts of the apps whose current source a picked-up session does not run
 	changedImages, pending sets.Set[string]
 	reloaded               map[string]string // the overlay digest each app last restarted from
 }
@@ -238,7 +237,7 @@ func (d *devLoop) renew(ctx context.Context) {
 	}
 }
 
-func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
+func (d *devLoop) run(ctx context.Context, stdout io.Writer, kept sets.Set[string]) error {
 	watcher, err := newDevWatcher(d.manifest, d.clock, d.options.output)
 	if err != nil {
 		return fmt.Errorf("watch build contexts: %w", err)
@@ -261,8 +260,8 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	}()
 	d.options.architectures = d.session.BuildArchitectures
 	d.changedImages, d.pending, d.reloaded = sets.New[string](), sets.New[string](), map[string]string{}
-	if d.stale.Len() != 0 {
-		d.rebuild(ctx, devChange{contexts: d.stale})
+	if kept.Len() != 0 {
+		d.rebuild(ctx, devChange{contexts: kept})
 	}
 	for _, app := range d.session.Apps {
 		d.pending.Insert(app.Name)
@@ -271,7 +270,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		if err := printEndpoints(stdout, "Ready", d.session); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C stops watching; the next holon dev picks up this session.")
+		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev.")
 		return err
 	})
 	for ctx.Err() == nil {
@@ -387,7 +386,7 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 	d.pending.Clear()
 }
 
-// rebuild applies a saved change: in place when its apps can reload, and through new images otherwise.
+// rebuild applies a change: in place when its apps can reload, and through new images otherwise.
 func (d *devLoop) rebuild(ctx context.Context, change devChange) {
 	if d.reloadable(change) {
 		failed, stale := d.reload(ctx, change)
