@@ -24,6 +24,13 @@ import (
 // document is validated and returned with its bytes.
 func ResolveDocument(ctx context.Context, source Source, options Options) (*Document, error) {
 	o := options.defaults()
+	source, variable, err := source.override(o)
+	if err != nil {
+		return nil, err
+	}
+	if variable != "" {
+		fmt.Fprintf(o.Stderr, "%s: using %s from %s\n", source.Alias, source.Endpoint, variable)
+	}
 	if err := source.validate(); err != nil {
 		return nil, err
 	}
@@ -58,6 +65,31 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	}
 }
 
+// override replaces a declared url entry's address with <ALIAS>_MCP_URL when that is set, and
+// returns the variable it read. The alias's <ALIAS>_MCP_TOKEN applies to the new address. Sources
+// given with -s and registry entries keep their address (see DeclaredSources).
+func (s Source) override(o Options) (Source, string, error) {
+	if !s.declared {
+		return s, "", nil
+	}
+	s.declared = false
+	variable := aliasVariable(s.Alias, "URL")
+	location := cmp.Or(commandenv.Value(o.Env, variable), os.Getenv(variable))
+	if location == "" {
+		return s, "", nil
+	}
+	if err := mcpregistry.ValidateEndpoint(location); err != nil {
+		return s, "", fmt.Errorf("%s: %w", variable, err)
+	}
+	s.Endpoint = location
+	return s, variable, nil
+}
+
+// aliasVariable names an alias's environment variable, such as ORDER_DESK_MCP_TOKEN for order-desk.
+func aliasVariable(alias, suffix string) string {
+	return strings.ToUpper(strings.ReplaceAll(alias, "-", "_")) + "_MCP_" + suffix
+}
+
 // endpointClient reads an endpoint source's token from <ALIAS>_MCP_TOKEN and explains a refusal.
 // A registry record's remote never reaches here, so a token only goes to a URL its owner named.
 func endpointClient(source Source, o Options) *http.Client {
@@ -67,7 +99,7 @@ func endpointClient(source Source, o Options) *http.Client {
 	}
 	transport := endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: origin}
 	if source.Alias != "" {
-		transport.variable = strings.ToUpper(strings.ReplaceAll(source.Alias, "-", "_")) + "_MCP_TOKEN"
+		transport.variable = aliasVariable(source.Alias, "TOKEN")
 		transport.token = cmp.Or(commandenv.Value(o.Env, transport.variable), os.Getenv(transport.variable))
 	}
 	client := *o.HTTPClient

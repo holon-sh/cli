@@ -106,6 +106,35 @@ func TestEndpointToken(t *testing.T) {
 	}
 }
 
+func TestEndpointURLOverride(t *testing.T) {
+	live := tokenServer(t, "secret")
+	const unreachable = "http://127.0.0.1:1/mcp"
+	for _, test := range []struct {
+		name   string
+		source Source
+		env    string
+		want   string // an error, or empty for the live server's contract
+	}{
+		{name: "declared entry overridden", source: Source{Alias: "docs", Endpoint: unreachable, declared: true}, env: "DOCS_MCP_URL=" + live.URL},
+		{name: "invalid override", source: Source{Alias: "docs", Endpoint: live.URL, declared: true}, env: "DOCS_MCP_URL=ftp://docs.example", want: "DOCS_MCP_URL: MCP URL must be an HTTP(S) URL"},
+		{name: "no override", source: Source{Alias: "docs", Endpoint: live.URL, declared: true}, env: "OTHER_MCP_URL=" + unreachable},
+		{name: "-s source is explicit", source: Source{Alias: "docs", Endpoint: unreachable}, env: "DOCS_MCP_URL=" + live.URL, want: "127.0.0.1:1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document, err := ResolveDocument(t.Context(), test.source, Options{Env: []string{test.env, "DOCS_MCP_TOKEN=secret"}})
+			if test.want != "" {
+				if err == nil || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("ResolveDocument = %v, want %q", err, test.want)
+				}
+				return
+			}
+			if err != nil || document.Identity.Name != "orders" {
+				t.Fatalf("ResolveDocument = %+v, %v; want the live server's contract", document, err)
+			}
+		})
+	}
+}
+
 func TestEndpointTokenIsNotWritten(t *testing.T) {
 	const token = "written-secret"
 	server := tokenServer(t, token)

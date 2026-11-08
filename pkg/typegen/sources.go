@@ -54,6 +54,9 @@ type Source struct {
 	Endpoint string
 	// Document is an already resolved contract document, with the exact bytes its digest names.
 	Document *Document
+	// declared marks an Endpoint from a sh.holon.requires url entry, which <ALIAS>_MCP_URL
+	// overrides. A -s source is explicit and never is.
+	declared bool
 }
 
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)

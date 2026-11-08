@@ -261,14 +261,19 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 	if source.Document != nil {
 		return ResolveDocument(ctx, source, p.options)
 	}
-	if document, done := external[source.key()]; done {
+	// Key the fetch by the address it will use, so an overridden entry is not served another's document.
+	overridden, _, err := source.override(p.options)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", source, err)
+	}
+	if document, done := external[overridden.key()]; done {
 		return document, nil
 	}
 	document, err := ResolveDocument(ctx, source, p.options)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
-	external[source.key()] = document
+	external[overridden.key()] = document
 	return document, nil
 }
 

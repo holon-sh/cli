@@ -202,6 +202,12 @@ export DOCS_MCP_TOKEN=...
 holon types check -s docs=https://mcp.example.com/mcp
 ```
 
+A `sh.holon.requires` entry `{ "url": … }` names a fixed address. When `<ALIAS>_MCP_URL` is set, `holon` asks that address instead, for a local server that picks its port at startup; `<ALIAS>_MCP_TOKEN` still applies, and `-s` sources and registry entries are not overridden.
+
+```sh
+DOCS_MCP_URL=http://localhost:8123/mcp holon types check
+```
+
 </details>
 
 ## Reference
