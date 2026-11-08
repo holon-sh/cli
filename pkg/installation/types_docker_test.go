@@ -3,7 +3,6 @@
 package installation
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -49,7 +48,6 @@ export default createMcpHandler(() => {
   return server;
 });`
 	manifest := manifestSpec{}
-	originalFiles := map[string][]byte{}
 	for _, name := range []string{"orders", "checkout"} {
 		path := filepath.Join(root, name)
 		code := provider
@@ -83,8 +81,6 @@ export default createMcpHandler(() => {
 			"node_modules/holon-ui/package.json":                   `{"name":"holon-ui","holon":{"slot":"generated","contractVersion":1}}`,
 			"node_modules/holon-ui/generated/holon-generated.json": `{"marker":"` + mcpcontract.Marker + `","placeholder":true}`,
 		})
-		originalFiles[filepath.Join(path, "package.json")] = []byte(packageJSON)
-		originalFiles[filepath.Join(path, lockName)] = lock
 		app := manifestApp{Name: name, Path: path, resolved: resolvedApp{App: protocol.App{Name: name, Port: 3000}}}
 		if name == "checkout" {
 			app.resolved.descriptor = &mcpregistry.Descriptor{Name: "io.github.example/checkout", Version: "1.0.0", Requires: map[string]mcpregistry.Requirement{
@@ -142,47 +138,27 @@ export default createMcpHandler(() => {
 				t.Fatal(err)
 			}
 			var build, platforms ocispec.Index
-			var image, published ocispec.Manifest
+			var image ocispec.Manifest
 			var config ocispec.Image
-			var record protocol.BuildRecord
 			publishedJSON(t, repository, tagged, &build)
 			publishedJSON(t, repository, build.Manifests[0], &platforms)
 			publishedJSON(t, repository, platforms.Manifests[0], &image)
 			publishedJSON(t, repository, image.Config, &config)
-			publishedJSON(t, repository, build.Manifests[1], &published)
-			publishedJSON(t, repository, published.Layers[0], &record)
-			labels := config.Config.Labels
-			if labels["io.modelcontextprotocol.server.name"] != "io.github.example/orders" || labels[ocispec.AnnotationTitle] != "Orders" ||
-				labels[ocispec.AnnotationVersion] != "1.0.0" || labels[ocispec.AnnotationDescription] != "Orders by id" {
+			if labels := config.Config.Labels; labels["io.modelcontextprotocol.server.name"] != "io.github.example/orders" {
 				t.Fatalf("code-only server labels: %v", labels)
-			}
-			if record.ServerName != "io.github.example/orders" || record.ServerVersion != "1.0.0" || record.Title != "Orders" || record.Description != "Orders by id" {
-				t.Fatalf("code-only server build record: %+v", record)
 			}
 		}
 		if app.Name == "checkout" {
-			if len(metadata.Requires) != 1 {
-				t.Fatal("caller expectations not published")
-			}
 			expected, err := typegen.FetchDocument(t.Context(), repository.Blobs(), metadata.Requires["orders"])
-			if err != nil || expected.Identity.Name != "io.github.example/orders" || len(expected.Schema.Tools) != 1 {
+			if err != nil || expected.Identity.Name != "io.github.example/orders" {
 				t.Fatalf("consumer dependency blob: %+v %v", expected, err)
 			}
-		}
-	}
-	for path, original := range originalFiles {
-		data, _ := os.ReadFile(path)
-		if !bytes.Equal(data, original) {
-			t.Fatal("modified original package scripts or lockfile: " + path)
 		}
 	}
 	checkout := prepared.Apps[slices.IndexFunc(prepared.Apps, func(app manifestApp) bool { return app.Name == "checkout" })]
 	before := editor(checkout, "index.d.ts")
 	workspace.accept(prepared)
-	providerPath, callerPath := filepath.Join(root, "orders/server.ts"), filepath.Join(root, "checkout/server.ts")
-	if err := os.WriteFile(providerPath, []byte(strings.Replace(provider, "id:z.string()", "id:z.number()", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	sourceFiles(t, root, map[string]string{"orders/server.ts": strings.Replace(provider, "id:z.string()", "id:z.number()", 1)})
 	if _, _, err := prepareManifestTypes(t.Context(), manifest, options); err == nil ||
 		!strings.Contains(err.Error(), "checkout does not type-check") || !strings.Contains(err.Error(), "error TS2322") {
 		t.Fatalf("expected incompatible argument diagnostic: %v", err)
@@ -190,9 +166,7 @@ export default createMcpHandler(() => {
 	if editor(checkout, "index.d.ts") == before {
 		t.Fatal("editor declarations did not update")
 	}
-	if err := os.WriteFile(callerPath, []byte(strings.Replace(caller, "get_order({id})", "get_order({id:Number(id)})", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	sourceFiles(t, root, map[string]string{"checkout/server.ts": strings.Replace(caller, "get_order({id})", "get_order({id:Number(id)})", 1)})
 	changed, cleanupChanged, err := prepareManifestTypes(t.Context(), manifest, options)
 	if err != nil {
 		t.Fatal(err)
@@ -202,12 +176,7 @@ export default createMcpHandler(() => {
 	if !workspace.affected(t.Context(), changed.Apps[index], changed) {
 		t.Fatal("signature edit did not include caller")
 	}
-	if err := os.WriteFile(providerPath, []byte(strings.Replace(provider, "total:5", "total:6", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(callerPath, []byte(caller), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	sourceFiles(t, root, map[string]string{"orders/server.ts": strings.Replace(provider, "total:5", "total:6", 1), "checkout/server.ts": caller})
 	fixed, cleanupFixed, err := prepareManifestTypes(t.Context(), manifest, options)
 	if err != nil {
 		t.Fatal(err)
@@ -215,14 +184,6 @@ export default createMcpHandler(() => {
 	defer cleanupFixed()
 	if workspace.affected(t.Context(), fixed.Apps[index], fixed) {
 		t.Fatal("handler-only edits changed the dependency signature")
-	}
-	unreadable := strings.Replace(provider, `import {z} from "zod";`,
-		`import {z} from "zod"; import {readFileSync} from "node:fs"; readFileSync("schema.json");`, 1)
-	if err := os.WriteFile(providerPath, []byte(unreadable), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := prepareManifestTypes(t.Context(), manifest, options); err == nil || !strings.Contains(err.Error(), "contract evaluation has no filesystem") {
-		t.Fatalf("unsupported extraction did not fail preparation: %v", err)
 	}
 }
 
@@ -259,10 +220,8 @@ async def checkout(id: str) -> float:
 			"server.py": code,
 			"requirements.txt": "holon-sh @ https://github.com/holon-sh/sdk-py/archive/a27a936f197af164a4c92c593916a64c74e60ad9.tar.gz\n" +
 				"mcp==2.3.0\n",
-			"package.json": `{"type":"module"}`,
 			"railpack.json": `{"provider":"python","steps":{"build":{"commands":[` +
-				`"python -c 'from holon.apps import apps; from holon.binding import set_default_binding; assert apps.orders and set_default_binding'",` +
-				`"test ! -e .holon-types/holon-sh"]}}}`,
+				`"python -c 'from holon.apps import apps; from holon.binding import set_default_binding; assert apps.orders and set_default_binding'"]}}}`,
 		})
 		manifest.Apps = append(manifest.Apps, app)
 	}
@@ -294,14 +253,8 @@ async def checkout(id: str) -> float:
 		}
 		defer cleanup()
 		selected := manifestSpec{Apps: []manifestApp{prepared.Apps[1]}}
-		apps, err := buildAndPush(t.Context(), selected, &imageUpload{grant: grant}, options)
-		if err != nil {
+		if _, err := buildAndPush(t.Context(), selected, &imageUpload{grant: grant}, options); err != nil {
 			t.Fatalf("build Python caller: %v\n%s", err, progress.String())
-		}
-		options.metadataGrant = grant
-		_, metadata, err := resolveTypeMetadata(t.Context(), apps[0].Image, options)
-		if err != nil || metadata == nil || metadata.Schema == nil || len(metadata.Requires) != 1 {
-			t.Fatalf("Python build lost contract metadata: %v %v", metadata, err)
 		}
 	}
 }

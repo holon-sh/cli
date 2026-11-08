@@ -19,15 +19,14 @@ if (mode === "contract" && !vm.SourceTextModule) {
   if (result.diagnostic) process.stderr.write(`${result.diagnostic}\n${result.missing ? `${result.missing}\n` : ""}`, () => process.exit(result.missing ? 3 : 2));
   else process.stdout.write(JSON.stringify(result), () => process.exit(0));
 } else if (mode === "check") {
-  const config = JSON.parse(readFileSync(args[0], "utf8"));
-  const root = resolve(config.root ?? ".");
+  const root = process.cwd();
   const require = createRequire(join(root, "package.json"));
   const compilerPackage = require.resolve("typescript/package.json");
   const tsconfig = join(root, "tsconfig.json");
   const flags = existsSync(tsconfig)
     ? ["--noEmit", "--project", tsconfig]
     : ["--noEmit", "--strict", "--skipLibCheck", "--allowJs", "--target", "ES2023", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--allowImportingTsExtensions",
-      ...(config.entry ? [join(root, config.entry)] : ts.sys.readDirectory(root, [".ts", ".mts", ".js", ".mjs"], ["node_modules", ".holon", ".holon-types"]))];
+      ...(args[0] ? [join(root, args[0])] : ts.sys.readDirectory(root, [".ts", ".mts", ".js", ".mjs"], ["node_modules", ".holon", ".holon-types"]))];
   const compiler = join(dirname(compilerPackage), JSON.parse(readFileSync(compilerPackage, "utf8")).bin.tsc);
   const result = spawnSync(process.execPath, [compiler, ...flags], { cwd: root, stdio: "inherit" });
   if (result.error) throw result.error;

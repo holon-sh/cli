@@ -21,7 +21,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"oras.land/oras-go/v2/registry/remote"
 
-	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
 
@@ -73,12 +72,10 @@ func (d *devLoop) changedApps(change devChange) []manifestApp {
 	})
 }
 
-// preparation is what the contract preparation a reload starts produced: contracts and clients, and the
-// clients it wrote into the apps, if it got that far.
+// preparation is what the contract preparation a reload starts produced.
 type preparation struct {
 	contexts sets.Set[string]
 	prepared manifestSpec
-	clients  *typegen.Prepared
 	err      error
 }
 
@@ -90,13 +87,12 @@ func (d *devLoop) reload(ctx context.Context, change devChange) sets.Set[string]
 	prepare, cancel := context.WithCancel(ctx)
 	result := make(chan preparation, 1)
 	manifest, options := d.manifest, d.options
-	options.types = new(typeWorkspace) // its own, so that the loop goes on writing the last clients meanwhile
 	go func() {
 		prepared, cleanup, err := prepareManifestTypes(prepare, manifest, options)
 		if err == nil {
 			cleanup()
 		}
-		result <- preparation{change.contexts, prepared, options.types.prepared, err}
+		result <- preparation{change.contexts, prepared, err}
 	}()
 	d.preparing, d.cancelPreparation = result, cancel
 	failed := sets.New[string]()
@@ -127,17 +123,16 @@ func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) err
 	if ctx.Err() != nil {
 		return nil
 	}
-	d.options.types.prepared = cmp.Or(result.clients, d.options.types.prepared)
 	d.options.output.problem("MCP types", result.err)
 	if result.err != nil {
 		return nil
 	}
-	accepted := result.prepared
-	accepted.Apps = slices.DeleteFunc(slices.Clone(result.prepared.Apps), func(app manifestApp) bool { return !result.contexts.Has(app.Path) })
-	for _, app := range accepted.Apps {
-		app.resolved.types.hosted = true // each reloaded, so its overlay staged the launcher
+	for _, app := range result.prepared.Apps {
+		if result.contexts.Has(app.Path) {
+			app.resolved.types.hosted = true // each reloaded, so its overlay staged the launcher
+			d.options.types.accepted[app.Name] = app.resolved.types
+		}
 	}
-	d.options.types.accept(accepted)
 	if !slices.ContainsFunc(result.prepared.Apps, func(app manifestApp) bool { return d.options.types.affected(ctx, app, result.prepared) }) {
 		return nil
 	}

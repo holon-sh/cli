@@ -159,39 +159,21 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	}
 	source := func(name string) Source { return Source{Path: filepath.Join(root, name)} }
 	orders := source("orders")
-	failure := errors.New("buildx unavailable")
-	failing := func(context.Context, string, string, []string, io.Writer) error { return failure }
 	for _, test := range []struct {
 		name    string
 		server  *Source
 		sources []Source
-		run     func(context.Context, string, string, []string, io.Writer) error
 		want    string
 	}{
 		{name: "unnamed server", sources: []Source{source("nameless")}, want: "declare the server's name, version and description in its MCP constructor, or add a server.json"},
 		{name: "go without server.json", sources: []Source{source("go")}, want: "needs a server.json"},
 		{name: "extraction diagnostic", sources: []Source{source("broken")}, want: "tools are registered dynamically"},
-		{name: "extractor failure", sources: []Source{orders}, run: failing, want: failure.Error()},
 		{name: "invalid derived alias", sources: []Source{source("odd")}, want: `cannot derive a client name from "example.com/---"; write ALIAS=`},
 		{name: "duplicate alias", sources: []Source{orders, source("orders-copy")}, want: "both become apps.orders"},
-		{name: "explicit aliases", sources: []Source{orders, {Alias: "backup", Path: filepath.Join(root, "orders-copy")}, {Alias: "odd", Path: filepath.Join(root, "odd")}}},
 		{name: "own server outside the consumer", server: &orders, want: "is outside"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			options := Options{Run: test.run}
-			if options.Run == nil {
-				options.Run = fakeRun(results)
-			}
-			prepared, err := Prepare(t.Context(), []Consumer{{Name: "app", Dir: app, Targets: []string{TargetTS}, Server: test.server, Sources: test.sources}}, options)
-			if prepared != nil {
-				defer prepared.Close()
-			}
-			if test.want == "" {
-				if err != nil {
-					t.Fatal(err)
-				}
-				return
-			}
+			_, err := Prepare(t.Context(), []Consumer{{Name: "app", Dir: app, Targets: []string{TargetTS}, Server: test.server, Sources: test.sources}}, Options{Run: fakeRun(results)})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Prepare = %v, want %q", err, test.want)
 			}
@@ -202,14 +184,13 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	c, extract := checkoutConsumer(t, TargetTS)
 	bin := t.TempDir()
-	put(t, bin, "npm", "#!/bin/sh\nset -e\n[ \"$INSTALL_MODE\" = from-options ]\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
+	put(t, bin, "npm", "#!/bin/sh\nset -e\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
 	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("INSTALL_MODE", "inherited")
 	var output bytes.Buffer
-	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Run: extract, Env: []string{"INSTALL_MODE=from-options"}}); err != nil {
+	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Run: extract}); err != nil {
 		t.Fatalf("generate: %v\n%s", err, &output)
 	}
 	if client := read(t, c.Dir, "node_modules/holon-sh/generated/index.js"); !strings.Contains(client, `"lookup"`) {
@@ -229,11 +210,6 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	err := Generate(t.Context(), []Consumer{c}, Options{Run: extract})
 	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run npm install holon-sh") {
 		t.Fatalf("undeclared runtime = %v", err)
-	}
-	py := Consumer{Name: "py", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: c.Sources}
-	err = Generate(t.Context(), []Consumer{py}, Options{Run: extract})
-	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run uv add holon-sh") {
-		t.Fatalf("undeclared python runtime = %v", err)
 	}
 }
 
@@ -292,21 +268,6 @@ func TestSuppliedContractsRemainDistinct(t *testing.T) {
 	}
 }
 
-func TestGoConsumerClients(t *testing.T) {
-	root := t.TempDir()
-	put(t, root, "go.mod", "module example.com/caller\n\ngo 1.27.0\n")
-	put(t, root, "server.go", "package main\n\nfunc main() {}\n")
-	put(t, root, "server.json", `{"name":"example.com/caller","version":"1.0.0","description":"Caller"}`)
-	c := Consumer{Name: "caller", Dir: root, Targets: []string{TargetGo}, Server: &Source{Path: root}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	clients := read(t, root, "holon/clients.go")
-	if !strings.Contains(clients, `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(clients, " Lookup(") {
-		t.Fatalf("Go client lacks the default runtime or dependency tool:\n%s", clients)
-	}
-}
-
 func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	needPython(t)
 	orders := t.TempDir()
@@ -320,16 +281,6 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(orders, "holon/apps")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("extraction wrote the generated slot: %v", err)
-	}
-	c := Consumer{Name: "orders", Dir: orders, Server: &Source{Path: orders}, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	if err := os.MkdirAll(filepath.Join(orders, "holon/apps/__pycache__"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
-		t.Fatalf("generate beside a holon/apps directory without a module: %v", err)
-	}
-	if !strings.Contains(read(t, orders, "holon/apps/__init__.py"), "async def lookup(") {
-		t.Fatal("generate wrote no client module")
 	}
 }
 

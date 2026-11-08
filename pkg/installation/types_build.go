@@ -37,18 +37,11 @@ func stageTypes(p *preparedTypes) (string, error) {
 	if len(targets) == 0 {
 		return "", nil
 	}
-	directory := filepath.Join(p.root, ".holon-types")
-	if err := os.Mkdir(directory, 0o755); err != nil {
-		return "", fmt.Errorf("prepare MCP types (.holon-types is reserved): %w", err)
-	}
 	if err := writeClients(p, p.root); err != nil {
 		return "", err
 	}
 	if !slices.Contains(targets, typegen.TargetTS) && !slices.Contains(targets, typegen.TargetUI) {
 		return "", stabilizeTimes(p.root)
-	}
-	if err := os.WriteFile(filepath.Join(directory, "stage.sh"), []byte(stageRuntimeSlots), 0o755); err != nil {
-		return "", err
 	}
 	if err := stageNodePackage(p.root); err != nil {
 		return "", fmt.Errorf("%s: %w", p.name, err)
@@ -63,22 +56,26 @@ func stageTypes(p *preparedTypes) (string, error) {
 		commands = []any{"..."}
 	}
 	build["commands"] = append([]any{"sh .holon-types/stage.sh"}, commands...)
-	if err := writeTypeJSON(filepath.Join(directory, "railpack.json"), config); err != nil {
+	if err := writeTypeJSON(filepath.Join(p.root, ".holon-types", "railpack.json"), config); err != nil {
 		return "", err
 	}
 	return ".holon-types/railpack.json", stabilizeTimes(p.root)
 }
 
 // writeClients writes p's generated clients into root, laid out as the app's directory: Python and Go
-// clients in place, and each TypeScript package's under .holon-types for stage.sh.
+// clients in place, and each TypeScript package's under .holon-types beside stage.sh.
 func writeClients(p *preparedTypes, root string) error {
+	directory := filepath.Join(root, ".holon-types")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		return fmt.Errorf("prepare MCP types (.holon-types is reserved): %w", err)
+	}
 	for _, target := range p.prepared.Targets(p.name) {
 		path := root
 		switch target {
 		case typegen.TargetTS:
-			path = filepath.Join(root, ".holon-types", nodeRuntime)
+			path = filepath.Join(directory, nodeRuntime)
 		case typegen.TargetUI:
-			path = filepath.Join(root, ".holon-types", uiRuntime)
+			path = filepath.Join(directory, uiRuntime)
 		}
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			return err
@@ -87,7 +84,7 @@ func writeClients(p *preparedTypes, root string) error {
 			return fmt.Errorf("%s: %w", p.name, err)
 		}
 	}
-	return nil
+	return os.WriteFile(filepath.Join(directory, "stage.sh"), []byte(stageRuntimeSlots), 0o755)
 }
 
 func railpackConfig(path string) (map[string]any, error) {

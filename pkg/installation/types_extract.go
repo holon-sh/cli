@@ -49,6 +49,7 @@ func (o buildOptions) extractTypes(ctx context.Context, language, toolingDir str
 // its contract was extracted in, so that the checker sees the dependencies installed there.
 func (o buildOptions) checkTypes(ctx context.Context, apps []*manifestApp) error {
 	group, ctx := errgroup.WithContext(ctx)
+	group.SetLimit(3)
 	for _, app := range apps {
 		p := app.resolved.types
 		if entry, language, ok := p.prepared.CheckEntry(p.name); ok {
@@ -64,24 +65,11 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 		return err
 	}
 	defer os.RemoveAll(generated)
-	directory := filepath.Join(generated, ".holon-types")
-	if err := os.Mkdir(directory, 0o755); err != nil {
-		return err
-	}
 	if err := writeClients(p, generated); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(directory, "stage.sh"), []byte(stageRuntimeSlots), 0o755); err != nil {
-		return err
-	}
-	if err := writeTypeJSON(filepath.Join(directory, "check.json"), map[string]string{"entry": entry}); err != nil {
-		return err
-	}
 	runner := contractRunners[language]
-	command := []string{runner.program, "/holon-tooling/" + language + "/" + runner.checker, "check", "/app/.holon-types/check.json"}
-	if language == "python" {
-		command = slices.Concat([]string{"env", "PYTHONPATH=/opt/holon-check", "MYPY_CACHE_DIR=/tmp/mypy"}, command)
-	}
+	command := []string{runner.program, "/holon-tooling/" + language + "/" + runner.checker, "check", entry}
 	var output bytes.Buffer
 	err = o.runInImage(ctx, p.root, p.prepared.Tooling(), generated, language == "python", command, &output)
 	if failed := (*typegen.RunnerError)(nil); errors.As(err, &failed) {
@@ -93,7 +81,7 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 // runInImage builds source's image for this machine with Kiln, without the app's build step, which may need
 // the clients being prepared, and runs command there without network access, with the tooling at
 // /holon-tooling. It copies what the command printed to stdout. With generated, it first stages those
-// clients as an image build does; with checker, the Python type checker is at /opt/holon-check.
+// clients as an image build does; with checker, the command can import the Python type checker.
 func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdout io.Writer) error {
 	env, err := commandenv.Environ(o.Env)
 	if err != nil {
@@ -120,13 +108,10 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	}
 	stages := finalStage.FindAllStringSubmatch(plan.Dockerfile, -1)
 	base, final := stages[len(stages)-1][1], stages[len(stages)-1][2]
-	words := make([]string, len(command))
-	for i, word := range command {
-		words[i] = "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
-	}
 	args := []string{"--build-context", "tooling=" + toolingDir}
 	recipe, mounts := plan.Dockerfile, "--mount=type=bind,from=tooling,target=/holon-tooling,readonly"
 	if checker {
+		command = slices.Concat([]string{"env", "PYTHONPATH=/opt/holon-check", "MYPY_CACHE_DIR=/dev/null"}, command)
 		recipe += "FROM " + base + " AS checker\nRUN " + checkerInstall + "\n"
 		mounts += " --mount=type=bind,from=checker,source=/opt/holon-check,target=/opt/holon-check,readonly"
 	}
@@ -134,6 +119,10 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	if generated != "" {
 		args = append(args, "--build-context", "generated="+generated)
 		recipe += "COPY --from=generated --chmod=755 . /app/\nRUN sh .holon-types/stage.sh\n"
+	}
+	words := make([]string, len(command))
+	for i, word := range command {
+		words[i] = "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
 	}
 	recipe += fmt.Sprintf("RUN --network=none %s mkdir /tmp/contract && "+
 		"{ %s >/tmp/contract/stdout 2>/tmp/contract/stderr; echo $? >/tmp/contract/status; }\n"+

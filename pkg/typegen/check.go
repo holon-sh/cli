@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 
@@ -59,11 +60,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 		if language == "python" {
 			program = pythonEnvironment(dir, program)
 		}
-		config := filepath.Join(root, language+"-check.json")
-		if err = writeJSON(config, map[string]any{"root": dir, "entry": ""}); err != nil {
-			return err
-		}
-		command := l.command(ctx, program, filepath.Join(root, "tooling"), language, l.checker, config)
+		command := exec.CommandContext(ctx, program, filepath.Join(root, "tooling", language, l.checker), "check", "")
 		command.Dir = dir
 		command.Env = append(append(command.Environ(), o.Env...), "PYTHONDONTWRITEBYTECODE=1")
 		command.Stdout = o.Stdout

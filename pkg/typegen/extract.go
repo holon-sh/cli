@@ -43,24 +43,17 @@ func (e *RunnerError) Error() string {
 var serverTimeout = 30 * time.Second
 
 // typeLanguage is how one language's tooling runs: the contract runner's interpreter flags and
-// script, the checker command, relative to the language's tooling directory, and the host
+// script, the checker script, relative to the language's tooling directory, and the host
 // interpreters that can run them.
 type typeLanguage struct {
 	flags           []string
-	runner          string
-	checker         []string
+	runner, checker string
 	programs, probe []string
 }
 
 var typeLanguages = map[string]typeLanguage{
-	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", []string{"runner.mjs", "check"}, []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
-	"python":     {nil, "extract.py", []string{"runner.py", "check"}, []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
-}
-
-// command runs step, one of the language's tooling commands, unpacked under tooling, with args.
-func (l typeLanguage) command(ctx context.Context, program, tooling, language string, step []string, args ...string) *exec.Cmd {
-	arguments := append([]string{filepath.Join(tooling, language, step[0])}, step[1:]...)
-	return exec.CommandContext(ctx, program, append(arguments, args...)...)
+	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", "runner.mjs", []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
+	"python":     {nil, "extract.py", "runner.py", []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
 }
 
 func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
@@ -251,11 +244,4 @@ func pythonProgram(ctx context.Context, dir, host string) string {
 func isFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
-}
-func writeJSON(path string, value any) error {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
 }

@@ -18,14 +18,14 @@ function unpackTooling(t) {
     mkdirSync(dirname(join(tooling, name)), { recursive: true });
     writeFileSync(join(tooling, name), bytes);
   }
-  const run = (mode, ...args) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), mode, ...args], { encoding: "utf8", stdio: "pipe" });
+  const check = (cwd, entry) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), "check", entry], { cwd, encoding: "utf8", stdio: "pipe" });
   // extract returns each app's contract, or its diagnostic and the package it missed.
   const extract = (apps, env = process.env) => Object.fromEntries(apps.map(({ name, path, entry }) => {
     const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "contract", path, entry], { encoding: "utf8", env });
     assert.ok([0, 2, 3].includes(status), stderr);
     return [name, status === 0 ? JSON.parse(stdout) : { diagnostic: stderr, missing: status === 3 ? stderr.trimEnd().split("\n").at(-1) : undefined }];
   }));
-  return { root, run, extract };
+  return { root, check, extract };
 }
 
 // An application directory holding files, including any node_modules it has installed.
@@ -71,7 +71,7 @@ export default createMcpHandler(() => {
 });
 
 test("installed packages resolve from the application: its own Zod, CommonJS packages and the MCP client", t => {
-  const { root, run, extract } = unpackTooling(t);
+  const { root, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
     // Stands in for an installed Zod other than the bundled one; its JSON Schema names its version.
@@ -134,7 +134,7 @@ test("module-scope effects fail with the capability, file and line; missing pack
 });
 
 test("check uses the application's compiler CLI and honors project file selection", t => {
-  const { root, run, extract } = unpackTooling(t);
+  const { root, check } = unpackTooling(t);
   const app = join(root, "application");
   mkdirSync(app);
   writeFileSync(join(app, "package.json"), '{"type":"module"}');
@@ -144,10 +144,8 @@ test("check uses the application's compiler CLI and honors project file selectio
   writeFileSync(join(compiler, "package.json"), JSON.stringify({ bin: { tsc: "compiler.cjs" }, exports: { "./package.json": "./package.json" } }));
   writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url)))});`);
   writeFileSync(join(app, "check.ts"), "export const total = 1;");
-  const config = join(root, "check.json");
   writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));
   // The application's file selection takes precedence over entry/discovery.
   writeFileSync(join(app, "excluded.ts"), 'export const wrong: number = "excluded";');
-  writeFileSync(config, JSON.stringify({ root: app, entry: "excluded.ts" }));
-  run("check", config);
+  check(app, "excluded.ts");
 });

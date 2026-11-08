@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
@@ -35,9 +36,26 @@ type preparedTypes struct {
 }
 
 type typeWorkspace struct {
+	mu       sync.Mutex // guards prepared and its writes, which a reload's preparation makes beside the loop
 	prepared *typegen.Prepared
 	accepted map[string]*preparedTypes
 	release  func()
+}
+
+func (w *typeWorkspace) publish(prepared *typegen.Prepared) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := prepared.Write(); err != nil {
+		return err
+	}
+	w.prepared = prepared
+	return nil
+}
+
+func (w *typeWorkspace) repair() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.prepared.Write()
 }
 
 func (w *typeWorkspace) close() {
@@ -221,10 +239,9 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		metadata[app.Name] = p.metadata
 	}
 	if w := options.types; w != nil {
-		if err := prepared.Write(); err != nil {
+		if err := w.publish(prepared); err != nil {
 			return manifestSpec{}, nil, err
 		}
-		w.prepared = prepared
 	}
 
 	for _, app := range manifest.Apps {
