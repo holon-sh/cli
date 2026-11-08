@@ -375,7 +375,8 @@ func TestRunDevLifecycle(t *testing.T) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if deletes != 1 {
+		// The session outlives the command, for the next holon dev to pick up.
+		if deletes != 0 {
 			t.Fatalf("deletes = %d", deletes)
 		}
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {

@@ -219,6 +219,7 @@ type devLoop struct {
 	clock                  clock.WithTicker
 	options                buildOptions
 	session                protocol.SessionResponse
+	stale                  sets.Set[string] // build contexts of the apps whose current source a picked-up session does not run
 	changedImages, pending sets.Set[string]
 	reloaded               map[string]string // the overlay digest each app last restarted from
 }
@@ -260,6 +261,9 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	}()
 	d.options.architectures = d.session.BuildArchitectures
 	d.changedImages, d.pending, d.reloaded = sets.New[string](), sets.New[string](), map[string]string{}
+	if d.stale.Len() != 0 {
+		d.rebuild(ctx, devChange{contexts: d.stale})
+	}
 	for _, app := range d.session.Apps {
 		d.pending.Insert(app.Name)
 	}
@@ -267,7 +271,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		if err := printEndpoints(stdout, "Ready", d.session); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C stops this session.")
+		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C stops watching; the next holon dev picks up this session.")
 		return err
 	})
 	for ctx.Err() == nil {
@@ -298,9 +302,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 			}
 		case change := <-changes:
 			stopRead()
-			if err := d.rebuild(ctx, change); err != nil && ctx.Err() == nil {
-				d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
-			}
+			d.rebuild(ctx, change)
 		}
 	}
 	return nil
@@ -386,16 +388,18 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 }
 
 // rebuild applies a saved change: in place when its apps can reload, and through new images otherwise.
-func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
+func (d *devLoop) rebuild(ctx context.Context, change devChange) {
 	if d.reloadable(change) {
 		failed, stale := d.reload(ctx, change)
 		if failed.Len() == 0 && !stale {
-			return nil
+			return
 		}
 		// An empty change still rebuilds the apps whose clients went stale.
 		change.contexts = failed
 	}
-	return d.buildImages(ctx, change)
+	if err := d.buildImages(ctx, change); err != nil && ctx.Err() == nil {
+		d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
+	}
 }
 
 func (d *devLoop) buildImages(ctx context.Context, change devChange) error {

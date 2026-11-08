@@ -33,12 +33,15 @@ type reloadFixture struct {
 	stdout   *installationtest.ObservedOutput
 	stderr   *installationtest.ObservedOutput
 	await    func(check func() bool)
+	start    func() // runs holon dev again, as a later command would
 	stop     func() error
 	baseHost string
 
 	mu       sync.Mutex
 	ready    bool
 	failNext bool
+	foreign  bool // the session is someone else's, so renewing it fails
+	creates  int
 	revision int
 	changed  chan struct{} // closed when the session moves past revision
 	reads    []string      // the revision each get_session named
@@ -85,6 +88,25 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 		installationtest.WriteJSON(w, buildGrant(registry))
 	})
 	var served []protocol.App
+	session := func() map[string]any {
+		response := apiSession(h, "alpha")
+		response["apps"], response["revision"] = served, strconv.Itoa(f.revision)
+		if !f.ready {
+			// As the API does, publish no endpoints until the apps are up.
+			response["endpoints"] = []protocol.SessionEndpoint{}
+			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
+		}
+		return response
+	}
+	h.control.Handle([]string{toolListSessions}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		items := []map[string]any{}
+		if served != nil {
+			items = append(items, session())
+		}
+		installationtest.WriteJSON(w, map[string]any{"items": items})
+	})
 	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession},
 		nil, func(w http.ResponseWriter, r *http.Request) {
 			f.mu.Lock()
@@ -104,7 +126,13 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 				installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
 				return
 			case protocol.ToolCreateSession:
+				f.creates++
 				served = input.Apps
+			case protocol.ToolRenewSession:
+				if f.foreign {
+					http.NotFound(w, r)
+					return
+				}
 			case protocol.ToolUpdateSession:
 				served = input.Desired.Apps
 				f.moved()
@@ -120,14 +148,7 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 					f.mu.Lock()
 				}
 			}
-			response := apiSession(h, "alpha")
-			response["apps"], response["revision"] = served, strconv.Itoa(f.revision)
-			if !f.ready {
-				// As the API does, publish no endpoints until the apps are up.
-				response["endpoints"] = []protocol.SessionEndpoint{}
-				response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
-			}
-			installationtest.WriteJSON(w, response)
+			installationtest.WriteJSON(w, session())
 		})
 	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, r *http.Request) {
 		var input reloadAppRequest
@@ -148,17 +169,21 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 	f.baseHost = h.baseHost
 	fc := testingclock.NewFakeClock(time.Now())
 	h.run.Clock = fc
-	var stop func() error
-	f.stdout, f.stderr, stop = startDev(t, h.run, "--project", filepath.Join(f.root, manifestFileName))
-	f.stop = sync.OnceValue(stop)
-	t.Cleanup(func() { _ = f.stop() })
 	f.await = func(check func() bool) {
 		t.Helper()
 		stepUntil(t, fc, devDebounce, check)
 	}
-	if ready {
-		f.await(func() bool { return strings.Contains(f.stdout.String(), "Watching for changes.") })
+	f.start = func() {
+		t.Helper()
+		var stop func() error
+		f.stdout, f.stderr, stop = startDev(t, h.run, "--project", filepath.Join(f.root, manifestFileName))
+		f.stop = sync.OnceValue(stop)
+		t.Cleanup(func() { _ = f.stop() })
+		if f.ready {
+			f.await(func() bool { return strings.Contains(f.stdout.String(), "Watching for changes.") })
+		}
 	}
+	f.start()
 	return f
 }
 
@@ -216,6 +241,42 @@ func TestDevSaves(t *testing.T) {
 	}
 }
 
+func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		foreign  bool
+		edit     map[string]string // made while no holon dev runs
+		creates  int
+		reloads  int
+		rebuilds bool
+	}{
+		{name: "server source edited since reloads into the kept image", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1},
+		{
+			name: "a dependency manifest edited since rebuilds", edit: map[string]string{"alpha/pyproject.toml": "[project]\nname = \"renamed\"\n"},
+			creates: 1, rebuilds: true,
+		},
+		{name: "another caller's session is not picked up", foreign: true, creates: 2, rebuilds: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := startReloadFixture(t, true)
+			if err := f.stop(); err != nil {
+				t.Fatalf("first run: %v stderr=%q", err, f.stderr.String())
+			}
+			f.update(func() { f.foreign = test.foreign })
+			sourceFiles(t, f.root, test.edit)
+			f.start()
+			f.mu.Lock()
+			creates := f.creates
+			f.mu.Unlock()
+			output := f.stderr.String()
+			if creates != test.creates || len(f.reloadRequests()) != test.reloads || strings.Contains(output, "alpha reusing its development image") == test.rebuilds ||
+				!strings.HasPrefix(f.stdout.String(), "Session  gentle-otter-482\n\nStarting\n") {
+				t.Fatalf("creates = %d, reloads = %d; stdout=%q stderr=%q", creates, len(f.reloadRequests()), f.stdout.String(), output)
+			}
+		})
+	}
+}
+
 func TestDevReloadPushesTheBuildSnapshot(t *testing.T) {
 	f := startReloadFixture(t, true)
 	started := len(f.stderr.String())
@@ -266,7 +327,7 @@ func TestDevStartup(t *testing.T) {
 	f.await(func() bool { return f.stdout.String() == starting })
 	f.update(func() { f.ready = true })
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Watching for changes.") })
-	if want := starting + "\nReady\n" + endpoints + "Watching for changes. Ctrl-C stops this session.\n"; f.stdout.String() != want {
+	if want := starting + "\nReady\n" + endpoints + "Watching for changes. Ctrl-C stops watching; the next holon dev picks up this session.\n"; f.stdout.String() != want {
 		t.Fatalf("stdout = %q, want %q", f.stdout.String(), want)
 	}
 	// Each read names the revision the session last had, so the server holds it until the session moves.

@@ -100,7 +100,8 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 		Use:   "dev [APP[=SOURCE]...]",
 		Short: "Run a development session",
 		Long: "Run apps and their required dependencies. Each app uses /<app-name>/ on the session host. " +
-			"Every image build type-checks the app's calls to the apps it requires.\n\n" + appsHelp,
+			"Every image build type-checks the app's calls to the apps it requires. When the command exits, its session stays " +
+			"until its lease expires, about ten minutes, and the next holon dev of the same apps picks it up.\n\n" + appsHelp,
 		Example: `  # Run every app in holon.yaml
   holon dev
 

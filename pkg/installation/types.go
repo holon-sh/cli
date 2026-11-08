@@ -30,9 +30,10 @@ type preparedTypes struct {
 	name        string
 	root        string
 	fingerprint string
+	inputs      string // the fingerprint of what a reload cannot replace; see imageInputs
 	metadata    *mcpcontract.Metadata
 	documents   map[string]*typegen.Document
-	hosted      bool // its snapshot was staged with the SDK launcher, so a source overlay can restart it
+	hosted      bool // its entry runs under the SDK launcher, so a source overlay can restart it
 }
 
 type typeWorkspace struct {
@@ -192,6 +193,16 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		p := app.resolved.types
 		if p.fingerprint, err = snapshotSource(*app, p.root); err != nil {
 			return manifestSpec{}, nil, err
+		}
+		if p.inputs, err = imageInputs(p.root); err != nil {
+			return manifestSpec{}, nil, err
+		}
+		if !app.resolved.stdio {
+			entry, err := sourceEntry(p.root)
+			if err != nil {
+				return manifestSpec{}, nil, err
+			}
+			p.hosted = hostedEntry(entry)
 		}
 	}
 	prepared, err = typegen.Prepare(ctx, consumers, typeOptions)

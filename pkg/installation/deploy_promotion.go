@@ -18,8 +18,11 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-// promotionAnnotation, on a source image's index, names what the image was built from.
-const promotionAnnotation = "sh.holon.promotion"
+// These annotations on a source image's index name what the image was built from; see imageKeys.
+const (
+	promotionAnnotation = "sh.holon.promotion"
+	inputsAnnotation    = "sh.holon.inputs"
+)
 
 var executableDigest = sync.OnceValue(func() string {
 	path, err := os.Executable()
@@ -38,26 +41,33 @@ var executableDigest = sync.OnceValue(func() string {
 	return sum.Encoded()
 })
 
-// promotionKey names everything an app's image is built from: its source snapshot and those of the apps
-// it requires, whose clients it carries, the build architectures, and this executable, which supplies the
-// launcher and the build. It is "" when any of them is unknown, such as a required app without source.
-func promotionKey(app manifestApp, fingerprints map[string]string, architectures []string) string {
+// imageKeys name what an app's image is built from, by the index annotation that publishes each. The
+// promotionAnnotation key names everything: its source snapshot and those of the apps it requires, whose
+// clients it carries, the build architectures, and this executable, which supplies the launcher and the
+// build. The inputsAnnotation key names the same but for the app's own server source, which a reload can
+// replace. They are nil when any of these is unknown, such as a required app without source.
+func imageKeys(app manifestApp, fingerprints map[string]string, architectures []string) map[string]string {
 	executable := executableDigest()
 	names := append([]string{app.Name}, app.resolved.Requires...)
 	if executable == "" || slices.ContainsFunc(names, func(name string) bool { return fingerprints[name] == "" }) {
-		return ""
+		return nil
 	}
-	hash := sha256.New()
-	_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", executable, strings.Join(slices.Sorted(slices.Values(buildArchitectures(architectures))), ","))
-	for _, name := range names {
-		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", name, fingerprints[name])
+	platforms := strings.Join(slices.Sorted(slices.Values(buildArchitectures(architectures))), ",")
+	keys := map[string]string{}
+	for annotation, own := range map[string]string{promotionAnnotation: fingerprints[app.Name], inputsAnnotation: app.resolved.types.inputs} {
+		hash := sha256.New()
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00%s\x00%s\x00", executable, platforms, app.Name, own)
+		for _, name := range app.resolved.Requires {
+			_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", name, fingerprints[name])
+		}
+		keys[annotation] = hex.EncodeToString(hash.Sum(nil))
 	}
-	return hex.EncodeToString(hash.Sum(nil))
+	return keys
 }
 
-// reusableImage returns the development session image, among images, that a build of app with key would
-// produce, read from the repository this build pushes to, or "" when none is.
-func reusableImage(ctx context.Context, app manifestApp, key string, images []string, upload *imageUpload, options buildOptions) string {
+// reusableImage returns the development session image, among images, whose annotation is key, read from the
+// repository this build pushes to, or "" when none is.
+func reusableImage(ctx context.Context, app manifestApp, annotation, key string, images []string, upload *imageUpload, options buildOptions) string {
 	if key == "" || len(images) == 0 {
 		return ""
 	}
@@ -70,7 +80,7 @@ func reusableImage(ctx context.Context, app manifestApp, key string, images []st
 			}
 			descriptor, err := repository.Resolve(ctx, image)
 			var index ocispec.Index
-			if err == nil && ociimage.FetchJSON(ctx, repository, descriptor, &index) == nil && index.Annotations[promotionAnnotation] == key {
+			if err == nil && ociimage.FetchJSON(ctx, repository, descriptor, &index) == nil && index.Annotations[annotation] == key {
 				found = image
 				return nil
 			}

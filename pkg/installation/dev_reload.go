@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +54,36 @@ func serverSource(relative string) bool {
 	relative = filepath.ToSlash(relative)
 	first, _, _ := strings.Cut(relative, "/")
 	return first != "ui" && slices.Contains([]string{".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"}, path.Ext(relative))
+}
+
+// imageInputs fingerprints the files of snapshot that are not server source, which an image build may read.
+// Two snapshots with the same image inputs differ only in what a source overlay delivers.
+func imageInputs(snapshot string) (string, error) {
+	hash := sha256.New()
+	err := filepath.WalkDir(snapshot, func(current string, item fs.DirEntry, walkErr error) error {
+		relative, err := filepath.Rel(snapshot, current)
+		if walkErr != nil || err != nil || item.IsDir() || serverSource(relative) {
+			return cmp.Or(walkErr, err)
+		}
+		info, err := item.Info()
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", filepath.ToSlash(relative), info.Mode())
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(current)
+			_, _ = io.WriteString(hash, link)
+			return err
+		}
+		file, err := os.Open(current)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = file.Close() }()
+		_, err = io.Copy(hash, file)
+		return err
+	})
+	return hex.EncodeToString(hash.Sum(nil)), err
 }
 
 // reloadable reports whether a change can restart its apps in place: only source edits, to apps that
@@ -108,9 +140,6 @@ func (d *devLoop) reload(ctx context.Context, change devChange) (sets.Set[string
 	}
 	accepted := prepared
 	accepted.Apps = slices.DeleteFunc(slices.Clone(prepared.Apps), func(app manifestApp) bool { return !change.contexts.Has(app.Path) })
-	for _, app := range accepted.Apps {
-		app.resolved.types.hosted = true // each reloaded, so its overlay staged the launcher
-	}
 	d.options.types.accept(accepted)
 	return failed, slices.ContainsFunc(prepared.Apps, func(app manifestApp) bool { return d.options.types.affected(ctx, app, prepared) })
 }
@@ -160,10 +189,11 @@ func (d *devLoop) buildOverlay(app manifestApp, snapshot, archive string) (ocisp
 	}
 	types := *d.options.types.accepted[app.Name]
 	types.root = snapshot
-	if _, _, err := stageSnapshot(app, &types, false); err != nil {
+	_, start, err := stageSnapshot(app, &types, false)
+	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	if !types.hosted {
+	if start == nil {
 		return ocispec.Descriptor{}, errors.New("the app no longer has a server entry the launcher runs")
 	}
 	return writeOverlay(snapshot, archive)

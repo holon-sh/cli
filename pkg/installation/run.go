@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
@@ -91,41 +92,43 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 	return manifest, nil
 }
 
-func uploadManifest(
-	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions, apps ...string,
-) (protocol.AppsRequestFor[protocol.App], manifestSpec, error) {
+// resolveManifest resolves the apps a command runs, with their dependencies, and checks their access rules.
+func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec, output *progressOutput, apps ...string) (manifestSpec, error) {
 	if _, err := manager.controlToken(ctx); err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		return manifestSpec{}, err
 	}
-	options.output.status("", "Preparing apps", progressWorking)
+	output.status("", "Preparing apps", progressWorking)
 	resolved, err := resolveManifestGraph(ctx, manifest, apps...)
 	if err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		return manifestSpec{}, err
 	}
-	if err := protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil); err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
-	}
+	return resolved, protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil)
+}
+
+func uploadManifest(
+	ctx context.Context, manager *Client, name string, resolved manifestSpec, options buildOptions,
+) (protocol.AppsRequestFor[protocol.App], error) {
 	if options.types != nil {
 		if err := options.types.acquire(resolved); err != nil {
-			return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+			return protocol.AppsRequestFor[protocol.App]{}, err
 		}
 	}
 	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options)
 	if err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
 	defer cleanup()
 	built, err := buildManifestImages(ctx, manager, name, prepared, options)
 	if err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
 	if err := currentTypeSources(prepared); err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
 	if options.types != nil {
 		options.types.accept(prepared)
 	}
-	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, resolved, nil
+	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
 }
 
 func imageDestination(ctx context.Context, manager *Client, name string, manifest manifestSpec) (protocol.UploadGrant, error) {
@@ -165,23 +168,41 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	}
 	defer options.types.close()
 	defer options.builders.close()
-	request, resolvedManifest, err := uploadManifest(ctx, manager, "", config.manifest, options, apps...)
+	resolved, err := resolveManifest(ctx, manager, config.manifest, config.output, apps...)
+	if err != nil {
+		return err
+	}
+	var previous protocol.SessionResponse
+	if config.devTTLSeconds == nil {
+		previous = previousSession(ctx, manager, resolved)
+	}
+	// Only the start reuses the previous session's images, for apps whose source the reload below brings up to date.
+	start := options
+	start.reusable, start.reuse = sessionImages(previous), inputsAnnotation
+	request, err := uploadManifest(ctx, manager, "", resolved, start)
 	if err != nil {
 		return err
 	}
 	request.TTLSeconds = config.devTTLSeconds
-	token, err := manager.controlToken(ctx)
-	if err != nil {
-		return err
-	}
 	config.output.deploying(request.Apps)
-	var session protocol.SessionResponse
-	if err := manager.client.Call(ctx, protocol.DevPlane, token, protocol.ToolCreateSession, request, &session); err != nil {
-		if status := HTTPStatus(err); status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+	session := previous
+	switch {
+	case previous.Name == "":
+		token, err := manager.controlToken(ctx)
+		if err != nil {
 			return err
 		}
-		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
-		return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
+		if err := manager.client.Call(ctx, protocol.DevPlane, token, protocol.ToolCreateSession, request, &session); err != nil {
+			if status := HTTPStatus(err); status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+				return err
+			}
+			console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
+			return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
+		}
+	case len(protocol.ChangedApps(previous.Apps, request.Apps)) != 0:
+		if session, err = replaceExecution(ctx, manager, previous.Name, previous, request); err != nil {
+			return err
+		}
 	}
 	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
 		return err
@@ -203,8 +224,51 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
 		return err
 	}
-	dev := &devLoop{manager: manager, name: session.Name, manifest: resolvedManifest, apps: apps, clock: config.clock(), options: options, session: session}
-	return errors.Join(dev.run(ctx, stdout), deleteWithFreshContext(manager, session.Name, session.UID))
+	dev := &devLoop{
+		manager: manager, name: session.Name, manifest: resolved, apps: apps, clock: config.clock(), options: options, session: session,
+		stale: reusedSources(resolved, previous, request.Apps),
+	}
+	return dev.run(ctx, stdout)
+}
+
+// previousSession renews and returns the development session an earlier holon dev of exactly manifest's apps
+// left running, or none. Renewal fails unless the session is the caller's, foreground and unexpired.
+func previousSession(ctx context.Context, manager *Client, manifest manifestSpec) protocol.SessionResponse {
+	// Without the session list, holon dev starts a new session, as it would with none to pick up.
+	sessions, _ := scopeSessions(ctx, manager, "")
+	for _, candidate := range sessions {
+		var session protocol.SessionResponse
+		if slices.EqualFunc(protocol.WritableApps(candidate.Apps), manifest.Apps, func(running protocol.App, app manifestApp) bool {
+			return running.Name == app.Name
+		}) && manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: candidate.Name}, &session) == nil {
+			return session
+		}
+	}
+	return protocol.SessionResponse{}
+}
+
+// reusedSources are the build contexts of the apps that kept the previous session's image, whose current
+// source the session does not run yet.
+func reusedSources(manifest manifestSpec, previous protocol.SessionResponse, apps []protocol.App) sets.Set[string] {
+	stale := sets.New[string]()
+	for _, app := range manifest.Apps {
+		current := apps[slices.IndexFunc(apps, func(current protocol.App) bool { return current.Name == app.Name })]
+		if app.Path != "" && slices.ContainsFunc(previous.Apps, func(old protocol.App) bool { return old.Name == app.Name && old.Image == current.Image }) {
+			stale.Insert(app.Path)
+		}
+	}
+	return stale
+}
+
+// sessionImages are the images that sessions run, by app, which a build reuses when they match its source.
+func sessionImages(sessions ...protocol.SessionResponse) map[string][]string {
+	images := map[string][]string{}
+	for _, session := range sessions {
+		for _, app := range session.Apps {
+			images[app.Name] = append(images[app.Name], app.Image)
+		}
+	}
+	return images
 }
 
 func sessionPath(name, suffix string) string {
@@ -292,16 +356,14 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	defer builders.close()
 	// Without the session list, deploy builds every image, as it would with no development session.
 	sessions, _ := scopeSessions(ctx, manager, "")
-	reusable := map[string][]string{}
-	for _, session := range sessions {
-		for _, app := range session.Apps {
-			reusable[app.Name] = append(reusable[app.Name], app.Image)
-		}
+	resolved, err := resolveManifest(ctx, manager, manifest, config.output, selection...)
+	if err != nil {
+		return err
 	}
-	desired, _, err := uploadManifest(ctx, manager, protocol.ProductionName, manifest, buildOptions{
+	desired, err := uploadManifest(ctx, manager, protocol.ProductionName, resolved, buildOptions{
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env, output: config.output,
-		builders: builders, architectures: manager.info.BuildArchitectures, reusable: reusable,
-	}, selection...)
+		builders: builders, architectures: manager.info.BuildArchitectures, reusable: sessionImages(sessions...), reuse: promotionAnnotation,
+	})
 	if err != nil {
 		return err
 	}
