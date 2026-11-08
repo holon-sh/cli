@@ -15,11 +15,10 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/opencontainers/go-digest"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 	"k8s.io/utils/clock"
-
-	"github.com/holon-sh/cli/internal/clientutil"
 )
 
 type progressState = tea.ProgramState
@@ -123,7 +122,7 @@ func progressStatusID(title string) string {
 	if title == "" {
 		return "holon"
 	}
-	return progressItemsID + "/" + clientutil.HashBytes([]byte(title))[:16]
+	return progressItemsID + "/" + digest.FromBytes([]byte(title)).Encoded()[:16]
 }
 
 func (o *progressOutput) finish(err error, message string) error {

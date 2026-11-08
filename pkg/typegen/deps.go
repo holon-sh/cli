@@ -8,7 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+
+	"golang.org/x/mod/modfile"
 )
 
 type packageJSON struct {
@@ -119,7 +122,7 @@ func DeclaredTargets(dir string) ([]string, error) {
 	if ensurePythonRuntime(dir) == nil {
 		targets = append(targets, TargetPy)
 	}
-	if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil && goRuntime.Match(data) {
+	if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil && requiresGoRuntime(data) {
 		targets = append(targets, TargetGo)
 	}
 	if len(targets) == 0 {
@@ -128,7 +131,10 @@ func DeclaredTargets(dir string) ([]string, error) {
 	return targets, nil
 }
 
-var goRuntime = regexp.MustCompile(`(?m)^\s*(?:require\s+)?` + regexp.QuoteMeta(goRuntimeModule) + `\s+v[^\s]+`)
+func requiresGoRuntime(data []byte) bool {
+	file, err := modfile.ParseLax("go.mod", data, nil)
+	return err == nil && slices.ContainsFunc(file.Require, func(require *modfile.Require) bool { return require.Mod.Path == goRuntimeModule })
+}
 
 var pythonRuntime = regexp.MustCompile(`(?im)(?:^|["'\s])holon[-_]sh(?:\[|[\s"'<=>!~;]|$)`)
 

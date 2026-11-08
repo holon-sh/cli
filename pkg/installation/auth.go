@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/opencontainers/go-digest"
 	"github.com/zitadel/oidc/v3/pkg/client/rp"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
@@ -154,7 +155,7 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	manager.statePath = filepath.Join(dir, "remotes", clientutil.HashBytes([]byte(manager.client.baseURL))+".tokens.json")
+	manager.statePath = filepath.Join(dir, "remotes", digest.FromBytes([]byte(manager.client.baseURL)).Encoded()+".tokens.json")
 	return manager, nil
 }
 
