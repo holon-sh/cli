@@ -119,6 +119,14 @@ type OrdersKitchenSinkInput = OrdersInputX1startsDashKeyAllEtc
 
 type OrdersKitchenSinkOutput = json.RawMessage
 
+type OrdersOrderListInput = map[string]json.RawMessage
+
+type OrdersOrderListOutput = json.RawMessage
+
+type OrdersOrderList2Input = map[string]json.RawMessage
+
+type OrdersOrderList2Output = json.RawMessage
+
 type OrdersRuntimeRunInput = struct {
 	Code string "json:\"code\""
 }
@@ -126,10 +134,6 @@ type OrdersRuntimeRunInput = struct {
 type OrdersRuntimeRunOutput = struct {
 	Stdout string "json:\"stdout\""
 }
-
-type OrdersRuntimeRun2Input = map[string]json.RawMessage
-
-type OrdersRuntimeRun2Output = json.RawMessage
 
 type OrdersWeirdKeysInput = map[string]json.RawMessage
 

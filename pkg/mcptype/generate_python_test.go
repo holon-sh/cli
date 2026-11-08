@@ -2,6 +2,7 @@ package mcptype
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,7 +83,19 @@ class Apps:
         return self._apps[name]
 `
 
-// Every public tool has a typed method, whatever its name, and the method calls that tool.
+func TestPythonMethodNames(t *testing.T) {
+	tools := catalog{}
+	for _, name := range []string{"get_order", "get-order", "order.list", "order/list", "runtime.run", "class", "123", "-", "_hidden"} {
+		tools[name] = compiledTool{}
+	}
+	want := map[string]string{"get_order": "get_order", "runtime.run": "runtime_run", "class": "class_", "123": "x123", "-": "value"}
+	if got := pythonMethods(tools); !maps.Equal(got, want) {
+		t.Fatalf("methods %v, want %v", got, want)
+	}
+}
+
+// A tool with a method of its own has a typed one, whatever its name, and the method calls that tool.
+// Tools whose derived names collide are reachable through call_tool alone.
 func TestPythonMethodsCallToolsNamedOtherwise(t *testing.T) {
 	python := pythonWithMypy(t)
 	var files map[string][]byte
@@ -103,22 +116,23 @@ async def typed() -> None:
     stdout: str = run["stdout"]
     request: Inputs.schemas.runtime_run = {"code": stdout}
     await apps.schemas.tools.runtime_run(**request)
-    await apps.schemas.tools.runtime_run2(anything=1)
     await apps.schemas.tools.get_order(id="a")
-    await apps.schemas.tools.get_order2(id="a")
+    await apps.schemas.call_tool("get-order", id="a")
+    await apps.schemas.call_tool("order.list")
     await apps.schemas.tools.class_(opt={"n": 1.0})
     await apps.schemas.tools.x123()
 async def use() -> list[str]:
     create_apps({"orders": {"endpoint": "http://localhost"}})
-    return [str(await getattr(apps.schemas.tools, method)()) for method in ("runtime_run", "runtime_run2", "get_order2", "class_", "x123", "value", "moji")]
+    return [str(await getattr(apps.schemas.tools, method)()) for method in ("runtime_run", "get_order", "class_", "x123", "value", "moji")]
 if __name__ == "__main__":
     print(" ".join(asyncio.run(use())))
 `)
 	files["wrong.py"] = []byte(`from holon.apps import apps
 async def use() -> None:
     await apps.schemas.tools.runtime_run(code=1)
-    await apps.schemas.tools.get_order2(order="a")
-    await apps.schemas.tools.runtime_run3()
+    await apps.schemas.tools.get_order2(id="a")
+    await apps.schemas.tools.order_list()
+    await apps.schemas.tools.order_list2()
 `)
 	writeFiles(t, root, files)
 	run := func(args ...string) (string, error) {
@@ -131,13 +145,13 @@ async def use() -> None:
 		t.Fatalf("mypy rejected the generated module or its use: %v\n%s", err, output)
 	}
 	output, err := run("-m", "mypy", "--no-incremental", "wrong.py")
-	for _, want := range []string{`Argument "code" to "runtime_run"`, `Unexpected keyword argument "order" for "get_order2"`, `has no attribute "runtime_run3"`} {
+	for _, want := range []string{`Argument "code" to "runtime_run"`, `has no attribute "get_order2"`, `has no attribute "order_list"`, `has no attribute "order_list2"`} {
 		if err == nil || !strings.Contains(output, want) {
 			t.Errorf("mypy did not report %s:\n%s", want, output)
 		}
 	}
 	output, err = run("main.py")
-	if want := "runtime.run runtime/run get-order class 123 - émoji🎉\n"; err != nil || output != want {
+	if want := "runtime.run get_order class 123 - émoji🎉\n"; err != nil || output != want {
 		t.Fatalf("methods called %q, %v; want %q", output, err, want)
 	}
 }

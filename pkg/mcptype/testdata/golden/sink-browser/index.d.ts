@@ -31,8 +31,9 @@ export interface Inputs {
     "get-order": OrdersInputId;
     "get_order": OrdersInputId;
     "kitchen-sink": OrdersInputX1startsDashKeyAllEtc;
+    "order.list": { [key: string]: unknown; };
+    "order/list": { [key: string]: unknown; };
     "runtime.run": { "code": string; };
-    "runtime/run": { [key: string]: unknown; };
     "weird-keys": { "": null; "-"?: boolean; "x\"quote"?: string; "ünïcode"?: number; };
     "émoji🎉": { "é"?: string; };
   };
@@ -86,8 +87,9 @@ export interface InputTypes {
     "get-order": {  };
     "get_order": {  };
     "kitchen-sink": { "9lives": OrdersInputX9lives; "Legacy": OrdersInputLegacy; "Node": OrdersInputNode; "Nodes": OrdersInputNodes; "_private": OrdersInputPrivate; "a/b~c": OrdersInputABC; "for": OrdersInputFor; "list": OrdersInputList; };
+    "order.list": {  };
+    "order/list": {  };
     "runtime.run": {  };
-    "runtime/run": {  };
     "weird-keys": {  };
     "émoji🎉": {  };
   };

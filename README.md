@@ -59,7 +59,7 @@ Call the server. A wrong tool name or argument is a type error.
 <details open>
 <summary><h4>Python</h4></summary>
 
-A tool whose name is not a Python identifier gets a method named after its words, so `resolve-library-id` is `resolve_library_id`. Names that would collide take a numeric suffix in sorted order, as in Go, and `call_tool("resolve-library-id", ...)` still works.
+A tool whose name is not a Python identifier gets a method named after its words, so `resolve-library-id` is `resolve_library_id`. If that name is another tool's too, the tool has no method and `call_tool("resolve-library-id", ...)` reaches it, as it does any tool.
 
 ```python
 from holon.apps import apps

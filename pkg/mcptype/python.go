@@ -38,20 +38,25 @@ func pythonMethod(tool string) string {
 }
 
 // pythonMethods names each tool's method. A tool named as an identifier keeps its name, and the others
-// take derived names in sorted order, with Go's numeric suffix on a collision. The runtime does not
-// expose a tool whose name starts with an underscore, so it has no method.
+// take derived names. A derived name that another tool also claims is given to none of them, because
+// a numeric suffix would move when the server adds a tool, leaving an existing method calling a
+// different tool. Those tools and the ones the runtime does not expose, whose names start with an
+// underscore, have no method.
 func pythonMethods(tools catalog) map[string]string {
-	taken := map[string]bool{}
+	claimed := map[string]int{}
+	for name := range tools {
+		if pythonIdentifier(name) {
+			claimed[name]++
+		} else if !strings.HasPrefix(name, "_") {
+			claimed[pythonMethod(name)]++
+		}
+	}
 	methods := map[string]string{}
 	for name := range tools {
 		if pythonIdentifier(name) {
-			taken[name] = true
 			methods[name] = name
-		}
-	}
-	for _, name := range sortedKeys(tools) {
-		if methods[name] == "" && !strings.HasPrefix(name, "_") {
-			methods[name] = unique(taken, pythonMethod(name))
+		} else if method := pythonMethod(name); !strings.HasPrefix(name, "_") && claimed[method] == 1 {
+			methods[name] = method
 		}
 	}
 	return methods
