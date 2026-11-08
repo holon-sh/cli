@@ -24,6 +24,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"github.com/holon-sh/protocol"
+	"github.com/opencontainers/go-digest"
 )
 
 const (
@@ -91,41 +92,37 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 	return manifest, nil
 }
 
-func uploadManifest(
-	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions, apps ...string,
-) (protocol.AppsRequestFor[protocol.App], manifestSpec, error) {
+func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec, output *progressOutput, apps ...string) (manifestSpec, error) {
 	if _, err := manager.controlToken(ctx); err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		return manifestSpec{}, err
 	}
-	options.output.status("", "Preparing apps", progressWorking)
+	output.status("", "Preparing apps", progressWorking)
 	resolved, err := resolveManifestGraph(ctx, manifest, apps...)
 	if err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		return manifestSpec{}, err
 	}
-	if err := protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil); err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
-	}
-	if options.types != nil {
-		if err := options.types.acquire(resolved); err != nil {
-			return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
-		}
-	}
+	return resolved, protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil)
+}
+
+func uploadManifest(
+	ctx context.Context, manager *Client, name string, resolved manifestSpec, options buildOptions,
+) (protocol.AppsRequestFor[protocol.App], error) {
 	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options)
 	if err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
 	defer cleanup()
 	built, err := buildManifestImages(ctx, manager, name, prepared, options)
 	if err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
 	if err := currentTypeSources(prepared); err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, manifestSpec{}, err
+		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
 	if options.types != nil {
 		options.types.accept(prepared)
 	}
-	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, resolved, nil
+	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
 }
 
 func imageDestination(ctx context.Context, manager *Client, name string, manifest manifestSpec) (protocol.UploadGrant, error) {
@@ -165,32 +162,40 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	}
 	defer options.types.close()
 	defer options.builders.close()
-	request, resolvedManifest, err := uploadManifest(ctx, manager, "", config.manifest, options, apps...)
+	resolved, err := resolveManifest(ctx, manager, config.manifest, config.output, apps...)
+	if err != nil {
+		return err
+	}
+	if err := options.types.acquire(resolved); err != nil {
+		return err
+	}
+	recordPath := manager.sessionRecordPath(resolved)
+	var previous protocol.SessionResponse
+	first := options
+	if config.devTTLSeconds == nil {
+		previous, first.kept = previousSession(ctx, manager, recordPath)
+	}
+	if previous.Name != "" {
+		if err := printStartingEndpoints(stdout, config.output, manager.client.baseURL, previous); err != nil {
+			return err
+		}
+	}
+	request, err := uploadManifest(ctx, manager, "", resolved, first)
 	if err != nil {
 		return err
 	}
 	request.TTLSeconds = config.devTTLSeconds
-	token, err := manager.controlToken(ctx)
-	if err != nil {
-		return err
-	}
 	config.output.deploying(request.Apps)
 	var session protocol.SessionResponse
-	if err := manager.client.Call(ctx, protocol.DevPlane, token, protocol.ToolCreateSession, request, &session); err != nil {
-		if status := HTTPStatus(err); status >= http.StatusBadRequest && status < http.StatusInternalServerError {
-			return err
-		}
+	if previous.Name != "" {
+		session, err = replaceExecution(ctx, manager, previous.Name, previous, request)
+	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &session); err == nil {
+		err = printStartingEndpoints(stdout, config.output, manager.client.baseURL, session)
+	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
 		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
-		return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
+		err = fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
 	}
-	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
-		return err
-	}
-	starting, err := startingSession(manager.client.baseURL, session)
 	if err != nil {
-		return err
-	}
-	if err := config.output.endpoints(stdout, "Starting", starting, true); err != nil {
 		return err
 	}
 	if request.TTLSeconds != nil {
@@ -207,8 +212,49 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
 		return err
 	}
-	dev := &devLoop{manager: manager, name: session.Name, manifest: resolvedManifest, apps: apps, clock: config.clock(), options: options, session: session}
-	return errors.Join(dev.run(ctx, stdout), deleteWithFreshContext(manager, session.Name, session.UID))
+	dev := &devLoop{manager: manager, name: session.Name, manifest: resolved, apps: apps, clock: config.clock(), options: options, session: session}
+	err = dev.run(ctx, stdout)
+	inputs := map[string]string{}
+	for name, types := range options.types.accepted {
+		inputs[name] = types.inputs
+	}
+	data, _ := json.Marshal(sessionRecord{Session: session.Name, Inputs: inputs})
+	_ = writePrivateFile(recordPath, data)
+	return err
+}
+
+type sessionRecord struct {
+	Session string            `json:"session"`
+	Inputs  map[string]string `json:"inputs"`
+}
+
+type keptImage struct {
+	inputs, image, overlay string
+}
+
+func (m *Client) sessionRecordPath(manifest manifestSpec) string {
+	key := m.client.baseURL
+	for _, app := range manifest.Apps {
+		key += "\x00" + app.Name + "\x00" + app.Path
+	}
+	return filepath.Join(filepath.Dir(m.statePath), digest.FromString(key).Encoded()+".session")
+}
+
+func previousSession(ctx context.Context, manager *Client, recordPath string) (protocol.SessionResponse, map[string]keptImage) {
+	var record sessionRecord
+	var session protocol.SessionResponse
+	data, err := readPrivateFile(recordPath)
+	if err != nil || json.Unmarshal(data, &record) != nil ||
+		manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: record.Session}, &session) != nil {
+		return protocol.SessionResponse{}, nil
+	}
+	kept := map[string]keptImage{}
+	for _, app := range session.Apps {
+		if inputs := record.Inputs[app.Name]; inputs != "" {
+			kept[app.Name] = keptImage{inputs: inputs, image: app.Image, overlay: app.Overlay}
+		}
+	}
+	return session, kept
 }
 
 func sessionPath(name, suffix string) string {
@@ -294,10 +340,14 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	}
 	builders := new(builderConnections)
 	defer builders.close()
-	desired, _, err := uploadManifest(ctx, manager, protocol.ProductionName, manifest, buildOptions{
+	resolved, err := resolveManifest(ctx, manager, manifest, config.output, selection...)
+	if err != nil {
+		return err
+	}
+	desired, err := uploadManifest(ctx, manager, protocol.ProductionName, resolved, buildOptions{
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env, output: config.output,
 		builders: builders, architectures: manager.info.BuildArchitectures,
-	}, selection...)
+	})
 	if err != nil {
 		return err
 	}
@@ -367,6 +417,17 @@ func reportSessionProgress(
 		phase, state = condition.Message, progressBlocked
 	}
 	output.status(name, phase, state)
+}
+
+func printStartingEndpoints(stdout io.Writer, output *progressOutput, origin string, session protocol.SessionResponse) error {
+	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
+		return err
+	}
+	starting, err := startingSession(origin, session)
+	if err != nil {
+		return err
+	}
+	return output.endpoints(stdout, "Starting", starting, true)
 }
 
 func startingSession(origin string, session protocol.SessionResponse) (protocol.SessionResponse, error) {
