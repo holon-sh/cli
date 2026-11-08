@@ -28,8 +28,15 @@ func TestDeclaredSources(t *testing.T) {
 				{Alias: "orders", Registry: &Reference{Name: "example.com/orders", Version: "1.0.0"}},
 			},
 		},
+		{
+			name: "a url beside a record",
+			data: descriptor + metadata + `{"requires":{"docs":{"url":"https://mcp.example/mcp"},"orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`,
+			want: []Source{{Alias: "docs", Endpoint: "https://mcp.example/mcp"}, {Alias: "orders", Registry: &Reference{Name: "example.com/orders", Version: "1.0.0"}}},
+		},
 		{name: "invalid descriptor", data: `{"name":"checkout","version":"1.0.0","description":"Checkout"}`, err: "namespace/name"},
 		{name: "invalid alias", data: descriptor + metadata + `{"requires":{"Orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`, err: "invalid dependency name"},
+		{name: "a url with a version", data: descriptor + metadata + `{"requires":{"docs":{"url":"https://mcp.example/mcp","version":"1.0.0"}}}}}}`, err: "leave out name, version and registry"},
+		{name: "a url that is not an endpoint", data: descriptor + metadata + `{"requires":{"docs":{"url":"ftp://mcp.example/mcp"}}}}}}`, err: "HTTP(S) URL"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -47,6 +54,26 @@ func TestDeclaredSources(t *testing.T) {
 				t.Fatalf("DeclaredSources = %#v, %v; want %#v", got, err, test.want)
 			}
 		})
+	}
+}
+
+// A running server with no registry record is declared by its url, which holon types check generates
+// from when no -s names it.
+func TestADeclaredEndpointIsGeneratedAndChecked(t *testing.T) {
+	live := liveServer(t, "docs")
+	defer live.Close()
+	app := typeScriptApp(t)
+	put(t, app, "server.json", `{"name":"example.com/app","version":"1.0.0","description":"App","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"docs":{"url":"`+live.URL+`"}}}}}}`)
+	put(t, app, "src/index.ts", "import type { Inputs } from \"holon-sh\";\nexport const input: Inputs[\"docs\"][\"read\"] = { id: \"a\" };\n")
+	sources, err := DeclaredSources(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Generate(t.Context(), []Consumer{{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: sources}}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := check(t, app); err != nil {
+		t.Fatalf("check: %v\n%s", err, output)
 	}
 }
 

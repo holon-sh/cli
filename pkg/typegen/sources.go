@@ -46,8 +46,9 @@ type Source struct {
 	// Registry is an MCP registry server version. Resolve its OCI package's document,
 	// falling back to its streamable-http remote when the image has no contract.
 	Registry *Reference
-	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract. With an
-	// Alias, the environment variable <ALIAS>_MCP_TOKEN supplies a bearer token for its origin.
+	// Endpoint is a live MCP endpoint, from -s or a url entry in sh.holon.requires; initialize and
+	// tools/list supply identity and contract. With an Alias, the environment variable
+	// <ALIAS>_MCP_TOKEN supplies a bearer token for its origin.
 	Endpoint string
 	// Document is an already resolved contract document, with the exact bytes its digest names.
 	Document *Document
