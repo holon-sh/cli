@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -118,6 +119,36 @@ func mustReject(t *testing.T, app string, diagnostics ...string) {
 			t.Errorf("rejected without %q: %v\n%s", diagnostic, err, output)
 		}
 	}
+}
+
+// Generated clients take the runtime's binding and option types: with the published holon-sh
+// declarations, a session hook and a plain fetch bind, and a binding's fields are still checked.
+func TestGeneratedClientsBindAsTheRuntimeDoes(t *testing.T) {
+	t.Parallel()
+	app := typeScriptApp(t)
+	for _, name := range []string{"runtime.d.ts", "protocol.d.ts"} {
+		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh", name))
+	}
+	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	put(t, app, "src/index.ts", `import { createApps, type EndpointBinding } from "holon-sh";
+const binding: EndpointBinding = { endpoint: "mcp:", fetch };
+const apps = createApps({ orders: binding }, { session: () => ({
+  callTool: async () => ({ structuredContent: { total: 1 } }),
+  readResource: async () => ({ contents: [] }),
+  listTools: async () => ({ tools: [] }),
+}) });
+export const total: Promise<number> = apps.orders.tools.lookup({ id: "1" }).then(result => result.total);
+`)
+	if output, err := check(t, app); err != nil {
+		t.Fatalf("check: %v\n%s", err, output)
+	}
+	put(t, app, "src/index.ts", `import { createApps } from "holon-sh";
+export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch } });
+`)
+	mustReject(t, app, "'fetsh' does not exist")
 }
 
 func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {

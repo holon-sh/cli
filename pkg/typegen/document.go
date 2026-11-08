@@ -28,7 +28,7 @@ func ParseDocument(ctx context.Context, data []byte) (*Document, error) {
 	if len(data) > maxContractBytes {
 		return nil, fmt.Errorf("contract document exceeds %d bytes", maxContractBytes)
 	}
-	if _, err := mcptype.Canonical(ctx, map[string]any{"metadata": json.RawMessage(data)}); err != nil {
+	if err := mcptype.ValidateMetadata(ctx, data); err != nil {
 		return nil, err
 	}
 	var metadata mcpcontract.Metadata

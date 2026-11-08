@@ -1,8 +1,6 @@
 // holon-generated-apps-v1 app=checkout
-import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } from "../protocol.js";
-export { ToolCallError } from "../protocol.js";
-export type Resources = import("./resources.js").Outputs;
-export type * from "./resources.js";
+import type { ToolClient, EndpointBinding, CreateOptions } from "../runtime.js";
+export { ToolCallError } from "../runtime.js";
 export type MysqlInputLabeledColumn = { "column": string; "label": string; };
 export type MysqlInputDirection = ("asc" | "desc");
 export type MysqlOutputRoot = { "columns": Array<MysqlOutputLabeledColumn>; };
@@ -63,9 +61,20 @@ export interface OutputTypes {
     "get_order": {  };
   };
 }
+export interface Resources {
+  "empty": {
+  };
+  "mysql": {
+  };
+  "orders": {
+    "orders://summary": { "total": number; };
+  };
+  "with-hyphen": {
+    "orders://summary": { "total": number; };
+  };
+}
 
 export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };
 export declare const apps: Apps;
-export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
-export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
+export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;

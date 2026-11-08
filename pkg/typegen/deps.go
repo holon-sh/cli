@@ -12,6 +12,7 @@ import (
 )
 
 type packageJSON struct {
+	Name, Version                                                         string
 	PackageManager                                                        string `json:"packageManager"`
 	Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
 }
@@ -98,7 +99,10 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 }
 
 // ErrNoRuntime identifies a project without a declared Holon SDK runtime.
-var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh or holon-ui in package.json, on holon-sh in pyproject.toml, or on github.com/holon-sh/sdk-go in go.mod")
+var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh or holon-ui in package.json, on holon-sh in pyproject.toml, or on " + goRuntimeModule + " in go.mod")
+
+// goRuntimeModule is the runtime module that generated Go clients import.
+const goRuntimeModule = "github.com/holon-sh/sdk-go"
 
 // DeclaredTargets are the slots a project's SDK dependencies declare. None is an error.
 func DeclaredTargets(dir string) ([]string, error) {
@@ -124,7 +128,7 @@ func DeclaredTargets(dir string) ([]string, error) {
 	return targets, nil
 }
 
-var goRuntime = regexp.MustCompile(`(?m)^\s*(?:require\s+)?github\.com/holon-sh/sdk-go\s+v[^\s]+`)
+var goRuntime = regexp.MustCompile(`(?m)^\s*(?:require\s+)?` + regexp.QuoteMeta(goRuntimeModule) + `\s+v[^\s]+`)
 
 var pythonRuntime = regexp.MustCompile(`(?im)(?:^|["'\s])holon[-_]sh(?:\[|[\s"'<=>!~;]|$)`)
 

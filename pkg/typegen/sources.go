@@ -30,7 +30,7 @@ const (
 	TargetTS = "ts" // node_modules/holon-sh/generated, resolved upward from the consumer
 	TargetUI = "ui"
 	TargetPy = "py" // holon/apps/__init__.py in the consumer
-	TargetGo = "go" // holon/ Go package in the consumer; needs Options.GoModule
+	TargetGo = "go" // holon/ Go package in the consumer
 )
 
 var targets = []string{TargetTS, TargetUI, TargetPy, TargetGo}
@@ -226,11 +226,13 @@ func serverEntry(path string) (root, entry, language string, err error) {
 	return root, filepath.ToSlash(entry), language, nil
 }
 
+var notKey = regexp.MustCompile(`[^a-z0-9-]+`)
+
 // serverKey is the client name derived from a server name: its last segment, lower-cased, with
 // runs of other characters as hyphens, trimmed to a 49-character label.
 func serverKey(serverName string) string {
 	key := serverName[strings.LastIndex(serverName, "/")+1:]
-	key = strings.Trim(regexp.MustCompile(`[^a-z0-9-]+`).ReplaceAllString(strings.ToLower(key), "-"), "-")
+	key = strings.Trim(notKey.ReplaceAllString(strings.ToLower(key), "-"), "-")
 	return strings.TrimRight(key[:min(len(key), 49)], "-")
 }
 

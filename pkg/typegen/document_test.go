@@ -25,6 +25,7 @@ func TestDocumentBytesAndValidation(t *testing.T) {
 		`{"version":1,"identity":{"name":"a","version":"1"},"contract":{"tools":[]}}`,
 		`{"schema":{"tools":[]}}`,
 		`{"identity":{"name":"a","version":"1"},"requires":{"orders":"sha256:abc"}}`,
+		`{"identity":{"name":"a","version":"1"},"schema":{"tools":[{"name":"get","inputSchema":{"type":"string"}}]}}`,
 	} {
 		if _, err := ParseDocument(t.Context(), []byte(invalid)); err == nil {
 			t.Fatalf("accepted %s", invalid)

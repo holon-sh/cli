@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -34,8 +35,6 @@ type Options struct {
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
 	// runs the server in its own directory and stops it after 30 seconds.
 	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
-	// GoModule is the runtime module that generated Go clients import; it defaults to github.com/holon-sh/sdk-go.
-	GoModule string
 }
 
 func validateEnv(env []string) error {
@@ -48,7 +47,6 @@ func validateEnv(env []string) error {
 }
 
 func (o Options) defaults() Options {
-	o.GoModule = cmp.Or(o.GoModule, "github.com/holon-sh/sdk-go")
 	o.HTTPClient = cmp.Or(o.HTTPClient, &http.Client{Timeout: 30 * time.Second})
 	o.Stdout = cmp.Or(o.Stdout, io.Discard)
 	o.Stderr = cmp.Or(o.Stderr, io.Discard)
@@ -109,6 +107,34 @@ type Prepared struct {
 	// resolved holds every non-path source's contract, keyed by alias as each consumer sees it.
 	resolved  map[string]*mcpcontract.Metadata
 	documents map[string]*Document
+	// fetched holds each registry and endpoint source's resolution, keyed by source.
+	fetched map[string]*fetch
+}
+
+type fetch struct {
+	document *Document
+	err      error
+}
+
+// fetchSources resolves each distinct registry and endpoint source concurrently. The returned
+// function waits for every resolution and returns them by source key.
+func fetchSources(ctx context.Context, consumers []Consumer, o Options) func() map[string]*fetch {
+	fetched := map[string]*fetch{}
+	var group sync.WaitGroup
+	for _, c := range consumers {
+		for _, source := range c.Sources {
+			if _, started := fetched[source.key()]; started || source.Path != "" || source.Document != nil {
+				continue
+			}
+			result := &fetch{}
+			fetched[source.key()] = result
+			group.Go(func() { result.document, result.err = ResolveDocument(ctx, source, o) })
+		}
+	}
+	return func() map[string]*fetch {
+		group.Wait()
+		return fetched
+	}
 }
 
 func (p *Prepared) Close() error { return os.RemoveAll(p.root) }
@@ -188,6 +214,12 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 		}
 	}()
 	p := &Prepared{paths: map[string]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}, documents: map[string]*Document{}}
+	// Registry and endpoint sources are fetched while path sources are extracted, and stopped when
+	// preparation fails.
+	ctx, cancel := context.WithCancel(ctx)
+	fetched := fetchSources(ctx, consumers, o)
+	defer fetched()
+	defer cancel()
 	var paths []*preparedSource
 	for _, c := range consumers {
 		pc := &preparedConsumer{Consumer: c, packages: map[string]map[string][]byte{}}
@@ -224,9 +256,9 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 	if err = extractSources(ctx, root, paths, o, true); err != nil {
 		return nil, err
 	}
-	external := map[string]*Document{}
+	p.fetched = fetched()
 	for _, c := range p.consumers {
-		if err = p.prepareConsumer(ctx, c, external); err != nil {
+		if err = p.prepareConsumer(ctx, c); err != nil {
 			return nil, err
 		}
 	}
@@ -237,8 +269,8 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 }
 
 // resolve returns a source's contract document: a snapshot's extraction for a path source, the
-// validated document itself for a contract source, or a fetch deduplicated by source key.
-func (p *Prepared) resolve(ctx context.Context, source Source, external map[string]*Document) (*Document, error) {
+// validated document itself for a contract source, or its fetch.
+func (p *Prepared) resolve(ctx context.Context, source Source) (*Document, error) {
 	if source.Path != "" {
 		absolute, _ := filepath.Abs(source.Path)
 		dependency := p.paths[absolute]
@@ -251,7 +283,7 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 			if p.paths[own].origin != dependency.origin {
 				continue
 			}
-			if err := p.prepareConsumer(ctx, consumer, external); err != nil {
+			if err := p.prepareConsumer(ctx, consumer); err != nil {
 				return nil, err
 			}
 			return consumer.document, nil
@@ -261,18 +293,14 @@ func (p *Prepared) resolve(ctx context.Context, source Source, external map[stri
 	if source.Document != nil {
 		return ResolveDocument(ctx, source, p.options)
 	}
-	if document, done := external[source.key()]; done {
-		return document, nil
+	fetched := p.fetched[source.key()]
+	if fetched.err != nil {
+		return nil, fmt.Errorf("%s: %w", source, fetched.err)
 	}
-	document, err := ResolveDocument(ctx, source, p.options)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", source, err)
-	}
-	external[source.key()] = document
-	return document, nil
+	return fetched.document, nil
 }
 
-func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, external map[string]*Document) error {
+func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) error {
 	if c.document != nil {
 		return nil
 	}
@@ -294,6 +322,10 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		return err
 	} else if descriptor != nil {
 		identity = descriptor.Identity()
+	} else if manifest, err := manifestIdentity(c.Dir, c.Targets); err != nil {
+		return err
+	} else if manifest.Name != "" {
+		identity = manifest
 	}
 	c.metadata = &mcpcontract.Metadata{Identity: identity, Requires: map[string]string{}}
 	if c.server != nil {
@@ -303,7 +335,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 	c.slot = slotMetadata{Marker: mcpcontract.Marker, App: c.Name, Identity: identity}
 	aliases := map[string]string{}
 	for _, source := range c.Sources {
-		metadata, err := p.resolve(ctx, source, external)
+		metadata, err := p.resolve(ctx, source)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
 		}
@@ -327,7 +359,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		}
 	}
 	for _, target := range c.Targets {
-		files, err := generateTypes(ctx, target, request, c.metadata, alias, p.options.GoModule)
+		files, err := generateTypes(ctx, target, request, c.metadata, alias)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
 		}
@@ -344,18 +376,17 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 
 // generateTypes generates one target's clients. Browser clients call the own server under its alias
 // or derived name; an alias also makes it a client in every other slot.
-func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, alias, goModule string) (map[string][]byte, error) {
+func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, alias string) (map[string][]byte, error) {
 	switch target {
 	case TargetTS:
-		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "node", "../runtime.mjs", "../protocol.js"
+		request.Target, request.RuntimeSpecifier = "node", "../runtime.mjs"
 	case TargetUI:
-		request.Target, request.RuntimeSpecifier, request.ProtocolSpecifier = "browser", "../runtime.mjs", "holon-sh/protocol"
+		request.Target, request.RuntimeSpecifier = "browser", "../runtime.mjs"
 		alias = cmp.Or(alias, serverKey(own.Identity.Name), "app")
 	case TargetPy:
 		request.Target = "python"
 	case TargetGo:
-		request.Target = "go"
-		request.GoModule = goModule
+		request.Target, request.GoModule = "go", goRuntimeModule
 	}
 	if own.Schema != nil && alias != "" {
 		if _, exists := request.Contracts[alias]; exists {
@@ -407,47 +438,52 @@ func (p *Prepared) Write() error {
 	owners := map[string]string{}
 	for _, c := range p.consumers {
 		for _, target := range c.Targets {
-			var err error
-			switch target {
-			case TargetTS, TargetUI:
-				var slot string
-				slot, err = InstalledRuntime(c.Dir, nodePackages[target])
-				if err != nil {
+			dir := c.Dir
+			if pkg, ok := nodePackages[target]; ok {
+				var err error
+				if dir, err = InstalledRuntime(c.Dir, pkg); err != nil {
 					return fmt.Errorf("%s: %w", c.Name, err)
 				}
-				if prior, ok := owners[slot]; ok && prior != c.Name {
-					return fmt.Errorf("%s and %s share %s; install a separate %s for each project (avoid hoisting this package)", prior, c.Name, slot, nodePackages[target])
+				if prior, ok := owners[dir]; ok && prior != c.Name {
+					return fmt.Errorf("%s and %s share %s; install a separate %s for each project (avoid hoisting this package)", prior, c.Name, dir, pkg)
 				}
-				owners[slot], slots[[2]string{c.Name, target}] = c.Name, slot
-				err = validateNodeSlot(slot, c.slot)
-			case TargetPy:
-				err = validatePythonSlot(c.Dir)
-			case TargetGo:
-				err = validateGoSlot(c.Dir)
+				owners[dir] = c.Name
 			}
-			if err != nil {
+			if err := validateSlot(target, dir, c.slot); err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
 			}
+			slots[[2]string{c.Name, target}] = dir
 		}
 	}
 	for _, c := range p.consumers {
 		for _, target := range c.Targets {
-			var err error
-			switch target {
-			case TargetTS, TargetUI:
-				err = writeNodeSlot(slots[[2]string{c.Name, target}], c.packages[target], c.slot)
-			case TargetPy:
-				err = p.WritePythonSlot(c.Name, c.Dir)
-			case TargetGo:
-				err = p.WriteGoSlot(c.Name, c.Dir)
-			}
-			if err != nil {
+			if err := writeSlot(target, slots[[2]string{c.Name, target}], c.packages[target], c.slot); err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
 			}
 			fmt.Fprintf(p.options.Stdout, "%s: generated %s types\n", c.Name, target)
 		}
 	}
 	return nil
+}
+
+func validateSlot(target, dir string, meta slotMetadata) error {
+	switch target {
+	case TargetPy:
+		return validatePythonSlot(dir)
+	case TargetGo:
+		return validateGoSlot(dir)
+	}
+	return validateNodeSlot(dir, meta)
+}
+
+func writeSlot(target, dir string, files map[string][]byte, meta slotMetadata) error {
+	switch target {
+	case TargetPy:
+		return writePythonSlot(dir, files)
+	case TargetGo:
+		return writeGoSlot(dir, files)
+	}
+	return writeNodeSlot(dir, files, meta)
 }
 
 // Targets reports the prepared targets of a consumer, in the order given; none for an unknown one.
@@ -470,43 +506,16 @@ func (p *Prepared) files(consumer, target string) (*preparedConsumer, map[string
 	return c, files, nil
 }
 
-// WriteNodeSlot writes the consumer's ts clients and their holon-generated.json marker into
-// pkgDir/generated, where pkgDir is an installed holon-sh package or a copy staged for an image.
-// It refuses slots that are unmarked, symlinked or owned by another consumer, and leaves an identical slot untouched.
-func (p *Prepared) WriteNodeSlot(consumer, pkgDir string) error {
-	return p.writePackageSlot(consumer, TargetTS, pkgDir)
-}
-
-func (p *Prepared) WriteBrowserSlot(consumer, pkgDir string) error {
-	return p.writePackageSlot(consumer, TargetUI, pkgDir)
-}
-
-func (p *Prepared) writePackageSlot(consumer, target, pkgDir string) error {
+// WriteSlot writes the consumer's target clients into dir. For a Node target, dir is an installed
+// holon-sh or holon-ui package or a copy staged for an image, and the clients go in its generated/
+// slot with a holon-generated.json marker; otherwise dir is the project or its staged copy. It
+// refuses a slot that another consumer or the project owns, and leaves an identical one untouched.
+func (p *Prepared) WriteSlot(consumer, target, dir string) error {
 	c, files, err := p.files(consumer, target)
 	if err != nil {
 		return err
 	}
-	return writeNodeSlot(pkgDir, files, c.slot)
-}
-
-// WritePythonSlot writes the consumer's holon/apps/__init__.py under root, a project directory or
-// its staged copy. Only a marked generated module is replaced.
-func (p *Prepared) WritePythonSlot(consumer, root string) error {
-	_, files, err := p.files(consumer, TargetPy)
-	if err != nil {
-		return err
-	}
-	return writePythonSlot(root, files)
-}
-
-// WriteGoSlot writes the consumer's holon/ Go client package under root. It replaces only an
-// absent or Holon-marked holon/ directory.
-func (p *Prepared) WriteGoSlot(consumer, root string) error {
-	_, files, err := p.files(consumer, TargetGo)
-	if err != nil {
-		return err
-	}
-	return writeGoSlot(root, files)
+	return writeSlot(target, dir, files, c.slot)
 }
 
 // AcquireLocks locks each consumer directory and its installed Node slots until the returned

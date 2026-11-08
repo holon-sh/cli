@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/opencontainers/go-digest"
 )
 
 // Change is one way a published contract breaks an expectation. Name is the tool name or resource URI, if any.
@@ -17,53 +16,31 @@ type Change struct {
 	Text string
 }
 
-// CanonicalForm is a document with annotations removed and unordered keywords sorted.
-// Both fields are empty for metadata without a contract.
-type CanonicalForm struct {
-	Canonical json.RawMessage `json:"canonical"`
-	Digest    string          `json:"digest"`
+// ValidateMetadata reports why data is not a contract document, or nil when it is one.
+func ValidateMetadata(ctx context.Context, data []byte) error {
+	value, err := marshal(ctx, json.RawMessage(data))
+	if err == nil {
+		_, err = decodeMetadata(value)
+	}
+	return err
 }
 
-// Canonical validates document, one of {"contract"}, {"schema"} or {"metadata"}, and returns its canonical form and digest.
-func Canonical(ctx context.Context, document any) (CanonicalForm, error) {
-	value, err := marshal(ctx, document)
-	if err != nil {
-		return CanonicalForm{}, err
-	}
-	object, err := asObject(value)
-	if err != nil {
-		return CanonicalForm{}, err
-	}
-	if len(object) != 1 {
-		return CanonicalForm{}, fmt.Errorf("expected a map with a single key, one of `contract`, `schema`, `metadata`")
-	}
-	variant := sortedKeys(object)[0]
-	var canonical Value
-	switch variant {
-	case "contract":
-		contract, err := decodeContract(object[variant])
+// SameContract reports whether two contracts are equal once annotations are removed and unordered
+// keywords sorted.
+func SameContract(ctx context.Context, a, b *mcpcontract.Contract) (bool, error) {
+	var forms [2]string
+	for i, side := range []*mcpcontract.Contract{a, b} {
+		value, err := marshal(ctx, side)
 		if err != nil {
-			return CanonicalForm{}, err
+			return false, err
 		}
-		canonical = canonicalContract(contract)
-	case "schema":
-		schema, err := asObject(object[variant])
+		decoded, err := decodeContract(value)
 		if err != nil {
-			return CanonicalForm{}, err
+			return false, err
 		}
-		normalizeObject(schema)
-		canonical = schema
-	case "metadata":
-		metadata, err := decodeMetadata(object[variant])
-		if err != nil || metadata.Schema == nil {
-			return CanonicalForm{}, err
-		}
-		canonical = canonicalContract(*metadata.Schema)
-	default:
-		return CanonicalForm{}, fmt.Errorf("unknown variant `%s`, expected one of `contract`, `schema`, `metadata`", variant)
+		forms[i] = string(encode(canonicalContract(decoded)))
 	}
-	data := encode(canonical)
-	return CanonicalForm{Canonical: data, Digest: digest.FromBytes(data).String()}, nil
+	return forms[0] == forms[1], nil
 }
 
 // Changes lists what breaks expected if published is deployed. Empty means compatible.
@@ -92,20 +69,16 @@ func Changes(ctx context.Context, expected *mcpcontract.Metadata, published *mcp
 }
 
 // GenerateRequest asks for one target's typed client package: node, browser, python or go.
-// Runtime files are copied into the package verbatim. Empty optional strings use
-// their defaults; GoModule is required for Go.
+// Empty optional strings use their defaults; GoModule is required for Go.
 type GenerateRequest struct {
 	Target    string                           `json:"target"`
 	Identity  mcpcontract.Identity             `json:"identity"`
 	Requires  map[string]mcpcontract.Identity  `json:"requires,omitempty"`
 	Contracts map[string]*mcpcontract.Contract `json:"contracts,omitempty"`
-	Runtime   map[string][]byte                `json:"runtime,omitempty"`
-	// Protocol is inlined into TypeScript declarations unless ProtocolSpecifier imports them.
-	Protocol          string `json:"protocol,omitempty"`
-	RuntimeSpecifier  string `json:"runtime_specifier,omitempty"`
-	ProtocolSpecifier string `json:"protocol_specifier,omitempty"`
-	Own               string `json:"own,omitempty"`
-	// Banner is the first-line comment on generated sources, excluding copied Runtime files.
+	// RuntimeSpecifier is the module TypeScript clients import their runtime and its declarations from.
+	RuntimeSpecifier string `json:"runtime_specifier,omitempty"`
+	Own              string `json:"own,omitempty"`
+	// Banner is the first-line comment on generated sources.
 	Banner   string `json:"banner,omitempty"`
 	GoModule string `json:"go_module,omitempty"`
 }

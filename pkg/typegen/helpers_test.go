@@ -101,7 +101,7 @@ func typeScriptApp(t *testing.T) string {
 	needNode(t)
 	app := t.TempDir()
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	put(t, slotPackage(t, app, "holon-sh"), "protocol.d.ts", "export type AuthProvider = unknown; export type CallOptions = unknown; export type CallMetadata = unknown; export type ToolResult = unknown; export type ToolClient<I, O, R> = unknown; export declare class ToolCallError {}\n")
+	put(t, slotPackage(t, app, "holon-sh"), "runtime.d.ts", "export type ToolClient<I, O, R> = unknown;\nexport declare class ToolCallError {}\nexport type EndpointBinding = unknown;\nexport type CreateOptions = unknown;\n")
 	linkTypeScript(t, app)
 	return app
 }
