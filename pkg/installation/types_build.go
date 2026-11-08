@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/tailscale/hujson"
@@ -95,14 +93,14 @@ func stageTypes(p *preparedTypes, check bool) (string, error) {
 			}
 			install = checkerInstall
 		}
-		if err := tooling.Unpack(directory, language); err != nil {
+		if err := tooling.UnpackChecker(directory, language); err != nil {
 			return "", err
 		}
 		before = append(before, runner+" check .holon-types/check.json")
 		after = append(after, runner+" verify .holon-types/check.json")
 	}
 	if len(before) == 0 {
-		return "", stabilizeTimes(p.root)
+		return "", nil
 	}
 	railpack, err := checkedBuild(filepath.Join(p.root, "railpack.json"), before, after, install)
 	if err != nil {
@@ -111,7 +109,7 @@ func stageTypes(p *preparedTypes, check bool) (string, error) {
 	if err := writeTypeJSON(filepath.Join(directory, "railpack.json"), railpack); err != nil {
 		return "", err
 	}
-	return ".holon-types/railpack.json", stabilizeTimes(p.root)
+	return ".holon-types/railpack.json", nil
 }
 
 // checkerInstall installs the Python type checker ahead of the app's dependency installation
@@ -175,27 +173,6 @@ func stageNodePackage(root string) error {
 	return writeTypeJSON(path, pkg)
 }
 
-// stabilizeTimes gives the files Holon wrote into the snapshot content-derived mtimes, so BuildKit's
-// incremental context sync resends only those that changed.
-func stabilizeTimes(root string) error {
-	for _, directory := range []string{".holon-types", "holon", "package.json"} {
-		err := filepath.WalkDir(filepath.Join(root, directory), func(path string, entry fs.DirEntry, err error) error {
-			if err != nil || entry.IsDir() {
-				return err
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			return os.Chtimes(path, mcpcontract.StableTime(data), mcpcontract.StableTime(data))
-		})
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-	}
-	return nil
-}
-
 func objectField(parent map[string]any, name string) map[string]any {
 	value, ok := parent[name].(map[string]any)
 	if !ok {
@@ -215,5 +192,5 @@ func readTypeJSON(path string, value any) error {
 
 func writeTypeJSON(path string, value any) error {
 	data, _ := json.MarshalIndent(value, "", "  ")
-	return mcpcontract.WriteStable(path, append(data, '\n'), 0o644)
+	return os.WriteFile(path, append(data, '\n'), 0o644)
 }

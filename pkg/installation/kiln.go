@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/holon-sh/cli/internal/commandenv"
@@ -121,10 +120,10 @@ func stageLauncher(snapshot, entry string) ([]string, error) {
 		bootstrap = fmt.Sprintf("import asyncio\nfrom holon_host import start\nasyncio.run(start(%q))\n", module)
 		start = []string{"python", "./.holon/main.py"}
 	}
-	if err := mcpcontract.WriteStable(filepath.Join(hostDir, adapter), []byte(contents), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostDir, adapter), []byte(contents), 0o644); err != nil {
 		return nil, err
 	}
-	if err := mcpcontract.WriteStable(filepath.Join(hostDir, launcher), []byte(bootstrap), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostDir, launcher), []byte(bootstrap), 0o644); err != nil {
 		return nil, err
 	}
 	return start, nil

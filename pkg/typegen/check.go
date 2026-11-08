@@ -65,7 +65,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 			}
 		}
 		config := filepath.Join(root, language+"-check.json")
-		if err = writeJSON(config, map[string]any{"root": dir, "entry": "", "sources": map[string]string{}, "check": true}); err != nil {
+		if err = writeJSON(config, map[string]any{"root": dir, "entry": "", "sources": map[string]string{}}); err != nil {
 			return err
 		}
 		command := l.command(ctx, program, toolingDir, language, l.checker, config)
@@ -81,7 +81,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 	return nil
 }
 
-// CheckConfig is the runner's check configuration ({entry, sources, check}) for the consumer's own
+// CheckConfig is the runner's check configuration ({entry, sources}) for the consumer's own
 // server, for a type check inside an image build against the dependencies installed there. Paths are
 // relative to the consumer directory. It reports false for consumers without an extracted server.
 func (p *Prepared) CheckConfig(consumer string) (map[string]any, bool) {
@@ -92,7 +92,7 @@ func (p *Prepared) CheckConfig(consumer string) (map[string]any, bool) {
 	sources := map[string]string{}
 	maps.Copy(sources, c.server.sources)
 	entry, _ := filepath.Rel(c.Dir, filepath.Join(c.server.origin, c.server.entry))
-	return map[string]any{"entry": filepath.ToSlash(entry), "sources": sources, "check": true}, true
+	return map[string]any{"entry": filepath.ToSlash(entry), "sources": sources}, true
 }
 
 // pythonEnvironment is the interpreter of the project's virtual environment: the nearest .venv or
