@@ -25,7 +25,7 @@ func TestDeclaredSources(t *testing.T) {
 			name: "sorted aliases, registry references and urls",
 			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"},"chat":{"url":"https://mcp.example/mcp"}}}}}}`,
 			want: []Source{
-				{Alias: "chat", Endpoint: "https://mcp.example/mcp", declared: true},
+				{Alias: "chat", Endpoint: "https://mcp.example/mcp"},
 				{Alias: "docs", Registry: &protocol.RegistryRef{Name: "example.com/documentation", Version: "4.4.4", Registry: "https://registry.example"}},
 				{Alias: "orders", Registry: &protocol.RegistryRef{Name: "example.com/orders", Version: "1.0.0"}},
 			},
@@ -39,7 +39,7 @@ func TestDeclaredSources(t *testing.T) {
 			if test.data != "" {
 				put(t, root, "server.json", test.data)
 			}
-			got, err := DeclaredSources(root)
+			got, err := DeclaredSources(root, nil)
 			if test.err != "" {
 				if err == nil || !strings.Contains(err.Error(), filepath.Join(root, "server.json")) || !strings.Contains(err.Error(), test.err) {
 					t.Fatalf("DeclaredSources error = %v, want server.json and %q", err, test.err)
@@ -53,26 +53,25 @@ func TestDeclaredSources(t *testing.T) {
 	}
 }
 
-// A url entry's address gives way to <ALIAS>_MCP_URL, as for a server that picks its port at startup;
-// a registry entry keeps its record's address.
 func TestDeclaredURLOverride(t *testing.T) {
-	live := tokenServer(t, "secret")
 	root := t.TempDir()
-	put(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"order-desk":{"url":"http://127.0.0.1:1/mcp"},"orders":{"name":"example.com/orders","version":"1.0.0","registry":"http://127.0.0.1:1"}}}}}}`)
-	sources, err := DeclaredSources(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var progress strings.Builder
-	document, err := ResolveDocument(t.Context(), sources[0], Options{Stderr: &progress, Env: []string{"ORDER_DESK_MCP_URL=" + live.URL, "ORDER_DESK_MCP_TOKEN=secret"}})
-	if err != nil || document.Identity.Name != "orders" {
-		t.Fatalf("ResolveDocument = %+v, %v; want the overriding server's contract", document, err)
-	}
-	if want := "order-desk: using " + live.URL + " from ORDER_DESK_MCP_URL\n"; progress.String() != want {
-		t.Fatalf("progress = %q, want %q", progress.String(), want)
-	}
-	if _, err := ResolveDocument(t.Context(), sources[1], Options{Env: []string{"ORDERS_MCP_URL=" + live.URL}}); err == nil || !strings.Contains(err.Error(), "127.0.0.1:1") {
-		t.Fatalf("registry entry ResolveDocument = %v, want its record fetched from the declared registry", err)
+	put(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"order-desk":{"url":"https://mcp.example/mcp"},"orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`)
+	registry := Source{Alias: "orders", Registry: &protocol.RegistryRef{Name: "example.com/orders", Version: "1.0.0"}}
+	for _, test := range []struct {
+		name string
+		env  string
+		want Source // the url entry; the registry entry never changes
+	}{
+		{name: "override", env: "ORDER_DESK_MCP_URL=http://localhost:8123/mcp", want: Source{Alias: "order-desk", Endpoint: "http://localhost:8123/mcp", from: "ORDER_DESK_MCP_URL"}},
+		{name: "no override", env: "OTHER_MCP_URL=http://localhost:8123/mcp", want: Source{Alias: "order-desk", Endpoint: "https://mcp.example/mcp"}},
+		{name: "registry entry is not overridden", env: "ORDERS_MCP_URL=http://localhost:8123/mcp", want: Source{Alias: "order-desk", Endpoint: "https://mcp.example/mcp"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := DeclaredSources(root, []string{test.env})
+			if want := []Source{test.want, registry}; err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("DeclaredSources = %#v, %v; want %#v", got, err, want)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -8,6 +9,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+
+	"github.com/holon-sh/cli/internal/commandenv"
+	"github.com/holon-sh/protocol"
 )
 
 // serverMention is what an MCP server's entry names: the protocol, an SDK or holon-sh.
@@ -59,11 +63,11 @@ func AppConsumer(name, dir string) (*Consumer, error) {
 	return &Consumer{Name: name, Dir: dir, Targets: targets, Server: own}, nil
 }
 
-// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias. When a url entry
-// is resolved, <ALIAS>_MCP_URL replaces its address, for a server that picks its port at startup.
-// A registry entry is not overridden: its record supplies the server's identity and address
-// together, so a local stand-in is declared as a url entry or given with -s instead.
-func DeclaredSources(dir string) ([]Source, error) {
+// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias. A url entry's
+// address gives way to <ALIAS>_MCP_URL, read from env and then the process environment, for a
+// server that picks its port at startup. A registry entry keeps its record's address, which comes
+// with the server's identity; a local stand-in is declared as a url entry or given with -s.
+func DeclaredSources(dir string, env []string) ([]Source, error) {
 	d, err := readDescriptor(dir)
 	if err != nil || d == nil {
 		return nil, err
@@ -71,9 +75,14 @@ func DeclaredSources(dir string) ([]Source, error) {
 	var sources []Source
 	for _, alias := range slices.Sorted(maps.Keys(d.Requires)) {
 		requirement := d.Requires[alias]
-		source := Source{Alias: alias, Endpoint: requirement.URL, declared: requirement.URL != ""}
+		source := Source{Alias: alias, Endpoint: requirement.URL}
 		if requirement.URL == "" {
 			source.Registry = &requirement.RegistryRef
+		} else {
+			variable := protocol.DependencyEnvName(alias)
+			if location := cmp.Or(commandenv.Value(env, variable), os.Getenv(variable)); location != "" {
+				source.Endpoint, source.from = location, variable
+			}
 		}
 		sources = append(sources, source)
 	}

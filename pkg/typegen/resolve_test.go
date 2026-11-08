@@ -106,22 +106,19 @@ func TestEndpointToken(t *testing.T) {
 	}
 }
 
+// An address from <ALIAS>_MCP_URL is reported, takes the alias's token and names the variable when invalid.
 func TestEndpointURLOverride(t *testing.T) {
 	live := tokenServer(t, "secret")
-	const unreachable = "http://127.0.0.1:1/mcp"
 	for _, test := range []struct {
-		name   string
-		source Source
-		env    string
-		want   string // an error, or empty for the live server's contract
+		name, location, want string
 	}{
-		{name: "declared entry overridden", source: Source{Alias: "docs", Endpoint: unreachable, declared: true}, env: "DOCS_MCP_URL=" + live.URL},
-		{name: "invalid override", source: Source{Alias: "docs", Endpoint: live.URL, declared: true}, env: "DOCS_MCP_URL=ftp://docs.example", want: "DOCS_MCP_URL: MCP URL must be an HTTP(S) URL"},
-		{name: "no override", source: Source{Alias: "docs", Endpoint: live.URL, declared: true}, env: "OTHER_MCP_URL=" + unreachable},
-		{name: "-s source is explicit", source: Source{Alias: "docs", Endpoint: unreachable}, env: "DOCS_MCP_URL=" + live.URL, want: "127.0.0.1:1"},
+		{name: "override", location: live.URL},
+		{name: "invalid override", location: "ftp://docs.example", want: "DOCS_MCP_URL: MCP URL must be an HTTP(S) URL"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			document, err := ResolveDocument(t.Context(), test.source, Options{Env: []string{test.env, "DOCS_MCP_TOKEN=secret"}})
+			var progress strings.Builder
+			source := Source{Alias: "docs", Endpoint: test.location, from: "DOCS_MCP_URL"}
+			document, err := ResolveDocument(t.Context(), source, Options{Stderr: &progress, Env: []string{"DOCS_MCP_TOKEN=secret"}})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {
 					t.Fatalf("ResolveDocument = %v, want %q", err, test.want)
@@ -129,7 +126,10 @@ func TestEndpointURLOverride(t *testing.T) {
 				return
 			}
 			if err != nil || document.Identity.Name != "orders" {
-				t.Fatalf("ResolveDocument = %+v, %v; want the live server's contract", document, err)
+				t.Fatalf("ResolveDocument = %+v, %v; want the overriding server's contract", document, err)
+			}
+			if want := "docs: using " + live.URL + " from DOCS_MCP_URL\n"; progress.String() != want {
+				t.Fatalf("progress = %q, want %q", progress.String(), want)
 			}
 		})
 	}
