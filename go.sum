@@ -127,12 +127,12 @@ github.com/hashicorp/go-cleanhttp v0.5.2 h1:035FKYIWjmULyFRBKPs8TBQoi0x6d9G4xc9n
 github.com/hashicorp/go-cleanhttp v0.5.2/go.mod h1:kO/YDlP8L1346E6Sodw+PrpBSV4/SoxCXGY6BqNFT48=
 github.com/holon-sh/mcp-bridge v0.0.4 h1:0RSEvt9u0y6YMo2zuPsi6VFj4q52+hKy6DuUTnOIBuA=
 github.com/holon-sh/mcp-bridge v0.0.4/go.mod h1:4Zj3W5TYQhZ4kENbZhXMZmspaqnXmQYYxaLw9GHIYVM=
-github.com/holon-sh/protocol v0.0.1-dev.10.0.20261107201219-617df8bcb614 h1:iyEoarL2Wuf3Z/j9mDge2ll4BEBuTSSwSvltKOJRv28=
-github.com/holon-sh/protocol v0.0.1-dev.10.0.20261107201219-617df8bcb614/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
+github.com/holon-sh/protocol v0.0.1-dev.12 h1:CkrRef+8K57qvsEtQAOlJnLd8YThvKQneAdEkytwlpw=
+github.com/holon-sh/protocol v0.0.1-dev.12/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
 github.com/holon-sh/runtime v0.0.1-dev.3 h1:a/3GoAQDaYNOaQzbLVDIeK+OhpBj/BeeK4KnkjBzqYw=
 github.com/holon-sh/runtime v0.0.1-dev.3/go.mod h1:7wNtRIOJIGYwl1M6zzNb1aXiZFNZ9T+OmPa6w+wG4T4=
-github.com/holon-sh/runtime v0.0.1-dev.3.0.20261108155919-706e05e56067 h1:zLzkO+LYGL9s/u9vy2/PgMtqLVfmCi3k1FItdA05quk=
-github.com/holon-sh/runtime v0.0.1-dev.3.0.20261108155919-706e05e56067/go.mod h1:7wNtRIOJIGYwl1M6zzNb1aXiZFNZ9T+OmPa6w+wG4T4=
+github.com/holon-sh/runtime v0.0.1-dev.4 h1:LHS3EqatoLFqRfy0BrRaBDDfzsmPT6ZSYKVSeBCx7x0=
+github.com/holon-sh/runtime v0.0.1-dev.4/go.mod h1:7wNtRIOJIGYwl1M6zzNb1aXiZFNZ9T+OmPa6w+wG4T4=
 github.com/iancoleman/orderedmap v0.3.0 h1:5cbR2grmZR/DiVt+VJopEhtVs9YGInGIxAoMJn+Ichc=
 github.com/iancoleman/orderedmap v0.3.0/go.mod h1:XuLcCUkdL5owUCQeF2Ue9uuw1EptkJDkXXS7VoV7XGE=
 github.com/in-toto/attestation v1.2.0 h1:aPRUZ3azbqD7yEBD5fP3TD8Dszf+YHo284SOcpahjQk=
