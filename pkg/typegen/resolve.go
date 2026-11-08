@@ -15,6 +15,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/tooling"
+	"github.com/holon-sh/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -104,7 +105,7 @@ func (t endpointTransport) RoundTrip(request *http.Request) (*http.Response, err
 // resolveRegistry fetches a registry record, then its first OCI package's
 // contract document or its first streamable-http remote's schemas.
 // A package error is an error; a package without a contract artifact falls through to the remote.
-func resolveRegistry(ctx context.Context, ref Reference, o Options) (*Document, error) {
+func resolveRegistry(ctx context.Context, ref protocol.RegistryRef, o Options) (*Document, error) {
 	label := ref.Name + "@" + ref.Version
 	d, err := (Client{HTTP: o.HTTPClient, Origin: ref.RegistryURL()}).Get(ctx, ref.Name, ref.Version)
 	if err != nil {

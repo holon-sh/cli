@@ -194,7 +194,7 @@ func (p *manifestSpec) selectApps(args []string) ([]string, error) {
 		app := manifestApp{Name: source.Alias, Path: source.Path}
 		switch {
 		case source.Registry != nil:
-			app.Registry = &protocol.RegistrySource{RegistryRef: protocol.RegistryRef(*source.Registry)}
+			app.Registry = &protocol.RegistrySource{RegistryRef: *source.Registry}
 			err = app.Registry.Validate()
 		case source.Endpoint != "":
 			app.Remote = &manifestRemote{URL: source.Endpoint}

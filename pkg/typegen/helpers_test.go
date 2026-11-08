@@ -20,6 +20,8 @@ import (
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
+
+	"github.com/holon-sh/protocol"
 )
 
 const pythonProvider = "from mcp.server import MCPServer\nserver = MCPServer(\"provider\")\n@server.tool()\ndef read(id: str) -> str:\n    return id\n"
@@ -210,7 +212,7 @@ func registryImageSource(t *testing.T, image *http.Client) (Source, *http.Client
 		_, _ = w.Write([]byte(`{"server":{"name":"example.com/orders","version":"1.0.0","description":"Orders","packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]}}`))
 	}))
 	t.Cleanup(server.Close)
-	source := Source{Registry: &Reference{Name: "example.com/orders", Version: "1.0.0", Registry: server.URL}}
+	source := Source{Registry: &protocol.RegistryRef{Name: "example.com/orders", Version: "1.0.0", Registry: server.URL}}
 	client := &http.Client{Transport: hostTransport{
 		strings.TrimPrefix(server.URL, "https://"): server.Client().Transport,
 		"images.example": image.Transport,

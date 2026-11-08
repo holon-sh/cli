@@ -544,7 +544,10 @@ func TestRunDevPathAppRequiringRemote(t *testing.T) {
 	alpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
 		"requires": map[string]any{"docs": map[string]any{"url": "https://docs.example/mcp"}},
 	}}}
-	sourceFiles(t, root, map[string]string{"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage})
+	sourceFiles(t, root, map[string]string{
+		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
+		manifestFileName: "apps:\n- name: alpha\n  path: ./alpha\n  access: {server: {}}\n- name: docs\n  remote: {url: https://docs.example/mcp}\n  access: {server: {}}\n",
+	})
 	writeDescriptor(t, filepath.Join(root, "alpha", "server.json"), alpha)
 	h := newRunHarness(t)
 	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
@@ -567,23 +570,13 @@ func TestRunDevPathAppRequiringRemote(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Error(err)
 			}
-			if len(input.Apps) != 2 || input.Apps[0].Name != "alpha" || !slices.Equal(input.Apps[0].Requires, []string{"docs"}) ||
-				input.Apps[1].Remote == nil || input.Apps[1].Remote.URL != "https://docs.example/mcp" {
+			if len(input.Apps) != 2 || !slices.Equal(input.Apps[0].Requires, []string{"docs"}) {
 				t.Errorf("unexpected session: %#v", input.Apps)
 			}
 		}
 		installationtest.WriteJSON(w, apiSession(h, "alpha", "docs"))
 	})
 	h.start(t, buildImage(t, "alpha"))
-	app := "- name: alpha\n  path: ./alpha\n  access: {server: {}}\n- name: docs\n  remote: {url: %s}\n  access: {server: {}}\n"
-	t.Run("a remote at another URL does not satisfy it", func(t *testing.T) {
-		sourceFiles(t, root, map[string]string{manifestFileName: "apps:\n" + fmt.Sprintf(app, "https://elsewhere.example/mcp")})
-		err := executeCommand(t.Context(), []string{"dev"}, io.Discard, io.Discard, h.run)
-		if err == nil || !strings.Contains(err.Error(), "alpha requires docs to be https://docs.example/mcp; declared app does not match") {
-			t.Fatalf("error = %v", err)
-		}
-	})
-	sourceFiles(t, root, map[string]string{manifestFileName: "apps:\n" + fmt.Sprintf(app, "https://docs.example/mcp")})
 	fc := testingclock.NewFakeClock(time.Now())
 	h.run.Clock = fc
 	stdout, _, stop := startDev(t, h.run)

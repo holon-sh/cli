@@ -8,9 +8,8 @@ import (
 	"fmt"
 	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/protocol"
 	"io/fs"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,40 +19,20 @@ import (
 	"unicode/utf8"
 )
 
-const RegistryOrigin = "https://registry.modelcontextprotocol.io"
 const maxDescriptorBytes = 1 << 20
 
 var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`)
 var wildcardVersion = regexp.MustCompile(`(^|\.)[xX](\.|$)`)
 
-type Reference struct {
-	Name     string `json:"name"`
-	Version  string `json:"version"`
-	Registry string `json:"registry,omitempty"`
-}
-
-func (r Reference) Identity() mcpcontract.Identity {
-	return mcpcontract.Identity{Name: r.Name, Version: r.Version}
-}
-func (r Reference) RegistryURL() string {
-	return strings.TrimRight(cmp.Or(r.Registry, RegistryOrigin), "/")
-}
-func (r Reference) Validate() error {
+// validRegistryRef also requires a name and an exact version that the MCP Registry accepts.
+func validRegistryRef(r protocol.RegistryRef) error {
 	if len(r.Name) > 200 || !serverNamePattern.MatchString(r.Name) {
 		return errors.New("server name must have the form namespace/name")
 	}
-	if r.Version == "" || len(r.Version) > 255 || strings.EqualFold(r.Version, "latest") || strings.ContainsAny(r.Version, "^~<>=*| \t\r\n") || wildcardVersion.MatchString(r.Version) {
+	if len(r.Version) > 255 || strings.ContainsAny(r.Version, "^~<>=*| \t\r\n") || wildcardVersion.MatchString(r.Version) {
 		return errors.New("server version must be exact; ranges and latest are unsupported")
 	}
-	u, err := url.Parse(r.RegistryURL())
-	if err == nil {
-		host := u.Hostname()
-		loopback := host == "localhost" || strings.HasSuffix(host, ".localhost") || net.ParseIP(host).IsLoopback()
-		if u.Host != "" && u.User == nil && u.RawQuery == "" && u.Fragment == "" && (u.Scheme == "https" || u.Scheme == "http" && loopback) {
-			return nil
-		}
-	}
-	return errors.New("MCP registry must be an HTTPS URL (loopback HTTP is allowed)")
+	return r.Validate()
 }
 
 // Server is how a server describes itself, in its server.json or the serverInfo it answers.
@@ -70,10 +49,9 @@ type Server struct {
 
 type descriptor struct {
 	Server
-	Packages []registryPackage                  `json:"packages"`
-	Remotes  []transport                        `json:"remotes"`
-	Meta     map[string]json.RawMessage         `json:"_meta"`
-	Requires map[string]mcpregistry.Requirement `json:"-"`
+	Packages []registryPackage          `json:"packages"`
+	Remotes  []transport                `json:"remotes"`
+	Meta     map[string]json.RawMessage `json:"_meta"`
 }
 type registryPackage struct {
 	RegistryType string `json:"registryType"`
@@ -95,20 +73,12 @@ func ParseDescriptor(data []byte) (*descriptor, error) {
 	if err := json.Unmarshal(data, &d); err != nil {
 		return nil, err
 	}
-	if err := (Reference{Name: d.Name, Version: d.Version}).Validate(); err != nil {
+	if err := validRegistryRef(protocol.RegistryRef{Name: d.Name, Version: d.Version}); err != nil {
 		return nil, err
 	}
 	if n := utf8.RuneCountInString(d.Description); n < 1 || n > 100 {
 		return nil, errors.New("server description must contain 1 to 100 characters")
 	}
-	if len(d.Meta[mcpregistry.PublisherMetadata]) > 4096 {
-		return nil, errors.New("publisher-provided metadata exceeds 4096 bytes")
-	}
-	holon, err := mcpregistry.ParseHolonMetadata(d.Meta)
-	if err != nil {
-		return nil, err
-	}
-	d.Requires = holon.Requires
 	return &d, nil
 }
 
@@ -118,7 +88,7 @@ type Client struct {
 }
 
 func (c Client) Get(ctx context.Context, name, version string) (*descriptor, error) {
-	origin := (Reference{Registry: c.Origin}).RegistryURL()
+	origin := protocol.RegistryRef{Registry: c.Origin}.RegistryURL()
 	data, err := fetchJSON(ctx, c.HTTP, origin+"/v0.1/servers/"+url.PathEscape(name)+"/versions/"+url.PathEscape(version))
 	if err != nil {
 		return nil, err

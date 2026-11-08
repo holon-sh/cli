@@ -101,12 +101,14 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 func ParseHolonMetadata(meta map[string]json.RawMessage) (HolonMetadata, error) {
 	var holon HolonMetadata
 	value := meta[PublisherMetadata]
-	if value == nil {
-		return holon, nil
+	if len(value) > 4096 {
+		return HolonMetadata{}, errors.New("publisher-provided metadata exceeds 4096 bytes")
 	}
 	var publisher map[string]json.RawMessage
-	if err := json.Unmarshal(value, &publisher); err != nil {
-		return holon, err
+	if value != nil {
+		if err := json.Unmarshal(value, &publisher); err != nil {
+			return HolonMetadata{}, err
+		}
 	}
 	if extension := publisher["sh.holon"]; extension != nil {
 		if err := wire.DecodeJSONStrict(extension, &holon); err != nil {
@@ -115,10 +117,10 @@ func ParseHolonMetadata(meta map[string]json.RawMessage) (HolonMetadata, error) 
 	}
 	for name, requirement := range holon.Requires {
 		if !wire.ValidAppName(name) {
-			return holon, fmt.Errorf("dependency name %q must produce a valid endpoint environment variable", name)
+			return HolonMetadata{}, fmt.Errorf("dependency name %q must produce a valid endpoint environment variable", name)
 		}
 		if err := requirement.Validate(); err != nil {
-			return holon, fmt.Errorf("dependency %s: %w", name, err)
+			return HolonMetadata{}, fmt.Errorf("dependency %s: %w", name, err)
 		}
 	}
 	return holon, nil

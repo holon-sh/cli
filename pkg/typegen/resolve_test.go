@@ -14,6 +14,8 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/holon-sh/protocol"
 )
 
 type hostTransport map[string]http.RoundTripper
@@ -187,7 +189,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 				strings.TrimPrefix(live.URL, "http://"):    http.DefaultTransport,
 				"images.example":                           image.Transport,
 			}}
-			ref := Reference{Name: identity.Name, Version: identity.Version, Registry: server.URL}
+			ref := protocol.RegistryRef{Name: identity.Name, Version: identity.Version, Registry: server.URL}
 			metadata, err := ResolveDocument(t.Context(), Source{Alias: "orders", Registry: &ref}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir(), "ORDERS_MCP_TOKEN=secret"}})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {

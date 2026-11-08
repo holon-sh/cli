@@ -87,9 +87,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 		}
 		for _, dependency := range app.resolved.Requires {
 			requirement := app.resolved.descriptor.Requires[dependency]
-			if requirement.URL == "" {
-				requirement.Registry = requirement.RegistryURL()
-			}
+			requirement.Registry = requirement.RegistryURL()
 			if prior, exists := selections[dependency]; exists && prior != requirement {
 				return manifestSpec{}, fmt.Errorf("conflicting references for dependency %s", dependency)
 			}
