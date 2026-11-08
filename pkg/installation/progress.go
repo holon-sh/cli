@@ -20,6 +20,7 @@ import (
 	"k8s.io/utils/clock"
 
 	"github.com/holon-sh/cli/internal/clientutil"
+	"github.com/holon-sh/protocol"
 )
 
 type progressState = tea.ProgramState
@@ -42,6 +43,8 @@ type progressOutput struct {
 	clock    clock.PassiveClock
 	renderer errgroup.Group
 	statuses map[string]tea.ProgramStatus
+	preview  string // the provisional block in the live area
+	printed  string // the endpoints plain output last printed
 }
 
 func newProgressOutput(stdout, stderr io.Writer, verbose bool, clock clock.PassiveClock) (*progressOutput, io.Writer, io.Writer) {
@@ -126,8 +129,50 @@ func progressStatusID(title string) string {
 	return progressItemsID + "/" + clientutil.HashBytes([]byte(title))[:16]
 }
 
+// progressPreview is text the terminal shows above the status rows until another preview replaces it.
+type progressPreview string
+
+// endpoints prints the session's endpoints under heading. A provisional block stays in the terminal's live
+// area until the next block replaces it. Plain output cannot take a block back, so for endpoints it has
+// already printed it repeats only the heading.
+func (o *progressOutput) endpoints(stdout io.Writer, heading string, session protocol.SessionResponse, provisional bool) error {
+	block, err := formatEndpoints(session)
+	if err != nil || block == "" {
+		return err
+	}
+	text := "\n" + heading + "\n" + block
+	if o == nil {
+		_, err = io.WriteString(stdout, text)
+		return err
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.program != nil && stdout == io.Writer(o) {
+		if !provisional {
+			_, _ = o.Write([]byte(text))
+			text = ""
+		}
+		o.preview = text
+		o.program.Send(progressPreview(text))
+		return nil
+	}
+	if block == o.printed {
+		text = heading + "\n"
+	}
+	o.printed = block
+	_, err = io.WriteString(stdout, text)
+	return err
+}
+
 func (o *progressOutput) finish(err error, message string) error {
 	if o.program != nil {
+		// Leave a provisional block that nothing replaced in the scrollback.
+		o.mu.Lock()
+		if o.preview != "" {
+			_, _ = o.Write([]byte(o.preview))
+			o.program.Send(progressPreview(""))
+		}
+		o.mu.Unlock()
 		state := progressDone
 		if err != nil {
 			state, message = progressError, err.Error()
@@ -164,6 +209,7 @@ func (o *progressOutput) measure(name, phase string) func() {
 }
 
 type progressModel struct {
+	preview string
 	items   []tea.ProgramStatus
 	status  tea.ProgramStatus
 	spinner spinner.Model
@@ -176,6 +222,10 @@ func newProgressModel() progressModel {
 func (m progressModel) Init() tea.Cmd { return nil }
 
 func (m progressModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if preview, ok := message.(progressPreview); ok {
+		m.preview = string(preview)
+		return m, nil
+	}
 	if statuses, ok := message.([]tea.ProgramStatus); ok {
 		m.status, m.items = statuses[0], statuses[1:]
 		return m, m.spinner.Tick
@@ -215,6 +265,7 @@ func (m progressModel) indicator(state progressState) string {
 
 func (m progressModel) View() tea.View {
 	var content strings.Builder
+	content.WriteString(m.preview)
 	for _, item := range m.items {
 		_, _ = fmt.Fprintf(&content, "  %s %s  %s\n", m.indicator(item.State), item.Title, item.Message)
 	}

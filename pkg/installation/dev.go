@@ -267,7 +267,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		d.pending.Insert(app.Name)
 	}
 	announce := sync.OnceValue(func() error {
-		if err := printEndpoints(stdout, "Ready", d.session); err != nil {
+		if err := d.options.output.endpoints(stdout, "Ready", d.session, false); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C stops this session.")

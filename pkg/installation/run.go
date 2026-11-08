@@ -186,7 +186,11 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
 		return err
 	}
-	if err := printStartingEndpoints(stdout, manager.client.baseURL, session); err != nil {
+	starting, err := startingSession(manager.client.baseURL, session)
+	if err != nil {
+		return err
+	}
+	if err := config.output.endpoints(stdout, "Starting", starting, true); err != nil {
 		return err
 	}
 	if request.TTLSeconds != nil {
@@ -197,7 +201,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(ready)
 		}
-		if err := printEndpoints(stdout, "Ready", ready); err != nil {
+		if err := config.output.endpoints(stdout, "Ready", ready, false); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
@@ -315,7 +319,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 		return err
 	}
 	config.output.apps(desired.Apps, "ready", progressDone)
-	return printEndpoints(stdout, "Ready", ready)
+	return config.output.endpoints(stdout, "Ready", ready, false)
 }
 
 func waitSessionReady(
@@ -373,25 +377,25 @@ func reportSessionProgress(
 	output.status(name, phase, state)
 }
 
-// printStartingEndpoints prints where the session's apps will be. The API publishes endpoints only once
+// startingSession gives the session the endpoints its apps will have. The API publishes endpoints only once
 // their apps are up, but the URLs follow from the session's name.
-func printStartingEndpoints(stdout io.Writer, origin string, session protocol.SessionResponse) error {
+func startingSession(origin string, session protocol.SessionResponse) (protocol.SessionResponse, error) {
 	base, err := protocol.SessionAudience(origin, protocol.ModeDevelopment, session.Name)
 	if err != nil {
-		return err
+		return session, err
 	}
 	session.Endpoints = make([]protocol.SessionEndpoint, 0, len(session.Apps))
 	for _, app := range session.Apps {
 		session.Endpoints = append(session.Endpoints, protocol.SessionEndpoint{Name: app.Name, URL: base + protocol.AppPath(app.Name)})
 	}
-	if len(session.Endpoints) == 0 {
-		return nil
-	}
-	return printEndpoints(stdout, "Starting", session)
+	return session, nil
 }
 
-func printEndpoints(stdout io.Writer, heading string, session protocol.SessionResponse) error {
-	output := []byte("\n" + heading + "\n")
+func formatEndpoints(session protocol.SessionResponse) (string, error) {
+	if len(session.Endpoints) == 0 {
+		return "", nil
+	}
+	var output []byte
 	mode := protocol.ModeDevelopment
 	if session.Name == protocol.ProductionName {
 		mode = protocol.ModeProduction
@@ -399,7 +403,7 @@ func printEndpoints(stdout io.Writer, heading string, session protocol.SessionRe
 	for i, endpoint := range session.Endpoints {
 		website, err := url.Parse(endpoint.URL)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if i == 0 {
 			website.Path = protocol.MCPPath
@@ -412,8 +416,7 @@ func printEndpoints(stdout io.Writer, heading string, session protocol.SessionRe
 		website.Path = strings.TrimSuffix(protocol.AppBrowserMount(app, mode), "/") + "/"
 		output = fmt.Appendf(output, "\n  %s\n    Browser  %s\n    MCP      %s\n", endpoint.Name, website.String(), endpoint.URL)
 	}
-	_, err := stdout.Write(append(output, '\n'))
-	return err
+	return string(append(output, '\n')), nil
 }
 
 // StreamLogs follows session logs until ctx ends or the server rejects the request. A dropped stream resumes from
