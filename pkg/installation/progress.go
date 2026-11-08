@@ -19,6 +19,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 	"k8s.io/utils/clock"
+
+	"github.com/holon-sh/protocol"
 )
 
 type progressState = tea.ProgramState
@@ -41,6 +43,8 @@ type progressOutput struct {
 	clock    clock.PassiveClock
 	renderer errgroup.Group
 	statuses map[string]tea.ProgramStatus
+	preview  string
+	printed  string
 }
 
 func newProgressOutput(stdout, stderr io.Writer, verbose bool, clock clock.PassiveClock) (*progressOutput, io.Writer, io.Writer) {
@@ -125,8 +129,45 @@ func progressStatusID(title string) string {
 	return progressItemsID + "/" + digest.FromBytes([]byte(title)).Encoded()[:16]
 }
 
+type progressPreview string
+
+func (o *progressOutput) endpoints(stdout io.Writer, heading string, session protocol.SessionResponse, provisional bool) error {
+	block, err := formatEndpoints(session)
+	if err != nil || block == "" {
+		return err
+	}
+	text := "\n" + heading + "\n" + block
+	if o == nil {
+		_, err = io.WriteString(stdout, text)
+		return err
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.program != nil {
+		if !provisional {
+			_, _ = o.Write([]byte(text))
+			text = ""
+		}
+		o.preview = text
+		o.program.Send(progressPreview(text))
+		return nil
+	}
+	if block == o.printed {
+		text = heading + "\n"
+	}
+	o.printed = block
+	_, err = io.WriteString(stdout, text)
+	return err
+}
+
 func (o *progressOutput) finish(err error, message string) error {
 	if o.program != nil {
+		o.mu.Lock()
+		if o.preview != "" {
+			_, _ = o.Write([]byte(o.preview))
+			o.program.Send(progressPreview(""))
+		}
+		o.mu.Unlock()
 		state := progressDone
 		if err != nil {
 			state, message = progressError, err.Error()
@@ -163,6 +204,7 @@ func (o *progressOutput) measure(name, phase string) func() {
 }
 
 type progressModel struct {
+	preview string
 	items   []tea.ProgramStatus
 	status  tea.ProgramStatus
 	spinner spinner.Model
@@ -175,6 +217,10 @@ func newProgressModel() progressModel {
 func (m progressModel) Init() tea.Cmd { return nil }
 
 func (m progressModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if preview, ok := message.(progressPreview); ok {
+		m.preview = string(preview)
+		return m, nil
+	}
 	if statuses, ok := message.([]tea.ProgramStatus); ok {
 		m.status, m.items = statuses[0], statuses[1:]
 		return m, m.spinner.Tick
@@ -214,6 +260,7 @@ func (m progressModel) indicator(state progressState) string {
 
 func (m progressModel) View() tea.View {
 	var content strings.Builder
+	content.WriteString(m.preview)
 	for _, item := range m.items {
 		_, _ = fmt.Fprintf(&content, "  %s %s  %s\n", m.indicator(item.State), item.Title, item.Message)
 	}
