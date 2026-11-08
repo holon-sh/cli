@@ -18,7 +18,7 @@ function unpackTooling(t) {
     mkdirSync(dirname(join(tooling, name)), { recursive: true });
     writeFileSync(join(tooling, name), bytes);
   }
-  const check = (cwd, entry) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), "check", entry], { cwd, encoding: "utf8", stdio: "pipe" });
+  const check = (cwd, entry) => execFileSync(process.execPath, [join(tooling, "check.mjs"), "check", entry], { cwd, encoding: "utf8", stdio: "pipe" });
   // extract returns each app's contract, or its diagnostic and the package it missed.
   const extract = (apps, env = process.env) => Object.fromEntries(apps.map(({ name, path, entry }) => {
     const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "contract", path, entry], { encoding: "utf8", env });
@@ -148,4 +148,9 @@ test("check uses the application's compiler CLI and honors project file selectio
   // The application's file selection takes precedence over entry/discovery.
   writeFileSync(join(app, "excluded.ts"), 'export const wrong: number = "excluded";');
   check(app, "excluded.ts");
+  // Without a tsconfig, it compiles the project's own sources, not installed or generated ones.
+  rmSync(join(app, "tsconfig.json"));
+  const wrong = 'export const wrong: number = "wrong";';
+  application(root, { "src/nested/wrong.ts": wrong, "node_modules/pkg/wrong.ts": wrong, ".holon/wrong.ts": wrong, ".holon-types/wrong.ts": wrong });
+  assert.throws(() => check(app, ""), error => error.stdout.match(/^[^(\s]+/gm).join() === "excluded.ts,src/nested/wrong.ts");
 });

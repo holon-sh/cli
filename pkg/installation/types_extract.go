@@ -24,7 +24,7 @@ import (
 
 // contractRunners are each language's interpreter, contract runner and checker, in its tooling directory.
 var contractRunners = map[string]struct{ program, runner, checker string }{
-	"typescript": {"node", "runner.mjs", "runner.mjs"},
+	"typescript": {"node", "runner.mjs", "check.mjs"},
 	"python":     {"python", "extract.py", "runner.py"},
 }
 

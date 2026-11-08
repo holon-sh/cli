@@ -44,23 +44,30 @@ func Check(ctx context.Context, dir string, options Options) error {
 		return err
 	}
 	defer os.RemoveAll(root)
-	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
-		return err
-	}
 	if err := validateEnv(o.Env); err != nil {
 		return err
 	}
 	slices.Sort(languages)
 	for _, language := range slices.Compact(languages) {
 		l := typeLanguages[language]
-		program, err := l.localProgram(ctx)
+		var program string
+		if language == "python" {
+			program = pythonEnvironment(dir, "")
+		}
+		if program == "" {
+			if program, err = l.localProgram(ctx); err != nil {
+				return err
+			}
+		}
+		checker, err := tooling.File(language, l.checker)
 		if err != nil {
 			return err
 		}
-		if language == "python" {
-			program = pythonEnvironment(dir, program)
+		path := filepath.Join(root, l.checker)
+		if err = os.WriteFile(path, checker, 0o600); err != nil {
+			return err
 		}
-		command := exec.CommandContext(ctx, program, filepath.Join(root, "tooling", language, l.checker), "check", "")
+		command := exec.CommandContext(ctx, program, path, "check", "")
 		command.Dir = dir
 		command.Env = append(append(command.Environ(), o.Env...), "PYTHONDONTWRITEBYTECODE=1")
 		command.Stdout = o.Stdout

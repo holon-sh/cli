@@ -33,7 +33,7 @@ for (const directory of [...packages].sort()) {
   notices.push(`${pkg.name ?? relative(root, directory)} ${pkg.version ?? ""}\n${licenses.sort().map(name => readFileSync(join(licenseDirectory, name), "utf8")).join("\n")}`);
 }
 
-const files = { "runner.mjs": outputFiles[0].contents, "THIRD-PARTY-NOTICES.txt": Buffer.from(notices.join("\n\n")), "version.json": Buffer.from(JSON.stringify({ version }) + "\n") };
+const files = { "runner.mjs": outputFiles[0].contents, "check.mjs": readFileSync(join(root, "check.mjs")), "THIRD-PARTY-NOTICES.txt": Buffer.from(notices.join("\n\n")), "version.json": Buffer.from(JSON.stringify({ version }) + "\n") };
 for (const directory of vendored) {
   for (const file of readdirSync(directory, { recursive: true })) {
     if (/(^|\/)(package\.json|[^/]*\.m?js|licen[sc]e[^/]*)$/i.test(file) && !file.startsWith("src/")) files[`vendor/${relative(root, directory)}/${file}`] = readFileSync(join(directory, file));
