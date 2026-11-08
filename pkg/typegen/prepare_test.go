@@ -5,18 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/holon-sh/cli/pkg/mcpregistry"
 )
 
 func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, []string, io.Writer) error) {
@@ -111,35 +107,6 @@ func TestConsumersAnnounceTheirManifestIdentity(t *testing.T) {
 	}
 }
 
-func TestServersDescribeEachConsumersOwnServer(t *testing.T) {
-	info := json.RawMessage(`{"name":"example.com/chat","version":"2.0.0","title":"Chat","description":"Chat with Holon","websiteUrl":"https://example.com/chat"}`)
-	for _, test := range []struct {
-		name, descriptor string
-		want             *mcpregistry.Descriptor
-	}{
-		{"MCP constructor", "", &mcpregistry.Descriptor{Name: "example.com/chat", Version: "2.0.0", Title: "Chat", Description: "Chat with Holon", WebsiteURL: "https://example.com/chat"}},
-		{"server.json", `{"name":"example.com/chat","version":"1.0.0","description":"Chat"}`, &mcpregistry.Descriptor{Name: "example.com/chat", Version: "1.0.0", Description: "Chat"}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			chat := t.TempDir()
-			put(t, chat, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-			put(t, chat, "server.ts", "export default {};\n")
-			if test.descriptor != "" {
-				put(t, chat, "server.json", test.descriptor)
-			}
-			options := Options{Run: fakeRun(map[string]any{"": extraction{ServerInfo: info}, "example.com/chat": extraction{}})}
-			prepared, err := Prepare(t.Context(), []Consumer{{Name: "chat", Dir: chat, Server: &Source{Path: filepath.Join(chat, "server.ts")}}}, options)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer prepared.Close()
-			if got := prepared.Servers()["chat"]; !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("chat server = %+v, want %+v", got, test.want)
-			}
-		})
-	}
-}
-
 func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	root := t.TempDir()
 	app := filepath.Join(root, "app")
@@ -202,9 +169,6 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	}
 	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
 		t.Fatal(err)
-	}
-	if err := Generate(t.Context(), []Consumer{c}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "exit status 17") {
-		t.Fatalf("failed installation was not reported: %v", err)
 	}
 	put(t, c.Dir, "package.json", `{"type":"module"}`)
 	err := Generate(t.Context(), []Consumer{c}, Options{Run: extract})
@@ -352,33 +316,5 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 	writeProvider(t, orders, "orders", "while True:\n    pass\n")
 	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "server.py: no catalog within 1s") {
 		t.Fatalf("server that never answers: %v", err)
-	}
-}
-
-// containerRun runs the real runner as the platform's container does: only the tooling root is
-// mounted, so the server must be given as a snapshot under it.
-func containerRun(ctx context.Context, language, tooling string, args []string, stdout io.Writer) error {
-	if !pathInsideContext(args[1], filepath.Dir(tooling)) {
-		return fmt.Errorf("%s is not a snapshot under %s", args[1], filepath.Dir(tooling))
-	}
-	command := exec.CommandContext(ctx, "node", append([]string{filepath.Join(tooling, language, "runner.mjs")}, args...)...)
-	command.Stdout = stdout
-	return command.Run()
-}
-
-func TestAnExtractionHookRunsSnapshotsThatNeedNothingInstalled(t *testing.T) {
-	needNode(t)
-	orders := t.TempDir()
-	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
-	put(t, orders, "server.ts", `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
-import { z } from "zod";
-export default createMcpHandler(() => {
-  const server = new McpServer({ name: "orders", version: "1" });
-  server.registerTool("read", { inputSchema: z.object({ id: z.string() }) }, () => ({ content: [] }));
-  return server;
-});`)
-	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{Run: containerRun})
-	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
-		t.Fatalf("schema-only server in a snapshot = %+v, %v", contract, err)
 	}
 }

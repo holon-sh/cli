@@ -195,7 +195,7 @@ func (d *devLoop) buildOverlay(app manifestApp, snapshot, archive string) (ocisp
 }
 
 // writeOverlay archives root with a stable file order and no timestamps or owners, so that an unchanged
-// snapshot yields the same digest. It leaves out .holon-types, which only image builds read.
+// snapshot yields the same digest.
 func writeOverlay(root, destination string) (descriptor ocispec.Descriptor, err error) {
 	file, err := os.Create(destination)
 	if err != nil {
@@ -215,9 +215,6 @@ func writeOverlay(root, destination string) (descriptor ocispec.Descriptor, err 
 		relative, err := filepath.Rel(root, current)
 		if err != nil || relative == "." {
 			return err
-		}
-		if relative == ".holon-types" {
-			return filepath.SkipDir
 		}
 		info, err := item.Info()
 		if err != nil {
