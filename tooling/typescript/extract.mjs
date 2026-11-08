@@ -4,12 +4,9 @@
 // empty environment, a fixed clock and seeded randomness, so the contract is the same everywhere;
 // no filesystem, network or timers. The application's own Zod and MCP SDK compute the schemas, or
 // the tooling's copies when it has none.
-// The files the loader serves from the application tree are recorded as `sources`, the inputs check
-// and verify require to be unchanged.
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { createHash } from "node:crypto";
-import { readFileSync, realpathSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createSandbox, MissingPackage } from "./sandbox.mjs";
 
 const identity = { name: "holon-contract", version: "1" };
@@ -28,10 +25,7 @@ export async function contract(root, entry) {
       const { createMcpHandler } = await sandbox.import(sandbox.resolve("@modelcontextprotocol/server", file));
       handler = createMcpHandler(() => exported);
     }
-    const result = await catalog(handler);
-    const real = realpathSync(root);
-    const files = [...sandbox.served].map(served => relative(real, served)).filter(path => !path.startsWith("..") && !path.split(sep).includes("node_modules")).sort();
-    return { ...result, sources: Object.fromEntries(files.map(path => [path.split(sep).join("/"), createHash("sha256").update(readFileSync(join(real, path))).digest("hex")])) };
+    return await catalog(handler);
   } catch (error) {
     return { diagnostic: `${entry}: ${sandbox.diagnostic(error)}`, ...(error instanceof MissingPackage && { missing: error.cause }) };
   }

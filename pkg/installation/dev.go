@@ -221,6 +221,8 @@ type devLoop struct {
 	session                protocol.SessionResponse
 	changedImages, pending sets.Set[string]
 	reloaded               map[string]string // the overlay digest each app last restarted from
+	preparing              chan preparation  // what a reload's preparation produces, until the loop accepts it
+	cancelPreparation      context.CancelFunc
 }
 
 func (d *devLoop) renew(ctx context.Context) {
@@ -257,6 +259,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	defer func() {
 		cancel()
 		background.Wait()
+		d.stopPreparation()
 	}()
 	d.options.architectures = d.session.BuildArchitectures
 	d.changedImages, d.pending, d.reloaded = sets.New[string](), sets.New[string](), map[string]string{}
@@ -264,7 +267,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		d.pending.Insert(app.Name)
 	}
 	announce := sync.OnceValue(func() error {
-		if err := printEndpoints(stdout, "Ready", d.session); err != nil {
+		if err := d.options.output.endpoints(stdout, "Ready", d.session, false); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C stops this session.")
@@ -291,6 +294,11 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		case <-ctx.Done():
 			stopRead()
 			return nil
+		case result := <-d.preparing:
+			stopRead()
+			if err := d.acceptPreparation(ctx, result); err != nil && ctx.Err() == nil {
+				d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
+			}
 		case result := <-read:
 			stopRead()
 			if err := d.poll(result.session, result.err); err != nil {
@@ -344,7 +352,7 @@ func (d *devLoop) readSession(ctx context.Context) (<-chan sessionRead, context.
 }
 
 func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
-	d.options.output.problem("editor imports", d.options.types.prepared.Write())
+	d.options.output.problem("editor imports", d.options.types.repair())
 	if expiry, err := time.Parse(time.RFC3339Nano, d.session.ExpiresAt); err == nil && !expiry.After(d.clock.Now()) {
 		return errors.New("development session lease expired")
 	}
@@ -388,11 +396,10 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 // rebuild applies a saved change: in place when its apps can reload, and through new images otherwise.
 func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
 	if d.reloadable(change) {
-		failed, stale := d.reload(ctx, change)
-		if failed.Len() == 0 && !stale {
+		failed := d.reload(ctx, change)
+		if failed.Len() == 0 {
 			return nil
 		}
-		// An empty change still rebuilds the apps whose clients went stale.
 		change.contexts = failed
 	}
 	return d.buildImages(ctx, change)
@@ -416,6 +423,7 @@ func (d *devLoop) buildImages(ctx context.Context, change devChange) error {
 			return nil
 		}
 	}
+	d.stopPreparation()
 	if _, err := d.manager.controlToken(ctx); err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}

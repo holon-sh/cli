@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/holon-sh/cli/internal/commandenv"
@@ -41,7 +42,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		return "", errors.New("invalid build architectures")
 	}
 	p := app.resolved.types
-	config, start, err := stageSnapshot(app, p, true)
+	config, start, err := stageSnapshot(app, p)
 	if err != nil {
 		return "", err
 	}
@@ -78,8 +79,8 @@ func buildArchitectures(configured []string) []string {
 // stageSnapshot fills p's snapshot as an image build or a source overlay reads it: the generated clients,
 // then the SDK launcher for a hosted entry. It returns the build configuration and start command, either
 // of which may be empty.
-func stageSnapshot(app manifestApp, p *preparedTypes, check bool) (string, []string, error) {
-	config, err := stageTypes(p, check)
+func stageSnapshot(app manifestApp, p *preparedTypes) (string, []string, error) {
+	config, err := stageTypes(p)
 	if err != nil {
 		return "", nil, err
 	}
@@ -120,10 +121,10 @@ func stageLauncher(snapshot, entry string) ([]string, error) {
 		bootstrap = fmt.Sprintf("import asyncio\nfrom holon_host import start\nasyncio.run(start(%q))\n", module)
 		start = []string{"python", "./.holon/main.py"}
 	}
-	if err := os.WriteFile(filepath.Join(hostDir, adapter), []byte(contents), 0o644); err != nil {
+	if err := mcpcontract.WriteStable(filepath.Join(hostDir, adapter), []byte(contents), 0o644); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(hostDir, launcher), []byte(bootstrap), 0o644); err != nil {
+	if err := mcpcontract.WriteStable(filepath.Join(hostDir, launcher), []byte(bootstrap), 0o644); err != nil {
 		return nil, err
 	}
 	return start, nil

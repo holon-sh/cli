@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/containerd/containerd/v2/core/images"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -23,8 +24,8 @@ func Copy(ctx context.Context, source oras.ReadOnlyTarget, destination oras.Targ
 	}
 	var document map[string]json.RawMessage
 	var children, selected []ocispec.Descriptor
-	switch descriptor.MediaType {
-	case ocispec.MediaTypeImageIndex, "application/vnd.docker.distribution.manifest.list.v2+json":
+	switch {
+	case images.IsIndexType(descriptor.MediaType):
 		if err := FetchJSON(ctx, source, descriptor, &document); err != nil {
 			return ocispec.Descriptor{}, err
 		}
@@ -71,7 +72,7 @@ func Copy(ctx context.Context, source oras.ReadOnlyTarget, destination oras.Targ
 }
 
 func imagePlatform(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor) (ocispec.Platform, error) {
-	if descriptor.MediaType != ocispec.MediaTypeImageManifest && descriptor.MediaType != "application/vnd.docker.distribution.manifest.v2+json" {
+	if !images.IsManifestType(descriptor.MediaType) {
 		return ocispec.Platform{}, fmt.Errorf("unsupported image manifest %q", descriptor.MediaType)
 	}
 	var manifest ocispec.Manifest

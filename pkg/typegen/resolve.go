@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -24,6 +26,9 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	o := options.defaults()
 	if err := source.validate(); err != nil {
 		return nil, err
+	}
+	if source.from != "" {
+		fmt.Fprintf(o.Stderr, "%s: using %s from %s\n", source.Alias, source.Endpoint, source.from)
 	}
 	switch {
 	case source.Path != "":
@@ -39,10 +44,11 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 			return nil, err
 		}
 		defer os.RemoveAll(root)
-		tools, release := o.tools()
-		defer release()
+		if err := tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
+			return nil, err
+		}
 		// Printing a contract is how a committed one is regenerated, so a stale file is not an error here.
-		if err := extractSources(ctx, root, tools, []*preparedSource{prepared}, o, false); err != nil {
+		if err := extractSources(ctx, root, []*preparedSource{prepared}, o, false); err != nil {
 			return nil, err
 		}
 		return NewDocument(ctx, prepared.metadata)

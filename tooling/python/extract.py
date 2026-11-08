@@ -1,7 +1,7 @@
 """Obtain an application's MCP contract by running its server and asking it.
 
-Usage: extract.py contract ROOT ENTRY. The contract (tools, resources and the application files the
-server loaded) is printed on stdout; a failure is a diagnostic on stderr with status 2, or status 3
+Usage: extract.py contract ROOT ENTRY. The contract (the server's tools, resources and its own
+description) is printed on stdout; a failure is a diagnostic on stderr with status 2, or status 3
 with the uninstalled package's name as the last line. The runner re-runs itself without site
 packages or the caller's environment, where an import finder serves the application's files, the
 standard library and its environment's installed packages (mcp and pydantic among them), and names
@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import builtins
 import datetime
-import hashlib
 import importlib.abc
 import importlib.machinery
 import importlib.util
@@ -40,7 +39,6 @@ if TYPE_CHECKING:
     from mcp.server import MCPServer, Server
 
 RESOURCE_SCHEMA = "sh.holon/outputSchema"
-INSTALLED = {"site-packages", "dist-packages", ".venv", "venv", "node_modules"}
 STDLIB = Path(sysconfig.get_paths()["stdlib"]).resolve()
 EPOCH = 315532800  # 1980-01-01T00:00:00Z, the instant the frozen clock shows
 MONOTONIC = time.monotonic
@@ -64,7 +62,7 @@ def unavailable(name: str, capability: str) -> Callable[..., NoReturn]:
 
 
 class Finder(importlib.abc.MetaPathFinder):
-    """Serves the application's files and installed packages, recording application files."""
+    """Serves the application's files and installed packages."""
 
     def __init__(self, root: Path, entry: Path) -> None:
         self.root = root
@@ -72,16 +70,10 @@ class Finder(importlib.abc.MetaPathFinder):
         self.search = list(
             dict.fromkeys([str(root), str(entry.parent), *self.packages])
         )
-        self.served: set[Path] = set()
         # importlib.metadata finds distributions on sys.path; imports still go through find_spec.
         sys.path.extend(
             directory for directory in self.packages if directory not in sys.path
         )
-
-    def application(self, path: Path) -> bool:
-        if not path.is_relative_to(self.root):
-            return False
-        return not INSTALLED & set(path.relative_to(self.root).parts)
 
     def find_spec(
         self, name: str, path: Sequence[str] | None, target: ModuleType | None = None
@@ -98,12 +90,6 @@ class Finder(importlib.abc.MetaPathFinder):
                 "or commit holon-contract.json",
                 name=name,
             )
-        if (
-            spec is not None
-            and spec.origin
-            and self.application(Path(spec.origin).resolve())
-        ):
-            self.served.add(Path(spec.origin).resolve())
         return spec
 
 
@@ -194,8 +180,6 @@ def freeze(finder: Finder) -> None:
                 f"{name} {path}",
                 "files outside the application, its packages and the standard library",
             )()
-        if finder.application(path):
-            finder.served.add(path)
 
     def frozen_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
         if not isinstance(file, int):
@@ -309,7 +293,6 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
         spec = importlib.util.spec_from_file_location(path.stem, path)
         if spec is None or spec.loader is None:
             raise ImportError(f"cannot import {path}")
-        finder.served.add(path.resolve())
         module = sys.modules[path.stem] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         result = loop.run_until_complete(catalog(find_server(module)))
@@ -331,12 +314,7 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
             sys.stderr.write(error.name.partition(".")[0] + "\n")
             return 3
         return 2
-    sources = {}
-    for file in sorted(finder.served):
-        with file.open("rb") as source:
-            digest = hashlib.file_digest(source, "sha256").hexdigest()
-        sources[file.relative_to(root).as_posix()] = digest
-    json.dump({**result, "sources": sources}, stdout)
+    json.dump(result, stdout)
     stdout.flush()  # Python 3.11 loses it at exit once the server's world is frozen
     return 0
 

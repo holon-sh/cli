@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/containerd/containerd/v2/core/images"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -45,8 +46,8 @@ func rewrite(
 	if err := FetchJSON(ctx, repository, descriptor, &document); err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	switch descriptor.MediaType {
-	case ocispec.MediaTypeImageIndex, "application/vnd.docker.distribution.manifest.list.v2+json":
+	switch {
+	case images.IsIndexType(descriptor.MediaType):
 		if platform != nil {
 			return ocispec.Descriptor{}, errors.New("nested image indexes are unsupported")
 		}
@@ -54,11 +55,11 @@ func rewrite(
 		if err := json.Unmarshal(document["manifests"], &children); err != nil {
 			return ocispec.Descriptor{}, errors.New("image index has no manifests")
 		}
-		images := make([]ocispec.Descriptor, 0, len(children))
+		manifests := make([]ocispec.Descriptor, 0, len(children))
 		executable := false
 		for _, child := range children {
 			if child.ArtifactType == mcpcontract.MediaType {
-				images = append(images, child)
+				manifests = append(manifests, child)
 				continue
 			}
 			if child.ArtifactType != "" || child.Annotations["vnd.docker.reference.type"] == "attestation-manifest" {
@@ -73,14 +74,14 @@ func rewrite(
 			}
 			child.Digest, child.Size = prepared.Digest, prepared.Size
 			child.Data, child.URLs = nil, nil
-			images = append(images, child)
+			manifests = append(manifests, child)
 			executable = true
 		}
 		if !executable {
 			return ocispec.Descriptor{}, errors.New("image index has no executable manifests")
 		}
-		document["manifests"], _ = json.Marshal(images)
-	case ocispec.MediaTypeImageManifest, "application/vnd.docker.distribution.manifest.v2+json":
+		document["manifests"], _ = json.Marshal(manifests)
+	case images.IsManifestType(descriptor.MediaType):
 		var configDescriptor ocispec.Descriptor
 		var layers []ocispec.Descriptor
 		if err := json.Unmarshal(document["config"], &configDescriptor); err != nil {
@@ -102,8 +103,8 @@ func rewrite(
 			return ocispec.Descriptor{}, err
 		}
 		_ = json.Unmarshal(config["config"], &image.Runtime)
-		if descriptor.MediaType == "application/vnd.docker.distribution.manifest.v2+json" {
-			image.layerMediaType = "application/vnd.docker.image.rootfs.diff.tar.gzip"
+		if descriptor.MediaType == images.MediaTypeDockerSchema2Manifest {
+			image.layerMediaType = images.MediaTypeDockerSchema2LayerGzip
 		}
 		if err := transform(&image); err != nil {
 			return ocispec.Descriptor{}, err

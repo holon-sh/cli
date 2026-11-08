@@ -104,9 +104,7 @@ def extract(apps: dict[str, tuple[Path, str]]) -> dict[str, dict]:
     return results
 
 
-def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
-    tmp_path,
-):
+def test_the_bundle_extracts_each_servers_catalog(tmp_path):
     files = {
         "src/server.py": SERVER,
         "src/models.py": MODELS,
@@ -132,29 +130,7 @@ def test_the_bundle_extracts_each_servers_catalog_and_detects_changed_sources(
         },
         {"uri": "ui://orders/app.html", "outputSchema": {}},
     ]
-    # Every application file the server imported or read is a recorded input.
-    assert list(contract["sources"]) == [
-        "catalog/__init__.py",
-        "catalog/region.py",
-        "order.json",
-        "src/lifespan.py",
-        "src/models.py",
-        "src/server.py",
-    ]
     assert [tool["name"] for tool in result["low"]["tools"]] == ["lookup"]
-
-    config = tmp_path / "verify.json"
-    recorded = {str(orders / name): d for name, d in contract["sources"].items()}
-    config.write_text(json.dumps({"sources": recorded}))
-    runner = [sys.executable, str(ROOT / "runner.py")]
-    subprocess.run([*runner, "verify", str(config)], check=True)
-    models = orders / "src/models.py"
-    models.write_text(models.read_text() + "# changed\n")
-    checked = subprocess.run(
-        [*runner, "verify", str(config)], text=True, capture_output=True, check=False
-    )
-    assert checked.returncode != 0
-    assert "sources changed after extraction" in checked.stderr
 
 
 FROZEN = """

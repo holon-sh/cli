@@ -19,6 +19,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/mcptype"
+	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/opencontainers/go-digest"
 )
 
@@ -34,9 +35,6 @@ type Options struct {
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
 	// runs the server in its own directory and stops it after 30 seconds.
 	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
-	// Tooling, when set, is shared by every call that a command makes with it, so the tooling is
-	// unpacked and each interpreter probed once. Without it each call has its own.
-	Tooling *Tooling
 }
 
 func validateEnv(env []string) error {
@@ -59,26 +57,9 @@ type preparedSource struct {
 	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
 	server                                     *mcpregistry.Descriptor
-	sources                                    map[string]string
 }
 
 func (s *preparedSource) extract(result *extraction) error {
-	// The runners report the application files the server loaded. Those outside the snapshot, such
-	// as generated slots that an image build replaces, are not inputs that check can verify.
-	matcher, err := SourceMatcher(s.origin)
-	if err != nil {
-		return err
-	}
-	s.sources = map[string]string{}
-	for path, digest := range result.Sources {
-		ignored, err := IgnoredSource(s.origin, filepath.Join(s.origin, filepath.FromSlash(path)), matcher)
-		if err != nil {
-			return err
-		}
-		if !ignored {
-			s.sources[path] = digest
-		}
-	}
 	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
 	if s.metadata.Identity == (mcpcontract.Identity{}) {
 		descriptor, err := ParseDescriptor(result.ServerInfo)
@@ -99,8 +80,8 @@ type preparedConsumer struct {
 	document *Document
 }
 
-// Prepared owns a temporary directory for the snapshots that an Options.Run hook extracts. Close
-// releases it; preparation never modifies consumers.
+// Prepared owns a temporary directory for tooling and documents. Close releases it; preparation
+// never modifies consumers.
 type Prepared struct {
 	consumers []*preparedConsumer
 	paths     map[string]*preparedSource
@@ -140,6 +121,9 @@ func fetchSources(ctx context.Context, consumers []Consumer, o Options) func() m
 }
 
 func (p *Prepared) Close() error { return os.RemoveAll(p.root) }
+
+// Tooling is the directory the contract runners and checkers are unpacked in, until Close.
+func (p *Prepared) Tooling() string { return filepath.Join(p.root, "tooling") }
 
 // Metadata returns each consumer's own contract document (identity, extracted contract and the
 // expectations it holds of its sources) by consumer name, plus every resolved source by alias.
@@ -250,9 +234,12 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			paths = append(paths, s)
 		}
 	}
-	tools, release := o.tools()
-	defer release()
-	if err = extractSources(ctx, root, tools, paths, o, true); err != nil {
+	if len(paths) != 0 {
+		if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
+			return nil, err
+		}
+	}
+	if err = extractSources(ctx, root, paths, o, true); err != nil {
 		return nil, err
 	}
 	p.fetched = fetched()
