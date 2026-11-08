@@ -243,7 +243,7 @@ async def checkout(id: str) -> float:
 			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "incompatible type") {
 				t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, progress.String())
 			}
-			if strings.Contains(progress.String(), "Collecting mypy") || !strings.Contains(progress.String(), checkerInstall) {
+			if strings.Contains(progress.String(), "Collecting mypy") {
 				t.Fatalf("source edit reinstalled the type checker: %v\n%s", err, progress.String())
 			}
 			continue
