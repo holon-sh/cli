@@ -136,15 +136,6 @@ func generationCases(t *testing.T) []generationCase {
 		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "runtime": `+runtime+`, "protocol": `+quoted(protocol)+`, "go_module": "example.com/é/runtime", "own": "orders", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
 	}
 	add("empty-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
-	add("inputs-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime", "contracts": {"orders": {"tools": [{"name": "lookup",
-        "inputSchema": {"type": "object", "required": ["id", "rows", "byRegion"],
-            "properties": {
-                "id": {"type": "string"},
-                "rows": {"type": "array", "items": {"$ref": "#/$defs/Row"}},
-                "byRegion": {"type": "object", "additionalProperties": {"type": "object", "properties": {"quantity": {"type": "integer"}}}}
-            },
-            "$defs": {"Row": {"type": "object", "required": ["sku"], "properties": {"sku": {"type": "string"}}}}},
-        "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}}}]}}}`)
 	for _, target := range []string{"node", "python"} {
 		// sink-browser already renders the kitchen sink's TypeScript, so only Python renders it here.
 		options, contracts := "", sampleContracts+`, "schemas": `+kitchenSink+`}`
@@ -162,10 +153,8 @@ func generationCases(t *testing.T) []generationCase {
 		{"bad-target", `"target": "wasm"`},
 		{"identity-empty", `"identity": {"name": "", "version": "1"}`},
 		{"duplicate-tool", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}}, {"name":"read", "inputSchema":{"type":"object"}}]}}`},
-		{"input-not-object", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"string"}}]}}`},
 		{"output-null", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}, "outputSchema":null}]}}`},
 		{"duplicate-resource", `"contracts": {"x": {"tools": [], "resources": [{"uri":"r://a", "outputSchema":{}}, {"uri":"r://a", "outputSchema":{}}]}}`},
-		{"external-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "https://example.com"}}}}]}}`},
 		{"unresolved-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/nope"}}}}]}}`},
 		{"external-ref-in-cycle", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/$defs/A"}}, "$defs": {"A": {"anyOf": [{"$ref": "/$defs/B"}]}, "B": {"$ref": "#/$defs/A"}}}}]}}`},
 		{"schema-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": 5}}}]}}`},

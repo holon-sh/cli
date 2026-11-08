@@ -3,6 +3,7 @@ package mcptype
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -27,7 +28,7 @@ func pythonIdentifier(name string) bool {
 // joined by underscores, as Go joins them into a method name, with a prefix before a leading digit
 // and a suffix after a keyword.
 func pythonMethod(tool string) string {
-	method := cmp.Or(strings.Join(goWords.FindAllString(tool, -1), "_"), "value")
+	method := cmp.Or(strings.Join(asciiWords.FindAllString(tool, -1), "_"), "value")
 	if method[0] >= '0' && method[0] <= '9' {
 		method = "x" + method
 	}
@@ -43,22 +44,20 @@ func pythonMethod(tool string) string {
 // different tool. Those tools and the ones the runtime does not expose, whose names start with an
 // underscore, have no method.
 func pythonMethods(tools catalog) map[string]string {
+	methods := map[string]string{}
 	claimed := map[string]int{}
 	for name := range tools {
-		if pythonIdentifier(name) {
-			claimed[name]++
-		} else if !strings.HasPrefix(name, "_") {
-			claimed[pythonMethod(name)]++
+		if strings.HasPrefix(name, "_") {
+			continue
 		}
-	}
-	methods := map[string]string{}
-	for name := range tools {
-		if pythonIdentifier(name) {
-			methods[name] = name
-		} else if method := pythonMethod(name); !strings.HasPrefix(name, "_") && claimed[method] == 1 {
-			methods[name] = method
+		method := name
+		if !pythonIdentifier(name) {
+			method = pythonMethod(name)
 		}
+		methods[name] = method
+		claimed[method]++
 	}
+	maps.DeleteFunc(methods, func(name, method string) bool { return name != method && claimed[method] > 1 })
 	return methods
 }
 
@@ -257,14 +256,12 @@ func (e *pythonEmitter) input(value typ, name string) (string, []string) {
 }
 
 // generatePython writes the typing-only module body: shapes, export classes, protocols and _Clients.
-// It also returns, per binding, the tools whose methods are not named after them, by method name.
-func generatePython(contracts map[string]catalog) (string, map[string]map[string]string) {
+func generatePython(contracts map[string]catalog) string {
 	emitter := &pythonEmitter{names: map[string]bool{"Inputs": true, "Outputs": true, "InputTypes": true, "OutputTypes": true}, emitted: map[*declaration]bool{}}
 	var clients []string
 	exportNames := []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"}
 	exports := make([][]string, 4)
 	var fields, indices []string
-	renamed := map[string]map[string]string{}
 	for _, binding := range sortedKeys(contracts) {
 		appName := unique(emitter.names, typeIdentifier(binding)+"App")
 		toolsName := unique(emitter.names, typeIdentifier(binding)+"Tools")
@@ -292,12 +289,6 @@ func generatePython(contracts map[string]catalog) (string, map[string]map[string
 			}
 			if method == "" {
 				continue
-			}
-			if method != name {
-				if renamed[binding] == nil {
-					renamed[binding] = map[string]string{}
-				}
-				renamed[binding][method] = name
 			}
 			methods = append(methods, pythonOverloaded(signatures)...)
 			for i, rendered := range []string{input, output} {
@@ -335,5 +326,5 @@ func generatePython(contracts map[string]catalog) (string, map[string]map[string
 	sections = append(sections, clients...)
 	fields = append(fields, pythonOverloaded(indices)...)
 	sections = append(sections, pythonBlock("class _Clients(_typing.Protocol):", fields, "    "))
-	return strings.Join(sections, "\n\n") + "\n", renamed
+	return strings.Join(sections, "\n\n") + "\n"
 }
