@@ -15,6 +15,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/protocol"
 )
 
 const dockerignoreFile = ".dockerignore"
@@ -45,7 +48,7 @@ type Source struct {
 	Path string
 	// Registry is an MCP registry server version. Resolve its OCI package's document,
 	// falling back to its streamable-http remote when the image has no contract.
-	Registry *Reference
+	Registry *protocol.RegistryRef
 	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract. With an
 	// Alias, the environment variable <ALIAS>_MCP_TOKEN supplies a bearer token for its origin.
 	Endpoint string
@@ -68,7 +71,7 @@ func ParseSource(arg string) (Source, error) {
 		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
 			name, _ := url.PathUnescape(m[1])
 			version, _ := url.PathUnescape(m[2])
-			source.Registry = &Reference{Name: name, Version: version, Registry: u.Scheme + "://" + u.Host}
+			source.Registry = &protocol.RegistryRef{Name: name, Version: version, Registry: u.Scheme + "://" + u.Host}
 			return source, nil
 		}
 		source.Endpoint = arg
@@ -116,10 +119,10 @@ func (s Source) validate() error {
 		return fmt.Errorf("alias %q must be a DNS label of at most 49 characters", s.Alias)
 	}
 	if s.Registry != nil {
-		return s.Registry.Validate()
+		return validRegistryRef(*s.Registry)
 	}
 	if s.Endpoint != "" {
-		return validEndpoint(s.Endpoint)
+		return mcpregistry.ValidateEndpoint(s.Endpoint)
 	}
 	return nil
 }

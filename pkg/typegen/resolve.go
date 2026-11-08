@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -14,7 +13,9 @@ import (
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/tooling"
+	"github.com/holon-sh/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -101,20 +102,12 @@ func (t endpointTransport) RoundTrip(request *http.Request) (*http.Response, err
 	return nil, fmt.Errorf("server refused the request with HTTP %d; %s", response.StatusCode, hint)
 }
 
-func validEndpoint(location string) error {
-	u, err := url.Parse(location)
-	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" {
-		return errors.New("MCP URL must be an HTTP(S) URL without credentials or a fragment")
-	}
-	return nil
-}
-
 // resolveRegistry fetches a registry record, then its first OCI package's
 // contract document or its first streamable-http remote's schemas.
 // A package error is an error; a package without a contract artifact falls through to the remote.
-func resolveRegistry(ctx context.Context, ref Reference, o Options) (*Document, error) {
+func resolveRegistry(ctx context.Context, ref protocol.RegistryRef, o Options) (*Document, error) {
 	label := ref.Name + "@" + ref.Version
-	d, err := (Client{HTTP: o.HTTPClient, Origin: ref.RegistryURL()}).Get(ctx, ref.Name, ref.Version)
+	d, err := mcpregistry.Fetch(ctx, o.HTTPClient, ref)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", label, err)
 	}
@@ -151,7 +144,7 @@ func resolveRegistry(ctx context.Context, ref Reference, o Options) (*Document, 
 // the server's own serverInfo names the contract; a registry source supplies its record's identity.
 // MCP allows an empty serverInfo version, which SDKs report for a server that does not set one.
 func liveContract(ctx context.Context, location string, identity *mcpcontract.Identity, client *http.Client) (*Document, error) {
-	if err := validEndpoint(location); err != nil {
+	if err := mcpregistry.ValidateEndpoint(location); err != nil {
 		return nil, err
 	}
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon-types", Version: "0.0.1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: location, HTTPClient: client, DisableStandaloneSSE: true}, nil)

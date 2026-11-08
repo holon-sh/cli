@@ -54,6 +54,8 @@ func TestConfigurationJSONSchemas(t *testing.T) {
 			{"unknown Holon field", strings.Replace(descriptor, `"sh.holon":{`, `"sh.holon":{"unknown":true,`, 1), false},
 			{"missing dependency version", strings.Replace(descriptor,
 				`"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{"name":"io.github.acme/orders"}`, 1), false},
+			{"dependency url", strings.Replace(descriptor,
+				`"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{"url":"https://orders.example/mcp"}`, 1), true},
 		}},
 	} {
 		t.Run(reference.name, func(t *testing.T) {

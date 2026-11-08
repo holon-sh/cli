@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -174,7 +175,6 @@ func TestRegistrySourceResolution(t *testing.T) {
 		{"oci identity mismatch", base + oci + `}`, "", "belongs to example.com/other", imageClient(t, wrongIdentity)},
 		{"oci error propagates", base + `,"packages":[{"registryType":"oci","identifier":"orders:1.0.0"},{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]` + remote + `}`, "", "package orders:1.0.0: package identifier must use an explicit OCI registry", nil},
 		{"neither", base + `,"packages":[{"registryType":"npm","identifier":"orders"}]}`, "", "publishes neither", nil},
-		{"wrong registry identity", `{"name":"example.com/wrong","version":"1.0.0","description":"Wrong"}`, "", "different server name", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			record = test.record
@@ -187,7 +187,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 				strings.TrimPrefix(live.URL, "http://"):    http.DefaultTransport,
 				"images.example":                           image.Transport,
 			}}
-			ref := Reference{Name: identity.Name, Version: identity.Version, Registry: server.URL}
+			ref := protocol.RegistryRef{Name: identity.Name, Version: identity.Version, Registry: server.URL}
 			metadata, err := ResolveDocument(t.Context(), Source{Alias: "orders", Registry: &ref}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir(), "ORDERS_MCP_TOKEN=secret"}})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {

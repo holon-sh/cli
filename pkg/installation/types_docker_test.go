@@ -88,8 +88,8 @@ export default createMcpHandler(() => {
 		originalFiles[filepath.Join(path, lockName)] = lock
 		app := manifestApp{Name: name, Path: path, resolved: resolvedApp{App: protocol.App{Name: name, Port: 3000}}}
 		if name == "checkout" {
-			app.resolved.descriptor = &mcpregistry.Descriptor{Name: "io.github.example/checkout", Version: "1.0.0", Requires: map[string]protocol.RegistryRef{
-				"orders": {Name: "io.github.example/orders", Version: "1.0.0", Registry: "https://private-registry.example"},
+			app.resolved.descriptor = &mcpregistry.Descriptor{Name: "io.github.example/checkout", Version: "1.0.0", Requires: map[string]mcpregistry.Requirement{
+				"orders": {RegistryRef: protocol.RegistryRef{Name: "io.github.example/orders", Version: "1.0.0", Registry: "https://private-registry.example"}},
 			}}
 			app.resolved.Requires = []string{"orders"}
 		}
@@ -276,7 +276,7 @@ async def checkout(id: str) -> float:
 		app := manifestApp{Name: name, Path: filepath.Join(root, name), resolved: resolvedApp{App: protocol.App{Name: name}, descriptor: descriptor}}
 		if name == "checkout" {
 			code = caller
-			descriptor.Requires = map[string]protocol.RegistryRef{"orders": {Name: "example.org/orders", Version: "1"}}
+			descriptor.Requires = map[string]mcpregistry.Requirement{"orders": {RegistryRef: protocol.RegistryRef{Name: "example.org/orders", Version: "1"}}}
 			app.resolved.Requires = []string{"orders"}
 		}
 		sourceFiles(t, app.Path, map[string]string{

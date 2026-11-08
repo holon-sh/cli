@@ -27,7 +27,7 @@ func registry(t *testing.T, handler http.HandlerFunc) protocol.RegistryRef {
 
 func TestFetchRefusesInvalidResponses(t *testing.T) {
 	record := `{"server":` + descriptorJSON + `}`
-	if descriptor, err := Fetch(t.Context(), registry(t, func(w http.ResponseWriter, _ *http.Request) {
+	if descriptor, err := Fetch(t.Context(), nil, registry(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(record))
 	})); err != nil || descriptor.Description != "Analytics tools" {
 		t.Fatalf("descriptor = %+v, %v", descriptor, err)
@@ -41,7 +41,7 @@ func TestFetchRefusesInvalidResponses(t *testing.T) {
 		{name: "unavailable", body: record, status: 503, want: "HTTP 503"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := Fetch(t.Context(), registry(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, err := Fetch(t.Context(), nil, registry(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(test.status)
 				_, _ = w.Write([]byte(test.body))
 			}))
@@ -52,7 +52,7 @@ func TestFetchRefusesInvalidResponses(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := Fetch(ctx, registry(t, func(http.ResponseWriter, *http.Request) {})); !errors.Is(err, context.Canceled) {
+	if _, err := Fetch(ctx, nil, registry(t, func(http.ResponseWriter, *http.Request) {})); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation: %v", err)
 	}
 }
@@ -60,7 +60,7 @@ func TestFetchRefusesInvalidResponses(t *testing.T) {
 func TestFetchStaysOnValidRegistries(t *testing.T) {
 	for target, want := range map[string]string{"http://registry.example/": "must be an HTTPS URL", "/loop": "too many"} {
 		t.Run(target, func(t *testing.T) {
-			_, err := Fetch(t.Context(), registry(t, func(w http.ResponseWriter, r *http.Request) {
+			_, err := Fetch(t.Context(), nil, registry(t, func(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, target, http.StatusFound)
 			}))
 			if err == nil || !strings.Contains(err.Error(), want) {

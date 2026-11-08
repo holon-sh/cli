@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 
@@ -25,17 +26,42 @@ type Descriptor struct {
 	Repository  struct {
 		URL string `json:"url"`
 	} `json:"repository"`
-	Remotes  []Transport                 `json:"remotes"`
-	Packages []Package                   `json:"packages"`
-	Meta     map[string]json.RawMessage  `json:"_meta"`
-	Requires map[string]wire.RegistryRef `json:"-"`
-	Egress   wire.Egress                 `json:"-"`
+	Remotes  []Transport                `json:"remotes"`
+	Packages []Package                  `json:"packages"`
+	Meta     map[string]json.RawMessage `json:"_meta"`
+	Requires map[string]Requirement     `json:"-"`
+	Egress   wire.Egress                `json:"-"`
 }
 
 type HolonMetadata struct {
-	Requires map[string]wire.RegistryRef `description:"Dependencies keyed by app name." json:"requires"`
+	Requires map[string]Requirement `description:"Dependencies keyed by app name." json:"requires"`
 
 	Egress wire.Egress `description:"Outbound TCP destinations: DNS names or IP addresses; {NAME} is a non-secret input." json:"egress,omitzero" nullable:"false"`
+}
+
+type Requirement struct {
+	wire.RegistryRef
+
+	URL string `json:"url,omitempty"`
+}
+
+func (r Requirement) Validate() error {
+	switch {
+	case r.URL == "":
+		return r.RegistryRef.Validate()
+	case r.RegistryRef != (wire.RegistryRef{}):
+		return errors.New("a url names the server; leave out name, version and registry")
+	default:
+		return ValidateEndpoint(r.URL)
+	}
+}
+
+func ValidateEndpoint(location string) error {
+	u, err := url.Parse(location)
+	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" {
+		return errors.New("MCP URL must be an HTTP(S) URL without credentials or a fragment")
+	}
+	return nil
 }
 
 type Package struct {

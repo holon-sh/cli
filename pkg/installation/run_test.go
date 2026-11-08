@@ -461,18 +461,18 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 	selection := "apps:\n- name: unused\n  path: ./not-checked-out\n  access: {server: {}}\n"
 	var dependency *protocol.RegistrySource
 	var dependencyName string
+	requires := map[string]any{"delta": map[string]string{"url": "https://upstream.example/mcp"}}
 	for _, name := range []string{"gamma", "beta", "alpha"} {
 		document := descriptorDocument(name)
 		delete(document, "packages")
 		document["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://upstream.example/mcp"}}
+		document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": requires}}}
 		if dependency != nil {
-			document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
-				"requires": map[string]protocol.RegistryRef{dependencyName: dependency.RegistryRef},
-			}}}
 			data, _ := json.Marshal(dependency)
 			selection += fmt.Sprintf("- name: %s\n  registry: %s\n  access: {server: {}}\n", dependencyName, data)
 		}
 		dependency, dependencyName = descriptorRegistry(t, document), name
+		requires = map[string]any{name: dependency.RegistryRef}
 	}
 	alpha := "alpha=" + dependency.Registry + "/v0.1/servers/" + url.PathEscape(dependency.Name) + "/versions/" + dependency.Version
 	for _, tc := range []struct {

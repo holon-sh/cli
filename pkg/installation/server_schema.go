@@ -3,11 +3,18 @@ package installation
 import (
 	"encoding/json"
 
+	"github.com/swaggest/jsonschema-go"
+
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/protocol"
 )
 
 func ServerJSONSchema() ([]byte, error) {
+	type endpointRequirement struct {
+		URL string `description:"URL of a running MCP server." format:"uri" json:"url" required:"true"`
+	}
 	reflector := configurationReflector()
+	reflector.AddTypeMapping(mcpregistry.Requirement{}, jsonschema.OneOf(protocol.RegistryRef{}, endpointRequirement{}))
 	reflected, err := reflector.Reflect(struct {
 		Meta struct {
 			Publisher struct {

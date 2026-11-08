@@ -16,6 +16,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/opencontainers/go-digest"
@@ -57,7 +58,7 @@ func (o Options) defaults() Options {
 type preparedSource struct {
 	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
-	server                                     Server
+	server                                     *mcpregistry.Descriptor
 	sources                                    map[string]string
 }
 
@@ -84,7 +85,7 @@ func (s *preparedSource) extract(result *extraction) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w; declare the server's name, version and description in its MCP constructor, or add a server.json", s.origin, err)
 		}
-		s.metadata.Identity, s.server = descriptor.Identity(), descriptor.Server
+		s.metadata.Identity, s.server = descriptor.Identity(), descriptor
 	}
 	return nil
 }
@@ -123,8 +124,8 @@ func (p *Prepared) Metadata() map[string]*mcpcontract.Metadata {
 }
 
 // Servers returns how each consumer's own server describes itself, by consumer name.
-func (p *Prepared) Servers() map[string]Server {
-	result := map[string]Server{}
+func (p *Prepared) Servers() map[string]*mcpregistry.Descriptor {
+	result := map[string]*mcpregistry.Descriptor{}
 	for _, c := range p.consumers {
 		if c.server != nil {
 			result[c.Name] = c.server.server
@@ -156,7 +157,7 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 	case err != nil:
 		return nil, err
 	case descriptor != nil:
-		s.metadata.Identity, s.server = descriptor.Identity(), descriptor.Server
+		s.metadata.Identity, s.server = descriptor.Identity(), descriptor
 	case language == "go":
 		return nil, fmt.Errorf("%s: a Go server source needs a server.json beside its entry", origin)
 	}
