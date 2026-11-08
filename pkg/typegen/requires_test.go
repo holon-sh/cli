@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-
 	"github.com/holon-sh/protocol"
 )
 

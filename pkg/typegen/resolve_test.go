@@ -13,9 +13,8 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-
 	"github.com/holon-sh/protocol"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type hostTransport map[string]http.RoundTripper

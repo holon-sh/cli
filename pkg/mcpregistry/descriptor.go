@@ -101,9 +101,6 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 func ParseHolonMetadata(meta map[string]json.RawMessage) (HolonMetadata, error) {
 	var holon HolonMetadata
 	value := meta[PublisherMetadata]
-	if len(value) > 4096 {
-		return HolonMetadata{}, errors.New("publisher-provided metadata exceeds 4096 bytes")
-	}
 	var publisher map[string]json.RawMessage
 	if value != nil {
 		if err := json.Unmarshal(value, &publisher); err != nil {

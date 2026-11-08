@@ -2,14 +2,13 @@ package typegen
 
 import (
 	"errors"
+	"github.com/holon-sh/protocol"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/holon-sh/protocol"
 )
 
 func TestResolveDocumentFindsServerSources(t *testing.T) {

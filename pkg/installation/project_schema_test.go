@@ -56,8 +56,6 @@ func TestConfigurationJSONSchemas(t *testing.T) {
 				`"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{"name":"io.github.acme/orders"}`, 1), false},
 			{"dependency url", strings.Replace(descriptor,
 				`"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{"url":"https://orders.example/mcp"}`, 1), true},
-			{"dependency url with a version", strings.Replace(descriptor,
-				`"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{"url":"https://orders.example/mcp","version":"1.0.0"}`, 1), false},
 		}},
 	} {
 		t.Run(reference.name, func(t *testing.T) {

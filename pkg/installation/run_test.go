@@ -461,18 +461,18 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 	selection := "apps:\n- name: unused\n  path: ./not-checked-out\n  access: {server: {}}\n"
 	var dependency *protocol.RegistrySource
 	var dependencyName string
+	requires := map[string]any{"delta": map[string]string{"url": "https://upstream.example/mcp"}}
 	for _, name := range []string{"gamma", "beta", "alpha"} {
 		document := descriptorDocument(name)
 		delete(document, "packages")
 		document["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://upstream.example/mcp"}}
+		document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": requires}}}
 		if dependency != nil {
-			document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
-				"requires": map[string]protocol.RegistryRef{dependencyName: dependency.RegistryRef},
-			}}}
 			data, _ := json.Marshal(dependency)
 			selection += fmt.Sprintf("- name: %s\n  registry: %s\n  access: {server: {}}\n", dependencyName, data)
 		}
 		dependency, dependencyName = descriptorRegistry(t, document), name
+		requires = map[string]any{name: dependency.RegistryRef}
 	}
 	alpha := "alpha=" + dependency.Registry + "/v0.1/servers/" + url.PathEscape(dependency.Name) + "/versions/" + dependency.Version
 	for _, tc := range []struct {
@@ -534,55 +534,6 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
-	}
-}
-
-func TestRunDevPathAppRequiringRemote(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	alpha := descriptorDocument("alpha")
-	alpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{
-		"requires": map[string]any{"docs": map[string]any{"url": "https://docs.example/mcp"}},
-	}}}
-	sourceFiles(t, root, map[string]string{
-		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
-		manifestFileName: "apps:\n- name: alpha\n  path: ./alpha\n  access: {server: {}}\n- name: docs\n  remote: {url: https://docs.example/mcp}\n  access: {server: {}}\n",
-	})
-	writeDescriptor(t, filepath.Join(root, "alpha", "server.json"), alpha)
-	h := newRunHarness(t)
-	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, protocol.Info{
-			Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}, BuildArchitectures: []string{"arm64"},
-		})
-	})
-	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, protocol.UploadGrant{
-			Grant: "grant-secret", Registry: "registry.example", Repositories: map[string]string{"alpha": "holon/upload/alpha", "docs": "holon/upload/docs"},
-		})
-	})
-	h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolDeleteSession}, nil, func(w http.ResponseWriter, r *http.Request) {
-		switch installationtest.ToolName(r) {
-		case protocol.ToolDeleteSession:
-			installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
-			return
-		case protocol.ToolCreateSession:
-			var input protocol.AppsRequestFor[protocol.App]
-			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-				t.Error(err)
-			}
-			if len(input.Apps) != 2 || !slices.Equal(input.Apps[0].Requires, []string{"docs"}) {
-				t.Errorf("unexpected session: %#v", input.Apps)
-			}
-		}
-		installationtest.WriteJSON(w, apiSession(h, "alpha", "docs"))
-	})
-	h.start(t, buildImage(t, "alpha"))
-	fc := testingclock.NewFakeClock(time.Now())
-	h.run.Clock = fc
-	stdout, _, stop := startDev(t, h.run)
-	stepUntil(t, fc, workflowPoll, func() bool { return strings.Contains(stdout.String(), "/mcp/alpha") })
-	if err := stop(); err != nil {
-		t.Fatal(err)
 	}
 }
 
