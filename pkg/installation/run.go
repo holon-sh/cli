@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
@@ -214,13 +213,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	dev := &devLoop{manager: manager, name: session.Name, manifest: resolved, apps: apps, clock: config.clock(), options: options, session: session}
-	kept := sets.New[string]()
-	for i, app := range resolved.Apps {
-		if first.kept[app.Name].image == request.Apps[i].Image {
-			kept.Insert(app.Path)
-		}
-	}
-	err = dev.run(ctx, stdout, kept)
+	err = dev.run(ctx, stdout)
 	inputs := map[string]string{}
 	for name, types := range options.types.accepted {
 		inputs[name] = types.inputs

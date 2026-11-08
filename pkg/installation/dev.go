@@ -217,7 +217,6 @@ type devLoop struct {
 	options                buildOptions
 	session                protocol.SessionResponse
 	changedImages, pending sets.Set[string]
-	reloaded               map[string]string
 	preparing              chan preparation
 	cancelPreparation      context.CancelFunc
 }
@@ -236,7 +235,7 @@ func (d *devLoop) renew(ctx context.Context) {
 	}
 }
 
-func (d *devLoop) run(ctx context.Context, stdout io.Writer, kept sets.Set[string]) error {
+func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	watcher, err := newDevWatcher(d.manifest, d.clock, d.options.output)
 	if err != nil {
 		return fmt.Errorf("watch build contexts: %w", err)
@@ -259,11 +258,11 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer, kept sets.Set[strin
 		d.stopPreparation()
 	}()
 	d.options.architectures = d.session.BuildArchitectures
-	d.changedImages, d.pending, d.reloaded = sets.New[string](), sets.New[string](), map[string]string{}
+	d.changedImages, d.pending = sets.New[string](), sets.New[string]()
 	for _, app := range d.session.Apps {
 		d.pending.Insert(app.Name)
 	}
-	d.reload(ctx, kept)
+	d.reload(ctx, watcher.contexts)
 	announce := sync.OnceValue(func() error {
 		if err := d.options.output.endpoints(stdout, "Ready", d.session, false); err != nil {
 			return err
@@ -392,8 +391,32 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 func (d *devLoop) rebuild(ctx context.Context, change devChange) {
 	d.reload(ctx, change.contexts)
 	contexts := change.contexts.Union(d.stopPreparation())
-	if change.manifest && !d.reloadManifest(ctx) {
-		return
+	if change.manifest {
+		reloaded, err := resolveManifestFile(d.manifest.file)
+		if err == nil {
+			reloaded.sources, reloaded.access = d.manifest.sources, d.manifest.access
+			reloaded, err = resolveManifestGraph(ctx, reloaded, d.apps...)
+		}
+		if err != nil {
+			if ctx.Err() == nil {
+				d.options.output.problem("app rebuild", fmt.Errorf("metadata resolution failed: %w; existing service remains available", err))
+			}
+			return
+		}
+		if !sameManifestTopology(d.manifest, reloaded) {
+			d.options.output.problem("app metadata",
+				errors.New("app topology, dependencies, configuration, egress or access rules changed; restart holon dev to apply it"))
+			return
+		}
+		d.options.output.problem("app metadata", nil)
+		for i, app := range reloaded.Apps {
+			previous := d.manifest.Apps[i]
+			if app.resolved.Image != previous.resolved.Image || !reflect.DeepEqual(app.Registry, previous.Registry) ||
+				app.Path != "" && !reflect.DeepEqual(app.resolved.descriptor, previous.resolved.descriptor) {
+				d.changedImages.Insert(app.Name)
+			}
+		}
+		d.manifest = reloaded
 	}
 	if contexts.Len() == 0 && d.changedImages.Len() == 0 {
 		d.options.output.status("app rebuild", "no app changed; continuing to watch", progressDone)
@@ -402,22 +425,29 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) {
 	d.prepare(ctx, contexts)
 }
 
-func (d *devLoop) reloadManifest(ctx context.Context) bool {
-	reloaded, err := resolveManifestFile(d.manifest.file)
-	if err == nil {
-		reloaded.sources, reloaded.access = d.manifest.sources, d.manifest.access
-		reloaded, err = resolveManifestGraph(ctx, reloaded, d.apps...)
+func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) error {
+	d.cancelPreparation()
+	d.preparing = nil
+	if ctx.Err() != nil {
+		return nil
 	}
-	if err != nil {
-		if ctx.Err() == nil {
-			d.options.output.problem("app rebuild", fmt.Errorf("metadata resolution failed: %w; existing service remains available", err))
+	d.options.output.problem("MCP types", result.err)
+	if result.err != nil {
+		return nil
+	}
+	for _, app := range result.prepared.Apps {
+		if result.contexts.Has(app.Path) {
+			types := *app.resolved.types
+			types.inputs = d.options.types.accepted[app.Name].inputs
+			d.options.types.accepted[app.Name] = &types
 		}
-		return false
 	}
-	return d.updateManifest(reloaded)
-}
-
-func (d *devLoop) rollOut(ctx context.Context, result preparation) error {
+	if len(result.built.Apps) == 0 {
+		return nil
+	}
+	if result.buildErr != nil {
+		return fmt.Errorf("remote image preparation failed: %w", result.buildErr)
+	}
 	apps := slices.DeleteFunc(result.images, func(app protocol.App) bool {
 		if !slices.ContainsFunc(d.session.Apps, func(current protocol.App) bool {
 			return current.Name == app.Name && current.Image == app.Image && current.Overlay == app.Overlay
@@ -443,7 +473,6 @@ func (d *devLoop) rollOut(ctx context.Context, result preparation) error {
 		for _, app := range apps {
 			d.pending.Insert(app.Name)
 			d.changedImages.Delete(app.Name)
-			delete(d.reloaded, app.Name)
 		}
 		d.session = updated
 		message = fmt.Sprintf("remote update requested (generation %d)", updated.Generation)
@@ -451,22 +480,4 @@ func (d *devLoop) rollOut(ctx context.Context, result preparation) error {
 	d.options.types.accept(result.built)
 	d.options.output.status("app rebuild", message, progressDone)
 	return nil
-}
-
-func (d *devLoop) updateManifest(reloaded manifestSpec) bool {
-	if !sameManifestTopology(d.manifest, reloaded) {
-		d.options.output.problem("app metadata",
-			errors.New("app topology, dependencies, configuration, egress or access rules changed; restart holon dev to apply it"))
-		return false
-	}
-	d.options.output.problem("app metadata", nil)
-	for i, app := range reloaded.Apps {
-		previous := d.manifest.Apps[i]
-		if app.resolved.Image != previous.resolved.Image || !reflect.DeepEqual(app.Registry, previous.Registry) ||
-			app.Path != "" && !reflect.DeepEqual(app.resolved.descriptor, previous.resolved.descriptor) {
-			d.changedImages.Insert(app.Name)
-		}
-	}
-	d.manifest = reloaded
-	return true
 }

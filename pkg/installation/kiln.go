@@ -66,14 +66,8 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	if !request.Development {
 		return image, "", nil
 	}
-	overlay, err := request.writeOverlay(ctx)
-	if err != nil {
-		return "", "", err
-	}
-	if err := request.pushOverlay(ctx, overlay); err != nil {
-		return "", "", err
-	}
-	return image, overlay.Digest.String(), nil
+	overlay, err := request.pushOverlay(ctx, "")
+	return image, overlay, err
 }
 
 func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *preparedTypes) (buildRequest, error) {

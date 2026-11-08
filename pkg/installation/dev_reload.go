@@ -23,7 +23,6 @@ import (
 const (
 	toolReloadApp    = "reload_app"
 	overlayMediaType = "application/vnd.holon.source-overlay.v0.tar+zstd"
-	overlayExtension = ".tar.zst"
 )
 
 type reloadAppRequest struct {
@@ -97,32 +96,6 @@ func (d *devLoop) stopPreparation() sets.Set[string] {
 	return stopped.contexts
 }
 
-func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) error {
-	d.cancelPreparation()
-	d.preparing = nil
-	if ctx.Err() != nil {
-		return nil
-	}
-	d.options.output.problem("MCP types", result.err)
-	if result.err != nil {
-		return nil
-	}
-	for _, app := range result.prepared.Apps {
-		if result.contexts.Has(app.Path) {
-			types := *app.resolved.types
-			types.inputs = d.options.types.accepted[app.Name].inputs
-			d.options.types.accepted[app.Name] = &types
-		}
-	}
-	if len(result.built.Apps) == 0 {
-		return nil
-	}
-	if result.buildErr != nil {
-		return fmt.Errorf("remote image preparation failed: %w", result.buildErr)
-	}
-	return d.rollOut(ctx, result)
-}
-
 func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) (outdated bool, err error) {
 	defer d.options.output.measure(app.Name, "reload")()
 	directory, err := os.MkdirTemp("", "holon-overlay-")
@@ -130,13 +103,12 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) (outdated bool
 		return false, err
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
-	snapshot := filepath.Join(directory, "source")
-	if _, err := snapshotSource(app, snapshot); err != nil {
-		return false, err
-	}
 	accepted := d.options.types.accepted[app.Name]
 	types := *accepted
-	types.root = snapshot
+	types.root = filepath.Join(directory, "source")
+	if _, err := snapshotSource(app, types.root); err != nil {
+		return false, err
+	}
 	plan, err := d.options.planSource(ctx, app, &types)
 	if err != nil {
 		return false, err
@@ -144,34 +116,29 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) (outdated bool
 	if !plan.Development || accepted.inputs == "" {
 		return true, nil
 	}
-	return types.inputs != accepted.inputs, d.restart(ctx, app, plan)
-}
-
-func (d *devLoop) restart(ctx context.Context, app manifestApp, plan buildRequest) error {
+	outdated = types.inputs != accepted.inputs
 	d.options.output.status(app.Name, "reloading", progressWorking)
-	overlay, err := plan.writeOverlay(ctx)
-	if err != nil {
-		return err
-	}
-	if overlay.Digest.String() == d.reloaded[app.Name] {
-		d.options.output.status(app.Name, "unchanged", progressDone)
-		return nil
-	}
+	running := &d.session.Apps[slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })]
 	plan.upload = newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
-	if err := plan.pushOverlay(ctx, overlay); err != nil {
-		return err
+	overlay, err := plan.pushOverlay(ctx, running.Overlay)
+	if err != nil {
+		return outdated, err
+	}
+	if overlay == running.Overlay {
+		d.options.output.status(app.Name, "unchanged", progressDone)
+		return outdated, nil
 	}
 	var result reloadAppResult
 	request := reloadAppRequest{
 		AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name},
-		Digest:     overlay.Digest.String(),
+		Digest:     overlay,
 	}
 	if err := d.manager.Call(ctx, ControlPlane(d.name), toolReloadApp, request, &result); err != nil {
-		return err
+		return outdated, err
 	}
-	d.reloaded[app.Name] = request.Digest
+	running.Overlay = overlay
 	d.options.output.status(app.Name, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
-	return nil
+	return outdated, nil
 }
 
 func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
@@ -179,46 +146,43 @@ func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
 	return fsutil.MapResultKeep
 }
 
-func (r buildRequest) writeOverlay(ctx context.Context) (descriptor ocispec.Descriptor, err error) {
+func (r buildRequest) pushOverlay(ctx context.Context, unless string) (string, error) {
 	source, err := fsutil.NewFS(r.Source)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return "", err
 	}
 	stable, err := fsutil.NewFilterFS(source, &fsutil.FilterOpt{Map: stableStat})
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return "", err
 	}
-	file, err := os.Create(r.Source + overlayExtension)
+	file, err := os.Create(r.Source + ".tar.zst")
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return "", err
 	}
-	defer func() { err = errors.Join(err, file.Close()) }()
+	defer func() { _ = file.Close() }()
 	digester := digest.SHA256.Digester()
 	compressed, err := zstd.NewWriter(io.MultiWriter(file, digester.Hash()), zstd.WithEncoderConcurrency(1))
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return "", err
 	}
 	if err := errors.Join(fsutil.WriteTar(ctx, stable, compressed), compressed.Close()); err != nil {
-		return ocispec.Descriptor{}, err
+		return "", err
 	}
-	info, err := file.Stat()
-	if err != nil {
-		return ocispec.Descriptor{}, err
+	overlay := ocispec.Descriptor{MediaType: overlayMediaType, Digest: digester.Digest()}
+	if overlay.Digest.String() == unless {
+		return unless, nil
 	}
-	return ocispec.Descriptor{MediaType: overlayMediaType, Digest: digester.Digest(), Size: info.Size()}, nil
-}
-
-func (r buildRequest) pushOverlay(ctx context.Context, overlay ocispec.Descriptor) error {
-	err := r.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
-		file, err := os.Open(r.Source + overlayExtension)
-		if err != nil {
+	if overlay.Size, err = file.Seek(0, io.SeekCurrent); err != nil {
+		return "", err
+	}
+	err = r.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		defer func() { _ = file.Close() }()
 		return repository.Blobs().Push(ctx, overlay, file)
 	})
 	if err != nil {
-		return fmt.Errorf("upload source: %w", err)
+		return "", fmt.Errorf("upload source: %w", err)
 	}
-	return nil
+	return overlay.Digest.String(), nil
 }
