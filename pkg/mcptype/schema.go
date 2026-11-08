@@ -1,6 +1,7 @@
 package mcptype
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -18,40 +19,50 @@ type shape struct {
 	declared []*declaration
 }
 
-// name gives each declaration that declares accepts an identifier and returns them to declare. tool
-// scopes a name to the tool and binding to the binding's inputs or outputs. Every name is assigned
-// first, because declarations can refer to each other in any order.
-func (s shape) name(names map[string]bool, tool, binding string, declares func(*declaration) bool) []*declaration {
+// declarations returns the declarations the shape introduces that declares accepts.
+func (s shape) declarations(declares func(*declaration) bool) []*declaration {
 	var result []*declaration
 	for _, ref := range s.declared {
 		if declares(ref) {
-			if ref.name == "" {
-				ref.name = unique(names, ref.preferred(tool, binding))
-			}
 			result = append(result, ref)
 		}
 	}
 	return result
 }
 
-// preferred is the identifier a declaration would like within tool and binding.
-func (d *declaration) preferred(tool, binding string) string {
-	if d.definition != "" {
-		return binding + typeIdentifier(d.definition)
+// nameDeclarations names each declaration of a binding's tools that declares accepts after its
+// contents, so that a name never depends on which tools share it. Inputs and outputs are named
+// apart, each as the binding's name, Input or Output, and the declaration's label. Declarations with
+// one label take it in the order of their keys, the second and later ones with a number.
+func nameDeclarations(names map[string]bool, binding string, tools catalog, declares func(*declaration) bool) {
+	for _, direction := range []string{"Input", "Output"} {
+		var refs []*declaration
+		for _, name := range sortedKeys(tools) {
+			declared := tools[name].input
+			if direction == "Output" {
+				declared = tools[name].output
+			}
+			refs = append(refs, declared.declarations(declares)...)
+		}
+		slices.SortFunc(refs, func(a, b *declaration) int { return cmp.Or(cmp.Compare(a.label, b.label), cmp.Compare(a.key, b.key)) })
+		for _, ref := range refs {
+			ref.name = unique(names, typeIdentifier(binding)+direction+typeIdentifier(ref.label))
+		}
 	}
-	return tool + d.local
 }
 
 // declaration is a type rendered by name: one that refers to itself, which only a declared name can
-// express, or a shape that several places in a binding's inputs or outputs share.
+// express, a type that a definition or title names, or an object that several places in a binding's
+// inputs or outputs share.
 type declaration struct {
 	value  typ
 	cyclic bool
-	// Once shared, definition names it for the whole binding when every use names that definition
-	// and several tools use it; otherwise local names it within the tool that first mentions it. As
-	// parsed, both come from the definition it is declared from.
-	definition, local string
-	name              string // Assigned by name.
+	// definition is the name of the definition or title it is declared from, if any.
+	definition string
+	// Once shared, label names the type by its contents within its binding's inputs or outputs, and
+	// key spells them.
+	label, key string
+	name       string // Assigned by nameDeclarations.
 }
 
 type typeKind uint8
@@ -81,7 +92,7 @@ type typ struct {
 	prefix     []typ            // kindTuple
 	min        int              // kindTuple: required prefix length
 	fields     map[string]field // kindObject
-	definition string           // kindObject: the definition a reference to it named, until shared
+	definition string           // The definition or title that names it, until shared
 	extra      extra            // kindTuple rest, kindObject additional properties
 	items      []typ            // kindUnion, kindIntersection
 	ref        *declaration     // kindDeclared
@@ -130,7 +141,8 @@ func parseShape(ctx context.Context, schema Value) (shape, error) {
 	for _, section := range []string{"definitions", "$defs"} {
 		definitions, _ := root[section].(Object)
 		for _, name := range sortedKeys(definitions) {
-			if result.named[name], err = parser.reference("#/"+section+"/"+name, definitions[name], 0); err != nil {
+			pointer := "#/" + section + "/" + strings.NewReplacer("~", "~0", "/", "~1").Replace(name)
+			if result.named[name], err = parser.reference(pointer, definitions[name], 0); err != nil {
 				return shape{}, err
 			}
 		}
@@ -175,30 +187,33 @@ func (p *parser) reference(reference string, target Value, depth int) (typ, erro
 	if alias(target) {
 		return p.parse(target, depth) // The schema it names is declared instead, if that one recurs.
 	}
-	definition := definitionName(reference)
-	current := &declaration{definition: definition, local: typeIdentifier(definition)}
+	current := &declaration{definition: definitionName(reference)}
 	p.references[reference] = current
 	value, err := p.parse(target, depth)
 	if err != nil {
 		return typ{}, err
 	}
+	if value.kind != kindDeclared {
+		value.definition = cmp.Or(current.definition, value.definition)
+	}
 	if !current.cyclic {
 		delete(p.references, reference)
-		if value.kind == kindObject {
-			value.definition = definition
-		}
 		return value, nil
 	}
+	current.definition, value.definition = value.definition, ""
 	current.value = value
 	return typ{kind: kindDeclared, ref: current}, nil
 }
 
-// definitionName is the name a reference gives its target: the last segment of its pointer.
+// definitionName is the name a reference gives its target: its key in the root's definitions or
+// $defs section, if it is one.
 func definitionName(reference string) string {
-	if reference == "#" {
-		return ""
+	for _, section := range []string{"#/definitions/", "#/$defs/"} {
+		if name, ok := strings.CutPrefix(reference, section); ok && !strings.Contains(name, "/") {
+			return strings.NewReplacer("~1", "/", "~0", "~").Replace(name)
+		}
 	}
-	return reference[strings.LastIndexByte(reference, '/')+1:]
+	return ""
 }
 
 // selfDefined reports whether schema reaches reference through other references and combinators
@@ -393,7 +408,13 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 		if err != nil {
 			return typ{}, err
 		}
-		return objectType(fields, extra), nil
+		value := objectType(fields, extra)
+		// A title names an object only if it names fields: tools title every property, and the type
+		// of a free-form one is not worth a name.
+		if title, ok := object["title"].(string); ok && len(fields) > 0 {
+			value.definition = title
+		}
+		return value, nil
 	}
 	return typ{kind: kindUnknown}, nil
 }

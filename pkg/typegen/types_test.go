@@ -302,17 +302,16 @@ func TestDecodesEveryDepth(t *testing.T) {
 		t.Fatalf("name = %q", name)
 	}
 	// Unions decode as raw JSON, as they do when not recursive, and so does their exported name.
-	var tree FilesWalkOutputTree
+	var tree FilesOutputTree
 	if err := json.Unmarshal(walk.Tree, &tree); err != nil || string(tree) != `+"`"+`["leaf", ["leaf", ["leaf"]]]`+"`"+` {
 		t.Fatalf("tree = %s, %v", tree, err)
 	}
-	var named FilesWalkOutputFileInfo = *walk.Root
+	var named FilesOutputFileInfo = *walk.Root
 	var input FilesWalkInput
-	var inputRoot *FilesWalkInputFileInfo = input.Root
-	var self *FilesWalkOutputValue = walk.Self
+	var inputRoot *FilesInputFileInfo = input.Root
+	var self *FilesWalkOutput = walk.Self
 	// Go types are nominal, so these compile only if walk and stat share their types.
-	var file FilesStatOutputFileInfo = named
-	_, _, _ = FilesStatOutput{File: &file}, FilesStatInput{File: inputRoot}, self
+	_, _, _ = FilesStatOutput{File: &named}, FilesStatInput{File: inputRoot}, self
 }
 `)
 		// holon types check leaves Go to the compiler. Only clients.go needs the SDK. Go has no

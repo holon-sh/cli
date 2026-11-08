@@ -14,21 +14,15 @@ from holon.client import ToolResult as _ToolResult
 import builtins as _builtins
 import typing as _typing
 
-MysqlSelectInputColumnsItem = _typing.TypedDict("MysqlSelectInputColumnsItem", {"column": _builtins.str, "label": _builtins.str})
+MysqlInputLabeledColumn = _typing.TypedDict("MysqlInputLabeledColumn", {"column": _builtins.str, "label": _builtins.str})
 
-MysqlSelectInput = _typing.TypedDict("MysqlSelectInput", {"columns": _typing.NotRequired[_builtins.list[_builtins.str] | _builtins.list[MysqlSelectInputColumnsItem] | None], "direction": _typing.NotRequired[_typing.Literal["asc"] | _typing.Literal["desc"]], "table": _builtins.str})
+MysqlInputDirection: _typing.TypeAlias = _typing.Literal["asc"] | _typing.Literal["desc"]
 
-MysqlSelectOutputColumnsItem = _typing.TypedDict("MysqlSelectOutputColumnsItem", {"value": _builtins.float})
+MysqlSelectInput = _typing.TypedDict("MysqlSelectInput", {"columns": _typing.NotRequired[_builtins.list[_builtins.str] | _builtins.list[MysqlInputLabeledColumn] | None], "direction": _typing.NotRequired[MysqlInputDirection], "table": _builtins.str})
 
-MysqlSelectOutput = _typing.TypedDict("MysqlSelectOutput", {"columns": _builtins.list[MysqlSelectOutputColumnsItem]})
+MysqlOutputLabeledColumn = _typing.TypedDict("MysqlOutputLabeledColumn", {"value": _builtins.float})
 
-MysqlSelectInputsLabeledColumn = _typing.TypedDict("MysqlSelectInputsLabeledColumn", {"column": _builtins.str, "label": _builtins.str})
-
-MysqlSelectOutputsLabeledColumn = _typing.TypedDict("MysqlSelectOutputsLabeledColumn", {"value": _builtins.float})
-
-MysqlSelectOutputsRootColumnsItem = _typing.TypedDict("MysqlSelectOutputsRootColumnsItem", {"value": _builtins.float})
-
-MysqlSelectOutputsRoot = _typing.TypedDict("MysqlSelectOutputsRoot", {"columns": _builtins.list[MysqlSelectOutputsRootColumnsItem]})
+MysqlOutputRoot = _typing.TypedDict("MysqlOutputRoot", {"columns": _builtins.list[MysqlOutputLabeledColumn]})
 
 OrdersGetOrderInput = _typing.TypedDict("OrdersGetOrderInput", {"count": _typing.NotRequired[_builtins.int], "orderId": _builtins.str})
 
@@ -44,21 +38,25 @@ SchemasClassInputOpt = _typing.TypedDict("SchemasClassInputOpt", {"n": _typing.N
 
 SchemasClassInput = _typing.TypedDict("SchemasClassInput", {"opt": _typing.NotRequired[SchemasClassInputOpt]})
 
-SchemasGetOrderInput = _typing.TypedDict("SchemasGetOrderInput", {"id": _builtins.str})
+SchemasInputId = _typing.TypedDict("SchemasInputId", {"id": _builtins.str})
 
-SchemasKitchenSinkInputValueAll = _typing.TypedDict("SchemasKitchenSinkInputValueAll", {"a": _builtins.str, "b": _typing.NotRequired[_builtins.int]})
+SchemasInputX1startsDashKeyAllEtcAll = _typing.TypedDict("SchemasInputX1startsDashKeyAllEtcAll", {"a": _builtins.str, "b": _typing.NotRequired[_builtins.int]})
 
-SchemasKitchenSinkInputValueClosedEmpty = _typing.TypedDict("SchemasKitchenSinkInputValueClosedEmpty", {})
+SchemasInputX1startsDashKeyAllEtcClosedEmpty = _typing.TypedDict("SchemasInputX1startsDashKeyAllEtcClosedEmpty", {})
 
-SchemasKitchenSinkInputValueNestedItemItem = _typing.TypedDict("SchemasKitchenSinkInputValueNestedItemItem", {"deep": _typing.NotRequired[None]})
+SchemasInputX1startsDashKeyAllEtcNestedItemItem = _typing.TypedDict("SchemasInputX1startsDashKeyAllEtcNestedItemItem", {"deep": _typing.NotRequired[None]})
 
-SchemasKitchenSinkInputValueNoType = _typing.TypedDict("SchemasKitchenSinkInputValueNoType", {"p": _builtins.bool})
+SchemasInputX1startsDashKeyAllEtcNoType = _typing.TypedDict("SchemasInputX1startsDashKeyAllEtcNoType", {"p": _builtins.bool})
 
-SchemasKitchenSinkInputValueNumericType = _typing.TypedDict("SchemasKitchenSinkInputValueNumericType", {"p": _typing.NotRequired[_builtins.bool]})
+SchemasInputNodes: _typing.TypeAlias = _builtins.list["SchemasInputNode"]
 
-SchemasKitchenSinkInputValue = _typing.TypedDict("SchemasKitchenSinkInputValue", {"1starts": _typing.NotRequired[_builtins.str], "Dash-Key": _typing.NotRequired[_builtins.str], "all": _typing.NotRequired[SchemasKitchenSinkInputValueAll], "allConflict": _typing.NotRequired[_builtins.object], "allNonObject": _typing.NotRequired[_builtins.object], "annotated": _typing.NotRequired[_builtins.str], "arrayRef": _typing.NotRequired[_builtins.str], "closedEmpty": _typing.NotRequired[SchemasKitchenSinkInputValueClosedEmpty], "constNum": _typing.NotRequired[_builtins.float], "constObj": _typing.NotRequired[_builtins.object], "constString": _typing.NotRequired[_typing.Literal["it's \"quoted\"\n"]], "cycle": _typing.NotRequired["SchemasKitchenSinkInputNode"], "dash-key": _typing.NotRequired[_builtins.str], "emptyAll": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "emptyAny": _typing.NotRequired[_typing.Never], "falseSchema": _typing.NotRequired[_typing.Never], "implicitTuple": _typing.NotRequired[_builtins.list[_builtins.object]], "literals": _typing.Literal["a"] | _typing.Literal[1] | _builtins.float | _typing.Literal[-3] | _typing.Literal[True] | None | _builtins.object | _builtins.object | _builtins.float | _builtins.float | _builtins.float, "mapOf": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.str]], "multi": _typing.NotRequired[_builtins.str | None | _builtins.list[_builtins.int] | _builtins.object], "nested": _typing.NotRequired[_builtins.list[_builtins.list[SchemasKitchenSinkInputValueNestedItemItem]]], "noType": SchemasKitchenSinkInputValueNoType, "nodes": _typing.NotRequired[_builtins.list["SchemasKitchenSinkInputNode"]], "numericType": _typing.NotRequired[SchemasKitchenSinkInputValueNumericType], "odd key with spaces": _typing.NotRequired[_builtins.str], "oneOf": _typing.NotRequired[_builtins.str | _builtins.float], "openObj": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "openTuple": _typing.NotRequired[_builtins.list[_builtins.object]], "plainArray": _typing.NotRequired[_builtins.list[_builtins.object]], "pointerEscape": _typing.NotRequired[_builtins.int], "rootRef": _typing.NotRequired["SchemasKitchenSinkInputValue"], "trueObj": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "trueSchema": _typing.NotRequired[_builtins.object], "tuple": _builtins.list[_builtins.object], "unknownKeyword": _typing.NotRequired[_builtins.object]})
+SchemasInputX1startsDashKeyAllEtcNumericType = _typing.TypedDict("SchemasInputX1startsDashKeyAllEtcNumericType", {"p": _typing.NotRequired[_builtins.bool]})
 
-SchemasKitchenSinkInputNode = _typing.TypedDict("SchemasKitchenSinkInputNode", {"next": _typing.NotRequired["SchemasKitchenSinkInputNode"], "value": _builtins.int})
+SchemasInputABC: _typing.TypeAlias = _builtins.int
+
+SchemasInputX1startsDashKeyAllEtc = _typing.TypedDict("SchemasInputX1startsDashKeyAllEtc", {"1starts": _typing.NotRequired[_builtins.str], "Dash-Key": _typing.NotRequired[_builtins.str], "all": _typing.NotRequired[SchemasInputX1startsDashKeyAllEtcAll], "allConflict": _typing.NotRequired[_builtins.object], "allNonObject": _typing.NotRequired[_builtins.object], "annotated": _typing.NotRequired[_builtins.str], "arrayRef": _typing.NotRequired[_builtins.str], "closedEmpty": _typing.NotRequired[SchemasInputX1startsDashKeyAllEtcClosedEmpty], "constNum": _typing.NotRequired[_builtins.float], "constObj": _typing.NotRequired[_builtins.object], "constString": _typing.NotRequired[_typing.Literal["it's \"quoted\"\n"]], "cycle": _typing.NotRequired["SchemasInputNode"], "dash-key": _typing.NotRequired[_builtins.str], "emptyAll": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "emptyAny": _typing.NotRequired[_typing.Never], "falseSchema": _typing.NotRequired[_typing.Never], "implicitTuple": _typing.NotRequired[_builtins.list[_builtins.object]], "literals": _typing.Literal["a"] | _typing.Literal[1] | _builtins.float | _typing.Literal[-3] | _typing.Literal[True] | None | _builtins.object | _builtins.object | _builtins.float | _builtins.float | _builtins.float, "mapOf": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.str]], "multi": _typing.NotRequired[_builtins.str | None | _builtins.list[_builtins.int] | _builtins.object], "nested": _typing.NotRequired[_builtins.list[_builtins.list[SchemasInputX1startsDashKeyAllEtcNestedItemItem]]], "noType": SchemasInputX1startsDashKeyAllEtcNoType, "nodes": _typing.NotRequired[SchemasInputNodes], "numericType": _typing.NotRequired[SchemasInputX1startsDashKeyAllEtcNumericType], "odd key with spaces": _typing.NotRequired[_builtins.str], "oneOf": _typing.NotRequired[_builtins.str | _builtins.float], "openObj": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "openTuple": _typing.NotRequired[_builtins.list[_builtins.object]], "plainArray": _typing.NotRequired[_builtins.list[_builtins.object]], "pointerEscape": _typing.NotRequired[SchemasInputABC], "rootRef": _typing.NotRequired["SchemasInputX1startsDashKeyAllEtc"], "trueObj": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "trueSchema": _typing.NotRequired[_builtins.object], "tuple": _builtins.list[_builtins.object], "unknownKeyword": _typing.NotRequired[_builtins.object]})
+
+SchemasInputNode = _typing.TypedDict("SchemasInputNode", {"next": _typing.NotRequired["SchemasInputNode"], "value": _builtins.int})
 
 SchemasWeirdKeysInput = _typing.TypedDict("SchemasWeirdKeysInput", {"": None, "-": _typing.NotRequired[_builtins.bool], "x\"quote": _typing.NotRequired[_builtins.str], "ünïcode": _typing.NotRequired[_builtins.int]})
 
@@ -83,13 +81,13 @@ class Inputs:
     class schemas:
         CallTool: _typing.TypeAlias = _builtins.dict[_builtins.str, _builtins.object]
         call_tool: _typing.TypeAlias = SchemasCallToolInput
-        get_order: _typing.TypeAlias = SchemasGetOrderInput
+        get_order: _typing.TypeAlias = SchemasInputId
 
 class Outputs:
     class empty:
         pass
     class mysql:
-        select: _typing.TypeAlias = MysqlSelectOutput
+        select: _typing.TypeAlias = MysqlOutputRoot
     class orders:
         get_order: _typing.TypeAlias = OrdersGetOrderOutput
     class schemas:
@@ -100,8 +98,8 @@ class InputTypes:
         pass
     class mysql:
         class select:
-            Direction: _typing.TypeAlias = _typing.Literal["asc"] | _typing.Literal["desc"]
-            LabeledColumn: _typing.TypeAlias = MysqlSelectInputsLabeledColumn
+            Direction: _typing.TypeAlias = MysqlInputDirection
+            LabeledColumn: _typing.TypeAlias = MysqlInputLabeledColumn
     class orders:
         class get_order:
             pass
@@ -120,8 +118,8 @@ class OutputTypes:
         pass
     class mysql:
         class select:
-            LabeledColumn: _typing.TypeAlias = MysqlSelectOutputsLabeledColumn
-            Root: _typing.TypeAlias = MysqlSelectOutputsRoot
+            LabeledColumn: _typing.TypeAlias = MysqlOutputLabeledColumn
+            Root: _typing.TypeAlias = MysqlOutputRoot
     class orders:
         class get_order:
             pass
@@ -136,11 +134,11 @@ class EmptyApp(_typing.Protocol):
     tools: EmptyTools
 
 class MysqlTools(_typing.Protocol):
-    async def select(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[MysqlSelectInput]) -> MysqlSelectOutput: ...
+    async def select(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[MysqlSelectInput]) -> MysqlOutputRoot: ...
 
 class MysqlApp(_typing.Protocol):
     tools: MysqlTools
-    async def call_tool(self, name: _typing.Literal["select"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[MysqlSelectInput]) -> _ToolResult[MysqlSelectOutput]: ...
+    async def call_tool(self, name: _typing.Literal["select"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[MysqlSelectInput]) -> _ToolResult[MysqlOutputRoot]: ...
 
 class OrdersTools(_typing.Protocol):
     async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[OrdersGetOrderInput]) -> OrdersGetOrderOutput: ...
@@ -156,7 +154,7 @@ class OrdersApp(_typing.Protocol):
 class SchemasTools(_typing.Protocol):
     async def CallTool(self, options: _CallOptions | None = ..., /, **arguments: _builtins.object) -> _CompleteResult[_builtins.object]: ...
     async def call_tool(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasCallToolInput]) -> SchemasCallToolOutput: ...
-    async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasGetOrderInput]) -> _CompleteResult[_builtins.object]: ...
+    async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasInputId]) -> _CompleteResult[_builtins.object]: ...
 
 class SchemasApp(_typing.Protocol):
     tools: SchemasTools
@@ -171,11 +169,11 @@ class SchemasApp(_typing.Protocol):
     @_typing.overload
     async def call_tool(self, name: _typing.Literal["class"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasClassInput]) -> _ToolResult[_builtins.list[_builtins.object]]: ...
     @_typing.overload
-    async def call_tool(self, name: _typing.Literal["get-order"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasGetOrderInput]) -> _ToolResult[_builtins.object]: ...
+    async def call_tool(self, name: _typing.Literal["get-order"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasInputId]) -> _ToolResult[_builtins.object]: ...
     @_typing.overload
-    async def call_tool(self, name: _typing.Literal["get_order"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasGetOrderInput]) -> _ToolResult[_builtins.object]: ...
+    async def call_tool(self, name: _typing.Literal["get_order"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasInputId]) -> _ToolResult[_builtins.object]: ...
     @_typing.overload
-    async def call_tool(self, name: _typing.Literal["kitchen-sink"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasKitchenSinkInputValue]) -> _ToolResult[_builtins.object]: ...
+    async def call_tool(self, name: _typing.Literal["kitchen-sink"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasInputX1startsDashKeyAllEtc]) -> _ToolResult[_builtins.object]: ...
     @_typing.overload
     async def call_tool(self, name: _typing.Literal["weird-keys"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasWeirdKeysInput]) -> _ToolResult[SchemasWeirdKeysOutput]: ...
     @_typing.overload

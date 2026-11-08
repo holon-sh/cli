@@ -110,14 +110,14 @@ func generateTypeScript(contracts map[string]catalog, names map[string]bool, int
 			fmt.Fprintf(&exports[i], "  %s: {\n", quoted(binding))
 		}
 		tools := contracts[binding]
+		nameDeclarations(names, binding, tools, declaresAll)
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
 			for index, shape := range []shape{tool.input, tool.output} {
 				if index == 1 && !tool.structured {
 					continue
 				}
-				direction := []string{"Input", "Output"}[index]
-				for _, ref := range shape.name(names, typeIdentifier(binding)+typeIdentifier(name)+direction, typeIdentifier(binding)+direction, declaresAll) {
+				for _, ref := range shape.declarations(declaresAll) {
 					fmt.Fprintf(&out, "export type %s = %s;\n", ref.name, renderTypeScript(ref.value))
 				}
 				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value))
