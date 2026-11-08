@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -53,8 +55,41 @@ func serverSource(relative string) bool {
 	return first != "ui" && slices.Contains([]string{".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"}, path.Ext(relative))
 }
 
+// imageInputs fingerprints the files of snapshot that are not server source, which an image build may read.
+// Two snapshots with the same image inputs differ only in what a source overlay delivers.
+func imageInputs(snapshot string) (string, error) {
+	hash := sha256.New()
+	err := filepath.WalkDir(snapshot, func(current string, item fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, _ := filepath.Rel(snapshot, current)
+		if item.IsDir() || serverSource(relative) {
+			return nil
+		}
+		info, err := item.Info()
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", filepath.ToSlash(relative), info.Mode())
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(current)
+			_, _ = io.WriteString(hash, link)
+			return err
+		}
+		file, err := os.Open(current)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = file.Close() }()
+		_, err = io.Copy(hash, file)
+		return err
+	})
+	return hex.EncodeToString(hash.Sum(nil)), err
+}
+
 // reloadable reports whether a change can restart its apps in place: only source edits, to apps that
-// run under the Holon launcher and are already running the last accepted build.
+// run under the Holon launcher, while no image change is pending.
 func (d *devLoop) reloadable(change devChange) bool {
 	if change.manifest || change.imageInputs || d.pending.Len() != 0 || d.changedImages.Len() != 0 {
 		return false
@@ -129,7 +164,6 @@ func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) err
 	}
 	for _, app := range result.prepared.Apps {
 		if result.contexts.Has(app.Path) {
-			app.resolved.types.hosted = true // each reloaded, so its overlay staged the launcher
 			d.options.types.accepted[app.Name] = app.resolved.types
 		}
 	}
@@ -185,10 +219,11 @@ func (d *devLoop) buildOverlay(app manifestApp, snapshot, archive string) (ocisp
 	}
 	types := *d.options.types.accepted[app.Name]
 	types.root = snapshot
-	if _, _, err := stageSnapshot(app, &types); err != nil {
+	_, start, err := stageSnapshot(app, &types)
+	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	if !types.hosted {
+	if start == nil {
 		return ocispec.Descriptor{}, errors.New("the app no longer has a server entry the launcher runs")
 	}
 	return writeOverlay(snapshot, archive)

@@ -239,7 +239,7 @@ func (d *devLoop) renew(ctx context.Context) {
 	}
 }
 
-func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
+func (d *devLoop) run(ctx context.Context, stdout io.Writer, kept sets.Set[string]) error {
 	watcher, err := newDevWatcher(d.manifest, d.clock, d.options.output)
 	if err != nil {
 		return fmt.Errorf("watch build contexts: %w", err)
@@ -263,6 +263,9 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	}()
 	d.options.architectures = d.session.BuildArchitectures
 	d.changedImages, d.pending, d.reloaded = sets.New[string](), sets.New[string](), map[string]string{}
+	if kept.Len() != 0 {
+		d.rebuild(ctx, devChange{contexts: kept})
+	}
 	for _, app := range d.session.Apps {
 		d.pending.Insert(app.Name)
 	}
@@ -270,7 +273,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		if err := printEndpoints(stdout, "Ready", d.session); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C stops this session.")
+		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev.")
 		return err
 	})
 	for ctx.Err() == nil {
@@ -306,9 +309,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 			}
 		case change := <-changes:
 			stopRead()
-			if err := d.rebuild(ctx, change); err != nil && ctx.Err() == nil {
-				d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
-			}
+			d.rebuild(ctx, change)
 		}
 	}
 	return nil
@@ -393,16 +394,18 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 	d.pending.Clear()
 }
 
-// rebuild applies a saved change: in place when its apps can reload, and through new images otherwise.
-func (d *devLoop) rebuild(ctx context.Context, change devChange) error {
+// rebuild applies a change: in place when its apps can reload, and through new images otherwise.
+func (d *devLoop) rebuild(ctx context.Context, change devChange) {
 	if d.reloadable(change) {
 		failed := d.reload(ctx, change)
 		if failed.Len() == 0 {
-			return nil
+			return
 		}
 		change.contexts = failed
 	}
-	return d.buildImages(ctx, change)
+	if err := d.buildImages(ctx, change); err != nil && ctx.Err() == nil {
+		d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
+	}
 }
 
 func (d *devLoop) buildImages(ctx context.Context, change devChange) error {

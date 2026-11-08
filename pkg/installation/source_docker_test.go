@@ -130,7 +130,7 @@ func TestDockerSourceBuild(t *testing.T) {
 		want := errors.New("progress writer failed")
 		failed := options
 		failed.Stderr = progressFunc(func([]byte) (int, error) { return 0, want })
-		if _, err := buildSource(t.Context(), prepareBuild(t, manifest).Apps[0], upload, failed, ""); !errors.Is(err, want) {
+		if _, err := buildSource(t.Context(), prepareBuild(t, manifest).Apps[0], upload, failed, nil); !errors.Is(err, want) {
 			t.Fatalf("progress error: %v", err)
 		}
 	})

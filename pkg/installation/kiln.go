@@ -30,14 +30,14 @@ type buildRequest struct {
 
 	Env        []string
 	app        manifestApp
-	promotion  string // the promotionKey published with the image, or ""
+	keys       map[string]string // the imageKeys published with the image
 	upload     *imageUpload
 	httpClient *http.Client
 	builders   *builderConnections
 	output     *progressOutput
 }
 
-func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions, promotion string) (string, error) {
+func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions, keys map[string]string) (string, error) {
 	if !protocol.ValidBuildArchitectures(options.architectures) {
 		return "", errors.New("invalid build architectures")
 	}
@@ -51,7 +51,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		return "", err
 	}
 	request := buildRequest{
-		Request: kiln.Request{ConfigFilePath: config, Source: p.root, Start: start}, Env: env, app: app, promotion: promotion,
+		Request: kiln.Request{ConfigFilePath: config, Source: p.root, Start: start}, Env: env, app: app, keys: keys,
 		upload: upload, httpClient: options.HTTPClient, builders: options.builders, output: options.output,
 	}
 	for _, arch := range buildArchitectures(options.architectures) {
@@ -94,7 +94,6 @@ func stageSnapshot(app manifestApp, p *preparedTypes) (string, []string, error) 
 		}
 	}
 	start, err := stageLauncher(p.root, entry)
-	p.hosted = start != nil
 	return config, start, err
 }
 

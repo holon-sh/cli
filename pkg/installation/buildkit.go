@@ -80,9 +80,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 	err = request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		entries := slices.Clone(manifests)
 		annotations := map[string]string{}
-		if request.promotion != "" {
-			annotations[promotionAnnotation] = request.promotion
-		}
+		maps.Copy(annotations, request.keys)
 		if p := request.app.resolved.types; p.metadata != nil {
 			metadata, ownDigest, err := pushTypeMetadata(ctx, repository, p.metadata, p.documents)
 			if err != nil {
