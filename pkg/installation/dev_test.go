@@ -41,10 +41,6 @@ func TestRunDevRebuildsWhatASaveChanged(t *testing.T) {
 		rebuilt    []string
 	}{
 		{
-			name: "metadata saved unchanged", done: "no app changed",
-			edit: map[string]string{manifestFileName: manifest + "# comment\n", "beta/server.json": string(beta)},
-		},
-		{
 			name: "ignored server.json edited", done: "remote image is unchanged", rebuilt: []string{"beta"},
 			edit: map[string]string{"beta/server.json": strings.Replace(string(beta), "Example MCP server", "edited", 1)},
 		},

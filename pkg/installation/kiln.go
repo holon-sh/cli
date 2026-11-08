@@ -35,16 +35,13 @@ type buildRequest struct {
 
 	Env        []string
 	app        manifestApp
-	dockerfile string // kiln's plan for Request
+	dockerfile string
 	upload     *imageUpload
 	httpClient *http.Client
 	builders   *builderConnections
 	output     *progressOutput
 }
 
-// buildSource builds app's image from its prepared snapshot and returns it with the overlay that carries its
-// server source in development. An image that a picked-up session already runs is kept when it would be built
-// from the same inputs.
 func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, string, error) {
 	if !protocol.ValidBuildArchitectures(options.architectures) {
 		return "", "", errors.New("invalid build architectures")
@@ -79,8 +76,6 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	return image, overlay.Digest.String(), nil
 }
 
-// planSource stages p's snapshot and plans its image with Kiln. In development an app the launcher runs is
-// planned without its server source, and the plan says what the image is built from.
 func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *preparedTypes) (buildRequest, error) {
 	config, start, err := stageSnapshot(app, p)
 	if err != nil {
@@ -110,11 +105,8 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 	return request, err
 }
 
-// contextCopy matches a COPY that Kiln writes from the build context, capturing its exclusions and its JSON
-// list of sources and destination.
 var contextCopy = regexp.MustCompile(`(?m)^COPY ((?:--exclude=\S+ )*)(\[.*\])$`)
 
-// imageInputs hashes what a development image is built from: Kiln's Dockerfile and the context files it copies.
 func imageInputs(ctx context.Context, dockerfile, root string) (string, error) {
 	source, err := fsutil.NewFS(root)
 	if err != nil {

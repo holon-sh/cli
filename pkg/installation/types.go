@@ -30,7 +30,7 @@ type preparedTypes struct {
 	name        string
 	root        string
 	fingerprint string
-	inputs      string // the imageInputs of its current image, or "" for one that carries its own server source
+	inputs      string
 	metadata    *mcpcontract.Metadata
 	documents   map[string]*typegen.Document
 }

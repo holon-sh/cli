@@ -39,14 +39,14 @@ type reloadFixture struct {
 	stdout   *installationtest.ObservedOutput
 	stderr   *installationtest.ObservedOutput
 	await    func(check func() bool)
-	start    func(args ...string) // runs holon dev again, as a later command would
+	start    func(args ...string)
 	stop     func() error
 	baseHost string
 
 	mu       sync.Mutex
 	ready    bool
 	failNext bool
-	foreign  bool // the session is someone else's, so renewing it fails
+	foreign  bool
 	creates  int
 	served   []protocol.App
 	revision int
@@ -234,7 +234,6 @@ func TestDevSaves(t *testing.T) {
 			if rebuilt := after.Image != before.Image; rebuilt != test.rebuilt {
 				t.Fatalf("image replaced = %v; stderr=%q", rebuilt, f.stderr.String())
 			}
-			// The update that replaces the image carries the overlay of what was saved.
 			if test.rebuilt && after.Overlay != requests[len(requests)-1].Digest {
 				t.Fatalf("rebuilt with overlay %+v after reloading %+v", after.Overlay, requests)
 			}
@@ -245,8 +244,8 @@ func TestDevSaves(t *testing.T) {
 func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 	for _, test := range []struct {
 		name    string
-		between func(t *testing.T, f *reloadFixture) // changes things while no holon dev runs
-		edit    map[string]string                    // made while no holon dev runs
+		between func(t *testing.T, f *reloadFixture)
+		edit    map[string]string
 		creates int
 		reloads int
 		rebuilt bool
@@ -303,7 +302,7 @@ func TestDevDetachedStartsItsOwnSession(t *testing.T) {
 	}
 	f.start("--detach")
 	f.await(func() bool { return f.created() == 2 })
-	f.update(func() {}) // releases the readiness read, which the fixture holds at the session's current revision
+	f.update(func() {})
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Expires") })
 }
 
@@ -335,7 +334,6 @@ func TestDevReloadPushesTheBuildSnapshot(t *testing.T) {
 	}
 }
 
-// overlay returns the entries of the overlay blob with digest, by name; a symlink holds its target.
 func (f *reloadFixture) overlay(t *testing.T, digest string) map[string][]byte {
 	t.Helper()
 	f.registry.mu.Lock()

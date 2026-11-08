@@ -93,7 +93,6 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 	return manifest, nil
 }
 
-// resolveManifest resolves the apps a command runs, with their dependencies, and checks their access rules.
 func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec, output *progressOutput, apps ...string) (manifestSpec, error) {
 	if _, err := manager.controlToken(ctx); err != nil {
 		return manifestSpec{}, err
@@ -190,20 +189,15 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	config.output.deploying(request.Apps)
 	var session protocol.SessionResponse
 	if previous.Name != "" {
-		if session, err = replaceExecution(ctx, manager, previous.Name, previous, request); err != nil {
-			return err
-		}
-	} else {
-		if err := manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &session); err != nil {
-			if status := HTTPStatus(err); status >= http.StatusBadRequest && status < http.StatusInternalServerError {
-				return err
-			}
-			console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
-			return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
-		}
-		if err := printStartingEndpoints(stdout, config.output, manager.client.baseURL, session); err != nil {
-			return err
-		}
+		session, err = replaceExecution(ctx, manager, previous.Name, previous, request)
+	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &session); err == nil {
+		err = printStartingEndpoints(stdout, config.output, manager.client.baseURL, session)
+	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
+		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
+		err = fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
+	}
+	if err != nil {
+		return err
 	}
 	if request.TTLSeconds != nil {
 		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
@@ -220,8 +214,13 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	dev := &devLoop{manager: manager, name: session.Name, manifest: resolved, apps: apps, clock: config.clock(), options: options, session: session}
-	err = dev.run(ctx, stdout, keptContexts(resolved, first.kept, request.Apps))
-	// Without the record, the next holon dev starts a new session, as it would with none to pick up.
+	kept := sets.New[string]()
+	for i, app := range resolved.Apps {
+		if first.kept[app.Name].image == request.Apps[i].Image {
+			kept.Insert(app.Path)
+		}
+	}
+	err = dev.run(ctx, stdout, kept)
 	inputs := map[string]string{}
 	for name, types := range options.types.accepted {
 		inputs[name] = types.inputs
@@ -231,20 +230,15 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	return err
 }
 
-// sessionRecord is what holon dev records about the session it leaves: its name and what each app's image was
-// built from.
 type sessionRecord struct {
 	Session string            `json:"session"`
 	Inputs  map[string]string `json:"inputs"`
 }
 
-// keptImage is what an app of a picked-up session runs, which a build keeps while its inputs still match.
 type keptImage struct {
 	inputs, image, overlay string
 }
 
-// sessionRecordPath is where holon dev records the session it leaves, for the next holon dev of the same apps from
-// the same directories against this installation. A run elsewhere, or of other apps, keeps to its own session.
 func (m *Client) sessionRecordPath(manifest manifestSpec) string {
 	key := m.client.baseURL
 	for _, app := range manifest.Apps {
@@ -253,19 +247,6 @@ func (m *Client) sessionRecordPath(manifest manifestSpec) string {
 	return filepath.Join(filepath.Dir(m.statePath), digest.FromString(key).Encoded()+".session")
 }
 
-// keptContexts returns the build contexts of the apps still on their picked-up image; apps holds manifest's apps in order.
-func keptContexts(manifest manifestSpec, kept map[string]keptImage, apps []protocol.App) sets.Set[string] {
-	contexts := sets.New[string]()
-	for i, app := range manifest.Apps {
-		if app.Path != "" && kept[app.Name].image == apps[i].Image {
-			contexts.Insert(app.Path)
-		}
-	}
-	return contexts
-}
-
-// previousSession renews and returns the session recorded in record, with what its apps run, or none.
-// Renewal fails unless the session is still the caller's, not detached and unexpired.
 func previousSession(ctx context.Context, manager *Client, recordPath string) (protocol.SessionResponse, map[string]keptImage) {
 	var record sessionRecord
 	var session protocol.SessionResponse

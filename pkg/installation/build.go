@@ -35,8 +35,8 @@ type buildOptions struct {
 	Env           []string
 	HTTPClient    *http.Client
 	output        *progressOutput
-	development   bool                 // apps the launcher runs build without server source, which an overlay carries
-	kept          map[string]keptImage // what the apps of a picked-up session run, kept by the first build alone
+	development   bool
+	kept          map[string]keptImage
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {

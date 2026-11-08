@@ -217,8 +217,8 @@ type devLoop struct {
 	options                buildOptions
 	session                protocol.SessionResponse
 	changedImages, pending sets.Set[string]
-	reloaded               map[string]string // the overlay digest each app last restarted from
-	preparing              chan preparation  // what a reload's preparation produces, until the loop accepts it
+	reloaded               map[string]string
+	preparing              chan preparation
 	cancelPreparation      context.CancelFunc
 }
 
@@ -389,8 +389,6 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 	d.pending.Clear()
 }
 
-// rebuild applies a saved change: every changed app restarts from an overlay of its source at once, and the work
-// behind it, which the next save stops, prepares contracts and refreshes any image the change outdated.
 func (d *devLoop) rebuild(ctx context.Context, change devChange) {
 	d.reload(ctx, change.contexts)
 	contexts := change.contexts.Union(d.stopPreparation())
@@ -404,7 +402,6 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) {
 	d.prepare(ctx, contexts)
 }
 
-// reloadManifest adopts a saved manifest and reports whether it could.
 func (d *devLoop) reloadManifest(ctx context.Context) bool {
 	reloaded, err := resolveManifestFile(d.manifest.file)
 	if err == nil {
@@ -420,7 +417,6 @@ func (d *devLoop) reloadManifest(ctx context.Context) bool {
 	return d.updateManifest(reloaded)
 }
 
-// rollOut updates the session to the images a save's background work built, unless it already runs them.
 func (d *devLoop) rollOut(ctx context.Context, result preparation) error {
 	apps := slices.DeleteFunc(result.images, func(app protocol.App) bool {
 		if !slices.ContainsFunc(d.session.Apps, func(current protocol.App) bool {
