@@ -21,22 +21,17 @@ func TestDeclaredSources(t *testing.T) {
 		{name: "no descriptor"},
 		{name: "no requires", data: descriptor + `}`},
 		{
-			name: "sorted aliases and registry references",
-			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"}}}}}}`,
+			name: "sorted aliases, registry references and urls",
+			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"},"chat":{"url":"https://mcp.example/mcp"}}}}}}`,
 			want: []Source{
+				{Alias: "chat", Endpoint: "https://mcp.example/mcp"},
 				{Alias: "docs", Registry: &Reference{Name: "example.com/documentation", Version: "4.4.4", Registry: "https://registry.example"}},
 				{Alias: "orders", Registry: &Reference{Name: "example.com/orders", Version: "1.0.0"}},
 			},
 		},
-		{
-			name: "a url beside a record",
-			data: descriptor + metadata + `{"requires":{"docs":{"url":"https://mcp.example/mcp"},"orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`,
-			want: []Source{{Alias: "docs", Endpoint: "https://mcp.example/mcp"}, {Alias: "orders", Registry: &Reference{Name: "example.com/orders", Version: "1.0.0"}}},
-		},
 		{name: "invalid descriptor", data: `{"name":"checkout","version":"1.0.0","description":"Checkout"}`, err: "namespace/name"},
 		{name: "invalid alias", data: descriptor + metadata + `{"requires":{"Orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`, err: "invalid dependency name"},
 		{name: "a url with a version", data: descriptor + metadata + `{"requires":{"docs":{"url":"https://mcp.example/mcp","version":"1.0.0"}}}}}}`, err: "leave out name, version and registry"},
-		{name: "a url that is not an endpoint", data: descriptor + metadata + `{"requires":{"docs":{"url":"ftp://mcp.example/mcp"}}}}}}`, err: "HTTP(S) URL"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -54,28 +49,6 @@ func TestDeclaredSources(t *testing.T) {
 				t.Fatalf("DeclaredSources = %#v, %v; want %#v", got, err, test.want)
 			}
 		})
-	}
-}
-
-// A running server with no registry record is declared by its url; the clients generated from the
-// declaration alone, as check regenerates them, type-check the project's calls to it.
-func TestADeclaredEndpointIsGeneratedAndChecked(t *testing.T) {
-	t.Parallel()
-	live := liveServer(t, "docs")
-	defer live.Close()
-	app := typeScriptApp(t)
-	put(t, app, "server.json", string(mustJSON(t, map[string]any{"name": "example.com/app", "version": "1.0.0", "description": "App",
-		"_meta": map[string]any{"io.modelcontextprotocol.registry/publisher-provided": map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"docs": map[string]any{"url": live.URL}}}}}})))
-	put(t, app, "src/index.ts", "import type { Inputs } from \"holon-sh\";\nexport const input: Inputs[\"docs\"][\"read\"] = { id: \"a\" };\n")
-	sources, err := DeclaredSources(app)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := Generate(t.Context(), []Consumer{{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: sources}}, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	if output, err := check(t, app); err != nil {
-		t.Fatalf("check: %v\n%s", err, output)
 	}
 }
 

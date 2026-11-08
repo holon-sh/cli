@@ -178,11 +178,7 @@ holon types check -s bar/server.py
 <details open>
 <summary><h3>Registry</h3></summary>
 
-A registry record under `sh.holon.requires` in [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json), or `-s` with a registry version URL. The record is fetched for its contract.
-
-```json
-"context7": { "name": "io.github.upstash/context7", "version": "4.4.4" }
-```
+A `sh.holon.requires` entry in [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json), or `-s` with a registry version URL. The record is fetched for its contract.
 
 ```sh
 holon types check -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
@@ -193,17 +189,13 @@ holon types check -s https://registry.modelcontextprotocol.io/v0.1/servers/io.gi
 <details open>
 <summary><h3>Server</h3></summary>
 
-An endpoint URL, as a `url` entry under `sh.holon.requires` or with `-s`. The running server is asked for `tools/list` and `resources/list`. Only `holon types` reads the `url` form yet.
-
-```json
-"docs": { "url": "https://mcp.example.com/mcp" }
-```
+An endpoint URL. The running server is asked for `tools/list` and `resources/list`.
 
 ```sh
 holon types check -s https://mcp.context7.com/mcp
 ```
 
-If the server requires a token, set `<ALIAS>_MCP_TOKEN` for the alias that names it: the `requires` key, or `ALIAS=` before the URL. The token is sent only to that URL's origin, as a bearer token, and is not written anywhere.
+If the server requires a token, name it and set `<ALIAS>_MCP_TOKEN`. The token is sent only to that URL's origin, as a bearer token, and is not written anywhere.
 
 ```sh
 export DOCS_MCP_TOKEN=...
