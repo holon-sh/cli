@@ -65,6 +65,7 @@ func TestPrepareRejectsInvalidConsumers(t *testing.T) {
 		{"contract and endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata()), Endpoint: "https://x.example/mcp"}}}, "exactly one of"},
 		{"bad alias", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Alias: "Bad_Alias", Registry: ref}}}, "must be a DNS label"},
 		{"bad version", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Registry: &Reference{Name: "example.com/orders", Version: "latest"}}}}, "exact"},
+		{"bad endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Endpoint: "https://user:secret@x.example/mcp"}}}, "without credentials"},
 	} {
 		prepared, err := Prepare(t.Context(), []Consumer{test.c}, Options{})
 		if prepared != nil {

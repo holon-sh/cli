@@ -180,6 +180,10 @@ holon types check -s bar/server.py
 
 A registry record under `sh.holon.requires` in [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json), or `-s` with a registry version URL. The record is fetched for its contract.
 
+```json
+"context7": { "name": "io.github.upstash/context7", "version": "4.4.4" }
+```
+
 ```sh
 holon types check -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
 ```
@@ -189,7 +193,7 @@ holon types check -s https://registry.modelcontextprotocol.io/v0.1/servers/io.gi
 <details open>
 <summary><h3>Server</h3></summary>
 
-An endpoint URL, as a `url` entry under `sh.holon.requires` or with `-s`. The running server is asked for `tools/list` and `resources/list`.
+An endpoint URL, as a `url` entry under `sh.holon.requires` or with `-s`. The running server is asked for `tools/list` and `resources/list`. Only `holon types` reads the `url` form yet.
 
 ```json
 "docs": { "url": "https://mcp.example.com/mcp" }

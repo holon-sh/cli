@@ -74,6 +74,14 @@ func (r requirement) validate() error {
 	}
 }
 
+// source is the entry as the dependency source named alias.
+func (r requirement) source(alias string) Source {
+	if r.URL != "" {
+		return Source{Alias: alias, Endpoint: r.URL}
+	}
+	return Source{Alias: alias, Registry: &r.Reference}
+}
+
 // Server is how a server describes itself, in its server.json or the serverInfo it answers.
 type Server struct {
 	Name        string `json:"name"`

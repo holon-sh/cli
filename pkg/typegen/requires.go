@@ -68,12 +68,7 @@ func DeclaredSources(dir string) ([]Source, error) {
 	}
 	var sources []Source
 	for _, alias := range slices.Sorted(maps.Keys(d.Requires)) {
-		r := d.Requires[alias]
-		source := Source{Alias: alias, Endpoint: r.URL}
-		if r.URL == "" {
-			source.Registry = &r.Reference
-		}
-		sources = append(sources, source)
+		sources = append(sources, d.Requires[alias].source(alias))
 	}
 	return sources, nil
 }

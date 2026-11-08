@@ -119,6 +119,9 @@ func (s Source) validate() error {
 	if s.Registry != nil {
 		return s.Registry.Validate()
 	}
+	if s.Endpoint != "" {
+		return validEndpoint(s.Endpoint)
+	}
 	return nil
 }
 

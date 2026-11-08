@@ -57,13 +57,15 @@ func TestDeclaredSources(t *testing.T) {
 	}
 }
 
-// A running server with no registry record is declared by its url, which holon types check generates
-// from when no -s names it.
+// A running server with no registry record is declared by its url; the clients generated from the
+// declaration alone, as check regenerates them, type-check the project's calls to it.
 func TestADeclaredEndpointIsGeneratedAndChecked(t *testing.T) {
+	t.Parallel()
 	live := liveServer(t, "docs")
 	defer live.Close()
 	app := typeScriptApp(t)
-	put(t, app, "server.json", `{"name":"example.com/app","version":"1.0.0","description":"App","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"docs":{"url":"`+live.URL+`"}}}}}}`)
+	put(t, app, "server.json", string(mustJSON(t, map[string]any{"name": "example.com/app", "version": "1.0.0", "description": "App",
+		"_meta": map[string]any{"io.modelcontextprotocol.registry/publisher-provided": map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"docs": map[string]any{"url": live.URL}}}}}})))
 	put(t, app, "src/index.ts", "import type { Inputs } from \"holon-sh\";\nexport const input: Inputs[\"docs\"][\"read\"] = { id: \"a\" };\n")
 	sources, err := DeclaredSources(app)
 	if err != nil {
