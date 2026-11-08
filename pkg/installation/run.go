@@ -24,6 +24,7 @@ import (
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 
+	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/protocol"
 )
 
@@ -108,11 +109,6 @@ func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec
 func uploadManifest(
 	ctx context.Context, manager *Client, name string, resolved manifestSpec, options buildOptions,
 ) (protocol.AppsRequestFor[protocol.App], error) {
-	if options.types != nil {
-		if err := options.types.acquire(resolved); err != nil {
-			return protocol.AppsRequestFor[protocol.App]{}, err
-		}
-	}
 	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, err
@@ -172,9 +168,13 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
+	if err := options.types.acquire(resolved); err != nil {
+		return err
+	}
+	record := manager.leftSession(resolved)
 	var previous protocol.SessionResponse
 	if config.devTTLSeconds == nil {
-		previous = previousSession(ctx, manager, resolved)
+		previous = previousSession(ctx, manager, record)
 	}
 	if previous.Name != "" {
 		if err := printStartingEndpoints(stdout, manager.client.baseURL, previous); err != nil {
@@ -226,26 +226,31 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	dev := &devLoop{manager: manager, name: session.Name, manifest: resolved, apps: apps, clock: config.clock(), options: options, session: session}
-	return dev.run(ctx, stdout, keptImages(resolved, start.reusable, request.Apps))
+	err = dev.run(ctx, stdout, keptImages(resolved, start.reusable, request.Apps))
+	// Without the record, the next holon dev starts a new session, as it would with none to pick up.
+	_ = writePrivateFile(record, []byte(session.Name))
+	return err
 }
 
-// previousSession renews and returns the development session an earlier holon dev of exactly manifest's apps
-// left running, or none. Renewal fails unless the session is the caller's, not detached and unexpired.
-func previousSession(ctx context.Context, manager *Client, manifest manifestSpec) protocol.SessionResponse {
-	// Without the session list, holon dev starts a new session, as it would with none to pick up.
-	sessions, _ := scopeSessions(ctx, manager, "")
-	for _, candidate := range sessions {
-		if !slices.EqualFunc(protocol.WritableApps(candidate.Apps), manifest.Apps, func(running protocol.App, app manifestApp) bool {
-			return running.Name == app.Name
-		}) {
-			continue
-		}
-		var session protocol.SessionResponse
-		if manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: candidate.Name}, &session) == nil {
-			return session
-		}
+// leftSession is where holon dev records the session it leaves, for the next holon dev of the same apps from the
+// same directories against this installation. A run elsewhere, or of other apps, keeps to its own session.
+func (m *Client) leftSession(manifest manifestSpec) string {
+	key := m.client.baseURL
+	for _, app := range manifest.Apps {
+		key += "\x00" + app.Name + "\x00" + app.Path
 	}
-	return protocol.SessionResponse{}
+	return filepath.Join(filepath.Dir(m.statePath), clientutil.HashBytes([]byte(key))+".session")
+}
+
+// previousSession renews and returns the session recorded in record, or none. Renewal fails unless the
+// session is still the caller's, not detached and unexpired.
+func previousSession(ctx context.Context, manager *Client, record string) protocol.SessionResponse {
+	var session protocol.SessionResponse
+	name, err := readPrivateFile(record)
+	if err != nil || manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: string(name)}, &session) != nil {
+		return protocol.SessionResponse{}
+	}
+	return session
 }
 
 // keptImages are the build contexts of the apps whose image, apps[i], is one that reusable offered.

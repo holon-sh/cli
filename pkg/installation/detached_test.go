@@ -63,10 +63,6 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				}
 				installationtest.WriteJSON(w, ready)
 			})
-			// A detached run creates its own session, so it renews none of the caller's.
-			h.control.Handle([]string{toolListSessions}, nil, func(w http.ResponseWriter, _ *http.Request) {
-				installationtest.WriteJSON(w, map[string]any{"items": []protocol.SessionResponse{{Name: "quiet-otter-12", Apps: []protocol.App{{Name: "echo"}}}}})
-			})
 			h.control.Handle([]string{protocol.ToolDeleteSession}, map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
 				if installationtest.ToolArguments(r)["skipHooks"] != true {
 					t.Error("cleanup must bypass lifecycle hooks")
