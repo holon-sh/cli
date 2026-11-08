@@ -18,14 +18,14 @@ function unpackTooling(t) {
     mkdirSync(dirname(join(tooling, name)), { recursive: true });
     writeFileSync(join(tooling, name), bytes);
   }
-  const run = (mode, ...args) => execFileSync(process.execPath, [join(tooling, "check.mjs"), mode, ...args], { encoding: "utf8", stdio: "pipe" });
+  const check = (cwd, entry) => execFileSync(process.execPath, [join(tooling, "runner.mjs"), "check", entry], { cwd, encoding: "utf8", stdio: "pipe" });
   // extract returns each app's contract, or its diagnostic and the package it missed.
   const extract = (apps, env = process.env) => Object.fromEntries(apps.map(({ name, path, entry }) => {
     const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "contract", path, entry], { encoding: "utf8", env });
     assert.ok([0, 2, 3].includes(status), stderr);
     return [name, status === 0 ? JSON.parse(stdout) : { diagnostic: stderr, missing: status === 3 ? stderr.trimEnd().split("\n").at(-1) : undefined }];
   }));
-  return { root, run, extract };
+  return { root, check, extract };
 }
 
 // An application directory holding files, including any node_modules it has installed.
@@ -38,8 +38,8 @@ function application(root, files) {
   return app;
 }
 
-test("a server with only schema imports extracts with nothing installed and records every file served", t => {
-  const { root, run, extract } = unpackTooling(t);
+test("a server with only schema imports extracts with nothing installed", t => {
+  const { root, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
     "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@schemas/*": ["./schemas/*"] } } }),
@@ -67,20 +67,11 @@ export default createMcpHandler(() => {
   assert.deepEqual(extracted.orders.tools.map(tool => tool.name), ["list", "read"]);
   assert.deepEqual(Object.keys(extracted.orders.tools[1].outputSchema.properties), ["id", "status"]);
   assert.deepEqual(extracted.orders.resources, [{ uri: "orders://latest", outputSchema: { type: "object" } }, { uri: "ui://orders/app.html", outputSchema: {} }]);
-  assert.deepEqual(Object.keys(extracted.orders.sources), ["meta.json", "schemas/order.ts", "server.ts", "tools.ts"]);
   assert.deepEqual(extracted.plain.tools, []);
-
-  const config = join(root, "verify.json");
-  writeFileSync(config, JSON.stringify({ root: app, sources: extracted.orders.sources }));
-  run("verify", config);
-  writeFileSync(join(app, "schemas/order.ts"), "export const status = null;");
-  for (const mode of ["check", "verify"]) {
-    assert.throws(() => run(mode, config), { stderr: /schemas\/order\.ts:.*stale/ });
-  }
 });
 
 test("installed packages resolve from the application: its own Zod, CommonJS packages and the MCP client", t => {
-  const { root, run, extract } = unpackTooling(t);
+  const { root, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
     // Stands in for an installed Zod other than the bundled one; its JSON Schema names its version.
@@ -108,7 +99,6 @@ export default createMcpHandler(() => {
   symlinkSync(fileURLToPath(new URL("../node_modules/@modelcontextprotocol/client", import.meta.url)), join(app, "node_modules/@modelcontextprotocol/client"));
   const { units } = extract([{ name: "units", path: app, entry: "server.ts" }]);
   assert.deepEqual(units.tools, [{ name: "convert", inputSchema: { type: "object", description: "zod 9.9.9", properties: { unit: { type: "string", enum: ["cm", "in"] } } } }]);
-  assert.deepEqual(Object.keys(units.sources), ["server.ts"]);
 });
 
 test("module-scope reads of the environment, clock and randomness give one contract", t => {
@@ -143,36 +133,19 @@ test("module-scope effects fail with the capability, file and line; missing pack
   assert.equal(extracted.missing.missing, "left-pad");
 });
 
-// installCompiler gives app a compiler package that exposes bin.tsc without a JavaScript API, as
-// TypeScript 7 does.
-function installCompiler(app) {
+test("check uses the application's compiler CLI and honors project file selection", t => {
+  const { root, check } = unpackTooling(t);
+  const app = join(root, "application");
+  mkdirSync(app);
+  writeFileSync(join(app, "package.json"), '{"type":"module"}');
+  // A compiler package can expose bin.tsc without a JavaScript API, as TypeScript 7 does.
   const compiler = join(app, "node_modules/typescript");
   mkdirSync(compiler, { recursive: true });
   writeFileSync(join(compiler, "package.json"), JSON.stringify({ bin: { tsc: "compiler.cjs" }, exports: { "./package.json": "./package.json" } }));
   writeFileSync(join(compiler, "compiler.cjs"), `require(${JSON.stringify(fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url)))});`);
-}
-
-test("check uses the application's compiler CLI and honors project file selection", t => {
-  const { root, run, extract } = unpackTooling(t);
-  const app = join(root, "application");
-  mkdirSync(app);
-  writeFileSync(join(app, "package.json"), '{"type":"module"}');
-  installCompiler(app);
   writeFileSync(join(app, "check.ts"), "export const total = 1;");
-  const config = join(root, "check.json");
   writeFileSync(join(app, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "ES2023", module: "ESNext", moduleResolution: "Bundler", strict: true }, files: ["check.ts"] }));
   // The application's file selection takes precedence over entry/discovery.
   writeFileSync(join(app, "excluded.ts"), 'export const wrong: number = "excluded";');
-  writeFileSync(config, JSON.stringify({ root: app, entry: "excluded.ts" }));
-  run("check", config);
-});
-
-test("without a tsconfig, check compiles the project's sources but not installed or generated ones", t => {
-  const { root, run } = unpackTooling(t);
-  const wrong = 'export const wrong: number = "wrong";';
-  const app = application(root, { "package.json": '{"type":"module"}', "src/nested/wrong.ts": wrong, "node_modules/pkg/wrong.ts": wrong, ".holon/wrong.ts": wrong, ".holon-types/wrong.ts": wrong });
-  installCompiler(app);
-  const config = join(root, "check.json");
-  writeFileSync(config, JSON.stringify({ root: app }));
-  assert.throws(() => run("check", config), error => error.stdout.match(/wrong\.ts/g)?.join() === "wrong.ts" && error.stdout.includes("src/nested/wrong.ts"));
+  check(app, "excluded.ts");
 });

@@ -42,7 +42,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		return "", errors.New("invalid build architectures")
 	}
 	p := app.resolved.types
-	config, start, err := stageSnapshot(app, p, true)
+	config, start, err := stageSnapshot(app, p)
 	if err != nil {
 		return "", err
 	}
@@ -79,8 +79,8 @@ func buildArchitectures(configured []string) []string {
 // stageSnapshot fills p's snapshot as an image build or a source overlay reads it: the generated clients,
 // then the SDK launcher for a hosted entry. It returns the build configuration and start command, either
 // of which may be empty.
-func stageSnapshot(app manifestApp, p *preparedTypes, check bool) (string, []string, error) {
-	config, err := stageTypes(p, check)
+func stageSnapshot(app manifestApp, p *preparedTypes) (string, []string, error) {
+	config, err := stageTypes(p)
 	if err != nil {
 		return "", nil, err
 	}

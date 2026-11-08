@@ -1,7 +1,9 @@
 package mcptype
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
 	"slices"
@@ -20,6 +22,43 @@ var pythonName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 // pythonIdentifier reports whether name is a public ASCII identifier that is not a keyword.
 func pythonIdentifier(name string) bool {
 	return pythonName.MatchString(name) && !strings.HasPrefix(name, "_") && !slices.Contains(pythonKeywords, name)
+}
+
+// pythonMethod derives a method name for a tool whose name is not an identifier: its ASCII words
+// joined by underscores, as Go joins them into a method name, with a prefix before a leading digit
+// and a suffix after a keyword.
+func pythonMethod(tool string) string {
+	method := cmp.Or(strings.Join(asciiWords.FindAllString(tool, -1), "_"), "value")
+	if method[0] >= '0' && method[0] <= '9' {
+		method = "x" + method
+	}
+	if slices.Contains(pythonKeywords, method) {
+		method += "_"
+	}
+	return method
+}
+
+// pythonMethods names each tool's method. A tool named as an identifier keeps its name, and the others
+// take derived names. A derived name that another tool also claims is given to none of them, because
+// a numeric suffix would move when the server adds a tool, leaving an existing method calling a
+// different tool. Those tools and the ones the runtime does not expose, whose names start with an
+// underscore, have no method.
+func pythonMethods(tools catalog) map[string]string {
+	methods := map[string]string{}
+	claimed := map[string]int{}
+	for name := range tools {
+		if strings.HasPrefix(name, "_") {
+			continue
+		}
+		method := name
+		if !pythonIdentifier(name) {
+			method = pythonMethod(name)
+		}
+		methods[name] = method
+		claimed[method]++
+	}
+	maps.DeleteFunc(methods, func(name, method string) bool { return name != method && claimed[method] > 1 })
+	return methods
 }
 
 func pythonBlock(header string, lines []string, indent string) string {
@@ -230,8 +269,9 @@ func generatePython(contracts map[string]catalog) string {
 		appExports := make([][]string, 4)
 		tools := contracts[binding]
 		nameDeclarations(emitter.names, binding, tools, pythonDeclares)
+		toolMethods := pythonMethods(tools)
 		for _, name := range sortedKeys(tools) {
-			tool := tools[name]
+			tool, method := tools[name], toolMethods[name]
 			shapes := []shape{tool.input, tool.output}
 			prefix := typeIdentifier(binding) + typeIdentifier(name)
 			emitter.declare(shapes[0])
@@ -242,27 +282,27 @@ func generatePython(contracts map[string]catalog) string {
 			if !tool.structured {
 				returned = "_CompleteResult[_builtins.object]"
 			}
-			var toolMethods []string
+			var signatures []string
 			for _, argument := range arguments {
 				calls = append(calls, fmt.Sprintf("    async def call_tool(self, name: _typing.Literal[%s], options: _CallOptions | None = ..., /, **arguments: %s) -> _ToolResult[%s]: ...", quoted(name), argument, output))
-				toolMethods = append(toolMethods, fmt.Sprintf("    async def %s(self, options: _CallOptions | None = ..., /, **arguments: %s) -> %s: ...", name, argument, returned))
+				signatures = append(signatures, fmt.Sprintf("    async def %s(self, options: _CallOptions | None = ..., /, **arguments: %s) -> %s: ...", method, argument, returned))
 			}
-			if !pythonIdentifier(name) {
+			if method == "" {
 				continue
 			}
-			methods = append(methods, pythonOverloaded(toolMethods)...)
+			methods = append(methods, pythonOverloaded(signatures)...)
 			for i, rendered := range []string{input, output} {
 				if i == 1 && !tool.structured {
 					continue
 				}
-				appExports[i] = append(appExports[i], fmt.Sprintf("        %s: _typing.TypeAlias = %s", name, rendered))
+				appExports[i] = append(appExports[i], fmt.Sprintf("        %s: _typing.TypeAlias = %s", method, rendered))
 				var types []string
 				for _, definition := range sortedKeys(shapes[i].named) {
 					if pythonIdentifier(definition) {
 						types = append(types, fmt.Sprintf("            %s: _typing.TypeAlias = %s", definition, emitter.render(shapes[i].named[definition], prefix+exportNames[i]+typeIdentifier(definition))))
 					}
 				}
-				appExports[i+2] = append(appExports[i+2], pythonBlock(fmt.Sprintf("        class %s:", name), types, "            "))
+				appExports[i+2] = append(appExports[i+2], pythonBlock(fmt.Sprintf("        class %s:", method), types, "            "))
 			}
 		}
 		var app []string

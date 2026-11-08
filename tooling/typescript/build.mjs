@@ -11,16 +11,12 @@ const root = dirname(fileURLToPath(import.meta.url));
 const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const destination = join(root, "..", "..", "pkg", "tooling");
 const nodeBanner = 'import { createRequire as _createRequire } from "node:module"; import { fileURLToPath as _fileURLToPath } from "node:url"; import { dirname as _dirname } from "node:path"; const require = _createRequire(import.meta.url); const __filename = _fileURLToPath(import.meta.url); const __dirname = _dirname(__filename);';
-const options = { bundle: true, write: false, metafile: true, format: "esm", legalComments: "inline", absWorkingDir: root, platform: "node", target: "node22" };
-const runner = await build({ ...options, entryPoints: [join(root, "runner.mjs")], banner: { js: nodeBanner }, outfile: "runner.mjs" });
-// The checker compares digests and starts the application's own compiler, so it bundles no package.
-const checker = await build({ ...options, entryPoints: [join(root, "check.mjs")], outfile: "check.mjs" });
-if (Object.keys(checker.metafile.inputs).some(path => path.includes("node_modules/"))) throw new Error("check.mjs must not bundle packages");
+const { metafile, outputFiles } = await build({ entryPoints: [join(root, "runner.mjs")], bundle: true, write: false, metafile: true, format: "esm", legalComments: "inline", absWorkingDir: root, platform: "node", target: "node22", banner: { js: nodeBanner }, outfile: "runner.mjs" });
 
 // Zod and the MCP SDK ship as published ES modules for applications that have not installed them.
 const vendored = ["zod", "@modelcontextprotocol/server", "@modelcontextprotocol/core"].map(name => join(root, "node_modules", name));
 const packages = new Set(vendored);
-for (const path of Object.keys(runner.metafile.inputs)) {
+for (const path of Object.keys(metafile.inputs)) {
   if (!path.includes("node_modules/")) continue;
   let directory = dirname(join(root, path));
   while (!existsSync(join(directory, "package.json"))) directory = dirname(directory);
@@ -37,7 +33,7 @@ for (const directory of [...packages].sort()) {
   notices.push(`${pkg.name ?? relative(root, directory)} ${pkg.version ?? ""}\n${licenses.sort().map(name => readFileSync(join(licenseDirectory, name), "utf8")).join("\n")}`);
 }
 
-const files = { "runner.mjs": runner.outputFiles[0].contents, "check.mjs": checker.outputFiles[0].contents, "THIRD-PARTY-NOTICES.txt": Buffer.from(notices.join("\n\n")), "version.json": Buffer.from(JSON.stringify({ version }) + "\n") };
+const files = { "runner.mjs": outputFiles[0].contents, "THIRD-PARTY-NOTICES.txt": Buffer.from(notices.join("\n\n")), "version.json": Buffer.from(JSON.stringify({ version }) + "\n") };
 for (const directory of vendored) {
   for (const file of readdirSync(directory, { recursive: true })) {
     if (/(^|\/)(package\.json|[^/]*\.m?js|licen[sc]e[^/]*)$/i.test(file) && !file.startsWith("src/")) files[`vendor/${relative(root, directory)}/${file}`] = readFileSync(join(directory, file));

@@ -3,10 +3,12 @@ package typegen
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+
+	"github.com/holon-sh/cli/pkg/tooling"
 )
 
 func Check(ctx context.Context, dir string, options Options) error {
@@ -42,33 +44,23 @@ func Check(ctx context.Context, dir string, options Options) error {
 		return err
 	}
 	defer os.RemoveAll(root)
+	if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
+		return err
+	}
 	if err := validateEnv(o.Env); err != nil {
 		return err
 	}
-	tools, release := o.tools()
-	defer release()
 	slices.Sort(languages)
 	for _, language := range slices.Compact(languages) {
 		l := typeLanguages[language]
-		toolingDir, err := tools.dir(language)
+		program, err := l.localProgram(ctx)
 		if err != nil {
 			return err
 		}
-		// mypy checks a Python project in its own environment, so the host's matters only without one.
-		program := ""
 		if language == "python" {
-			program = pythonEnvironment(dir)
+			program = pythonEnvironment(dir, program)
 		}
-		if program == "" {
-			if program, err = tools.host(ctx, language); err != nil {
-				return err
-			}
-		}
-		config := filepath.Join(root, language+"-check.json")
-		if err = writeJSON(config, map[string]any{"root": dir, "entry": "", "sources": map[string]string{}, "check": true}); err != nil {
-			return err
-		}
-		command := l.command(ctx, program, toolingDir, language, l.checker, config)
+		command := exec.CommandContext(ctx, program, filepath.Join(root, "tooling", language, l.checker), "check", "")
 		command.Dir = dir
 		command.Env = append(append(command.Environ(), o.Env...), "PYTHONDONTWRITEBYTECODE=1")
 		command.Stdout = o.Stdout
@@ -81,23 +73,19 @@ func Check(ctx context.Context, dir string, options Options) error {
 	return nil
 }
 
-// CheckConfig is the runner's check configuration ({entry, sources, check}) for the consumer's own
-// server, for a type check inside an image build against the dependencies installed there. Paths are
-// relative to the consumer directory. It reports false for consumers without an extracted server.
-func (p *Prepared) CheckConfig(consumer string) (map[string]any, bool) {
+// CheckEntry is the consumer's own server entry, relative to the consumer directory, and its language, for a
+// type check against the dependencies installed in its image. It reports false for consumers without an
+// extracted server.
+func (p *Prepared) CheckEntry(consumer string) (entry, language string, ok bool) {
 	c := p.consumer(consumer)
 	if c == nil || c.server == nil || c.server.metadata.Schema == nil {
-		return nil, false
+		return "", "", false
 	}
-	sources := map[string]string{}
-	maps.Copy(sources, c.server.sources)
-	entry, _ := filepath.Rel(c.Dir, filepath.Join(c.server.origin, c.server.entry))
-	return map[string]any{"entry": filepath.ToSlash(entry), "sources": sources, "check": true}, true
+	entry, _ = filepath.Rel(c.Dir, filepath.Join(c.server.origin, c.server.entry))
+	return filepath.ToSlash(entry), c.server.language, true
 }
 
-// pythonEnvironment is the interpreter of the project's virtual environment: the nearest .venv or
-// venv from dir up, else the active one, else "".
-func pythonEnvironment(dir string) string {
+func pythonEnvironment(dir, fallback string) string {
 	for current := dir; ; current = filepath.Dir(current) {
 		for _, venv := range []string{".venv", "venv"} {
 			if python := filepath.Join(current, venv, "bin", "python"); isFile(python) {
@@ -111,5 +99,5 @@ func pythonEnvironment(dir string) string {
 	if active := os.Getenv("VIRTUAL_ENV"); active != "" && isFile(filepath.Join(active, "bin", "python")) {
 		return filepath.Join(active, "bin", "python")
 	}
-	return ""
+	return fallback
 }

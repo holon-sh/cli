@@ -108,7 +108,7 @@ func typeScriptApp(t *testing.T) string {
 
 func needPython(t *testing.T) string {
 	t.Helper()
-	program, err := new(Tooling).host(context.Background(), "python")
+	program, err := typeLanguages["python"].localProgram(context.Background())
 	if err != nil {
 		t.Skip(err)
 	}
@@ -116,7 +116,7 @@ func needPython(t *testing.T) string {
 }
 func needNode(t *testing.T) {
 	t.Helper()
-	if _, err := new(Tooling).host(context.Background(), "typescript"); err != nil {
+	if _, err := typeLanguages["typescript"].localProgram(context.Background()); err != nil {
 		t.Skip(err)
 	}
 }
@@ -124,10 +124,10 @@ func needNode(t *testing.T) {
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
 // snapshot's server.json name, printing an extraction or returning an error as the runner's failure.
 func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
-	return func(_ context.Context, _, _ string, args []string, stdout io.Writer) error {
+	return func(_ context.Context, _, tooling string, args []string, stdout io.Writer) error {
 		root, entry := args[1], args[2]
-		if !isFile(filepath.Join(root, entry)) {
-			return fmt.Errorf("entry %s is not in its snapshot %s", entry, root)
+		if !pathInsideContext(root, filepath.Dir(tooling)) || !isFile(filepath.Join(root, entry)) {
+			return fmt.Errorf("entry %s is not in a snapshot under %s: %s", entry, filepath.Dir(tooling), root)
 		}
 		var descriptor struct{ Name string }
 		if err := readTypeJSON(filepath.Join(root, "server.json"), &descriptor); err != nil && !errors.Is(err, fs.ErrNotExist) {
