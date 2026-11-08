@@ -62,8 +62,7 @@ Call the server. A wrong tool name or argument is a type error.
 ```python
 from holon.apps import apps
 
-libraries = await apps.context7.tools.resolve_library_id(libraryName="Next.js", query="app router")
-libraries.content  # Context7 declares no output schema, so the complete result is returned
+await apps.context7.tools.resolve_library_id(libraryName="Next.js", query="app router")
 
 await apps.context7.tools.resolve_library_id(libraryName=1, query="app router")
 # error: Argument "libraryName" to "resolve_library_id" of "Context7Tools" has incompatible type "int"; expected "str"  [arg-type]
