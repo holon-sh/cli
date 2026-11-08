@@ -17,14 +17,14 @@ type goTool struct {
 	name, input, output string
 }
 
-var goWords = regexp.MustCompile(`[a-zA-Z0-9]+`)
+var asciiWords = regexp.MustCompile(`[a-zA-Z0-9]+`)
 
 // goTagName matches ASCII JSON struct-tag names; "-" alone means omission.
 var goTagName = regexp.MustCompile(`^[a-zA-Z0-9` + regexp.QuoteMeta(" !#$%&()*+./:;<=>?@[]^_{|}~") + `-]+$`)
 
 // typeIdentifier turns any name into a capitalized ASCII identifier.
 func typeIdentifier(value string) string {
-	words := goWords.FindAllString(value, -1)
+	words := asciiWords.FindAllString(value, -1)
 	for i, word := range words {
 		words[i] = strings.ToUpper(word[:1]) + word[1:]
 	}

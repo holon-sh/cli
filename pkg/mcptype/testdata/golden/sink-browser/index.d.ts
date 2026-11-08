@@ -23,11 +23,15 @@ export interface Inputs {
     "-": { [key: string]: unknown; };
     "123": { [key: string]: unknown; };
     "CallTool": { [key: string]: unknown; };
+    "_hidden": { [key: string]: unknown; };
     "call_tool": { "a"?: number; "b": string; };
     "class": { "opt"?: { "n"?: number; }; };
     "get-order": OrdersInputId;
     "get_order": OrdersInputId;
     "kitchen-sink": OrdersInputX1startsDashKeyAllEtc;
+    "order.list": { [key: string]: unknown; };
+    "order/list": { [key: string]: unknown; };
+    "runtime.run": { "code": string; };
     "weird-keys": { "": null; "-"?: boolean; "x\"quote"?: string; "ünïcode"?: number; };
     "émoji🎉": { "é"?: string; };
   };
@@ -51,6 +55,7 @@ export interface Outputs {
   "orders": {
     "call_tool": { "x": boolean; };
     "class": Array<unknown>;
+    "runtime.run": { "stdout": string; };
     "weird-keys": { "a.b"?: string; "nl\nname"?: string; "tab\tname": string; };
     "émoji🎉": string;
   };
@@ -74,11 +79,15 @@ export interface InputTypes {
     "-": {  };
     "123": {  };
     "CallTool": {  };
+    "_hidden": {  };
     "call_tool": {  };
     "class": {  };
     "get-order": {  };
     "get_order": {  };
     "kitchen-sink": { "9lives": OrdersInputX9lives; "Legacy": OrdersInputLegacy; "Node": OrdersInputNode; "Nodes": OrdersInputNodes; "_private": OrdersInputPrivate; "a/b~c": OrdersInputABC; "for": OrdersInputFor; "list": OrdersInputList; };
+    "order.list": {  };
+    "order/list": {  };
+    "runtime.run": {  };
     "weird-keys": {  };
     "émoji🎉": {  };
   };
@@ -102,6 +111,7 @@ export interface OutputTypes {
   "orders": {
     "call_tool": {  };
     "class": {  };
+    "runtime.run": {  };
     "weird-keys": {  };
     "émoji🎉": {  };
   };
