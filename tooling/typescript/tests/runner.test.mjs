@@ -79,6 +79,24 @@ export default createMcpHandler(() => {
   }
 });
 
+test("extraction uses the paths of a tsconfig in a parent directory, relative to that config", t => {
+  const { root, extract } = unpackTooling(t);
+  const app = application(root, {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@schemas/*": ["./packages/schemas/*"] } } }),
+    "packages/schemas/order.ts": 'import { z } from "zod"; export const order = z.object({ id: z.string() });',
+    "packages/api/package.json": '{"type":"module"}',
+    "packages/api/server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { order } from "@schemas/order";
+export default createMcpHandler(() => {
+  const server = new McpServer({ name: "orders", version: "1" });
+  server.registerTool("read", { inputSchema: order }, () => ({ content: [] }));
+  return server;
+}, { legacy: "reject" });`,
+  });
+  const { api } = extract([{ name: "api", path: join(app, "packages", "api"), entry: "server.ts" }]);
+  assert.deepEqual(Object.keys(api.tools?.[0].inputSchema.properties ?? {}), ["id"], api.diagnostic);
+});
+
 test("installed packages resolve from the application: its own Zod, CommonJS packages and the MCP client", t => {
   const { root, run, extract } = unpackTooling(t);
   const app = application(root, {

@@ -242,13 +242,14 @@ function conditional(value, match, conditions) {
   }
 }
 
-// tsconfigPaths maps a specifier through the application's tsconfig.json paths, if any.
+// tsconfigPaths maps a specifier through the paths of the tsconfig.json tsc finds from root, if any.
+// Only the options matter, so a config high in the tree does not cost a walk of everything under it.
 function tsconfigPaths(root) {
-  const file = join(root, "tsconfig.json");
-  if (!existsSync(file)) return () => [];
+  const file = ts.findConfigFile(root, ts.sys.fileExists);
+  if (!file) return () => [];
   const { config } = ts.readConfigFile(file, ts.sys.readFile);
-  const { options } = ts.parseJsonConfigFileContent(config ?? {}, ts.sys, root);
-  const base = options.baseUrl ?? options.pathsBasePath ?? root;
+  const { options } = ts.parseJsonConfigFileContent(config ?? {}, { ...ts.sys, readDirectory: () => [] }, dirname(file));
+  const base = options.baseUrl ?? options.pathsBasePath;
   const entries = Object.entries(options.paths ?? {});
   return specifier => entries.flatMap(([pattern, targets]) => {
     const [prefix, suffix = ""] = pattern.split("*");
