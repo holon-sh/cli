@@ -51,9 +51,6 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	if err != nil {
 		return "", "", err
 	}
-	if kept, ok := options.kept[app.Name]; ok && kept.inputs == p.inputs {
-		return kept.image, kept.overlay, nil
-	}
 	request.upload = upload
 	build := options.builder
 	if build == nil {

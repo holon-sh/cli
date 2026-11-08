@@ -36,7 +36,6 @@ type buildOptions struct {
 	HTTPClient    *http.Client
 	output        *progressOutput
 	development   bool
-	kept          map[string]keptImage
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {

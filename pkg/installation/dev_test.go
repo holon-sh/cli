@@ -67,11 +67,14 @@ func TestRunDevRebuildsWhatASaveChanged(t *testing.T) {
 			})
 			var mu sync.Mutex
 			var served []protocol.App
-			h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession},
+			h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession},
 				nil, func(w http.ResponseWriter, r *http.Request) {
 					mu.Lock()
 					defer mu.Unlock()
 					switch installationtest.ToolName(r) {
+					case protocol.ToolDeleteSession:
+						installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+						return
 					case protocol.ToolCreateSession:
 						var input protocol.AppsRequestFor[protocol.App]
 						if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
