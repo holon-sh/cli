@@ -1,4 +1,5 @@
 // holon-generated-apps-v1 app=chéck"out
+export type OrdersOutputItem = { "id": string; };
 export interface Inputs {
   "123": {
   };
@@ -27,7 +28,7 @@ export interface Outputs {
   };
   "orders": {
     "res://plain": string;
-    "res://typed": { "items": Array<{ "id": string; }>; };
+    "res://typed": { "items": Array<OrdersOutputItem>; };
     "res://é/ü": { "n"?: number; };
   };
   "orders!": {
@@ -65,7 +66,7 @@ export interface OutputTypes {
   };
   "orders": {
     "res://plain": {  };
-    "res://typed": { "Item": { "id": string; }; };
+    "res://typed": { "Item": OrdersOutputItem; };
     "res://é/ü": {  };
   };
   "orders!": {
