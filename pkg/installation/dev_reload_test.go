@@ -276,8 +276,8 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			f.mu.Lock()
 			creates, image := f.creates, f.served[0].Image
 			f.mu.Unlock()
-			if creates != test.creates {
-				t.Fatalf("creates = %d, want %d; stderr=%q", creates, test.creates, f.stderr.String())
+			if creates != test.creates || !strings.HasPrefix(f.stdout.String(), "Session  gentle-otter-482\n\nStarting\n") {
+				t.Fatalf("creates = %d, want %d; stdout=%q stderr=%q", creates, test.creates, f.stdout.String(), f.stderr.String())
 			}
 			if test.between == nil && (len(f.reloadRequests()) != test.reloads || (image != before) != test.rebuilt) {
 				t.Fatalf("reloads = %d, image replaced = %v; stderr=%q", len(f.reloadRequests()), image != before, f.stderr.String())

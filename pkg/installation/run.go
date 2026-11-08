@@ -176,6 +176,11 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if config.devTTLSeconds == nil {
 		previous = previousSession(ctx, manager, resolved)
 	}
+	if previous.Name != "" {
+		if err := printStartingEndpoints(stdout, manager.client.baseURL, previous); err != nil {
+			return err
+		}
+	}
 	// Only the first build reuses the previous session's images; devLoop.run reloads the apps that kept one.
 	start := options
 	start.reusable, start.reuseBy = sessionImages(previous), imageInputsAnnotation
@@ -202,12 +207,9 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 			console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
 			return fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
 		}
-	}
-	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
-		return err
-	}
-	if err := printStartingEndpoints(stdout, manager.client.baseURL, session); err != nil {
-		return err
+		if err := printStartingEndpoints(stdout, manager.client.baseURL, session); err != nil {
+			return err
+		}
 	}
 	if request.TTLSeconds != nil {
 		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
@@ -432,11 +434,14 @@ func reportSessionProgress(
 	output.status(name, phase, state)
 }
 
-// printStartingEndpoints prints where the session's apps will be. The API publishes endpoints only once
+// printStartingEndpoints prints the session and where its apps will be. The API publishes endpoints only once
 // their apps are up, but the URLs follow from the session's name.
 func printStartingEndpoints(stdout io.Writer, origin string, session protocol.SessionResponse) error {
 	base, err := protocol.SessionAudience(origin, protocol.ModeDevelopment, session.Name)
 	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
 		return err
 	}
 	session.Endpoints = make([]protocol.SessionEndpoint, 0, len(session.Apps))
