@@ -11,7 +11,7 @@ runs:
       uses: actions/checkout@v7
       with:
         repository: hughhan1/kiln
-        ref: 49d7d70bcc6fe53073ba36fe30671e2ae6b28463
+        ref: baddda0c04d61a849f39490b5dcbebdef8e22dca
         path: .kiln
         persist-credentials: false
     - name: Prepare build environment
