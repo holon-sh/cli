@@ -12,6 +12,7 @@ import (
 )
 
 type packageJSON struct {
+	Name, Version                                                         string
 	PackageManager                                                        string `json:"packageManager"`
 	Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
 }

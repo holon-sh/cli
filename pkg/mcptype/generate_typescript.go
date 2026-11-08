@@ -4,10 +4,13 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"strings"
 )
 
-const bindingTypes = `export interface EndpointBinding { endpoint: URL | string; authProvider?: AuthProvider; fetch?: (input: never, init?: never) => Promise<unknown>; installationUID?: string; scoped?: boolean }
-export interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }
+// bindingTypes gives the generated factory the runtime's own binding and option types, so a
+// consumer's object literals are checked against the installed runtime rather than a copy of it.
+// The runtime's binding requires an endpoint; a session hook serves the app without dialing it.
+const bindingTypes = `export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 `
 
@@ -35,6 +38,15 @@ func resourceContracts(contracts map[string]contract) map[string]contract {
 	return result
 }
 
+// declarationModule names the declarations beside an ES module. TypeScript pairs runtime.mjs with a
+// runtime.d.mts, but the runtimes ship runtime.d.ts, which the specifier runtime.js resolves to.
+func declarationModule(specifier string) string {
+	if module, ok := strings.CutSuffix(specifier, ".mjs"); ok {
+		return module + ".js"
+	}
+	return specifier
+}
+
 func generateTypeScriptPackage(ctx context.Context, request generateRequest, catalogs map[string]catalog) (map[string]string, error) {
 	// Resources take names that tools left free, so index.d.ts can re-export each one they declare.
 	names := map[string]bool{}
@@ -48,14 +60,15 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	switch {
 	case request.ProtocolSpecifier != "":
 		specifier := quoted(request.ProtocolSpecifier)
-		protocol = fmt.Sprintf("import type { AuthProvider, CallOptions, CallMetadata, ToolResult, ToolClient } from %s;\nexport { ToolCallError } from %s;", specifier, specifier)
+		protocol = fmt.Sprintf("import type { CallOptions, CallMetadata, ToolResult, ToolClient } from %s;\nexport { ToolCallError } from %s;", specifier, specifier)
 	case request.Protocol != "":
 		protocol = request.Protocol
 	}
 	identity, contracts := encode(request.caller()), encode(request.contracts)
-	types := fmt.Sprintf("%s\nexport type Resources = import(\"./resources.js\").Outputs;\nexport type * from \"./resources.js\";\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", protocol, tools)
+	runtime := cmp.Or(request.RuntimeSpecifier, "./runtime.mjs")
+	types := fmt.Sprintf("%s\nimport type { EndpointBinding, CreateOptions } from %s;\nexport type Resources = import(\"./resources.js\").Outputs;\nexport type * from \"./resources.js\";\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", protocol, quoted(declarationModule(runtime)), tools)
 	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
-	runtime := quoted(cmp.Or(request.RuntimeSpecifier, "./runtime.mjs"))
+	runtime = quoted(runtime)
 	if request.Target == "browser" {
 		files := map[string]string{
 			"index.js":       fmt.Sprintf("import { bindApps, appClass } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", runtime, runtime, bound),

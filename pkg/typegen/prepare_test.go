@@ -75,6 +75,43 @@ func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing
 	}
 }
 
+// A consumer without a server.json or a server of its own announces the identity its project
+// manifest gives it, read for the first target whose manifest names the project.
+func TestConsumersAnnounceTheirManifestIdentity(t *testing.T) {
+	const node = `{"name":"@example/checkout","version":"1.2.3","dependencies":{"holon-sh":"*"}}`
+	const python = "[build-system]\nrequires = ['hatchling']\n\n[project]\nname = 'checkout'\nversion = \"2.0\" # released\ndependencies = [\n  \"holon-sh\",\n]\n\n[project.urls]\nname = \"https://example.com\"\n"
+	for _, test := range []struct {
+		name    string
+		files   map[string]string
+		targets []string
+		want    mcpcontract.Identity
+	}{
+		{"package.json", map[string]string{"package.json": node}, []string{TargetTS}, mcpcontract.Identity{Name: "@example/checkout", Version: "1.2.3"}},
+		{"pyproject.toml", map[string]string{"pyproject.toml": python}, []string{TargetPy}, mcpcontract.Identity{Name: "checkout", Version: "2.0"}},
+		{"a dynamic version", map[string]string{"pyproject.toml": "[project]\nname = \"checkout\"\ndynamic = [\"version\"]\n"}, []string{TargetPy}, mcpcontract.Identity{Name: "checkout", Version: "0.0.0"}},
+		{"go.mod", map[string]string{"go.mod": "module example.com/checkout\n\ngo 1.27\n\nrequire github.com/holon-sh/sdk-go v0.0.1\n"}, []string{TargetGo}, mcpcontract.Identity{Name: "example.com/checkout", Version: "0.0.0"}},
+		{"the first target's manifest", map[string]string{"package.json": `{"name":"frontend"}`, "pyproject.toml": python}, []string{TargetPy, TargetTS}, mcpcontract.Identity{Name: "checkout", Version: "2.0"}},
+		{"server.json first", map[string]string{"package.json": node, "server.json": `{"name":"example.com/checkout","version":"3.0.0","description":"Checkout"}`}, []string{TargetTS}, mcpcontract.Identity{Name: "example.com/checkout", Version: "3.0.0"}},
+		{"an unnamed project", map[string]string{"package.json": `{"private":true}`}, []string{TargetTS}, mcpcontract.Identity{Name: "app", Version: "0.0.0"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, content := range test.files {
+				put(t, dir, name, content)
+			}
+			c := Consumer{Name: "app", Dir: dir, Targets: test.targets, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer prepared.Close()
+			if got := prepared.Metadata()["app"].Identity; got != test.want {
+				t.Fatalf("identity = %+v, want %+v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestServersDescribeEachConsumersOwnServer(t *testing.T) {
 	info := json.RawMessage(`{"name":"example.com/chat","version":"2.0.0","title":"Chat","description":"Chat with Holon","websiteUrl":"https://example.com/chat"}`)
 	for _, test := range []struct {

@@ -294,6 +294,8 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer, ext
 		return err
 	} else if descriptor != nil {
 		identity = descriptor.Identity()
+	} else if identity, err = manifestIdentity(c.Dir, c.Targets, c.Name); err != nil {
+		return err
 	}
 	c.metadata = &mcpcontract.Metadata{Identity: identity, Requires: map[string]string{}}
 	if c.server != nil {
