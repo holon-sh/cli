@@ -30,9 +30,9 @@ type preparedTypes struct {
 	name        string
 	root        string
 	fingerprint string
+	inputs      string
 	metadata    *mcpcontract.Metadata
 	documents   map[string]*typegen.Document
-	hosted      bool // its snapshot was staged with the SDK launcher, so a source overlay can restart it
 }
 
 type typeWorkspace struct {

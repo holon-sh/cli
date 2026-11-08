@@ -161,7 +161,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		types:   new(typeWorkspace),
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient,
 		Stderr: stderr, Env: config.Env, architectures: manager.info.BuildArchitectures, output: config.output,
-		builders: new(builderConnections),
+		builders: new(builderConnections), development: true,
 	}
 	defer options.types.close()
 	defer options.builders.close()
@@ -294,17 +294,9 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	}
 	builders := new(builderConnections)
 	defer builders.close()
-	// Without the session list, deploy builds every image, as it would with no development session.
-	sessions, _ := scopeSessions(ctx, manager, "")
-	reusable := map[string][]string{}
-	for _, session := range sessions {
-		for _, app := range session.Apps {
-			reusable[app.Name] = append(reusable[app.Name], app.Image)
-		}
-	}
 	desired, _, err := uploadManifest(ctx, manager, protocol.ProductionName, manifest, buildOptions{
 		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env, output: config.output,
-		builders: builders, architectures: manager.info.BuildArchitectures, reusable: reusable,
+		builders: builders, architectures: manager.info.BuildArchitectures,
 	}, selection...)
 	if err != nil {
 		return err

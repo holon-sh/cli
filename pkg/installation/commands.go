@@ -138,8 +138,7 @@ func newDeployCommand(config *commandConfig) *cobra.Command {
 		Use:   "deploy [APP[=SOURCE]...]",
 		Short: "Deploy apps to production",
 		Long: "Deploy every app, or the named apps and their required dependencies, to production. " +
-			"Production apps this deploy does not name keep running; holon app remove removes one. " +
-			"When a development session runs images built from the same source, deploy reuses them instead of building.\n\n" + appsHelp,
+			"Production apps this deploy does not name keep running; holon app remove removes one.\n\n" + appsHelp,
 		Example: `  # Deploy every app in holon.yaml
   holon deploy
 

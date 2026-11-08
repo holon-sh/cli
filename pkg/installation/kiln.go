@@ -3,17 +3,22 @@ package installation
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/tonistiigi/fsutil"
+	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
@@ -30,42 +35,102 @@ type buildRequest struct {
 
 	Env        []string
 	app        manifestApp
-	promotion  string // the promotionKey published with the image, or ""
+	dockerfile string
 	upload     *imageUpload
 	httpClient *http.Client
 	builders   *builderConnections
 	output     *progressOutput
 }
 
-func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions, promotion string) (string, error) {
+func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, string, error) {
 	if !protocol.ValidBuildArchitectures(options.architectures) {
-		return "", errors.New("invalid build architectures")
+		return "", "", errors.New("invalid build architectures")
 	}
 	p := app.resolved.types
-	config, start, err := stageSnapshot(app, p)
+	request, err := options.planSource(ctx, app, p)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	env, err := commandenv.Environ(options.Env)
-	if err != nil {
-		return "", err
-	}
-	request := buildRequest{
-		Request: kiln.Request{ConfigFilePath: config, Source: p.root, Start: start}, Env: env, app: app, promotion: promotion,
-		upload: upload, httpClient: options.HTTPClient, builders: options.builders, output: options.output,
-	}
-	for _, arch := range buildArchitectures(options.architectures) {
-		request.Platforms = append(request.Platforms, "linux/"+arch)
-	}
+	request.upload = upload
 	build := options.builder
 	if build == nil {
 		build = publishSource
 	}
 	image, err := build(ctx, request, options.Stderr)
 	if err != nil {
-		return "", fmt.Errorf("build %s: %w", app.Name, err)
+		return "", "", fmt.Errorf("build %s: %w", app.Name, err)
 	}
-	return image, nil
+	if !request.Development {
+		return image, "", nil
+	}
+	overlay, err := request.pushOverlay(ctx, "")
+	return image, overlay, err
+}
+
+func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *preparedTypes) (buildRequest, error) {
+	config, start, err := stageSnapshot(app, p)
+	if err != nil {
+		return buildRequest{}, err
+	}
+	env, err := commandenv.Environ(o.Env)
+	if err != nil {
+		return buildRequest{}, err
+	}
+	request := buildRequest{
+		Request: kiln.Request{ConfigFilePath: config, Source: p.root, Start: start, Development: o.development && start != nil},
+		Env:     env, app: app, httpClient: o.HTTPClient, builders: o.builders, output: o.output,
+	}
+	for _, arch := range buildArchitectures(o.architectures) {
+		request.Platforms = append(request.Platforms, "linux/"+arch)
+	}
+	planned := o.output.measure(app.Name, "plan")
+	plan, err := kiln.Plan(ctx, request.Request)
+	planned()
+	if err != nil {
+		return buildRequest{}, err
+	}
+	request.dockerfile = plan.Dockerfile
+	if request.Development {
+		p.inputs, err = imageInputs(ctx, plan.Dockerfile, p.root)
+	}
+	return request, err
+}
+
+var contextCopy = regexp.MustCompile(`(?m)^COPY ((?:--exclude=\S+ )*)(\[.*\])$`)
+
+func imageInputs(ctx context.Context, dockerfile, root string) (string, error) {
+	source, err := fsutil.NewFS(root)
+	if err != nil {
+		return "", err
+	}
+	digester := digest.SHA256.Digester()
+	_, _ = io.WriteString(digester.Hash(), dockerfile)
+	for _, match := range contextCopy.FindAllStringSubmatch(dockerfile, -1) {
+		var paths []string
+		if err := json.Unmarshal([]byte(match[2]), &paths); err != nil {
+			return "", err
+		}
+		filter := &fsutil.FilterOpt{IncludePatterns: paths[:len(paths)-1], Map: func(path string, s *fstypes.Stat) fsutil.MapResult {
+			if s.IsDir() {
+				return fsutil.MapResultExclude
+			}
+			return stableStat(path, s)
+		}}
+		if slices.Contains(filter.IncludePatterns, ".") {
+			filter.IncludePatterns = nil
+		}
+		for exclusion := range strings.FieldsSeq(match[1]) {
+			filter.ExcludePatterns = append(filter.ExcludePatterns, strings.TrimPrefix(exclusion, "--exclude="))
+		}
+		copied, err := fsutil.NewFilterFS(source, filter)
+		if err != nil {
+			return "", err
+		}
+		if err := fsutil.WriteTar(ctx, copied, digester.Hash()); err != nil {
+			return "", err
+		}
+	}
+	return digester.Digest().Encoded(), nil
 }
 
 // buildArchitectures are the architectures images are built for: the installation's, or both by default.
@@ -94,7 +159,6 @@ func stageSnapshot(app manifestApp, p *preparedTypes) (string, []string, error) 
 		}
 	}
 	start, err := stageLauncher(p.root, entry)
-	p.hosted = start != nil
 	return config, start, err
 }
 
