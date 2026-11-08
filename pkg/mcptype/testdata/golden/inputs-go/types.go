@@ -14,8 +14,6 @@ type OrdersLookupInput = struct {
 	Rows []OrdersInputRow "json:\"rows\""
 }
 
-type OrdersLookupInputRow = OrdersInputRow
-
 type OrdersLookupOutput = struct {
 	Total *json.Number "json:\"total,omitempty\""
 }

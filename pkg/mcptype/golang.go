@@ -169,9 +169,6 @@ func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
 					fmt.Fprintf(&declarations, format, ref.name, renderGo(ref.value))
 				}
 				fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(root))
-				for _, definition := range sortedKeys(part.shape.named) {
-					fmt.Fprintf(&declarations, "type %s = %s\n\n", unique(names, symbol+typeIdentifier(definition)), renderGo(part.shape.named[definition]))
-				}
 				symbols = append(symbols, symbol)
 			}
 			tools[name] = goTool{name: method, input: symbols[0], output: symbols[1]}

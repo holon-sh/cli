@@ -24,8 +24,6 @@ MysqlOutputLabeledColumn = _typing.TypedDict("MysqlOutputLabeledColumn", {"value
 
 MysqlOutputRoot = _typing.TypedDict("MysqlOutputRoot", {"columns": _builtins.list[MysqlOutputLabeledColumn]})
 
-MysqlSelectOutput: _typing.TypeAlias = MysqlOutputRoot
-
 OrdersGetOrderInput = _typing.TypedDict("OrdersGetOrderInput", {"count": _typing.NotRequired[_builtins.int], "orderId": _builtins.str})
 
 OrdersGetOrderOutput = _typing.TypedDict("OrdersGetOrderOutput", {"total": _builtins.float})
@@ -41,8 +39,6 @@ SchemasClassInputOpt = _typing.TypedDict("SchemasClassInputOpt", {"n": _typing.N
 SchemasClassInput = _typing.TypedDict("SchemasClassInput", {"opt": _typing.NotRequired[SchemasClassInputOpt]})
 
 SchemasInputId = _typing.TypedDict("SchemasInputId", {"id": _builtins.str})
-
-SchemasGetOrderInput: _typing.TypeAlias = SchemasInputId
 
 SchemasInputX1startsDashKeyAllEtcAll = _typing.TypedDict("SchemasInputX1startsDashKeyAllEtcAll", {"a": _builtins.str, "b": _typing.NotRequired[_builtins.int]})
 
@@ -61,8 +57,6 @@ SchemasInputABC: _typing.TypeAlias = _builtins.int
 SchemasInputX1startsDashKeyAllEtc = _typing.TypedDict("SchemasInputX1startsDashKeyAllEtc", {"1starts": _typing.NotRequired[_builtins.str], "Dash-Key": _typing.NotRequired[_builtins.str], "all": _typing.NotRequired[SchemasInputX1startsDashKeyAllEtcAll], "allConflict": _typing.NotRequired[_builtins.object], "allNonObject": _typing.NotRequired[_builtins.object], "annotated": _typing.NotRequired[_builtins.str], "arrayRef": _typing.NotRequired[_builtins.str], "closedEmpty": _typing.NotRequired[SchemasInputX1startsDashKeyAllEtcClosedEmpty], "constNum": _typing.NotRequired[_builtins.float], "constObj": _typing.NotRequired[_builtins.object], "constString": _typing.NotRequired[_typing.Literal["it's \"quoted\"\n"]], "cycle": _typing.NotRequired["SchemasInputNode"], "dash-key": _typing.NotRequired[_builtins.str], "emptyAll": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "emptyAny": _typing.NotRequired[_typing.Never], "falseSchema": _typing.NotRequired[_typing.Never], "implicitTuple": _typing.NotRequired[_builtins.list[_builtins.object]], "literals": _typing.Literal["a"] | _typing.Literal[1] | _builtins.float | _typing.Literal[-3] | _typing.Literal[True] | None | _builtins.object | _builtins.object | _builtins.float | _builtins.float | _builtins.float, "mapOf": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.str]], "multi": _typing.NotRequired[_builtins.str | None | _builtins.list[_builtins.int] | _builtins.object], "nested": _typing.NotRequired[_builtins.list[_builtins.list[SchemasInputX1startsDashKeyAllEtcNestedItemItem]]], "noType": SchemasInputX1startsDashKeyAllEtcNoType, "nodes": _typing.NotRequired[SchemasInputNodes], "numericType": _typing.NotRequired[SchemasInputX1startsDashKeyAllEtcNumericType], "odd key with spaces": _typing.NotRequired[_builtins.str], "oneOf": _typing.NotRequired[_builtins.str | _builtins.float], "openObj": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "openTuple": _typing.NotRequired[_builtins.list[_builtins.object]], "plainArray": _typing.NotRequired[_builtins.list[_builtins.object]], "pointerEscape": _typing.NotRequired[SchemasInputABC], "rootRef": _typing.NotRequired["SchemasInputX1startsDashKeyAllEtc"], "trueObj": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "trueSchema": _typing.NotRequired[_builtins.object], "tuple": _builtins.list[_builtins.object], "unknownKeyword": _typing.NotRequired[_builtins.object]})
 
 SchemasInputNode = _typing.TypedDict("SchemasInputNode", {"next": _typing.NotRequired["SchemasInputNode"], "value": _builtins.int})
-
-SchemasKitchenSinkInput: _typing.TypeAlias = SchemasInputX1startsDashKeyAllEtc
 
 SchemasWeirdKeysInput = _typing.TypedDict("SchemasWeirdKeysInput", {"": None, "-": _typing.NotRequired[_builtins.bool], "x\"quote": _typing.NotRequired[_builtins.str], "ünïcode": _typing.NotRequired[_builtins.int]})
 

@@ -238,15 +238,6 @@ func generatePython(contracts map[string]catalog) string {
 			emitter.declare(shapes[1])
 			input, arguments := emitter.input(shapes[0].value, prefix+"Input")
 			output := emitter.render(shapes[1].value, prefix+"Output")
-			// A tool whose whole input or output is declared keeps its own name for it, as Go does.
-			for i, rendered := range []string{input, output} {
-				if root := shapes[i].value; root.kind == kindDeclared && rendered == root.ref.name {
-					if alias := prefix + []string{"Input", "Output"}[i]; !emitter.names[alias] {
-						emitter.names[alias] = true
-						emitter.shapes = append(emitter.shapes, fmt.Sprintf("%s: _typing.TypeAlias = %s", alias, rendered))
-					}
-				}
-			}
 			returned := output
 			if !tool.structured {
 				returned = "_CompleteResult[_builtins.object]"

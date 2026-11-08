@@ -113,22 +113,6 @@ type OrdersInputList = json.RawMessage
 
 type OrdersKitchenSinkInput = OrdersInputX1startsDashKeyAllEtc
 
-type OrdersKitchenSinkInputX9lives = OrdersInputX9lives
-
-type OrdersKitchenSinkInputLegacy = OrdersInputLegacy
-
-type OrdersKitchenSinkInputNode = OrdersInputNode
-
-type OrdersKitchenSinkInputNodes = OrdersInputNodes
-
-type OrdersKitchenSinkInputPrivate = OrdersInputPrivate
-
-type OrdersKitchenSinkInputABC = OrdersInputABC
-
-type OrdersKitchenSinkInputFor = OrdersInputFor
-
-type OrdersKitchenSinkInputList = OrdersInputList
-
 type OrdersKitchenSinkOutput = json.RawMessage
 
 type OrdersWeirdKeysInput = map[string]json.RawMessage
