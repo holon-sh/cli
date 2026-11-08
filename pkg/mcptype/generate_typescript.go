@@ -7,25 +7,20 @@ import (
 	"strings"
 )
 
-// bindingTypes gives the generated factory the runtime's own binding and option types, so a
+// bindingTypes declares the generated factory over the runtime's own binding and option types, so a
 // consumer's object literals are checked against the installed runtime rather than a copy of it.
 // The runtime's binding requires an endpoint; a session hook serves the app without dialing it.
 const bindingTypes = `export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 `
 
-const exposeTypes = `export interface ExposeOptions { signal?: AbortSignal; execute?: (name: string, args: Record<string, unknown>) => Promise<unknown> }
-export declare function exposeTools(app: Apps[keyof Apps], options?: ExposeOptions): Promise<boolean>;
-export type PageResult<I> = { readonly value: I; readonly issues?: undefined } | { readonly issues: ReadonlyArray<{ readonly message: string }> };
-export interface PageSchema<I = unknown> { readonly "~standard": { readonly version: 1; readonly vendor: string; readonly types?: { readonly input: unknown; readonly output: I }; readonly validate: (value: unknown) => PageResult<I> | Promise<PageResult<I>>; readonly jsonSchema: { readonly input: (options: { target: "draft-2020-12" }) => object } } }
-export type PageInput<S> = S extends PageSchema<infer I> ? I : never;
-export interface PageAnnotations { title?: string; readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean }
-export interface PageTool<S extends PageSchema = PageSchema> { description: string; inputSchema: S; annotations?: PageAnnotations; execute: (args: PageInput<S>) => unknown }
-export interface PageHost { registerTool(name: string, config: { description: string; inputSchema: PageSchema; annotations?: PageAnnotations }, callback: (args: any, extra: any) => any): { remove(): void } }
-export declare function registerPageTools<S extends { [name: string]: PageSchema }>(tools: { [K in keyof S]: PageTool<S[K]> }, options?: { view?: PageHost; signal?: AbortSignal }): Promise<boolean>;
+// exposeTypes re-exports the browser runtime's page tools and narrows exposeTools to these apps.
+const exposeTypes = `export type { ExposeOptions, PageResult, PageSchema, PageInput, PageAnnotations, PageTool, PageHost } from %[1]s;
+export { registerPageTools } from %[1]s;
+export declare function exposeTools(app: Apps[keyof Apps], options?: import(%[1]s).ExposeOptions): Promise<boolean>;
 `
 
-// resourceContracts compiles resources as tools named by URI, so Outputs[alias][uri] is the resource's contents.
+// resourceContracts compiles resources as tools named by URI, so a resource's output is its contents.
 func resourceContracts(contracts map[string]contract) map[string]contract {
 	result := make(map[string]contract, len(contracts))
 	for alias, source := range contracts {
@@ -48,32 +43,24 @@ func declarationModule(specifier string) string {
 }
 
 func generateTypeScriptPackage(ctx context.Context, request generateRequest, catalogs map[string]catalog) (map[string]string, error) {
-	// Resources take names that tools left free, so index.d.ts can re-export each one they declare.
+	// Resources take names that tools left free, in the same declarations.
 	names := map[string]bool{}
-	tools := generateTypeScript(catalogs, names)
+	tools := generateTypeScript(catalogs, names, [4]string{"Inputs", "Outputs", "InputTypes", "OutputTypes"})
 	catalogs, err := compileCatalogs(ctx, resourceContracts(request.contracts))
 	if err != nil {
 		return nil, err
 	}
-	resources := generateTypeScript(catalogs, names)
-	var protocol string
-	switch {
-	case request.ProtocolSpecifier != "":
-		specifier := quoted(request.ProtocolSpecifier)
-		protocol = fmt.Sprintf("import type { CallOptions, CallMetadata, ToolResult, ToolClient } from %s;\nexport { ToolCallError } from %s;", specifier, specifier)
-	case request.Protocol != "":
-		protocol = request.Protocol
-	}
-	identity, contracts := encode(request.caller()), encode(request.contracts)
+	resources := generateTypeScript(catalogs, names, [4]string{1: "Resources"})
 	runtime := cmp.Or(request.RuntimeSpecifier, "./runtime.mjs")
-	types := fmt.Sprintf("%s\nimport type { EndpointBinding, CreateOptions } from %s;\nexport type Resources = import(\"./resources.js\").Outputs;\nexport type * from \"./resources.js\";\n%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", protocol, quoted(declarationModule(runtime)), tools)
+	declarations := quoted(declarationModule(runtime))
+	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", declarations, declarations, tools, resources)
+	identity, contracts := encode(request.caller()), encode(request.contracts)
 	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
 	runtime = quoted(runtime)
 	if request.Target == "browser" {
 		files := map[string]string{
-			"index.js":       fmt.Sprintf("import { bindApps, appClass } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", runtime, runtime, bound),
-			"index.d.ts":     types + bindingTypes + exposeTypes,
-			"resources.d.ts": resources,
+			"index.js":   fmt.Sprintf("import { bindApps, appClass } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", runtime, runtime, bound),
+			"index.d.ts": types + bindingTypes + fmt.Sprintf(exposeTypes, declarations),
 		}
 		if request.Own != "" {
 			own := quoted(request.Own)
@@ -83,8 +70,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		return files, nil
 	}
 	return map[string]string{
-		"index.js":       fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\n%sexport const apps = create(identity, contracts);\n", runtime, runtime, bound),
-		"index.d.ts":     types + "export declare const apps: Apps;\n" + bindingTypes,
-		"resources.d.ts": resources,
+		"index.js":   fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\n%sexport const apps = create(identity, contracts);\n", runtime, runtime, bound),
+		"index.d.ts": types + "export declare const apps: Apps;\n" + bindingTypes,
 	}, nil
 }

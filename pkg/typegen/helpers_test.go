@@ -83,31 +83,26 @@ func slotPackage(t *testing.T, app, pkg string) string {
 	return dir
 }
 
-// linkTooling makes the tooling's packages available to app, whose node_modules must exist.
-func linkTooling(t *testing.T, app string, packages ...string) {
+// linkTypeScript makes the tooling's compiler available to app, whose node_modules must exist.
+func linkTypeScript(t *testing.T, app string) {
 	t.Helper()
-	for _, pkg := range packages {
-		installed, err := filepath.Abs(filepath.Join("../../tooling/typescript/node_modules", pkg))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(installed, filepath.Join(app, "node_modules", pkg)); err != nil {
-			t.Fatal(err)
-		}
+	compiler, err := filepath.Abs("../../tooling/typescript/node_modules/typescript")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(compiler, filepath.Join(app, "node_modules/typescript")); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// typeScriptApp makes a project with a stand-in holon-sh, declaring what generated clients import
-// from the runtime, and the tooling's compiler.
+// typeScriptApp makes a project with a stand-in holon-sh and the tooling's compiler.
 func typeScriptApp(t *testing.T) string {
 	t.Helper()
 	needNode(t)
 	app := t.TempDir()
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	runtime := slotPackage(t, app, "holon-sh")
-	put(t, runtime, "protocol.d.ts", "export type AuthProvider = unknown; export type CallOptions = unknown; export type CallMetadata = unknown; export type ToolResult = unknown; export type ToolClient<I, O, R> = unknown; export declare class ToolCallError {}\n")
-	put(t, runtime, "runtime.d.ts", "export interface EndpointBinding { endpoint: URL | string }\nexport interface CreateOptions { validator?: (schema: object) => (value: unknown) => boolean }\n")
-	linkTooling(t, app, "typescript")
+	put(t, slotPackage(t, app, "holon-sh"), "runtime.d.ts", "export type ToolClient<I, O, R> = unknown;\nexport declare class ToolCallError {}\nexport type EndpointBinding = unknown;\nexport type CreateOptions = unknown;\n")
+	linkTypeScript(t, app)
 	return app
 }
 

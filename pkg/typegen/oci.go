@@ -3,19 +3,15 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/distribution/reference"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/opencontainers/go-digest"
+	"github.com/holon-sh/cli/pkg/ociimage"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
@@ -26,17 +22,6 @@ const (
 	dockerConfigEnv = "DOCKER_CONFIG"
 	homeEnv         = "HOME"
 )
-
-func fetchImageJSON(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor, value any) error {
-	if descriptor.Size <= 0 || descriptor.Size > 4<<20 {
-		return errors.New("invalid image metadata size")
-	}
-	data, err := content.FetchAll(ctx, source, descriptor)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, value)
-}
 
 // imageRepository authenticates with Docker-stored credentials.
 func imageRepository(name string, extraEnv []string, client *http.Client) (*remote.Repository, error) {
@@ -84,7 +69,7 @@ func ReadDocument(ctx context.Context, repository *remote.Repository, descriptor
 		return nil, nil
 	}
 	var index ocispec.Index
-	if err := fetchImageJSON(ctx, repository, descriptor, &index); err != nil {
+	if err := ociimage.FetchJSON(ctx, repository, descriptor, &index); err != nil {
 		return nil, err
 	}
 	reference := index.Annotations[mcpcontract.DigestAnnotation]
@@ -94,25 +79,8 @@ func ReadDocument(ctx context.Context, repository *remote.Repository, descriptor
 	return FetchDocument(ctx, repository.Blobs(), reference)
 }
 
-func parseImportedImage(image string) (reference.Named, error) {
-	named, err := reference.ParseNamed(image)
-	if err != nil {
-		return nil, errors.New("package identifier must use an explicit OCI registry")
-	}
-	if digested, ok := named.(reference.Digested); ok {
-		if digested.Digest().Algorithm() != digest.SHA256 {
-			return nil, errors.New("package image requires a SHA-256 digest")
-		}
-		return named, nil
-	}
-	if _, ok := named.(reference.Tagged); !ok {
-		return nil, errors.New("package image requires an explicit tag or digest")
-	}
-	return named, nil
-}
-
 func resolveTypeMetadata(ctx context.Context, image string, o Options) (*Document, error) {
-	named, err := parseImportedImage(image)
+	named, err := ociimage.Parse(image)
 	if err != nil {
 		return nil, err
 	}

@@ -1,9 +1,6 @@
 // holon-generated-apps-v1 app=checkout
-import type { CallOptions, CallMetadata, ToolResult, ToolClient } from "../protocol.js";
-export { ToolCallError } from "../protocol.js";
-import type { EndpointBinding, CreateOptions } from "../runtime.js";
-export type Resources = import("./resources.js").Outputs;
-export type * from "./resources.js";
+import type { ToolClient, EndpointBinding, CreateOptions } from "../runtime.js";
+export { ToolCallError } from "../runtime.js";
 export interface Inputs {
   "empty": {
   };
@@ -58,6 +55,18 @@ export interface OutputTypes {
   };
   "with-hyphen": {
     "get_order": {  };
+  };
+}
+export interface Resources {
+  "empty": {
+  };
+  "mysql": {
+  };
+  "orders": {
+    "orders://summary": { "total": number; };
+  };
+  "with-hyphen": {
+    "orders://summary": { "total": number; };
   };
 }
 

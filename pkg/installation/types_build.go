@@ -59,19 +59,17 @@ func stageTypes(p *preparedTypes, check bool) (string, error) {
 		return "", fmt.Errorf("prepare MCP types (.holon-types is reserved): %w", err)
 	}
 	for _, target := range targets {
-		path, write := p.root, p.prepared.WritePythonSlot
+		path := p.root
 		switch target {
-		case typegen.TargetGo:
-			write = p.prepared.WriteGoSlot
 		case typegen.TargetTS:
-			path, write = filepath.Join(directory, nodeRuntime), p.prepared.WriteNodeSlot
+			path = filepath.Join(directory, nodeRuntime)
 		case typegen.TargetUI:
-			path, write = filepath.Join(directory, uiRuntime), p.prepared.WriteBrowserSlot
+			path = filepath.Join(directory, uiRuntime)
 		}
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			return "", err
 		}
-		if err := write(p.name, path); err != nil {
+		if err := p.prepared.WriteSlot(p.name, target, path); err != nil {
 			return "", fmt.Errorf("%s: %w", p.name, err)
 		}
 	}

@@ -1,11 +1,9 @@
 package mcptype
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"maps"
 	"slices"
 	"strings"
@@ -20,7 +18,7 @@ type generateRequest struct {
 	contracts map[string]contract
 }
 
-// Generate returns the package files by relative path: copied runtime files plus generated sources.
+// Generate returns the generated sources by relative path.
 func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, error) {
 	// Only schemas need JSON decoding; the remaining options are already typed.
 	value, err := marshal(ctx, options.Contracts)
@@ -32,15 +30,6 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	for alias, raw := range contracts {
 		if request.contracts[alias], err = decodeContract(raw); err != nil {
 			return nil, err
-		}
-	}
-
-	for _, path := range sortedKeys(request.Runtime) {
-		if !relative(path) {
-			return nil, fmt.Errorf("runtime path %q must be relative and normalized", path)
-		}
-		if request.Runtime[path] == nil {
-			return nil, fmt.Errorf("runtime %s must contain bytes", path)
 		}
 	}
 	if err := request.validate(); err != nil {
@@ -63,9 +52,6 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 		return nil, err
 	}
 	files := map[string][]byte{}
-	for path, data := range request.Runtime {
-		files[path] = bytes.Clone(data)
-	}
 	for path, text := range generated {
 		if request.Banner != "" {
 			comment := "//"
@@ -88,13 +74,10 @@ func (r generateRequest) validate() error {
 			return err
 		}
 	}
-	if r.Protocol != "" && r.ProtocolSpecifier != "" {
-		return errors.New("protocol and protocol_specifier are mutually exclusive")
-	}
 	for _, option := range []struct {
 		name  string
 		value string
-	}{{"runtime_specifier", r.RuntimeSpecifier}, {"protocol_specifier", r.ProtocolSpecifier}, {"banner", r.Banner}} {
+	}{{"runtime_specifier", r.RuntimeSpecifier}, {"banner", r.Banner}} {
 		if option.value == "" {
 			continue
 		}
@@ -115,8 +98,4 @@ func (r generateRequest) caller() Object {
 		requires[alias] = identity
 	}
 	return Object{"name": r.Identity.Name, "requires": requires, "version": r.Identity.Version}
-}
-
-func relative(path string) bool {
-	return path != "." && fs.ValidPath(path)
 }

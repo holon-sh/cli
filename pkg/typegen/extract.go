@@ -144,15 +144,11 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			return err
 		}
 		if drift && document != nil {
-			answered, err := mcptype.Canonical(ctx, map[string]any{"contract": s.metadata.Schema})
+			same, err := mcptype.SameContract(ctx, s.metadata.Schema, document.Schema)
 			if err != nil {
 				return err
 			}
-			recorded, err := mcptype.Canonical(ctx, map[string]any{"contract": document.Schema})
-			if err != nil {
-				return err
-			}
-			if answered.Digest != recorded.Digest || document.Identity != s.metadata.Identity {
+			if !same || document.Identity != s.metadata.Identity {
 				contract := filepath.Join(s.origin, ContractFile)
 				return fmt.Errorf("%s is stale: the server answers a different contract; regenerate it with holon types generate --contract %s -o %s", contract, s.origin, contract)
 			}

@@ -1,84 +1,51 @@
 package typegen
 
 import (
-	"bufio"
-	"bytes"
 	"cmp"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/mod/modfile"
 )
 
-var (
-	goModulePath = regexp.MustCompile(`(?m)^\s*module\s+"?([^\s"]+)"?`)
-	tomlTable    = regexp.MustCompile(`^\s*\[`)
-	tomlProject  = regexp.MustCompile(`^\s*\[project\]\s*(#.*)?$`)
-	tomlString   = regexp.MustCompile(`^\s*(name|version)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
-)
-
-// manifestIdentity is the name and version a project's manifest gives it, read from the manifest
-// of the first target that names one: package.json for Node slots, pyproject.toml's [project]
-// table for Python and go.mod's module path for Go. Projects no manifest names fall back to the
-// consumer's name, and versions no manifest gives are unversioned.
-func manifestIdentity(dir string, targets []string, fallback string) (mcpcontract.Identity, error) {
+// manifestIdentity is the name and version that the manifest of the project's first target with one
+// names it by: package.json for Node slots, pyproject.toml's [project] table for Python and go.mod's
+// module path, which has no version, for Go. It is zero when no manifest names the project.
+func manifestIdentity(dir string, targets []string) (mcpcontract.Identity, error) {
 	for _, target := range targets {
-		var identity mcpcontract.Identity
-		var err error
-		switch target {
-		case TargetTS, TargetUI:
-			var manifest packageJSON
-			err = readTypeJSON(filepath.Join(dir, "package.json"), &manifest)
-			identity = mcpcontract.Identity{Name: manifest.Name, Version: manifest.Version}
-		case TargetPy:
-			var data []byte
-			data, err = os.ReadFile(filepath.Join(dir, "pyproject.toml"))
-			identity = pyprojectIdentity(data)
-		case TargetGo:
-			var data []byte
-			data, err = os.ReadFile(filepath.Join(dir, "go.mod"))
-			if match := goModulePath.FindSubmatch(data); match != nil {
-				identity.Name = string(match[1])
-			}
-		}
-		if errors.Is(err, os.ErrNotExist) {
+		file := filepath.Join(dir, map[string]string{TargetTS: "package.json", TargetUI: "package.json", TargetPy: "pyproject.toml", TargetGo: "go.mod"}[target])
+		data, err := os.ReadFile(file)
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
+		var identity mcpcontract.Identity
+		if err == nil {
+			switch target {
+			case TargetPy:
+				var manifest struct{ Project mcpcontract.Identity }
+				err = toml.Unmarshal(data, &manifest)
+				identity = manifest.Project
+			case TargetGo:
+				identity.Name = modfile.ModulePath(data)
+			default:
+				var manifest packageJSON
+				err = json.Unmarshal(data, &manifest)
+				identity = mcpcontract.Identity{Name: manifest.Name, Version: manifest.Version}
+			}
+		}
 		if err != nil {
-			return mcpcontract.Identity{}, err
+			return mcpcontract.Identity{}, fmt.Errorf("%s: %w", file, err)
 		}
 		if identity.Name != "" {
 			identity.Version = cmp.Or(identity.Version, unversioned)
 			return identity, nil
 		}
 	}
-	return mcpcontract.Identity{Name: fallback, Version: unversioned}, nil
-}
-
-// pyprojectIdentity reads the [project] table's name and version, each a quoted string on its own
-// line as a PEP 621 project declares them. A dynamic version is left empty.
-func pyprojectIdentity(data []byte) mcpcontract.Identity {
-	var identity mcpcontract.Identity
-	inProject := false
-	for scanner := bufio.NewScanner(bytes.NewReader(data)); scanner.Scan(); {
-		line := scanner.Text()
-		if tomlTable.MatchString(line) {
-			inProject = tomlProject.MatchString(line)
-			continue
-		}
-		if !inProject {
-			continue
-		}
-		if match := tomlString.FindStringSubmatch(line); match != nil {
-			value := match[2] + match[3]
-			if match[1] == "name" {
-				identity.Name = value
-			} else {
-				identity.Version = value
-			}
-		}
-	}
-	return identity
+	return mcpcontract.Identity{}, nil
 }

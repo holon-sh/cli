@@ -67,7 +67,7 @@ func endpointClient(source Source, o Options) *http.Client {
 	}
 	transport := endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: origin}
 	if source.Alias != "" {
-		transport.variable = strings.ToUpper(strings.ReplaceAll(source.Alias, "-", "_")) + "_MCP_TOKEN"
+		transport.variable = strings.TrimSuffix(protocol.DependencyEnvName(source.Alias), "_URL") + "_TOKEN"
 		transport.token = cmp.Or(commandenv.Value(o.Env, transport.variable), os.Getenv(transport.variable))
 	}
 	client := *o.HTTPClient

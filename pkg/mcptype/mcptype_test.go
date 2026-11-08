@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/opencontainers/go-digest"
 )
 
 func TestChanges(t *testing.T) {
@@ -49,30 +48,6 @@ func TestChanges(t *testing.T) {
 		})
 	}
 	if _, err := Changes(t.Context(), expected, published("", nil)); err == nil {
-		t.Fatal("invalid published metadata accepted")
-	}
-}
-
-func TestCanonical(t *testing.T) {
-	identity := mcpcontract.Identity{Name: "example/orders", Version: "1"}
-	for _, test := range []struct {
-		name     string
-		document any
-		want     string
-	}{
-		{"metadata without a contract", map[string]any{"metadata": mcpcontract.Metadata{Identity: identity}}, ""},
-		{"metadata", map[string]any{"metadata": mcpcontract.Metadata{Identity: identity, Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "get", Input: json.RawMessage(`{"type":"object","description":"docs"}`)}}}}}, `{"tools":[{"inputSchema":{"type":"object"},"name":"get"}]}`},
-		{"schema", map[string]any{"schema": json.RawMessage(`{"type":"object","required":["b","a"],"properties":{"a":{"type":"string","description":"docs"}}}`)}, `{"properties":{"a":{"type":"string"}},"required":["a","b"],"type":"object"}`},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			form, err := Canonical(t.Context(), test.document)
-			if err != nil || string(form.Canonical) != test.want || test.want != "" && form.Digest != digest.FromString(test.want).String() {
-				t.Fatalf("Canonical = %s %q, %v; want %s", form.Canonical, form.Digest, err, test.want)
-			}
-		})
-	}
-	invalid := mcpcontract.Metadata{Identity: identity, Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "get", Input: json.RawMessage(`{"type":"string"}`)}}}}
-	if _, err := Canonical(t.Context(), map[string]any{"metadata": invalid}); err == nil {
 		t.Fatal("invalid published metadata accepted")
 	}
 }
