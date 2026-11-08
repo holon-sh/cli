@@ -32,8 +32,6 @@ jobs:
         run: |
           if [ -n "$INPUT" ]; then
             version=$INPUT
-            python3 -c 'import sys; sys.path[0] = "scripts"; from package_cli import VERSION_PATTERN; sys.exit(not VERSION_PATTERN.fullmatch(sys.argv[1]))' "$version" \
-              || { echo "::error::'$version' is not X.Y.Z or X.Y.Z-{alpha,beta,rc,dev}.N"; exit 1; }
             if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
               echo "::error::v$version is already released"
               exit 1

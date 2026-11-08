@@ -1,5 +1,4 @@
 name: CI
-# Pull requests run it here; release.yml runs it on main with the version.
 on:
   pull_request:
   workflow_call:
