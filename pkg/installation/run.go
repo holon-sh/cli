@@ -196,11 +196,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 			return err
 		}
 	} else {
-		token, err := manager.controlToken(ctx)
-		if err != nil {
-			return err
-		}
-		if err := manager.client.Call(ctx, protocol.DevPlane, token, protocol.ToolCreateSession, request, &session); err != nil {
+		if err := manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &session); err != nil {
 			if status := HTTPStatus(err); status >= http.StatusBadRequest && status < http.StatusInternalServerError {
 				return err
 			}

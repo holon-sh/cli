@@ -194,15 +194,17 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		if p.fingerprint, err = snapshotSource(*app, p.root); err != nil {
 			return manifestSpec{}, nil, err
 		}
-		if p.imageInputs, err = imageInputs(p.root); err != nil {
-			return manifestSpec{}, nil, err
-		}
 		if !app.resolved.stdio {
 			entry, err := sourceEntry(p.root)
 			if err != nil {
 				return manifestSpec{}, nil, err
 			}
 			p.hosted = hostedEntry(entry)
+		}
+		if p.hosted {
+			if p.imageInputs, err = imageInputs(p.root); err != nil {
+				return manifestSpec{}, nil, err
+			}
 		}
 	}
 	prepared, err = typegen.Prepare(ctx, consumers, typeOptions)
