@@ -18,16 +18,13 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
-	"github.com/opencontainers/go-digest"
 )
 
-// extraction is the contract a runner prints: the server's catalog and the application files it
-// loaded, with their SHA-256 digests.
+// extraction is the contract a runner prints: the server's catalog and its own description.
 type extraction struct {
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`
 	ServerInfo json.RawMessage        `json:"serverInfo"`
-	Sources    map[string]string      `json:"sources"`
 }
 
 // RunnerError is a contract runner's failure: the status it exited with and what it wrote to
@@ -46,24 +43,17 @@ func (e *RunnerError) Error() string {
 var serverTimeout = 30 * time.Second
 
 // typeLanguage is how one language's tooling runs: the contract runner's interpreter flags and
-// script, the checker command, relative to the language's tooling directory, and the host
+// script, the checker script, relative to the language's tooling directory, and the host
 // interpreters that can run them.
 type typeLanguage struct {
 	flags           []string
-	runner          string
-	checker         []string
+	runner, checker string
 	programs, probe []string
 }
 
 var typeLanguages = map[string]typeLanguage{
-	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", []string{"runner.mjs", "check"}, []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
-	"python":     {nil, "extract.py", []string{"runner.py", "check"}, []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
-}
-
-// command runs step, one of the language's tooling commands, unpacked under tooling, with args.
-func (l typeLanguage) command(ctx context.Context, program, tooling, language string, step []string, args ...string) *exec.Cmd {
-	arguments := append([]string{filepath.Join(tooling, language, step[0])}, step[1:]...)
-	return exec.CommandContext(ctx, program, append(arguments, args...)...)
+	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", "runner.mjs", []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
+	"python":     {nil, "extract.py", "runner.py", []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
 }
 
 func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
@@ -134,7 +124,6 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 				return fmt.Errorf("%s: %s is not installed; install the application's dependencies, or commit its contract (holon types generate --contract %s -o %s)\n%s", s.origin, missing.name, s.origin, filepath.Join(s.origin, ContractFile), missing.diagnostic)
 			}
 			s.metadata.Identity, s.metadata.Schema = document.Identity, document.Schema
-			s.sources = map[string]string{ContractFile: digest.FromBytes(document.Data).Encoded()}
 			continue
 		}
 		if failures[i] != nil {
@@ -255,11 +244,4 @@ func pythonProgram(ctx context.Context, dir, host string) string {
 func isFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
-}
-func writeJSON(path string, value any) error {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
 }

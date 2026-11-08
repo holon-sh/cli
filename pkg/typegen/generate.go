@@ -57,26 +57,9 @@ type preparedSource struct {
 	origin, name, entry, language, fingerprint string
 	metadata                                   *mcpcontract.Metadata
 	server                                     *mcpregistry.Descriptor
-	sources                                    map[string]string
 }
 
 func (s *preparedSource) extract(result *extraction) error {
-	// The runners report the application files the server loaded. Those outside the snapshot, such
-	// as generated slots that an image build replaces, are not inputs that check can verify.
-	matcher, err := SourceMatcher(s.origin)
-	if err != nil {
-		return err
-	}
-	s.sources = map[string]string{}
-	for path, digest := range result.Sources {
-		ignored, err := IgnoredSource(s.origin, filepath.Join(s.origin, filepath.FromSlash(path)), matcher)
-		if err != nil {
-			return err
-		}
-		if !ignored {
-			s.sources[path] = digest
-		}
-	}
 	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
 	if s.metadata.Identity == (mcpcontract.Identity{}) {
 		descriptor, err := ParseDescriptor(result.ServerInfo)
@@ -138,6 +121,9 @@ func fetchSources(ctx context.Context, consumers []Consumer, o Options) func() m
 }
 
 func (p *Prepared) Close() error { return os.RemoveAll(p.root) }
+
+// Tooling is the directory the contract runners and checkers are unpacked in, until Close.
+func (p *Prepared) Tooling() string { return filepath.Join(p.root, "tooling") }
 
 // Metadata returns each consumer's own contract document (identity, extracted contract and the
 // expectations it holds of its sources) by consumer name, plus every resolved source by alias.

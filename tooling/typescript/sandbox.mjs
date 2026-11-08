@@ -51,7 +51,7 @@ export function createSandbox(root, vendor) {
     globalThis.process = Object.freeze({ env: {}, platform: "linux", arch: "x64", versions: Object.freeze({ node }), cwd: () => cwd, exit: control("exit"), on: control("on"), nextTick: control("nextTick") });
   }`, context, { filename: "holon:stub" })(stub, root, process.versions.node);
   const parse = vm.runInContext("JSON.parse", context);
-  const modules = new Map(), files = new Map(), commonjs = new Map(), builtins = new Map(), maps = new Map(), served = new Set();
+  const modules = new Map(), files = new Map(), commonjs = new Map(), builtins = new Map(), maps = new Map();
   const paths = tsconfigPaths(root);
 
   function resolveSpecifier(specifier, referrer, conditions) {
@@ -87,7 +87,6 @@ export function createSandbox(root, vendor) {
   function load(file) {
     if (modules.has(file)) return modules.get(file);
     const url = pathToFileURL(file).href;
-    served.add(file);
     let created;
     const format = formatOf(file);
     if (format === "json") {
@@ -145,7 +144,6 @@ export function createSandbox(root, vendor) {
   // require evaluates a CommonJS file in the context, resolving its requires through the loader.
   function require(file) {
     if (commonjs.has(file)) return commonjs.get(file).exports;
-    served.add(file);
     const record = { exports: {} };
     commonjs.set(file, record);
     if (formatOf(file) === "json") return (record.exports = parse(readFileSync(file, "utf8")));
@@ -177,7 +175,6 @@ export function createSandbox(root, vendor) {
 
   return {
     context,
-    served,
     import: async file => (await evaluate(load(realpathSync(file)))).namespace,
     resolve: (specifier, referrer) => resolveSpecifier(specifier, realpathSync(referrer), ["import", "node"]).file,
     // diagnostic rewrites transpiled positions to the original source and names missing capabilities.

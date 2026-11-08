@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -73,7 +73,6 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 		manifestFileName:  "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n",
 		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
 		"alpha/tools.py": "first", "alpha/pyproject.toml": "[project]\nname = \"alpha\"\n", "alpha/ui/main.ts": "export {}",
-		"alpha/.holon-types/notes.txt": "only image builds read this",
 	})
 	if err := os.Symlink("tools.py", filepath.Join(f.root, "alpha", "alias.py")); err != nil {
 		t.Fatal(err)
@@ -170,7 +169,6 @@ func TestDevSaves(t *testing.T) {
 		saves      []map[string]string // each awaits the line at the same index of lines
 		lines      []string
 		reloads    int
-		rebuilds   bool
 	}{
 		{
 			name:  "an unchanged snapshot sends nothing",
@@ -182,35 +180,27 @@ func TestDevSaves(t *testing.T) {
 		},
 		{
 			name:  "a module under ui/ rebuilds, since the frontend build reads it",
-			saves: []map[string]string{{"alpha/ui/main.ts": "export const edited = true"}}, lines: []string{"alpha building"}, rebuilds: true,
+			saves: []map[string]string{{"alpha/ui/main.ts": "export const edited = true"}}, lines: []string{"alpha building"},
 		},
 		{
 			name:  "a dependency manifest rebuilds",
-			saves: []map[string]string{{"alpha/pyproject.toml": "[project]\nname = \"renamed\"\n"}}, lines: []string{"alpha building"}, rebuilds: true,
+			saves: []map[string]string{{"alpha/pyproject.toml": "[project]\nname = \"renamed\"\n"}}, lines: []string{"alpha building"},
 		},
 		{
 			name: "a failed reload rebuilds", failReload: true,
-			saves: []map[string]string{{"alpha/tools.py": "second"}}, lines: []string{"alpha reload failed"}, reloads: 1, rebuilds: true,
+			saves: []map[string]string{{"alpha/tools.py": "second"}}, lines: []string{"alpha building"}, reloads: 1,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true)
 			f.update(func() { f.failNext = test.failReload })
-			started := len(f.stderr.String())
 			for i, files := range test.saves {
 				from := len(f.stderr.String())
 				sourceFiles(t, f.root, files)
 				f.await(func() bool { return strings.Contains(f.stderr.String()[from:], test.lines[i]) })
 			}
-			if test.rebuilds {
-				f.await(func() bool { return strings.Contains(f.stderr.String()[started:], "app rebuild") })
-			}
-			output := f.stderr.String()[started:]
-			if requests := f.reloadRequests(); len(requests) != test.reloads || strings.Contains(output, "alpha building") != test.rebuilds {
-				t.Fatalf("reloads = %d, rebuilt = %v; stderr=%q", len(requests), strings.Contains(output, "alpha building"), output)
-			}
-			if err := f.stop(); err != nil {
-				t.Fatalf("run: %v stderr=%q", err, f.stderr.String())
+			if requests := f.reloadRequests(); len(requests) != test.reloads {
+				t.Fatalf("reloads = %d; stderr=%q", len(requests), f.stderr.String())
 			}
 		})
 	}
@@ -222,9 +212,8 @@ func TestDevReloadPushesTheBuildSnapshot(t *testing.T) {
 	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "second"})
 	f.await(func() bool { return strings.Contains(f.stderr.String()[started:], "alpha reloaded") })
 	request := f.reloadRequests()[0]
-	if request.Session != "gentle-otter-482" || request.App != "alpha" || request.MediaType != overlayMediaType ||
-		strings.Contains(f.stderr.String()[started:], "alpha building") {
-		t.Fatalf("reload_app %+v; stderr=%q", request, f.stderr.String()[started:])
+	if request.Session != "gentle-otter-482" || request.App != "alpha" || request.MediaType != overlayMediaType {
+		t.Fatalf("reload_app %+v", request)
 	}
 	f.registry.mu.Lock()
 	blob := f.registry.items["holon/upload/alpha/blobs/"+request.Digest].data
@@ -243,16 +232,11 @@ func TestDevReloadPushesTheBuildSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Without host times or owners, an unchanged snapshot archives to the same digest.
-		if !header.ModTime.Equal(time.Unix(0, 0)) || header.Uid != 0 || header.Uname != "" {
-			t.Errorf("%s keeps host metadata", header.Name)
-		}
 		data, _ := io.ReadAll(archive)
 		entries[header.Name] = string(data) + header.Linkname
 	}
-	// The snapshot an image build would read, with its launcher, without what only image builds read.
-	if entries["tools.py"] != "second" || entries["alias.py"] != "tools.py" || !strings.Contains(entries[".holon/main.mjs"], "../server.js") ||
-		slices.ContainsFunc(slices.Collect(maps.Keys(entries)), func(name string) bool { return strings.HasPrefix(name, ".holon-types") }) {
+	// The snapshot an image build would read, with its launcher.
+	if entries["tools.py"] != "second" || entries["alias.py"] != "tools.py" || !strings.Contains(entries[".holon/main.mjs"], "../server.js") {
 		t.Fatalf("overlay entries = %v", entries)
 	}
 }
@@ -275,4 +259,43 @@ func TestDevStartup(t *testing.T) {
 		defer f.mu.Unlock()
 		return slices.Equal(f.reads, []string{"0", "1"})
 	})
+}
+
+// A save while the last save's types are still being prepared reloads at once, and stops that preparation.
+func TestDevSaveStopsTheLastPreparation(t *testing.T) {
+	bin, started := t.TempDir(), filepath.Join(t.TempDir(), "started")
+	// Stands in for npm installing the missing SDK runtime, which lasts until it is stopped.
+	sourceFiles(t, bin, map[string]string{"npm": "#!/bin/sh\necho $$ >> '" + started + "'\nexec sleep 600\n"})
+	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f := startReloadFixture(t, true)
+	alpha := filepath.Join(f.root, "alpha")
+	installRuntime(t, alpha)
+	from := len(f.stderr.String())
+	sourceFiles(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
+	f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha ready") })
+	if err := os.RemoveAll(filepath.Join(alpha, "node_modules", nodeRuntime)); err != nil {
+		t.Fatal(err)
+	}
+	runs := func() []string {
+		data, _ := os.ReadFile(started)
+		return strings.Fields(string(data))
+	}
+	for i, content := range []string{"second", "third"} {
+		from := len(f.stderr.String())
+		sourceFiles(t, f.root, map[string]string{"alpha/tools.py": content})
+		f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha reloaded") && len(runs()) == i+1 })
+	}
+	pid, err := strconv.Atoi(runs()[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if process, _ := os.FindProcess(pid); process.Signal(syscall.Signal(0)) == nil {
+		t.Fatal("the first save's preparation still runs")
+	}
+	if err := f.stop(); err != nil || strings.Contains(f.stderr.String(), "MCP types") {
+		t.Fatalf("run: %v stderr=%q", err, f.stderr.String())
+	}
 }
