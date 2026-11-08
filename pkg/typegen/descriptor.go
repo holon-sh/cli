@@ -57,7 +57,6 @@ func (r Reference) Validate() error {
 	return errors.New("MCP registry must be an HTTPS URL (loopback HTTP is allowed)")
 }
 
-// requirement is one sh.holon.requires entry: a registry record, or the URL of a running server.
 type requirement struct {
 	Reference
 	URL string `json:"url,omitempty"`
@@ -74,7 +73,6 @@ func (r requirement) validate() error {
 	}
 }
 
-// source is the entry as the dependency source named alias.
 func (r requirement) source(alias string) Source {
 	if r.URL != "" {
 		return Source{Alias: alias, Endpoint: r.URL}

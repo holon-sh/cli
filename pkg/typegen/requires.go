@@ -59,8 +59,7 @@ func AppConsumer(name, dir string) (*Consumer, error) {
 	return &Consumer{Name: name, Dir: dir, Targets: targets, Server: own}, nil
 }
 
-// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias: a registry
-// source for a record, an endpoint source for a url.
+// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias.
 func DeclaredSources(dir string) ([]Source, error) {
 	d, err := readDescriptor(dir)
 	if err != nil || d == nil {

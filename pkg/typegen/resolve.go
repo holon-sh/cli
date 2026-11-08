@@ -101,7 +101,6 @@ func (t endpointTransport) RoundTrip(request *http.Request) (*http.Response, err
 	return nil, fmt.Errorf("server refused the request with HTTP %d; %s", response.StatusCode, hint)
 }
 
-// validEndpoint accepts the URL of a running MCP server.
 func validEndpoint(location string) error {
 	u, err := url.Parse(location)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Fragment != "" {
