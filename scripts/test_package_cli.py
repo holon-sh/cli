@@ -31,12 +31,6 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(launcher["optionalDependencies"], {name: "1.2.3-rc.1" for name in (
                 "holon-types-darwin-arm64", "holon-types-darwin-x64", "holon-types-linux-arm64", "holon-types-linux-x64",
             )})
-            with tarfile.open(output / "create-holon-app-1.2.3-rc.1.tgz") as archive:
-                create = json.load(archive.extractfile("package/package.json"))
-            self.assertEqual(create["dependencies"], {"holon-types": "1.2.3-rc.1"})
-            with zipfile.ZipFile(output / "create_holon_app-1.2.3rc1-py3-none-any.whl") as archive:
-                metadata = archive.read("create_holon_app-1.2.3rc1.dist-info/METADATA").decode()
-            self.assertIn("Requires-Dist: holon-types==1.2.3-rc.1\n", metadata)
             for package in output.iterdir():
                 with (zipfile.ZipFile if package.suffix == ".whl" else tarfile.open)(package) as archive:
                     names = archive.namelist() if package.suffix == ".whl" else archive.getnames()

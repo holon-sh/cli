@@ -21,22 +21,6 @@ Or with [Go](https://go.dev/doc/install) 1.27+:
 go install github.com/holon-sh/cli/cmd/holon@latest
 ```
 
-## Create an app
-
-Without installing `holon` first, create a Python app with uv:
-
-```sh
-uvx create-holon-app orders
-```
-
-Or a TypeScript app with npm, or with `pnpm`, `yarn` or `bun create`:
-
-```sh
-npm create holon-app@next orders
-```
-
-Both run `holon init` from `holon-types`, which ships the `holon` binary on PyPI and npm for macOS and Linux.
-
 ## Example
 
 Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example uses the public [Context7](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4) server.
