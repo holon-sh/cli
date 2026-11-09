@@ -26,6 +26,9 @@ var client = &http.Client{Timeout: 30 * time.Second}
 // cliPackage is the package that installs holon into a Python or TypeScript project.
 const cliPackage = "holon-types"
 
+// holonPackages are the npm packages whose versions the app's clients depend on.
+var holonPackages = map[string]bool{typegen.NodePackages[typegen.TargetTS]: true, typegen.NodePackages[typegen.TargetUI]: true, cliPackage: true}
+
 // Resolve picks the SDK releases a new app in language pins, from npm's registry, or the one
 // npm_config_registry names, and PyPI: on npm, the newest release that reads the clients this holon
 // writes (holon.contractVersion); on PyPI, the newest release. The app's holon-types is this holon's

@@ -259,8 +259,9 @@ func (p Project) render() (map[string][]byte, error) {
 	return files, nil
 }
 
-// addPackages adds the npm packages the app needs to package.json data, keeping any version the
-// project already declares, and the view's build script when the project has none.
+// addPackages adds the npm packages the app needs to package.json data, and the view's build script
+// when the project has none. Holon's packages get the versions resolved for this holon, since they must
+// agree on the clients it writes; the project keeps any version it declares of the others.
 func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	var pkg typegen.PackageJSON
 	if err := json.Unmarshal(data, &pkg); err != nil {
@@ -281,10 +282,14 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 		packages map[string]string
 	}{{"dependencies", dependencies}, {"devDependencies", dev}} {
 		for _, name := range slices.Sorted(maps.Keys(section.packages)) {
-			if pkg.Declares(name) {
-				continue
+			object := section.name
+			if declared := pkg.Section(name); declared != "" {
+				if !holonPackages[name] {
+					continue
+				}
+				object = declared
 			}
-			updated, err := typegen.AddPackageMember(data, section.name, name, section.packages[name])
+			updated, err := typegen.SetPackageMember(data, object, name, section.packages[name])
 			if err != nil {
 				return nil, "", err
 			}
@@ -295,7 +300,7 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	}
 	switch current, ok := pkg.Scripts["build"]; {
 	case !ok:
-		updated, err := typegen.AddPackageMember(data, "scripts", "build", build)
+		updated, err := typegen.SetPackageMember(data, "scripts", "build", build)
 		return updated, "", err
 	case current == build:
 		return data, "", nil
@@ -304,10 +309,10 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	}
 }
 
-// PythonRequirements are the Python requirements the app needs: dependencies, which a project
-// declares directly, and development ones, which it only needs installed.
+// PythonRequirements are the Python requirements the app needs: dependencies, and development ones.
+// holon-types brings mypy, which holon types check runs.
 func (p Project) PythonRequirements() (dependencies, dev []string) {
-	return []string{typegen.PythonRuntime + "==" + p.Versions.HolonPy, "mcp>=2.3,<3"}, []string{cliPackage + "==" + p.Versions.HolonTypes, "mypy>=2.4,<3"}
+	return []string{typegen.PythonRuntime + "==" + p.Versions.HolonPy, "mcp>=2.3,<3"}, []string{cliPackage + "==" + p.Versions.HolonTypes}
 }
 
 // appendLines appends to a file's text each line of more it lacks.

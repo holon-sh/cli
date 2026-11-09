@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"bytes"
 	"cmp"
 	"fmt"
 	"io"
@@ -150,20 +149,10 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 		case typegen.TargetGo:
 			commands = append(commands, []string{"go", "get", typegen.GoRuntimeModule + "@latest"})
 		case typegen.TargetPy:
-			var installs bytes.Buffer
-			if err := commandenv.RunStreaming(cmd.Context(), dir, "uv", []string{"export", "--no-hashes", "--quiet"}, nil, nil, &installs, stderr); err != nil {
-				return fmt.Errorf("uv export in %s: %w", dirArg, err)
-			}
-			installed := map[string]bool{}
-			for line := range strings.Lines(installs.String()) {
-				installed[typegen.PythonName(line)] = true
-			}
+			// uv add replaces any version the project already declares.
 			dependencies, dev := project.PythonRequirements()
-			commands = append(commands, append([]string{"uv", "add", "--frozen"}, dependencies...))
-			if dev = slices.DeleteFunc(dev, func(r string) bool { return installed[typegen.PythonName(r)] }); len(dev) > 0 {
-				commands = append(commands, append([]string{"uv", "add", "--frozen", "--dev"}, dev...))
-			}
-			commands = append(commands, []string{"uv", "sync"})
+			commands = append(commands, append([]string{"uv", "add", "--frozen"}, dependencies...),
+				append([]string{"uv", "add", "--frozen", "--dev"}, dev...), []string{"uv", "sync"})
 		}
 		for _, command := range append(commands, []string{manager, "install"}) {
 			if err := run(command...); err != nil {
