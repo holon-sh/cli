@@ -426,10 +426,10 @@ func (p *Prepared) Write() error {
 		}
 	}
 	for _, c := range p.consumers {
+		if err := p.WriteClients(c.Name, c.Dir); err != nil {
+			return err
+		}
 		for _, target := range c.Targets {
-			if err := writeSlot(c.Dir, target, c.packages[target]); err != nil {
-				return fmt.Errorf("%s: %w", c.Name, err)
-			}
 			fmt.Fprintf(p.options.Stdout, "%s: generated %s types\n", c.Name, target)
 		}
 	}

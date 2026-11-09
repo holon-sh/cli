@@ -1,7 +1,6 @@
 package installation
 
 import (
-	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -33,7 +32,7 @@ func stabilizeTimes(root string, targets []string) error {
 			}
 			return os.Chtimes(path, mcpcontract.StableTime(data), mcpcontract.StableTime(data))
 		})
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err != nil {
 			return err
 		}
 	}
