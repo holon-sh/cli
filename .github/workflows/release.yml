@@ -111,9 +111,8 @@ jobs:
           merge-multiple: true
       - name: Publish platform packages, then the launcher, then create-holon-app
         run: |
-          tag=latest; case "$VERSION" in *-*) tag=next ;; esac
           for f in dist/holon-types-*-*-"$VERSION".tgz; do
-            npm publish "./$f" --access public --tag "$tag"
+            npm publish "./$f" --access public --tag latest
           done
-          npm publish "./dist/holon-types-$VERSION.tgz" --access public --tag "$tag"
-          npm publish "./dist/create-holon-app-$VERSION.tgz" --access public --tag "$tag"
+          npm publish "./dist/holon-types-$VERSION.tgz" --access public --tag latest
+          npm publish "./dist/create-holon-app-$VERSION.tgz" --access public --tag latest
