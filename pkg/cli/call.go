@@ -62,8 +62,8 @@ func newCall() *cobra.Command {
   # A dependency the server.json here declares
   holon call context7 resolve-library-id libraryName=Next.js query="app router"
 
-  # Arguments as a JSON object, from stdin
-  echo '{"libraryName":"Next.js","query":"app router"}' | holon call context7 resolve-library-id --args -
+  # Arguments as a JSON object
+  holon call context7 resolve-library-id --args '{"libraryName":"Next.js","query":"app router"}'
 
   # The complete MCP result
   holon call context7 resolve-library-id libraryName=Next.js query="app router" --json`, Args: cobra.MinimumNArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
@@ -85,7 +85,7 @@ func newCall() *cobra.Command {
 			}
 			return fmt.Errorf("%s has no tool %q; it has %s", args[0], args[1], cmp.Or(strings.Join(names, ", "), "none"))
 		}
-		arguments, err := callArguments(args[2:], raw, cmd.InOrStdin())
+		arguments, err := callArguments(args[2:], raw)
 		if err != nil {
 			return err
 		}
@@ -103,7 +103,7 @@ func newCall() *cobra.Command {
 		}
 		return err
 	}}
-	cmd.Flags().StringVar(&raw, "args", "", "Arguments as a JSON object, or - to read one from stdin")
+	cmd.Flags().StringVar(&raw, "args", "", "Arguments as a JSON object")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Print the complete MCP result as JSON")
 	return cmd
 }
@@ -238,31 +238,19 @@ func signature(schema any) string {
 	return strings.Join(append(first, rest...), ", ")
 }
 
-// callArguments builds a tool call's arguments from --args, then each KEY=VALUE.
-func callArguments(pairs []string, raw string, stdin io.Reader) (map[string]any, error) {
+// callArguments builds a tool call's arguments from --args, then each KEY=VALUE; a later KEY wins.
+func callArguments(pairs []string, raw string) (map[string]any, error) {
 	arguments := map[string]any{}
 	if raw != "" {
-		data := []byte(raw)
-		if raw == "-" {
-			var err error
-			if data, err = io.ReadAll(stdin); err != nil {
-				return nil, err
-			}
-		}
-		if err := json.Unmarshal(data, &arguments); err != nil || arguments == nil {
+		if err := json.Unmarshal([]byte(raw), &arguments); err != nil || arguments == nil {
 			return nil, errors.New("--args must be a JSON object")
 		}
 	}
-	seen := map[string]bool{}
 	for _, pair := range pairs {
 		key, value, ok := strings.Cut(pair, "=")
-		switch {
-		case !ok || key == "":
+		if !ok || key == "" {
 			return nil, fmt.Errorf("%s: arguments are KEY=VALUE", pair)
-		case seen[key]:
-			return nil, fmt.Errorf("%s is given twice", key)
 		}
-		seen[key] = true
 		var decoded any
 		if json.Unmarshal([]byte(value), &decoded) != nil {
 			decoded = value // A VALUE that is not JSON is a string.
@@ -272,32 +260,17 @@ func callArguments(pairs []string, raw string, stdin io.Reader) (map[string]any,
 	return arguments, nil
 }
 
-// writeResult prints a tool result's structured content, or else each content block: text as it is,
-// and other blocks as a one-line summary.
+// writeResult prints a tool result's structured content, or else its text blocks as they are and any
+// other block as JSON.
 func writeResult(w io.Writer, result *mcp.CallToolResult) error {
 	if result.StructuredContent != nil {
 		return writeJSON(w, result.StructuredContent)
 	}
 	for _, content := range result.Content {
 		var err error
-		switch content := content.(type) {
-		case *mcp.TextContent:
-			_, err = fmt.Fprintln(w, strings.TrimSuffix(content.Text, "\n"))
-		case *mcp.ImageContent:
-			_, err = fmt.Fprintf(w, "[image %s, %d bytes]\n", content.MIMEType, len(content.Data))
-		case *mcp.AudioContent:
-			_, err = fmt.Fprintf(w, "[audio %s, %d bytes]\n", content.MIMEType, len(content.Data))
-		case *mcp.ResourceLink:
-			_, err = fmt.Fprintf(w, "[resource link %s]\n", content.URI)
-		case *mcp.EmbeddedResource:
-			switch resource := content.Resource; {
-			case resource == nil:
-			case resource.Text != "":
-				_, err = fmt.Fprintln(w, strings.TrimSuffix(resource.Text, "\n"))
-			default:
-				_, err = fmt.Fprintf(w, "[resource %s, %d bytes]\n", resource.URI, len(resource.Blob))
-			}
-		default:
+		if text, ok := content.(*mcp.TextContent); ok {
+			_, err = fmt.Fprintln(w, strings.TrimSuffix(text.Text, "\n"))
+		} else {
 			err = writeJSON(w, content)
 		}
 		if err != nil {
