@@ -33,11 +33,12 @@ func SourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
 	return patternmatcher.New(patterns)
 }
 
-// GeneratedSource reports dependency directories and marked client slots excluded from source snapshots.
+// GeneratedSource reports dependency directories, generated clients and the directories they are
+// written through, which source snapshots leave out.
 func GeneratedSource(root, path string) bool {
 	relative, _ := filepath.Rel(root, path)
 	if slices.ContainsFunc(strings.Split(filepath.ToSlash(relative), "/"), func(part string) bool {
-		return slices.Contains([]string{".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}, part)
+		return slices.Contains([]string{".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}, part) || strings.HasPrefix(part, generatedTemp)
 	}) {
 		return true
 	}

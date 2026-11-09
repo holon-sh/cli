@@ -1,6 +1,6 @@
 // holon-generated-apps-v1 app=checkout
-import type { ToolClient, EndpointBinding, CreateOptions } from "../runtime.js";
-export { ToolCallError } from "../runtime.js";
+import type { ToolClient, EndpointBinding, CreateOptions } from "holon-sh/runtime";
+export { ToolCallError } from "holon-sh/runtime";
 export type MysqlInputLabeledColumn = { "column": string; "label": string; };
 export type MysqlInputDirection = ("asc" | "desc");
 export type MysqlOutputRoot = { "columns": Array<MysqlOutputLabeledColumn>; };

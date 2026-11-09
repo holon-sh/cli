@@ -77,7 +77,7 @@ await apps.context7.tools.resolve_library(libraryName="Next.js", query="app rout
 <summary><h4>TypeScript</h4></summary>
 
 ```ts
-import { apps } from "./generated/holon-sh/index.js";
+import { apps } from "./generated/holon-sh/index.mjs";
 
 const libraries = await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js", query: "app router" });
 libraries.content; // Context7 declares no output schema, so the complete result is returned
@@ -141,7 +141,7 @@ greeting["text"]
 <summary><h4>TypeScript</h4></summary>
 
 ```ts
-import { apps } from "./generated/holon-sh/index.js";
+import { apps } from "./generated/holon-sh/index.mjs";
 
 const greeting = await apps.bar.tools.greet({ name: "world" });
 greeting.result;

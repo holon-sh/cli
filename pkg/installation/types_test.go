@@ -23,7 +23,7 @@ func typedManifest(t *testing.T, apps ...manifestApp) manifestSpec {
 
 func installRuntime(t *testing.T, root string) {
 	t.Helper()
-	sourceFiles(t, filepath.Join(root, "node_modules", "holon-sh"), map[string]string{
-		"package.json": `{"name":"holon-sh","holon":{"contractVersion":2}}`,
-	})
+	for _, pkg := range []string{"holon-sh", "holon-ui"} {
+		sourceFiles(t, filepath.Join(root, "node_modules", pkg), map[string]string{"package.json": `{"name":"` + pkg + `","holon":{"contractVersion":2}}`})
+	}
 }

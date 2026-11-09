@@ -18,6 +18,9 @@ type packageJSON struct {
 	Name, Version                                                         string
 	PackageManager                                                        string `json:"packageManager"`
 	Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
+	Holon                                                                 struct {
+		ContractVersion int `json:"contractVersion"`
+	}
 }
 
 func (p packageJSON) declares(pkg string) bool {
@@ -30,16 +33,14 @@ func packageManager(dir string, pkg packageJSON) string {
 	if manager, _, _ := strings.Cut(pkg.PackageManager, "@"); manager != "" {
 		return manager
 	}
-	for current := dir; ; current = filepath.Dir(current) {
+	for current := range ancestors(dir) {
 		for _, lock := range []struct{ file, manager string }{{"pnpm-lock.yaml", "pnpm"}, {"yarn.lock", "yarn"}, {"bun.lock", "bun"}, {"bun.lockb", "bun"}, {"package-lock.json", "npm"}} {
 			if isFile(filepath.Join(current, lock.file)) {
 				return lock.manager
 			}
 		}
-		if filepath.Dir(current) == current {
-			return "npm"
-		}
 	}
+	return "npm"
 }
 
 // Install installs missing declared SDK runtimes with the project's package manager.
@@ -68,8 +69,8 @@ func Install(ctx context.Context, consumers []Consumer, options Options) error {
 
 func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 	const installCommand = "install"
-	if err := installedRuntime(dir, pkg); !errors.Is(err, errNotInstalled) {
-		return err
+	if installedRuntime(dir, pkg) == nil {
+		return nil
 	}
 	var manifest packageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil {

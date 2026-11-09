@@ -68,7 +68,7 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 		return err
 	}
 	defer os.RemoveAll(generated)
-	if err := writeClients(p, generated); err != nil {
+	if err := p.prepared.WriteClients(p.name, generated); err != nil {
 		return err
 	}
 	runner := contractRunners[language]
@@ -84,7 +84,8 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 // runInImage builds source's image for this machine with Kiln, without the app's build step, which may need
 // the clients being prepared, and runs command there without network access, with the tooling at
 // /holon-tooling. It copies what the command printed to stdout. With generated, it first copies those
-// clients into the app as an image build does; with checker, the command can import the Python type checker.
+// clients into the app, in a layer of their own so the source's layers stay cached; with checker, the
+// command can import the Python type checker.
 func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdout io.Writer) error {
 	env, err := commandenv.Environ(o.Env)
 	if err != nil {

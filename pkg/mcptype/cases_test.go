@@ -135,11 +135,11 @@ func generationCases(t *testing.T) []generationCase {
 	add("empty-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
 	for _, target := range []string{"node", "python"} {
 		// sink-browser already renders the kitchen sink's TypeScript, so only Python renders it here.
-		options, contracts := "", sampleContracts+`, "schemas": `+kitchenSink+`}`
+		contracts := sampleContracts + `, "schemas": ` + kitchenSink + `}`
 		if target == "node" {
-			options, contracts = `, "runtime_specifier": "../runtime.mjs"`, sampleContracts+`}`
+			contracts = sampleContracts + `}`
 		}
-		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+contracts+`, "banner": "holon-generated-apps-v1 app=checkout"`+options+`}`)
+		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+contracts+`, "banner": "holon-generated-apps-v1 app=checkout"}`)
 	}
 	for _, test := range []struct{ name, patch string }{
 		{"go-module-missing", `"target": "go", "go_module": ""`},

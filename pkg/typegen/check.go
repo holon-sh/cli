@@ -90,14 +90,11 @@ func (p *Prepared) CheckEntry(consumer string) (entry, language string, ok bool)
 }
 
 func pythonEnvironment(dir, fallback string) string {
-	for current := dir; ; current = filepath.Dir(current) {
+	for current := range ancestors(dir) {
 		for _, venv := range []string{".venv", "venv"} {
 			if python := filepath.Join(current, venv, "bin", "python"); isFile(python) {
 				return python
 			}
-		}
-		if filepath.Dir(current) == current {
-			break
 		}
 	}
 	if active := os.Getenv("VIRTUAL_ENV"); active != "" && isFile(filepath.Join(active, "bin", "python")) {

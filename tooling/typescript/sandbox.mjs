@@ -22,6 +22,13 @@ const extensions = ["", ".ts", ".tsx", ".mts", ".js", ".mjs", ".cjs", ".json", "
 
 export class MissingPackage extends Error {}
 
+const emptyClientsModule = `import { createApps as create, bindApps } from "holon-sh/runtime";
+export { ToolCallError } from "holon-sh/runtime";
+const identity = { name: "holon-contract", version: "0", requires: {} };
+export const apps = create(identity, {});
+export function createApps(bindings, options) { return bindApps(identity, {}, bindings, options); }
+`;
+
 export function createSandbox(root, vendor) {
   root = realpathSync(root);
   // Whatever the application logs goes to stderr: stdout carries only the contract.
@@ -51,7 +58,7 @@ export function createSandbox(root, vendor) {
     globalThis.process = Object.freeze({ env: {}, platform: "linux", arch: "x64", versions: Object.freeze({ node }), cwd: () => cwd, exit: control("exit"), on: control("on"), nextTick: control("nextTick") });
   }`, context, { filename: "holon:stub" })(stub, root, process.versions.node);
   const parse = vm.runInContext("JSON.parse", context);
-  const modules = new Map(), files = new Map(), commonjs = new Map(), builtins = new Map(), maps = new Map(), generated = new Map();
+  const modules = new Map(), files = new Map(), commonjs = new Map(), builtins = new Map(), maps = new Map(), generated = new Set();
   const paths = tsconfigPaths(root);
 
   function resolveSpecifier(specifier, referrer, conditions) {
@@ -80,16 +87,9 @@ export function createSandbox(root, vendor) {
   // snapshot leaves out and a first generation has not written. Like Python's holon.apps, they are then
   // a module with no clients.
   function emptyClients(target) {
-    const match = target.match(/^(.*[\\/]generated[\\/]holon-sh)(?:[\\/]index(?:\.[mc]?[jt]s)?)?$/);
-    if (!match || match[1].split(sep).includes("node_modules")) return;
-    const file = join(match[1], "index.mjs");
-    generated.set(file, `import { createApps as create, bindApps } from "holon-sh/runtime";
-export { ToolCallError } from "holon-sh/runtime";
-const identity = { name: "holon-contract", version: "0", requires: {} };
-export const apps = create(identity, {});
-export function createApps(bindings, options) { return bindApps(identity, {}, bindings, options); }
-`);
-    return file;
+    if (!/[\\/]generated[\\/]holon-sh[\\/]index\.mjs$/.test(target) || target.split(sep).includes("node_modules")) return;
+    generated.add(target);
+    return target;
   }
 
   function packageFile(pkg, subpath, conditions) {
@@ -128,7 +128,7 @@ export function createApps(bindings, options) { return bindApps(identity, {}, bi
   }
 
   function source(file, url, kind) {
-    const text = generated.get(file) ?? readFileSync(file, "utf8");
+    const text = generated.has(file) ? emptyClientsModule : readFileSync(file, "utf8");
     if (!/\.[mc]?tsx?$/.test(file)) return text;
     const { outputText, sourceMapText } = ts.transpileModule(text, { fileName: file, compilerOptions: { module: kind, target: ts.ScriptTarget.ES2022, sourceMap: true, jsx: ts.JsxEmit.ReactJSX, experimentalDecorators: true, esModuleInterop: true } });
     maps.set(url, new module.SourceMap(JSON.parse(sourceMapText)));

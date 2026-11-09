@@ -138,8 +138,8 @@ test("a server that imports its generated clients extracts before holon has writ
 export const createApps = (identity, contracts) => Object.freeze(Object.fromEntries(Object.keys(contracts).map(name => [name, {}])));
 export const bindApps = (identity, contracts, bindings) => createApps(identity, contracts);`,
     "src/server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
-import { apps, ToolCallError } from "../generated/holon-sh/index.js";
-import { createApps } from "@/generated/holon-sh/index.js";
+import { apps, ToolCallError } from "../generated/holon-sh/index.mjs";
+import { createApps } from "@/generated/holon-sh/index.mjs";
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "caller", version: "1" });
   if (ToolCallError && Object.keys({ ...apps, ...createApps({}) }).length === 0) server.registerTool("relay", {}, () => ({ content: [] }));

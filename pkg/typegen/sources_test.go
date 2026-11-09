@@ -2,13 +2,14 @@ package typegen
 
 import (
 	"errors"
-	"github.com/holon-sh/protocol"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/holon-sh/protocol"
 )
 
 func TestResolveDocumentFindsServerSources(t *testing.T) {
@@ -80,7 +81,7 @@ func TestPrepareRejectsInvalidConsumers(t *testing.T) {
 
 func TestGenerateKeepsFilesItDidNotWrite(t *testing.T) {
 	for _, test := range []struct{ target, file string }{
-		{TargetTS, "generated/holon-sh/index.js"},
+		{TargetTS, "generated/holon-sh/index.mjs"},
 		{TargetPy, "holon.py"},
 		{TargetPy, "holon/__init__.py"},
 		{TargetPy, "holon/apps/__init__.py"},
@@ -88,7 +89,7 @@ func TestGenerateKeepsFilesItDidNotWrite(t *testing.T) {
 	} {
 		t.Run(test.file, func(t *testing.T) {
 			dir := t.TempDir()
-			put(t, dir, "node_modules/holon-sh/package.json", `{"holon":{"contractVersion":2}}`)
+			runtimePackage(t, dir, "holon-sh")
 			put(t, dir, "requirements.txt", "holon-sh\n")
 			put(t, dir, test.file, "user content")
 			c := Consumer{Name: "app", Dir: dir, Targets: []string{test.target}, Sources: []Source{{Document: document(t, ordersMetadata())}}}

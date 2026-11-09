@@ -363,9 +363,9 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, alias string) (map[string][]byte, error) {
 	switch target {
 	case TargetTS:
-		request.Target, request.RuntimeSpecifier = "node", nodePackages[target]+"/runtime"
+		request.Target = "node"
 	case TargetUI:
-		request.Target, request.RuntimeSpecifier = "browser", nodePackages[target]+"/runtime"
+		request.Target = "browser"
 		alias = cmp.Or(alias, serverKey(own.Identity.Name), "app")
 	case TargetPy:
 		request.Target = "python"
@@ -420,14 +420,14 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 func (p *Prepared) Write() error {
 	for _, c := range p.consumers {
 		for _, target := range c.Targets {
-			if err := validateSlot(target, c.Dir); err != nil {
+			if err := validateSlot(c.Dir, target); err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
 			}
 		}
 	}
 	for _, c := range p.consumers {
 		for _, target := range c.Targets {
-			if err := writeSlot(target, c.Dir, c.packages[target]); err != nil {
+			if err := writeSlot(c.Dir, target, c.packages[target]); err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
 			}
 			fmt.Fprintf(p.options.Stdout, "%s: generated %s types\n", c.Name, target)
@@ -444,18 +444,20 @@ func (p *Prepared) Targets(consumer string) []string {
 	return nil
 }
 
-// WriteSlot writes the consumer's target clients into dir, the project or a copy staged for an image.
-// It refuses to overwrite files it did not generate, and leaves identical clients untouched.
-func (p *Prepared) WriteSlot(consumer, target, dir string) error {
+// WriteClients writes a consumer's clients into dir, the project or a copy staged for an image, and
+// nothing for an unknown one. It refuses to overwrite files it did not generate, and leaves identical
+// clients untouched.
+func (p *Prepared) WriteClients(consumer, dir string) error {
 	c := p.consumer(consumer)
 	if c == nil {
-		return fmt.Errorf("unknown consumer %q", consumer)
+		return nil
 	}
-	files, ok := c.packages[target]
-	if !ok {
-		return fmt.Errorf("%s has no %s clients", consumer, target)
+	for _, target := range c.Targets {
+		if err := writeSlot(dir, target, c.packages[target]); err != nil {
+			return fmt.Errorf("%s: %w", consumer, err)
+		}
 	}
-	return writeSlot(target, dir, files)
+	return nil
 }
 
 // AcquireLocks locks each consumer directory until the returned release function is called. A
