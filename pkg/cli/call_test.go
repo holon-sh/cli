@@ -34,7 +34,7 @@ func ordersServer(t *testing.T) *httptest.Server {
 func TestListPrintsTheHandshakeAndEachListing(t *testing.T) {
 	live := ordersServer(t)
 	got := run(t, "", "list", live.URL)
-	for _, want := range []string{"example.com/orders 1.2.0 (protocol ", "\nLook orders up by id.\n", "Tools (1)\n  read(id: string, count?: integer)\n      Read an order.\n", "Prompts (1)\n  summarize(id, tone?)\n"} {
+	for _, want := range []string{"example.com/orders 1.2.0 (protocol ", "\nLook orders up by id.\n", "\nTools (1)\n  read(id: string, count?: integer)\n      Read an order.\n\nPrompts (1)\n  summarize(id, tone?)\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("list output lacks %q:\n%s", want, got)
 		}
@@ -57,6 +57,9 @@ func TestCallTypesEachValueByTheToolSchema(t *testing.T) {
 	}
 	if arguments["id"] != "123" || arguments["count"] != 2.0 {
 		t.Errorf("the tool received %v, want id as the string \"123\" and count as the number 2", arguments)
+	}
+	if got := run(t, "", "call", live.URL, "read", `--args={"id":"9","count":1}`, "count=3"); got != "{\n  \"count\": 3,\n  \"id\": \"9\"\n}\n" {
+		t.Errorf("--args with an overriding pair sent %s", got)
 	}
 	run(t, `has no tool "write"; it has read`, "call", live.URL, "write")
 	run(t, "read returned an error", "call", live.URL, "read", "id=0")
