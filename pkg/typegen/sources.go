@@ -2,7 +2,8 @@
 //
 // A Consumer is a project directory that receives clients for the servers it names as Sources.
 // Sources can be supplied explicitly or read from sh.holon.requires with DeclaredSources.
-// The caller chooses which targets receive them; unresolved sources are errors.
+// The caller chooses which targets receive them; unresolved sources are errors. Connect opens a
+// session with a source's running server instead.
 package typegen
 
 import (

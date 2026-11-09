@@ -81,6 +81,16 @@ type Transport struct {
 	Variables map[string]InputFields `json:"variables"`
 }
 
+// StreamableRemote is the URL of the record's first streamable-http remote, or "" without one.
+func (d *Descriptor) StreamableRemote() string {
+	for _, remote := range d.Remotes {
+		if remote.Type == "streamable-http" {
+			return remote.URL
+		}
+	}
+	return ""
+}
+
 func (d *Descriptor) Identity() mcpcontract.Identity {
 	return mcpcontract.Identity{Name: d.Name, Version: d.Version}
 }
