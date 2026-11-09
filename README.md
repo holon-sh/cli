@@ -6,7 +6,7 @@
 [![Apache 2.0 License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/jXExyBdy)
 
-`holon` provides type-safety for MCP servers, e.g. invoking an MCP server as a function call your type checker understands.
+[`holon`](https://github.com/holon-sh/cli) is a framework for [type-safe](https://holon-labs.dev/docs/#types) [MCP servers](https://modelcontextprotocol.io/docs/learn/server-concepts).
 
 This is currently supported via the [Python SDK](https://github.com/holon-sh/sdk-py), [TypeScript SDK](https://github.com/holon-sh/sdk-ts) and [Go SDK](https://github.com/holon-sh/sdk-go).
 
@@ -22,13 +22,15 @@ Or with [Go](https://go.dev/doc/install) 1.27+:
 go install github.com/holon-sh/cli/cmd/holon@latest
 ```
 
-## Create an app
+## Example
+
+### Create an app
 
 ```sh
 holon init orders --lang py
 ```
 
-## Example
+### Dependencies
 
 Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example uses the public [Hugging Face](https://huggingface.co/docs/hub/en/hf-mcp-server) MCP server.
 
@@ -48,6 +50,8 @@ Declare dependencies under `sh.holon.requires` in your project's [`server.json`]
   }
 }
 ```
+
+### Types
 
 Generate the typed clients and type-check the calls to them.
 
@@ -163,52 +167,6 @@ await apps.bar.tools.hello({ name: "world" });
 
 greeting.text;
 // error TS2339: Property 'text' does not exist on type '{ result: string; }'.
-```
-
-</details>
-
-## Dependencies
-
-A dependency is an MCP server your project calls. For each one `holon` obtains a contract—the JSON Schemas of the server's tools and resources—and writes a typed client `apps.<alias>` into your project, for the SDK it declares: `generated/holon-sh/` for `holon-sh`, `generated/holon-ui/` for `holon-ui`, `holon/apps/` for Python and `holon/` for Go. TypeScript imports them as `#holon-sh` or `#holon-ui`, names `holon` adds to the `imports` of your `package.json`. A package that publishes code calling its clients lists `generated/holon-sh` in its `files`, so the projects that install it need not generate. `holon types check` then runs the language's type checker over your code against those clients. A TypeScript project needs a `tsconfig.json`, found as `tsc` finds it.
-
-A dependency is written in one of three ways.
-
-<details open>
-<summary><h3>Source code</h3></summary>
-
-An implementation of an MCP server, or its parent directory.
-
-```sh
-holon types check -s bar/server.py
-```
-
-</details>
-
-<details open>
-<summary><h3>Registry</h3></summary>
-
-A `sh.holon.requires` entry in [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json), or `-s` with a registry version URL. The record is fetched for its contract.
-
-```sh
-holon types check -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
-```
-
-</details>
-
-<details open>
-<summary><h3>Server</h3></summary>
-
-An endpoint URL. The running server is asked for `tools/list` and `resources/list`.
-
-```sh
-holon types check -s https://huggingface.co/mcp
-```
-
-If the server requires a token, name it and set `<ALIAS>_MCP_TOKEN`. The token is sent only to that URL's origin, as a bearer token, and is not written anywhere.
-
-```sh
-export DOCS_MCP_TOKEN=...
-holon types check -s docs=https://mcp.example.com/mcp
 ```
 
 </details>
