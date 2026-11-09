@@ -33,7 +33,7 @@ func ParseDescriptor(data []byte) (*mcpregistry.Descriptor, error) {
 	if len(data) > mcpregistry.MaxDescriptorBytes {
 		return nil, errors.New("server descriptor exceeds 1 MiB")
 	}
-	d, err := mcpregistry.ParseDescriptor(data)
+	d, err := mcpregistry.ParseLocalDescriptor(data)
 	if err != nil {
 		return nil, err
 	}

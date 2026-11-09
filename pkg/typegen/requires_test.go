@@ -31,6 +31,7 @@ func TestDeclaredSources(t *testing.T) {
 		},
 		{name: "invalid descriptor", data: `{"name":"checkout","version":"1.0.0","description":"Checkout"}`, err: "namespace/name"},
 		{name: "invalid alias", data: descriptor + metadata + `{"requires":{"Orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`, err: "dependency name \"Orders\""},
+		{name: "unknown requires member", data: descriptor + metadata + `{"requires":{"docs":{"url":"https://mcp.example/mcp","header":[]}}}}}}`, err: `unknown object member name "header"`},
 		{name: "a url with a version", data: descriptor + metadata + `{"requires":{"docs":{"url":"https://mcp.example/mcp","version":"1.0.0"}}}}}}`, err: "leave out name, version and registry"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
