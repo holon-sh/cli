@@ -4,6 +4,7 @@
 [![Go](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go)](https://go.dev/doc/install)
 [![Downloads](https://img.shields.io/badge/releases-download-blue)](https://github.com/holon-sh/cli/releases/latest)
 [![Apache 2.0 License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://holon-labs.dev/discord/)
 
 `holon` provides type-safety for MCP servers, e.g. invoking an MCP server as a function call your type checker understands.
 
@@ -227,6 +228,10 @@ holon types check -s docs=https://mcp.example.com/mcp
 ```
 
 </details>
+
+## Community
+
+Ask questions and share what you're building on the [Holon Discord](https://holon-labs.dev/discord/).
 
 ## Reference
 
