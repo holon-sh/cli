@@ -257,8 +257,8 @@ func (p Project) render() (map[string][]byte, error) {
 	return files, nil
 }
 
-// addPackages adds the npm packages the app needs to package.json data, and the view's build script
-// when the project has none.
+// addPackages adds the npm packages the app needs to package.json data, keeping any version the
+// project already declares, and the view's build script when the project has none.
 func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	var pkg typegen.PackageJSON
 	if err := json.Unmarshal(data, &pkg); err != nil {
@@ -279,14 +279,10 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 		packages map[string]string
 	}{{"dependencies", dependencies}, {"devDependencies", dev}} {
 		for _, name := range slices.Sorted(maps.Keys(section.packages)) {
-			object := section.name
-			if declared := pkg.Section(name); declared != "" {
-				if !holonPackages[name] {
-					continue
-				}
-				object = declared
+			if pkg.Declares(name) {
+				continue
 			}
-			updated, err := typegen.SetPackageMember(data, object, name, section.packages[name])
+			updated, err := typegen.AddPackageMember(data, section.name, name, section.packages[name])
 			if err != nil {
 				return nil, "", err
 			}
@@ -297,7 +293,7 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	}
 	switch current, ok := pkg.Scripts["build"]; {
 	case !ok:
-		updated, err := typegen.SetPackageMember(data, "scripts", "build", build)
+		updated, err := typegen.AddPackageMember(data, "scripts", "build", build)
 		return updated, "", err
 	case current == build:
 		return data, "", nil

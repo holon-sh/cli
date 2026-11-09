@@ -39,16 +39,7 @@ func (p PackageJSON) Launches() bool {
 }
 
 func (p PackageJSON) Declares(pkg string) bool {
-	return p.Section(pkg) != ""
-}
-
-func (p PackageJSON) Section(pkg string) string {
-	for name, section := range map[string]map[string]string{"dependencies": p.Dependencies, "devDependencies": p.DevDependencies, "peerDependencies": p.PeerDependencies, "optionalDependencies": p.OptionalDependencies} {
-		if section[pkg] != "" {
-			return name
-		}
-	}
-	return ""
+	return p.Dependencies[pkg] != "" || p.DevDependencies[pkg] != "" || p.PeerDependencies[pkg] != "" || p.OptionalDependencies[pkg] != ""
 }
 
 // packageManager is the project's declared package manager, else the one its nearest lockfile
@@ -135,7 +126,7 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 }
 
 // mapClients gives a Node.js target's clients the import name #holon-sh or #holon-ui in the package.json
-// at dir. Without a package.json there, nothing would resolve it.
+// at dir, unless it already maps that name. Without a package.json there, nothing would resolve it.
 func mapClients(dir, target string, o Options) error {
 	file := filepath.Join(dir, "package.json")
 	data, err := os.ReadFile(file)
@@ -146,18 +137,17 @@ func mapClients(dir, target string, o Options) error {
 		return err
 	}
 	name := "#" + NodePackages[target]
-	if data, err = SetPackageMember(data, "imports", name, "./"+slots[target]+"/"+mcptype.TypeScriptModule); err != nil || data == nil {
+	if data, err = AddPackageMember(data, "imports", name, "./"+slots[target]+"/"+mcptype.TypeScriptModule); err != nil || data == nil {
 		return err
 	}
 	fmt.Fprintf(o.Stderr, "%s: mapped %s in package.json\n", filepath.Base(dir), name)
 	return os.WriteFile(file, data, 0o644)
 }
 
-// SetPackageMember returns the package.json data with name set to value in its top-level object
-// member object: in place when object has name, else as its last member, adding object last when
-// absent, laid out as the file lays out its first member and leaving the rest as written; nil when
-// name already has value.
-func SetPackageMember(data []byte, object, name, value string) ([]byte, error) {
+// AddPackageMember returns the package.json data with name set to value as the last member of its
+// top-level object member object, which it adds last when absent, laid out as the file lays out its
+// first member and leaving the rest as written; nil when object already has name.
+func AddPackageMember(data []byte, object, name, value string) ([]byte, error) {
 	entry := fmt.Sprintf("%q: %q", name, value)
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
@@ -198,20 +188,11 @@ func SetPackageMember(data []byte, object, name, value string) ([]byte, error) {
 			start := int(decoder.InputOffset())
 			last := start
 			for decoder.More() {
-				if key, err = decoder.Token(); err != nil {
+				if key, err = decoder.Token(); err != nil || key == name {
 					return nil, err
 				}
-				after := int(decoder.InputOffset())
 				if last, err = skip(); err != nil {
 					return nil, err
-				}
-				if key == name {
-					current := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(data[after:last]), []byte(":")))
-					if string(current) == strconv.Quote(value) {
-						return nil, nil
-					}
-					start := last - len(current)
-					return slices.Concat(data[:start], []byte(strconv.Quote(value)), data[last:]), nil
 				}
 			}
 			return member(start, last, indent, entry), nil

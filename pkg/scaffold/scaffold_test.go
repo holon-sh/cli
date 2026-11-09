@@ -134,7 +134,7 @@ func TestResolve(t *testing.T) {
 	defer server.Close()
 	local := registries{npm: server.URL, pypi: server.URL}
 
-	for cli, holonTypes := range map[string]string{"0.0.1-dev.19": "0.0.1.dev19", "0.0.1-dev.15+1152a1a": "0.0.1.dev20", "dev": "0.0.1.dev20"} {
+	for cli, holonTypes := range map[string]string{"0.0.1-dev.19": "0.0.1-dev.19", "0.0.1-dev.15+1152a1a": "0.0.1.dev20", "dev": "0.0.1.dev20"} {
 		versions, err := local.resolve(context.Background(), "py", cli)
 		if err != nil {
 			t.Fatal(err)
