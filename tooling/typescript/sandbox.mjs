@@ -67,6 +67,12 @@ export function createSandbox(root, vendor) {
       const target = specifier.startsWith("file:") ? fileURLToPath(specifier) : resolve(dirname(referrer), specifier);
       return { file: candidate(target) ?? emptyClients(target) ?? fail(`Cannot find ${specifier} imported from ${referrer}`) };
     }
+    if (specifier.startsWith("#")) {
+      const scope = packageScope(referrer);
+      const target = scope && mapTarget(manifestOf(scope).imports ?? {}, specifier, conditions);
+      if (!target) fail(`Cannot find ${specifier} imported from ${referrer}`);
+      return resolveSpecifier(target, join(scope, "package.json"), conditions);
+    }
     if (!referrer.split(sep).includes("node_modules")) {
       for (const target of paths(specifier)) {
         const file = candidate(target) ?? emptyClients(target);
@@ -74,10 +80,9 @@ export function createSandbox(root, vendor) {
       }
     }
     const [, name, subpath] = specifier.match(/^((?:@[^/]+\/)?[^/]+)(\/.*)?$/) ?? fail(`Invalid specifier ${specifier}`);
-    for (let directory = dirname(referrer); ; directory = dirname(directory)) {
+    for (const directory of ancestors(referrer)) {
       const pkg = join(directory, "node_modules", name);
       if (existsSync(join(pkg, "package.json"))) return { file: packageFile(pkg, `.${subpath ?? ""}`, conditions) };
-      if (dirname(directory) === directory) break;
     }
     if (schemaPackages.has(name) && existsSync(join(vendor, name, "package.json"))) return { file: packageFile(join(vendor, name), `.${subpath ?? ""}`, conditions) };
     throw new MissingPackage(`Cannot find package ${name} imported from ${referrer}; install the application's dependencies or commit holon-contract.json`, { cause: name });
@@ -85,7 +90,7 @@ export function createSandbox(root, vendor) {
 
   // A server that calls other servers imports the clients holon generates into its project, which a
   // snapshot leaves out and a first generation has not written. Like Python's holon.apps, they are then
-  // a module with no clients.
+  // a module with no clients. The path is typegen's TypeScript slot and mcptype.TypeScriptModule.
   function emptyClients(target) {
     if (!/[\\/]generated[\\/]holon-sh[\\/]index\.mjs$/.test(target) || target.split(sep).includes("node_modules")) return;
     generated.add(target);
@@ -93,8 +98,8 @@ export function createSandbox(root, vendor) {
   }
 
   function packageFile(pkg, subpath, conditions) {
-    const manifest = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8"));
-    let target = manifest.exports === undefined ? (subpath === "." ? manifest.main ?? "index.js" : subpath) : exportTarget(manifest.exports, subpath, conditions);
+    const manifest = manifestOf(pkg);
+    let target = manifest.exports === undefined ? (subpath === "." ? manifest.main ?? "index.js" : subpath) : mapTarget(manifest.exports, subpath, conditions);
     target ??= fail(`${manifest.name} does not export ${subpath}`);
     return realpathSync(candidate(join(pkg, target)) ?? fail(`Cannot find ${join(pkg, target)}`));
   }
@@ -214,11 +219,25 @@ function formatOf(file) {
   if (file.endsWith(".json")) return "json";
   if (/\.(cjs|cts)$/.test(file)) return "commonjs";
   if (/\.(mjs|mts|ts|tsx)$/.test(file)) return "module";
+  const scope = packageScope(file);
+  return scope && manifestOf(scope).type === "module" ? "module" : "commonjs";
+}
+
+// packageScope is the directory of the package.json nearest file, which sets its format and # imports.
+function packageScope(file) {
+  for (const directory of ancestors(file)) if (existsSync(join(directory, "package.json"))) return directory;
+}
+
+// ancestors yields the directories above file, nearest first, up to the filesystem root.
+function* ancestors(file) {
   for (let directory = dirname(file); ; directory = dirname(directory)) {
-    const manifest = join(directory, "package.json");
-    if (existsSync(manifest)) return JSON.parse(readFileSync(manifest, "utf8")).type === "module" ? "module" : "commonjs";
-    if (dirname(directory) === directory) return "commonjs";
+    yield directory;
+    if (dirname(directory) === directory) return;
   }
+}
+
+function manifestOf(directory) {
+  return JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
 }
 
 // candidate is the file a module path names: exact file, .ts stand-ins, extensions.
@@ -229,8 +248,9 @@ function candidate(path) {
   }
 }
 
-function exportTarget(exports, subpath, conditions) {
-  if (typeof exports === "string" || Array.isArray(exports) || !Object.keys(exports).some(key => key.startsWith("."))) exports = { ".": exports };
+// mapTarget is the target a package's exports or imports give subpath, through patterns and conditions.
+function mapTarget(exports, subpath, conditions) {
+  if (typeof exports === "string" || Array.isArray(exports) || !Object.keys(exports).some(key => /^[.#]/.test(key))) exports = { ".": exports };
   if (Object.hasOwn(exports, subpath)) return conditional(exports[subpath], "", conditions);
   const patterns = Object.keys(exports).filter(key => key.includes("*")).sort((a, b) => b.indexOf("*") - a.indexOf("*"));
   for (const key of patterns) {

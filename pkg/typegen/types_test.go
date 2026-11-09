@@ -133,7 +133,7 @@ func TestGeneratedClientsBindAsTheRuntimeDoes(t *testing.T) {
 	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 		t.Fatal(err)
 	}
-	put(t, app, "src/index.ts", `import { createApps, type EndpointBinding } from "../generated/holon-sh/index.mjs";
+	put(t, app, "src/index.ts", `import { createApps, type EndpointBinding } from "#holon-sh";
 const binding: EndpointBinding = { endpoint: "mcp:", fetch };
 const apps = createApps({ orders: binding }, { session: () => ({
   callTool: async () => ({ structuredContent: { total: 1 } }),
@@ -145,7 +145,7 @@ export const total: Promise<number> = apps.orders.tools.lookup({ id: "1" }).then
 	if output, err := check(t, app); err != nil {
 		t.Fatalf("check: %v\n%s", err, output)
 	}
-	put(t, app, "src/index.ts", `import { createApps } from "../generated/holon-sh/index.mjs";
+	put(t, app, "src/index.ts", `import { createApps } from "#holon-sh";
 export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch } });
 `)
 	mustReject(t, app, "'fetsh' does not exist")

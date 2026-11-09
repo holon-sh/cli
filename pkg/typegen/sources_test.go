@@ -130,6 +130,22 @@ dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetP
 	}
 }
 
+// Install maps a project's clients in package.json as a package manager edits it: one member added,
+// in the file's layout, and a mapping the project already has kept.
+func TestAddImportKeepsPackageJSONAsWritten(t *testing.T) {
+	const entry = `"#holon-sh": "./generated/holon-sh/index.mjs"`
+	for _, c := range []struct{ in, out string }{
+		{"{\n  \"name\": \"a\",\n  \"files\": [\"dist\"]\n}\n", "{\n  \"name\": \"a\",\n  \"files\": [\"dist\"],\n  \"imports\": {\n    " + entry + "\n  }\n}\n"},
+		{"{\r\n\t\"imports\": {\r\n\t\t\"#lib\": \"./lib.js\"\r\n\t}\r\n}", "{\r\n\t\"imports\": {\r\n\t\t\"#lib\": \"./lib.js\",\r\n\t\t" + entry + "\r\n\t}\r\n}"},
+		{`{"imports":{"#holon-sh":{"browser":"./x.mjs"}}}`, ""},
+	} {
+		out, err := addImport([]byte(c.in), "#holon-sh", "./generated/holon-sh/index.mjs")
+		if err != nil || string(out) != c.out {
+			t.Errorf("addImport(%q) = %q, %v; want %q", c.in, out, err, c.out)
+		}
+	}
+}
+
 func TestParseSource(t *testing.T) {
 	cwd, _ := os.Getwd()
 	for _, test := range []struct {

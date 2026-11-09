@@ -25,7 +25,7 @@ func TestDockerAutomaticTypes(t *testing.T) {
 	const pkg = `{"type":"module","engines":{"node":">=22.20.0 <23"},
 "dependencies":{"@modelcontextprotocol/server":"2.3.1","holon-sh":"^0.0.1-dev.2","holon-ui":"^0.0.1-dev.0","zod":"4.6.5"},
 "devDependencies":{"typescript":"7.0.2"},
-"scripts":{"build":"node --input-type=module -e \"import {apps} from './generated/holon-sh/index.mjs'; import {App} from './generated/holon-ui/index.mjs'; ` +
+"scripts":{"build":"node --input-type=module -e \"import {apps} from '#holon-sh'; import {App} from '#holon-ui'; ` +
 		`if (!apps.orders || typeof App !== 'function') throw Error('missing generated import')\""}}`
 	const config = `{"compilerOptions":{"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext",
 "strict":true,"skipLibCheck":true,"noEmit":true},"include":["server.ts"]}`
@@ -36,7 +36,7 @@ export default createMcpHandler(() => {
     ({id}) => ({content:[{type:"text",text:String(id)}],structuredContent:{total:5}}));
   return server;
 });`
-	caller := `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; import {z} from "zod"; import {apps} from "./generated/holon-sh/index.mjs";
+	caller := `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; import {z} from "zod"; import {apps} from "#holon-sh";
 export default createMcpHandler(() => {
   const server=new McpServer({name:"checkout",version:"1"});
   server.registerTool("checkout", {inputSchema:z.object({id:z.string()})}, async ({id}) => {

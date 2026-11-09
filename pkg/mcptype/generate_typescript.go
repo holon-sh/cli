@@ -19,6 +19,11 @@ export declare function exposeTools(app: Apps[keyof Apps], options?: import(%[1]
 `
 
 // resourceContracts compiles resources as tools named by URI, so a resource's output is its contents.
+
+// TypeScriptModule is the generated clients' module, beside its declarations in index.d.mts. Its .mjs
+// keeps it an ES module in a CommonJS project.
+const TypeScriptModule = "index.mjs"
+
 func resourceContracts(contracts map[string]contract) map[string]contract {
 	result := make(map[string]contract, len(contracts))
 	for alias, source := range contracts {
@@ -49,18 +54,18 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
 	if request.Target == "browser" {
 		files := map[string]string{
-			"index.mjs":   fmt.Sprintf("import { bindApps, appClass } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", runtime, runtime, bound),
-			"index.d.mts": types + bindingTypes + fmt.Sprintf(exposeTypes, runtime),
+			TypeScriptModule: fmt.Sprintf("import { bindApps, appClass } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", runtime, runtime, bound),
+			"index.d.mts":    types + bindingTypes + fmt.Sprintf(exposeTypes, runtime),
 		}
 		if request.Own != "" {
 			own := quoted(request.Own)
-			files["index.mjs"] += fmt.Sprintf("export const App = /* @__PURE__ */ appClass(identity, contracts, %s);\n", own)
+			files[TypeScriptModule] += fmt.Sprintf("export const App = /* @__PURE__ */ appClass(identity, contracts, %s);\n", own)
 			files["index.d.mts"] += fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\ntype OwnAppKey = %s;\nexport declare class App extends HostApp { readonly tools: Apps[OwnAppKey][\"tools\"]; readonly resources: Apps[OwnAppKey][\"resources\"]; readonly callTool: Apps[OwnAppKey][\"callTool\"] }\n", own)
 		}
 		return files, nil
 	}
 	return map[string]string{
-		"index.mjs":   fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\n%sexport const apps = create(identity, contracts);\n", runtime, runtime, bound),
-		"index.d.mts": types + "export declare const apps: Apps;\n" + bindingTypes,
+		TypeScriptModule: fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\n%sexport const apps = create(identity, contracts);\n", runtime, runtime, bound),
+		"index.d.mts":    types + "export declare const apps: Apps;\n" + bindingTypes,
 	}, nil
 }

@@ -1,7 +1,9 @@
 package typegen
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +14,8 @@ import (
 	"strings"
 
 	"golang.org/x/mod/modfile"
+
+	"github.com/holon-sh/cli/pkg/mcptype"
 )
 
 type packageJSON struct {
@@ -43,8 +47,9 @@ func packageManager(dir string, pkg packageJSON) string {
 	return "npm"
 }
 
-// Install installs missing declared SDK runtimes with the project's package manager.
-// Call it before snapshotting sources: package installation can create or update lockfiles.
+// Install installs missing declared SDK runtimes with the project's package manager, and maps
+// #holon-sh and #holon-ui to the clients in package.json. Call it before snapshotting sources: both
+// can change the project's package files.
 func Install(ctx context.Context, consumers []Consumer, options Options) error {
 	o := options.defaults()
 	for _, c := range consumers {
@@ -55,7 +60,9 @@ func Install(ctx context.Context, consumers []Consumer, options Options) error {
 			var err error
 			switch target {
 			case TargetTS, TargetUI:
-				err = ensureNodeRuntime(ctx, c.Dir, nodePackages[target], o)
+				if err = ensureNodeRuntime(ctx, c.Dir, nodePackages[target], o); err == nil {
+					err = mapClients(c.Dir, target, o)
+				}
 			case TargetPy:
 				err = ensurePythonRuntime(c.Dir)
 			}
@@ -99,6 +106,84 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 		return fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
 	}
 	return installedRuntime(dir, pkg)
+}
+
+// mapClients gives a Node.js target's clients the import name #holon-sh or #holon-ui in the package.json
+// at dir, unless it already maps that name. Without a package.json there, nothing would resolve it.
+func mapClients(dir, target string, o Options) error {
+	file := filepath.Join(dir, "package.json")
+	data, err := os.ReadFile(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	name := "#" + nodePackages[target]
+	if data, err = addImport(data, name, "./"+slots[target]+"/"+mcptype.TypeScriptModule); err != nil || data == nil {
+		return err
+	}
+	fmt.Fprintf(o.Stderr, "%s: mapped %s in package.json\n", filepath.Base(dir), name)
+	return os.WriteFile(file, data, 0o644)
+}
+
+// addImport returns the package.json data with name mapped to target as its last import, laid out as
+// the file lays out its first member and leaving the rest as written; nil when it already maps name.
+func addImport(data []byte, name, target string) ([]byte, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return nil, errors.New("package.json is not a JSON object")
+	}
+	open := int(decoder.InputOffset())
+	newline, indent := " ", ""
+	space := data[open : len(data)-len(bytes.TrimLeft(data[open:], " \t\r\n"))]
+	if i := bytes.LastIndexByte(space, '\n'); i >= 0 {
+		newline, indent = "\n", string(space[i+1:])
+		if i > 0 && space[i-1] == '\r' {
+			newline = "\r\n"
+		}
+	}
+	// member inserts text as the last member of an object that opens at start and has members up to end.
+	member := func(start, end int, depth string, text string) []byte {
+		insert := "," + newline + depth + indent + text
+		if end == start {
+			insert = newline + depth + indent + text + newline + depth
+		}
+		return slices.Concat(data[:end], []byte(insert), data[end:])
+	}
+	// skip reads past a member's value and reports where it ends.
+	skip := func() (int, error) {
+		err := decoder.Decode(new(json.RawMessage))
+		return int(decoder.InputOffset()), err
+	}
+	entry := fmt.Sprintf("%q: %q", name, target)
+	end := open
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		if key == "imports" {
+			if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+				return nil, errors.New("package.json imports is not a JSON object")
+			}
+			start := int(decoder.InputOffset())
+			last := start
+			for decoder.More() {
+				if key, err = decoder.Token(); err != nil || key == name {
+					return nil, err
+				}
+				if last, err = skip(); err != nil {
+					return nil, err
+				}
+			}
+			return member(start, last, indent, entry), nil
+		}
+		if end, err = skip(); err != nil {
+			return nil, err
+		}
+	}
+	return member(open, end, "", `"imports": {`+newline+indent+indent+entry+newline+indent+"}"), nil
 }
 
 // ErrNoRuntime identifies a project without a declared Holon SDK runtime.
