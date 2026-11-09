@@ -35,6 +35,20 @@ type Options struct {
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
 	// runs the server in its own directory and stops it after 30 seconds.
 	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
+	// Images, when set, runs a Python application the host cannot in the image it builds: its contract
+	// when a package its server imports is not installed and it commits no contract, and its type check
+	// when it has no environment of its own. Without Run only.
+	Images Images
+}
+
+// Images runs a Python application in the image it builds, with the dependencies that image installs.
+// Both take a snapshot of the application at root and the tooling directory, and copy the runner's
+// stdout to stdout and build diagnostics to stderr; a failure the runner reports is a *RunnerError.
+type Images interface {
+	// Extract runs extract.py contract on the server entry, relative to root.
+	Extract(ctx context.Context, toolingDir, root, entry string, stdout, stderr io.Writer) error
+	// Check runs runner.py check on the whole application, with the clients in generated copied into it.
+	Check(ctx context.Context, toolingDir, root, generated string, stdout, stderr io.Writer) error
 }
 
 func validateEnv(env []string) error {

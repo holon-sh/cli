@@ -84,13 +84,19 @@ class Finder(importlib.abc.MetaPathFinder):
         spec = importlib.machinery.PathFinder.find_spec(name, search, target)
         if name == "holon.apps" and (spec is None or spec.origin is None):
             return importlib.machinery.ModuleSpec(name, EmptyApps())
-        if spec is None and path is None:
+        if spec is None and (path is None or self.generated_holon(name, path)):
             raise MissingModule(
                 f"No module named {name!r}; install the application's dependencies "
                 "or commit holon-contract.json",
                 name=name,
             )
         return spec
+
+    def generated_holon(self, name: str, path: Sequence[str]) -> bool:
+        """Whether holon is only the application's generated clients, without the holon-sh package."""
+        return name.startswith("holon.") and all(
+            Path(entry).resolve().is_relative_to(self.root) for entry in path
+        )
 
 
 class EmptyApps(importlib.abc.Loader):

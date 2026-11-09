@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -312,5 +313,78 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 	writeProvider(t, orders, "orders", "while True:\n    pass\n")
 	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "server.py: no catalog within 1s") {
 		t.Fatalf("server that never answers: %v", err)
+	}
+}
+
+// fakeImages stands in for the images Python apps build, recording what it was asked to run.
+type fakeImages struct{ extracted, checked []string }
+
+func (f *fakeImages) Extract(_ context.Context, tooling, root, entry string, stdout, _ io.Writer) error {
+	if !pathInsideContext(root, filepath.Dir(tooling)) || !isFile(filepath.Join(root, entry)) {
+		return fmt.Errorf("entry %s is not in a snapshot under %s: %s", entry, filepath.Dir(tooling), root)
+	}
+	f.extracted = append(f.extracted, entry)
+	return json.NewEncoder(stdout).Encode(extraction{Tools: []mcpcontract.Tool{lookupTool}})
+}
+
+func (f *fakeImages) Check(_ context.Context, tooling, root, generated string, stdout, _ io.Writer) error {
+	clients, _ := os.ReadFile(filepath.Join(generated, "holon", "apps", "__init__.py"))
+	switch {
+	case !isFile(filepath.Join(tooling, "python", "runner.py")):
+		return errors.New("no Python checker in the tooling directory")
+	case !isFile(filepath.Join(root, "main.py")) || isFile(filepath.Join(root, "holon", "apps", "__init__.py")):
+		return fmt.Errorf("%s is not a snapshot of the app without its clients", root)
+	case !strings.Contains(string(clients), "def lookup("):
+		return errors.New("the generated clients are not copied in")
+	}
+	f.checked = append(f.checked, root)
+	fmt.Fprintln(stdout, `main.py:3: error: Argument "id" to "lookup" of "OrdersTools" has incompatible type "int"; expected "str"  [arg-type]`)
+	return &RunnerError{Status: 1, Stderr: "Found 1 error in 1 file\n"}
+}
+
+func TestAPythonAppWithoutAnEnvironmentRunsInItsImage(t *testing.T) {
+	needPython(t)
+	t.Setenv("VIRTUAL_ENV", "")
+	root := t.TempDir()
+	orders, checkout := filepath.Join(root, "orders"), filepath.Join(root, "checkout")
+	writeProvider(t, orders, "orders", "import orders_database\n"+pythonProvider)
+	put(t, checkout, "pyproject.toml", "[project]\nname = \"checkout\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
+	put(t, checkout, "main.py", "from holon.apps import apps\nasync def total() -> None:\n    await apps.orders.tools.lookup(id=1)\n")
+	c := Consumer{Name: "checkout", Dir: checkout, Targets: []string{TargetPy}, Sources: []Source{{Alias: "orders", Path: orders}}}
+
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil || !strings.Contains(err.Error(), "orders_database is not installed; install the application's dependencies") {
+		t.Fatalf("without images: %v", err)
+	}
+	images := &fakeImages{}
+	var stderr bytes.Buffer
+	if err := Generate(t.Context(), []Consumer{c}, Options{Stderr: &stderr, Images: images}); err != nil {
+		t.Fatal(err)
+	}
+	if len(images.extracted) != 1 || !strings.Contains(stderr.String(), "orders: orders_database is not installed here; reading the contract in the app's image") {
+		t.Fatalf("extracted %v in the image:\n%s", images.extracted, stderr.String())
+	}
+	if clients := read(t, checkout, "holon/apps/__init__.py"); !strings.Contains(clients, "def lookup(") {
+		t.Fatalf("generated clients lack orders.lookup:\n%s", clients)
+	}
+
+	var output bytes.Buffer
+	err := Check(t.Context(), checkout, Options{Stdout: &output, Stderr: &output, Images: images})
+	if err == nil || !strings.Contains(err.Error(), "checkout does not type-check against its typed contracts: exit status 1") || len(images.checked) != 1 {
+		t.Fatalf("checked %v in the image: %v\n%s", images.checked, err, output.String())
+	}
+	for _, line := range []string{"checkout: no Python environment here; type-checking in the app's image", `incompatible type "int"`, "Found 1 error"} {
+		if !strings.Contains(output.String(), line) {
+			t.Errorf("image check output lacks %q:\n%s", line, output.String())
+		}
+	}
+
+	// An app with an environment of its own is checked there.
+	put(t, checkout, ".venv/bin/python", "#!/bin/sh\necho checked with the app environment\n")
+	if err := os.Chmod(filepath.Join(checkout, ".venv/bin/python"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	output.Reset()
+	if err := Check(t.Context(), checkout, Options{Stdout: &output, Stderr: &output, Images: images}); err != nil || len(images.checked) != 1 || !strings.Contains(output.String(), "checked with the app environment") {
+		t.Fatalf("checked %v in the image with an environment: %v\n%s", images.checked, err, output.String())
 	}
 }

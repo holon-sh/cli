@@ -164,11 +164,16 @@ func printContract(cmd *cobra.Command, arg, output string) error {
 }
 
 // newCheck builds the check command; it is registered as "holon types check" and as the
-// "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
-func newCheck(short string) *cobra.Command {
+// "holon check" shortcut (a cobra command has one parent, so each gets its own instance). With images,
+// it runs Python apps the host cannot in their images.
+func newCheck(short string, images typegen.Images) *cobra.Command {
 	var servers []string
 	var noGenerate bool
-	cmd := &cobra.Command{Use: "check [DIR]", Short: short, Long: "Generate typed clients for MCP servers, then type-check the project's calls to them.\n\n" + dependencyHelp, Example: `  # Generate, then type-check
+	long := "Generate typed clients for MCP servers, then type-check the project's calls to them.\n\n"
+	if images != nil {
+		long += "A Python app with no environment of its own (.venv, venv or an activated virtualenv) is type-checked in the image it builds, with Docker, as holon dev does.\n\n"
+	}
+	cmd := &cobra.Command{Use: "check [DIR]", Short: short, Long: long + dependencyHelp, Example: `  # Generate, then type-check
   holon types check
 
   # Type-check the existing clients only (no network, no writes)
@@ -181,17 +186,22 @@ func newCheck(short string) *cobra.Command {
 		}
 		consumers, err := selectConsumers(cmd, servers)
 		if err == nil && !noGenerate {
-			err = typegen.Generate(cmd.Context(), consumers, typegen.Options{Stdout: io.Discard, Stderr: cmd.ErrOrStderr()})
+			err = typegen.Generate(cmd.Context(), consumers, typegen.Options{Stdout: io.Discard, Stderr: cmd.ErrOrStderr(), Images: images})
 		}
 		if err != nil {
 			return err
+		}
+		options := typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr(), Images: images}
+		// --no-generate makes no network requests, which building an image does.
+		if noGenerate {
+			options.Images = nil
 		}
 		for _, c := range consumers {
 			// An app with only its own server makes no calls to check.
 			if len(c.Targets) == 0 {
 				continue
 			}
-			if err := typegen.Check(cmd.Context(), c.Dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}); err != nil {
+			if err := typegen.Check(cmd.Context(), c.Dir, options); err != nil {
 				return err
 			}
 		}
@@ -204,18 +214,20 @@ func newCheck(short string) *cobra.Command {
 
 const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory"
 
-// NewCommand builds the standalone CLI, including the check shortcut.
-func NewCommand(version string) *cobra.Command {
+// NewCommand builds the standalone CLI, including the check shortcut. With images, the types commands run
+// Python apps the host cannot in their images.
+func NewCommand(version string, images typegen.Images) *cobra.Command {
 	root := &cobra.Command{Use: "holon", Short: "MCP developer client", Version: version, SilenceUsage: true, SilenceErrors: true}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetVersionTemplate("holon {{.Version}}\n")
-	root.AddCommand(NewInitCommand(), NewTypesCommand(), newCheck("Shortcut for holon types check"), newList(), newCall())
+	root.AddCommand(NewInitCommand(), NewTypesCommand(images), newCheck("Shortcut for holon types check", images), newList(), newCall())
 	return root
 }
 
 // NewTypesCommand builds an independent types command tree that can be added to a host CLI.
-// It has no installation, project, or control-plane dependencies.
-func NewTypesCommand() *cobra.Command {
+// It has no installation, project, or control-plane dependencies; with images, it runs Python apps the
+// host cannot in their images.
+func NewTypesCommand(images typegen.Images) *cobra.Command {
 	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
 	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	var verbose bool
@@ -239,13 +251,13 @@ func NewTypesCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return typegen.Generate(cmd.Context(), consumers, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr()})
+		return typegen.Generate(cmd.Context(), consumers, typegen.Options{Stdout: progress, Stderr: cmd.ErrOrStderr(), Images: images})
 	}}
 	generate.Flags().StringVar(&contract, "contract", "", "Print one server's MCP contract instead of generating")
 	generate.Flags().StringVarP(&output, "output", "o", "", "Write the --contract document to FILE, such as holon-contract.json")
 	generate.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
 	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")
-	types.AddCommand(generate, newCheck("Type-check the project's calls to MCP servers"))
+	types.AddCommand(generate, newCheck("Type-check the project's calls to MCP servers", images))
 
 	return types
 }

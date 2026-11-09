@@ -175,12 +175,19 @@ def test_effects_and_missing_packages_fail_naming_them(tmp_path):
         name: (write(tmp_path / name, {"server.py": source}), "server.py")
         for name, source in sources.items()
     }
+    # Clients generated into the app make holon a namespace there, which still lacks holon-sh's modules.
+    generated = {
+        "server.py": "from holon.apps import apps\n",
+        "holon/apps/__init__.py": "from holon.client import Apps\n",
+    }
+    apps["generated"] = (write(tmp_path / "generated", generated), "server.py")
     result = extract(apps)
     for name, capability in (("socket", "network"), ("write", "file writes")):
         diagnostic = result[name]["diagnostic"]
         assert f'{name}/server.py", line 3' in diagnostic, diagnostic
         assert f"contract evaluation has no {capability}" in diagnostic, diagnostic
     assert result["missing"]["missing"] == "requests"
+    assert result["generated"]["missing"] == "holon", result["generated"]
     assert result["typed"]["tools"] == []
 
 

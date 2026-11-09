@@ -14,6 +14,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/holon-sh/cli/pkg/appartifact"
+	sharedcli "github.com/holon-sh/cli/pkg/cli"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
 
@@ -251,5 +252,66 @@ async def checkout(id: str) -> float:
 		if _, err := buildAndPush(t.Context(), selected, &imageUpload{grant: grant}, options); err != nil {
 			t.Fatalf("build Python caller: %v\n%s", err, progress.String())
 		}
+	}
+}
+
+// TestDockerPythonCheckWithoutEnvironment runs holon check on Python apps whose dependencies are installed
+// only in their images: the provider's contract is read there, and the caller is type-checked there.
+func TestDockerPythonCheckWithoutEnvironment(t *testing.T) {
+	t.Setenv("VIRTUAL_ENV", "")
+	root := t.TempDir()
+	requirements := "holon-sh @ https://github.com/holon-sh/sdk-py/archive/6e2e0140bc48296681ce717ef8887ce44766991d.tar.gz\nmcp==2.3.0\n"
+	caller := `from mcp.server import MCPServer
+from holon.apps import apps
+server = MCPServer("checkout")
+@server.tool()
+async def checkout(id: str) -> float:
+    order = await apps.orders.tools.read(id=id)
+    return order["total"]
+`
+	sourceFiles(t, root, map[string]string{
+		"holon.yaml": "apps:\n  - name: orders\n    path: orders\n  - name: checkout\n    path: checkout\n",
+		// holon.context is installed in the image, not on the host.
+		"orders/server.py": `from holon.context import IdentityClaims
+from mcp.server import MCPServer
+from pydantic import BaseModel
+server = MCPServer("orders")
+class Order(BaseModel):
+    total: float
+@server.tool()
+async def read(id: str) -> Order:
+    return Order(total=5)
+`,
+		"orders/server.json":        `{"name":"example.org/orders","version":"1","description":"Orders"}`,
+		"orders/requirements.txt":   requirements,
+		"checkout/server.py":        caller,
+		"checkout/requirements.txt": requirements,
+		"checkout/server.json": `{"name":"example.org/checkout","version":"1","description":"Checkout","_meta":{` +
+			`"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"orders":{"name":"example.org/orders","version":"1"}}}}}}`,
+	})
+	check := func() (string, error) {
+		var output strings.Builder
+		command := sharedcli.NewCommand("test", TypeImages())
+		command.SetArgs([]string{"check", root})
+		command.SetOut(&output)
+		command.SetErr(&output)
+		err := command.ExecuteContext(t.Context())
+		return output.String(), err
+	}
+	output, err := check()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, output)
+	}
+	for _, line := range []string{"orders: holon is not installed here; reading the contract in the app's image",
+		"checkout: no Python environment here; type-checking in the app's image", "checkout: typed contracts check passed."} {
+		if !strings.Contains(output, line) {
+			t.Errorf("holon check output lacks %q:\n%s", line, output)
+		}
+	}
+	sourceFiles(t, filepath.Join(root, "checkout"), map[string]string{"server.py": strings.Replace(caller, "read(id=id)", "read(id=42)", 1)})
+	output, err = check()
+	if err == nil || !strings.Contains(err.Error(), "checkout does not type-check") ||
+		!strings.Contains(output, `Argument "id" to "read" of "OrdersTools" has incompatible type "int"; expected "str"`) {
+		t.Fatalf("expected an incompatible argument diagnostic: %v\n%s", err, output)
 	}
 }

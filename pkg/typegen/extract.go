@@ -79,8 +79,9 @@ type missingPackage struct{ name, diagnostic string }
 func (m *missingPackage) Error() string { return m.name + " is not installed" }
 
 // extractSources obtains each non-Go path source's contract by running its server, or from its
-// committed ContractFile when a package the server imports is not installed. With drift, a
-// committed contract that differs from what the server answers is an error.
+// committed ContractFile when a package the server imports is not installed, or else, for a Python
+// server with Images, in its image. With drift, a committed contract that differs from what the server
+// answers is an error.
 func extractSources(ctx context.Context, root string, sources []*preparedSource, o Options, drift bool) error {
 	var run []*preparedSource
 	committed := map[*preparedSource]*Document{}
@@ -98,22 +99,27 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			// A hook may run servers where only root is visible, such as a container without network
 			// access, so it gets a snapshot there: a server that needs only its schema libraries
 			// extracts with the tooling's copies, and others report the package they miss.
-			directories[s] = filepath.Join(root, "sources", s.name)
-			fingerprint, err := SnapshotSource(s.name, s.origin, directories[s])
-			if err != nil {
+			if directories[s], err = s.snapshot(root); err != nil {
 				return err
-			}
-			if fingerprint != s.fingerprint {
-				return fmt.Errorf("%s changed during preparation; discarding the superseded update", s.origin)
 			}
 		}
 		run = append(run, s)
 	}
+	tooling := filepath.Join(root, "tooling")
 	results := make([]*extraction, len(run))
 	failures := make([]error, len(run))
 	var group sync.WaitGroup
 	for i, s := range run {
-		group.Go(func() { results[i], failures[i] = runServer(ctx, filepath.Join(root, "tooling"), directories[s], s, o) })
+		group.Go(func() { results[i], failures[i] = runServer(ctx, tooling, directories[s], s, o) })
+	}
+	group.Wait()
+	for i, s := range run {
+		var missing *missingPackage
+		if o.Images == nil || o.Run != nil || s.language != "python" || committed[s] != nil || !errors.As(failures[i], &missing) {
+			continue
+		}
+		fmt.Fprintf(o.Stderr, "%s: %s is not installed here; reading the contract in the app's image\n", filepath.Base(s.origin), missing.name)
+		group.Go(func() { results[i], failures[i] = s.extractInImage(ctx, root, tooling, o) })
 	}
 	group.Wait()
 	for i, s := range run {
@@ -180,6 +186,39 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	} else {
 		err = runLocal(ctx, tooling, s.language, args, &stdout, o.Env)
 	}
+	return s.contract(stdout.Bytes(), err)
+}
+
+// snapshot copies the source to root/sources/<name>, for a runner that sees only root, and returns that
+// directory.
+func (s *preparedSource) snapshot(root string) (string, error) {
+	directory := filepath.Join(root, "sources", s.name)
+	fingerprint, err := SnapshotSource(s.name, s.origin, directory)
+	if err != nil {
+		return "", err
+	}
+	if fingerprint != s.fingerprint {
+		return "", fmt.Errorf("%s changed during preparation; discarding the superseded update", s.origin)
+	}
+	return directory, nil
+}
+
+// extractInImage runs a Python source's server in the image it builds, from a snapshot under root.
+func (s *preparedSource) extractInImage(ctx context.Context, root, tooling string, o Options) (*extraction, error) {
+	directory, err := s.snapshot(root)
+	if err != nil {
+		return nil, err
+	}
+	var stdout bytes.Buffer
+	err = o.Images.Extract(ctx, tooling, directory, s.entry, &stdout, o.Stderr)
+	if failed := (*RunnerError)(nil); err != nil && !errors.As(err, &failed) {
+		return nil, fmt.Errorf("%s: read the contract in the app's image: %w", s.origin, err)
+	}
+	return s.contract(stdout.Bytes(), err)
+}
+
+// contract parses what the source's contract runner printed, or reports how it failed.
+func (s *preparedSource) contract(stdout []byte, err error) (*extraction, error) {
 	var failed *RunnerError
 	switch {
 	case errors.As(err, &failed) && failed.Status == 3:
@@ -191,7 +230,7 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 		return nil, fmt.Errorf("%s: %w", s.origin, err)
 	}
 	result := &extraction{}
-	if err := json.Unmarshal(stdout.Bytes(), result); err != nil {
+	if err := json.Unmarshal(stdout, result); err != nil {
 		return nil, fmt.Errorf("%s: the contract runner printed no contract: %w", s.origin, err)
 	}
 	return result, nil
