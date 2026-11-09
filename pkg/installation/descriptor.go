@@ -20,5 +20,5 @@ func readServerDescriptor(path string) (*mcpregistry.Descriptor, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mcpregistry.ParseDescriptor(data)
+	return mcpregistry.ParseLocalDescriptor(data)
 }

@@ -57,6 +57,17 @@ func TestFetchRefusesInvalidResponses(t *testing.T) {
 	}
 }
 
+func TestFetchIgnoresUnknownHolonMetadata(t *testing.T) {
+	metadata := `,"_meta":{"` + PublisherMetadata + `":{"sh.holon":{"future":true,"requires":{"search":{"name":"com.example/search","version":"1.0.0","headers":[{"name":"Authorization","value":"Bearer {TOKEN}"}]}}}}}}`
+	record := `{"server":` + strings.TrimSuffix(descriptorJSON, "}") + metadata + `}`
+	descriptor, err := Fetch(t.Context(), nil, registry(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(record))
+	}))
+	if err != nil || descriptor.Requires["search"].Name != "com.example/search" {
+		t.Fatalf("descriptor = %+v, %v", descriptor, err)
+	}
+}
+
 func TestFetchStaysOnValidRegistries(t *testing.T) {
 	for target, want := range map[string]string{"http://registry.example/": "must be an HTTPS URL", "/loop": "too many"} {
 		t.Run(target, func(t *testing.T) {

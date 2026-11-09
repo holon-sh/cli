@@ -2,6 +2,7 @@ package mcpregistry
 
 import (
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/url"
@@ -85,7 +86,20 @@ func (d *Descriptor) Identity() mcpcontract.Identity {
 	return mcpcontract.Identity{Name: d.Name, Version: d.Version}
 }
 
+// ParseDescriptor reads a server.json published by someone else, such as a registry record. It
+// ignores sh.holon members this version doesn't know, because published versions are immutable
+// and may come from a newer Holon.
 func ParseDescriptor(data []byte) (*Descriptor, error) {
+	return parseDescriptor(data, func(data []byte, target any) error { return jsonv2.Unmarshal(data, target) })
+}
+
+// ParseLocalDescriptor reads a server.json the user maintains, rejecting unknown sh.holon members so
+// that typos fail.
+func ParseLocalDescriptor(data []byte) (*Descriptor, error) {
+	return parseDescriptor(data, wire.DecodeJSONStrict)
+}
+
+func parseDescriptor(data []byte, decode func([]byte, any) error) (*Descriptor, error) {
 	var descriptor Descriptor
 	if err := json.Unmarshal(data, &descriptor); err != nil {
 		return nil, fmt.Errorf("decode server.json: %w", err)
@@ -100,7 +114,7 @@ func ParseDescriptor(data []byte) (*Descriptor, error) {
 		}
 		if extension := publisher["sh.holon"]; extension != nil {
 			var holon HolonMetadata
-			if err := wire.DecodeJSONStrict(extension, &holon); err != nil {
+			if err := decode(extension, &holon); err != nil {
 				return &descriptor, fmt.Errorf("sh.holon metadata: %w", err)
 			}
 			descriptor.Requires = holon.Requires
