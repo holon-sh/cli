@@ -15,7 +15,7 @@ import (
 	"github.com/holon-sh/cli/pkg/typegen"
 )
 
-var versions = Versions{HolonSH: "1.0.0", HolonUI: "2.0.0", HolonPy: "3.0.0"}
+var versions = Versions{HolonSH: "1.0.0", HolonUI: "2.0.0", HolonPy: "3.0.0", HolonTypes: "4.0.0"}
 
 func TestWrite(t *testing.T) {
 	for _, language := range Languages {
@@ -151,6 +151,8 @@ func TestResolve(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/pypi/holon-sh/json" {
 			_, _ = w.Write([]byte(`{"info": {"version": "0.0.1.dev5"}}`))
+		} else if r.URL.Path == "/pypi/holon-types/json" {
+			_, _ = w.Write([]byte(`{"info": {"version": "0.0.1.dev20"}}`))
 		} else if body, ok := npm[r.URL.Path]; ok {
 			_, _ = w.Write([]byte(body))
 		} else {
@@ -160,14 +162,17 @@ func TestResolve(t *testing.T) {
 	defer server.Close()
 	local := registries{npm: server.URL, pypi: server.URL}
 
-	versions, err := local.resolve(context.Background(), "py")
-	if err != nil {
-		t.Fatal(err)
+	// A release pins its own holon-types; a local build pins the newest.
+	for cli, holonTypes := range map[string]string{"0.0.1-dev.19": "0.0.1.dev19", "0.0.1-dev.15+1152a1a": "0.0.1.dev20", "dev": "0.0.1.dev20"} {
+		versions, err := local.resolve(context.Background(), "py", cli)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := (Versions{HolonUI: "0.0.1-dev.10", HolonPy: "0.0.1.dev5", HolonTypes: holonTypes}); versions != want {
+			t.Errorf("py versions from holon %s = %+v, want %+v", cli, versions, want)
+		}
 	}
-	if want := (Versions{HolonUI: "0.0.1-dev.10", HolonPy: "0.0.1.dev5"}); versions != want {
-		t.Errorf("py versions = %+v, want %+v", versions, want)
-	}
-	if _, err := local.resolve(context.Background(), "ts"); err == nil || !strings.Contains(err.Error(), "npm holon-sh: no release reads the clients this holon writes") {
+	if _, err := local.resolve(context.Background(), "ts", "0.0.1-dev.19"); err == nil || !strings.Contains(err.Error(), "npm holon-sh: no release reads the clients this holon writes") {
 		t.Errorf("ts Resolve = %v, want no holon-sh release for this contract", err)
 	}
 }

@@ -118,7 +118,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 		return err
 	}
 
-	if project.Versions, err = scaffold.Resolve(cmd.Context(), language); err != nil {
+	if project.Versions, err = scaffold.Resolve(cmd.Context(), language, cmd.Root().Version); err != nil {
 		return err
 	}
 	stderr := cmd.ErrOrStderr()

@@ -29,6 +29,9 @@ type Versions struct {
 	HolonSH string // holon-sh on npm, for a TypeScript server
 	HolonUI string // holon-ui on npm, for the view
 	HolonPy string // holon-sh on PyPI, for a Python server
+	// HolonTypes is holon-types, the holon CLI, on npm for a TypeScript server or on PyPI for a
+	// Python one.
+	HolonTypes string
 }
 
 // Languages are the languages an app can be written in, by their --lang names.
@@ -270,6 +273,9 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 		dependencies["zod"] = "^4.6.7"
 	}
 	dev := map[string]string{"@types/node": "^26.6.6", "typescript": "^7.0.2", "vite": "^8.3.7", "vite-plugin-singlefile": "^2.3.4"}
+	if p.Language == typegen.TargetTS {
+		dev[cliPackage] = p.Versions.HolonTypes
+	}
 	for _, section := range []struct {
 		name     string
 		packages map[string]string
@@ -301,7 +307,7 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 // PythonRequirements are the Python requirements the app needs: dependencies, which a project
 // declares directly, and development ones, which it only needs installed.
 func (p Project) PythonRequirements() (dependencies, dev []string) {
-	return []string{typegen.PythonRuntime + "==" + p.Versions.HolonPy, "mcp>=2.3,<3"}, []string{"mypy>=2.4,<3"}
+	return []string{typegen.PythonRuntime + "==" + p.Versions.HolonPy, "mcp>=2.3,<3"}, []string{cliPackage + "==" + p.Versions.HolonTypes, "mypy>=2.4,<3"}
 }
 
 // appendLines appends to a file's text each line of more it lacks.
