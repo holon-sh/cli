@@ -221,7 +221,7 @@ async def checkout(id: str) -> float:
 			"requirements.txt": "holon-sh @ https://github.com/holon-sh/sdk-py/archive/a27a936f197af164a4c92c593916a64c74e60ad9.tar.gz\n" +
 				"mcp==2.3.0\n",
 			"railpack.json": `{"provider":"python","steps":{"build":{"commands":[` +
-				`"python -c 'from holon.apps import apps; from holon.binding import set_default_binding; assert apps.orders and set_default_binding'"]}}}`,
+				`"python -c 'from holon.apps import apps; assert apps.orders'"]}}}`,
 		})
 		manifest.Apps = append(manifest.Apps, app)
 	}
