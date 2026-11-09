@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
 
-	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -45,7 +45,7 @@ func newList() *cobra.Command {
 		if asJSON {
 			return writeJSON(cmd.OutOrStdout(), catalog)
 		}
-		writeCatalog(cmd.Context(), cmd.OutOrStdout(), catalog)
+		writeCatalog(cmd.OutOrStdout(), catalog)
 		return nil
 	}}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Print everything the server reported as JSON")
@@ -56,7 +56,7 @@ func newCall() *cobra.Command {
 	var asJSON bool
 	var raw string
 	cmd := &cobra.Command{Use: "call TARGET TOOL [KEY=VALUE...]", Short: "Call a tool on an MCP server", Long: "Call a tool on an MCP server and print its result: the structured content when the tool returns some, otherwise its text. A result the tool marks as an error exits 1.\n\n" +
-		"Each KEY=VALUE is one argument. VALUE is read as JSON (5, true, [1,2], {\"a\":1}) unless the tool's input schema lets KEY take only strings, or strings and null, so id=123 sends \"123\" to a string parameter. --args supplies a JSON object of arguments, which KEY=VALUE pairs override.\n\n" + targetHelp, Example: `  # Call a remote server's tool
+		"Each KEY=VALUE is one argument. VALUE is read as JSON (5, true, [1,2], {\"a\":1}), or else as a string, so q=hello sends \"hello\"; quote a string that reads as JSON, as in id='\"123\"'. --args supplies a JSON object of arguments, which KEY=VALUE pairs override.\n\n" + targetHelp, Example: `  # Call a remote server's tool
   holon call https://mcp.context7.com/mcp resolve-library-id libraryName=Next.js query="app router"
 
   # A dependency the server.json here declares
@@ -72,21 +72,20 @@ func newCall() *cobra.Command {
 			return err
 		}
 		defer session.Close()
-		// Listing first names the tools when TOOL is wrong, supplies the schema that types each VALUE,
-		// and lets the SDK route the call by the tool's definition.
+		// Listing first names the tools when TOOL is wrong and lets the SDK route the call by the tool's
+		// definition.
 		tools, err := collect(session.Tools(cmd.Context(), nil))
 		if err != nil {
 			return err
 		}
-		i := slices.IndexFunc(tools, func(tool *mcp.Tool) bool { return tool.Name == args[1] })
-		if i < 0 {
+		if !slices.ContainsFunc(tools, func(tool *mcp.Tool) bool { return tool.Name == args[1] }) {
 			names := make([]string, len(tools))
 			for i, tool := range tools {
 				names[i] = tool.Name
 			}
 			return fmt.Errorf("%s has no tool %q; it has %s", args[0], args[1], cmp.Or(strings.Join(names, ", "), "none"))
 		}
-		arguments, err := callArguments(cmd.Context(), tools[i].InputSchema, args[2:], raw, cmd.InOrStdin())
+		arguments, err := callArguments(args[2:], raw, cmd.InOrStdin())
 		if err != nil {
 			return err
 		}
@@ -179,14 +178,14 @@ func collect[T any](items iter.Seq2[T, error]) ([]T, error) {
 	return all, nil
 }
 
-func writeCatalog(ctx context.Context, w io.Writer, c *catalog) {
+func writeCatalog(w io.Writer, c *catalog) {
 	info := cmp.Or(c.ServerInfo, &mcp.Implementation{})
 	fmt.Fprintf(w, "%s %s (protocol %s)\n", cmp.Or(info.Name, "unnamed server"), cmp.Or(info.Version, "unversioned"), c.ProtocolVersion)
 	if c.Instructions != "" {
 		fmt.Fprintf(w, "\n%s\n", strings.TrimSpace(c.Instructions))
 	}
 	writeSection(w, "Tools", c.Tools, func(tool *mcp.Tool) (string, string) {
-		return tool.Name + "(" + signature(ctx, tool.InputSchema) + ")", tool.Description
+		return tool.Name + "(" + signature(tool.InputSchema) + ")", tool.Description
 	})
 	writeSection(w, "Prompts", c.Prompts, func(prompt *mcp.Prompt) (string, string) {
 		arguments := make([]string, len(prompt.Arguments))
@@ -222,26 +221,25 @@ func writeSection[T any](w io.Writer, title string, items []T, line func(T) (hea
 	}
 }
 
-// signature summarizes a tool's parameters, the required ones first: name: type, or name?: type
-// when optional. A schema the generated clients cannot read shows as "…".
-func signature(ctx context.Context, schema any) string {
-	parameters, err := mcptype.Parameters(ctx, schema)
-	if err != nil {
-		return "…"
-	}
-	var required, optional []string
-	for _, parameter := range parameters {
-		if parameter.Required {
-			required = append(required, parameter.Name+": "+parameter.Type)
+// signature lists a tool's parameters, the required ones first and the others marked ?. --json prints
+// their schemas.
+func signature(schema any) string {
+	object, _ := schema.(map[string]any)
+	properties, _ := object["properties"].(map[string]any)
+	required, _ := object["required"].([]any)
+	var first, rest []string
+	for _, name := range slices.Sorted(maps.Keys(properties)) {
+		if slices.Contains(required, any(name)) {
+			first = append(first, name)
 		} else {
-			optional = append(optional, parameter.Name+"?: "+parameter.Type)
+			rest = append(rest, name+"?")
 		}
 	}
-	return strings.Join(append(required, optional...), ", ")
+	return strings.Join(append(first, rest...), ", ")
 }
 
 // callArguments builds a tool call's arguments from --args, then each KEY=VALUE.
-func callArguments(ctx context.Context, schema any, pairs []string, raw string, stdin io.Reader) (map[string]any, error) {
+func callArguments(pairs []string, raw string, stdin io.Reader) (map[string]any, error) {
 	arguments := map[string]any{}
 	if raw != "" {
 		data := []byte(raw)
@@ -255,8 +253,6 @@ func callArguments(ctx context.Context, schema any, pairs []string, raw string, 
 			return nil, errors.New("--args must be a JSON object")
 		}
 	}
-	// A schema the generated clients cannot read takes every VALUE as JSON; the server still validates.
-	parameters, _ := mcptype.Parameters(ctx, schema)
 	seen := map[string]bool{}
 	for _, pair := range pairs {
 		key, value, ok := strings.Cut(pair, "=")
@@ -267,23 +263,13 @@ func callArguments(ctx context.Context, schema any, pairs []string, raw string, 
 			return nil, fmt.Errorf("%s is given twice", key)
 		}
 		seen[key] = true
-		i := slices.IndexFunc(parameters, func(parameter mcptype.Parameter) bool { return parameter.Name == key })
-		arguments[key] = argumentValue(i >= 0 && parameters[i].Text, value)
+		var decoded any
+		if json.Unmarshal([]byte(value), &decoded) != nil {
+			decoded = value // A VALUE that is not JSON is a string.
+		}
+		arguments[key] = decoded
 	}
 	return arguments, nil
-}
-
-// argumentValue reads VALUE as JSON, except for a parameter that takes only strings, which takes
-// VALUE verbatim. A VALUE that is not JSON is a string.
-func argumentValue(text bool, value string) any {
-	if text {
-		return value
-	}
-	var decoded any
-	if json.Unmarshal([]byte(value), &decoded) == nil {
-		return decoded
-	}
-	return value
 }
 
 // writeResult prints a tool result's structured content, or else each content block: text as it is,
