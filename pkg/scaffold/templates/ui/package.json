@@ -1,0 +1,8 @@
+{
+  "name": "{{.App}}",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.20"
+  }
+}

@@ -11,7 +11,7 @@ import (
 
 func Run(ctx context.Context, executable string, args []string, stdin []byte, env []string) (string, error) {
 	var stdout, stderr strings.Builder
-	err := RunStreaming(ctx, executable, args, bytes.NewReader(stdin), env, &stdout, &stderr)
+	err := RunStreaming(ctx, "", executable, args, bytes.NewReader(stdin), env, &stdout, &stderr)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return stdout.String(), ctxErr

@@ -10,8 +10,9 @@ import (
 	"syscall"
 )
 
-func RunStreaming(ctx context.Context, executable string, args []string, stdin io.Reader, env []string, stdout, stderr io.Writer) error {
+func RunStreaming(ctx context.Context, dir, executable string, args []string, stdin io.Reader, env []string, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, executable, args...)
+	cmd.Dir = dir
 	cmd.Cancel = func() error {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		return nil

@@ -125,7 +125,7 @@ func (b *builderConnections) connect(platform string, env []string) (*builderCon
 				var diagnostic bytes.Buffer
 				builder, err := sourceBuilder(connection.ctx, env)
 				if err == nil {
-					err = commandenv.RunStreaming(connection.ctx, "docker", []string{"buildx", "dial-stdio", "--builder", builder, "--platform", platform},
+					err = commandenv.RunStreaming(connection.ctx, "", "docker", []string{"buildx", "dial-stdio", "--builder", builder, "--platform", platform},
 						local, env, local, &diagnostic)
 				}
 				if err != nil {

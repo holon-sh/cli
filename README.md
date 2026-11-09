@@ -21,6 +21,28 @@ Or with [Go](https://go.dev/doc/install) 1.27+:
 go install github.com/holon-sh/cli/cmd/holon@latest
 ```
 
+## Create an app
+
+```sh
+holon init orders --lang py
+```
+
+`--lang ts` writes the server in TypeScript instead, and `--lang go` in Go. Each app has an MCP server with one tool, `greet`, and a view the server returns as an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) and Holon serves as a page. The view calls the tool through a typed client:
+
+```ts
+// orders/ui/main.ts
+const { result } = await server.tools.greet({ name: name.value });
+```
+
+`holon init` pins the newest Holon SDK releases (on npm, those that read the clients it writes), installs the dependencies (`uv` for Python, `go get` for Go, the project's package manager for Node.js), generates the clients, and adds the app to `holon.yaml`. `holon types check` then type-checks the server and the view. A Go server's contract isn't read from its source, so its view calls `greet` untyped, and `go build` type-checks the server. Run the app with [`holon dev`](https://holon-labs.dev/docs/).
+
+In an existing Go module, Python project or Node.js project, `holon init` adds the server and the view beside the project's files, and the dependencies to its `go.mod`, `pyproject.toml` or `package.json`:
+
+```sh
+cd billing
+holon init
+```
+
 ## Example
 
 Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example uses the public [Context7](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4) server.
@@ -205,6 +227,46 @@ holon types check -s docs=https://mcp.example.com/mcp
 </details>
 
 ## Reference
+
+<details open>
+<summary><code>holon init</code></summary>
+
+```text
+Create an app in DIR, or the working directory: an MCP server in Go, Python or TypeScript, and a
+view it serves as an MCP App and as a page. The app is named after DIR.
+
+In an empty or absent DIR, holon init writes a new project. In a Go module (go.mod), a Python
+project (pyproject.toml) or a Node.js project (package.json), it adds the server and the view beside
+the project's own files: Go and Python dependencies through go get and uv, npm packages into
+package.json, and lines to .gitignore. It leaves the project's scripts and tsconfig.json as written.
+
+holon init pins the newest Holon SDK releases, on npm those that read the clients this holon writes,
+installs the dependencies, generates the clients, and adds the app to the working directory's
+holon.yaml when DIR is inside it, or else to DIR's.
+
+Usage:
+  holon init [DIR] [flags]
+
+Examples:
+  # A Go app in ./orders
+  holon init orders --lang go
+
+  # A Python app in ./orders
+  holon init orders --lang py
+
+  # A TypeScript app in the working directory, with its MCP server name
+  holon init --lang ts --name io.github.acme/orders
+
+  # Add an app to the Python project in the working directory
+  holon init
+
+Flags:
+  -h, --help          help for init
+      --lang string   The server's language: go, py or ts; detected in an existing project
+      --name string   The MCP server name (default com.example/APP)
+```
+
+</details>
 
 <details open>
 <summary><code>holon types generate</code></summary>

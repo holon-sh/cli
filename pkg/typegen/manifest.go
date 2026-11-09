@@ -19,7 +19,7 @@ import (
 // module path, which has no version, for Go. It is zero when no manifest names the project.
 func manifestIdentity(dir string, targets []string) (mcpcontract.Identity, error) {
 	for _, target := range targets {
-		file := filepath.Join(dir, map[string]string{TargetTS: "package.json", TargetUI: "package.json", TargetPy: "pyproject.toml", TargetGo: "go.mod"}[target])
+		file := filepath.Join(dir, Manifests[target])
 		data, err := os.ReadFile(file)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -34,7 +34,7 @@ func manifestIdentity(dir string, targets []string) (mcpcontract.Identity, error
 			case TargetGo:
 				identity.Name = modfile.ModulePath(data)
 			default:
-				var manifest packageJSON
+				var manifest PackageJSON
 				err = json.Unmarshal(data, &manifest)
 				identity = mcpcontract.Identity{Name: manifest.Name, Version: manifest.Version}
 			}

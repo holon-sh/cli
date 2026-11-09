@@ -147,7 +147,7 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	args = slices.Concat([]string{"buildx", "build", "--builder", builder, "--provenance=false", "-f", dockerfile,
 		"--output", "type=local,dest=" + exported}, args, []string{source})
 	logs := o.output.logs(o.Stderr)
-	if err := commandenv.RunStreaming(ctx, "docker", args, nil, env, logs, logs); err != nil {
+	if err := commandenv.RunStreaming(ctx, "", "docker", args, nil, env, logs, logs); err != nil {
 		if ctx.Err() == nil {
 			logs.failed("MCP types")
 		}

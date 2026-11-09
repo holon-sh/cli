@@ -209,7 +209,7 @@ func NewCommand(version string) *cobra.Command {
 	root := &cobra.Command{Use: "holon", Short: "MCP developer client", Version: version, SilenceUsage: true, SilenceErrors: true}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetVersionTemplate("holon {{.Version}}\n")
-	root.AddCommand(NewTypesCommand(), newCheck("Shortcut for holon types check"), newList(), newCall())
+	root.AddCommand(NewInitCommand(), NewTypesCommand(), newCheck("Shortcut for holon types check"), newList(), newCall())
 	return root
 }
 

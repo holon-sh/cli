@@ -174,6 +174,58 @@ const requiresOrders = `,"_meta":{"io.modelcontextprotocol.registry/publisher-pr
 
 const pythonServer = "from mcp.server import MCPServer\nserver = MCPServer('provider')\n@server.tool()\ndef read(id: str) -> str:\n    return id\n"
 
+func TestInitRefusals(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		err  string
+	}{
+		{[]string{"orders"}, "--lang is required"},
+		{[]string{"orders", "--lang", "rb"}, "use go, py or ts"},
+		{[]string{"_", "--lang", "py"}, "cannot name an app"},
+		{[]string{"orders", "--lang", "py", "--name", "Order Desk"}, "is not an MCP server name"},
+		{[]string{"orders", "--lang", "py", "--name", "io.github.acme/" + strings.Repeat("a", 200)}, "is not an MCP server name"},
+	} {
+		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			cmd := NewInitCommand()
+			cmd.SetIn(strings.NewReader(""))
+			cmd.SetOut(new(bytes.Buffer))
+			cmd.SetErr(new(bytes.Buffer))
+			cmd.SetArgs(test.args)
+			if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), test.err) {
+				t.Fatalf("init = %v, want %q", err, test.err)
+			}
+			if files, err := os.ReadDir("."); err != nil || len(files) != 0 {
+				t.Fatalf("init wrote files: %v, %v", files, err)
+			}
+		})
+	}
+}
+
+func TestInitManifest(t *testing.T) {
+	for _, test := range []struct{ manifest, dir, file, path string }{
+		{"holon.yaml", "orders", "holon.yaml", "orders"},
+		{"", "orders", "orders/holon.yaml", "."},
+		{"holon.yml", ".", "holon.yml", "."},
+		{"holon.yaml", "../outside", "../outside/holon.yaml", "."},
+	} {
+		t.Run(test.manifest+"/"+test.dir, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			working, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.manifest != "" {
+				writeCLIFile(t, working, test.manifest, "apps: []\n")
+			}
+			file, path, err := manifestFor(filepath.Join(working, test.dir))
+			if err != nil || file != filepath.Join(working, test.file) || path != test.path {
+				t.Fatalf("manifest = %s, %s, %v; want %s, %s", file, path, err, test.file, test.path)
+			}
+		})
+	}
+}
+
 func TestContractOfAPathSource(t *testing.T) {
 	dir := t.TempDir()
 	writeCLIFile(t, dir, "server.json", `{"name":"example.com/provider","version":"1.0.0","description":"Provider"}`)
