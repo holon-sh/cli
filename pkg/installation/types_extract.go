@@ -3,6 +3,7 @@ package installation
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,7 +17,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/typegen"
+	"github.com/tailscale/hujson"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
@@ -65,7 +68,7 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 		return err
 	}
 	defer os.RemoveAll(generated)
-	if err := writeClients(p, generated); err != nil {
+	if err := p.prepared.WriteClients(p.name, generated); err != nil {
 		return err
 	}
 	runner := contractRunners[language]
@@ -80,8 +83,9 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 
 // runInImage builds source's image for this machine with Kiln, without the app's build step, which may need
 // the clients being prepared, and runs command there without network access, with the tooling at
-// /holon-tooling. It copies what the command printed to stdout. With generated, it first stages those
-// clients as an image build does; with checker, the command can import the Python type checker.
+// /holon-tooling. It copies what the command printed to stdout. With generated, it first copies those
+// clients into the app, in a layer of their own so the source's layers stay cached; with checker, the
+// command can import the Python type checker.
 func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdout io.Writer) error {
 	env, err := commandenv.Environ(o.Env)
 	if err != nil {
@@ -118,7 +122,7 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	recipe += "FROM " + final + " AS contract\n"
 	if generated != "" {
 		args = append(args, "--build-context", "generated="+generated)
-		recipe += "COPY --from=generated --chmod=755 . /app/\nRUN sh .holon-types/stage.sh\n"
+		recipe += "COPY --from=generated . /app/\n"
 	}
 	words := make([]string, len(command))
 	for i, word := range command {
@@ -169,4 +173,35 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 		return err
 	}
 	return &typegen.RunnerError{Status: code, Stderr: string(stderr)}
+}
+
+func railpackConfig(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	config := map[string]any{}
+	if len(bytes.TrimSpace(data)) > 0 {
+		if data, err = hujson.Standardize(data); err != nil {
+			return nil, fmt.Errorf("railpack.json: %w", err)
+		}
+		if err := json.Unmarshal(data, &config); err != nil {
+			return nil, fmt.Errorf("railpack.json: %w", err)
+		}
+	}
+	return config, nil
+}
+
+func objectField(parent map[string]any, name string) map[string]any {
+	value, ok := parent[name].(map[string]any)
+	if !ok {
+		value = map[string]any{}
+		parent[name] = value
+	}
+	return value
+}
+
+func writeTypeJSON(path string, value any) error {
+	data, _ := json.MarshalIndent(value, "", "  ")
+	return mcpcontract.WriteStable(path, append(data, '\n'), 0o644)
 }

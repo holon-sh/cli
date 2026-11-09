@@ -23,8 +23,10 @@ func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
 	}
 	// A stand-in runtime prints the identity the generated module constructs its clients with.
 	root := t.TempDir()
-	files["holon/client.py"] = []byte("import json\nclass Apps:\n    def __init__(self, identity, *rest):\n        print(json.dumps(identity))\ndef __getattr__(name):\n    return object\n")
-	writeFiles(t, root, files)
+	writeFiles(t, root, map[string][]byte{
+		"holon/apps/__init__.py": files["__init__.py"],
+		"holon/client.py":        []byte("import json\nclass Apps:\n    def __init__(self, identity, *rest):\n        print(json.dumps(identity))\ndef __getattr__(name):\n    return object\n"),
+	})
 	command := exec.CommandContext(t.Context(), python, "-c", "import holon.apps")
 	command.Dir = root
 	output, err := command.CombinedOutput()
@@ -80,7 +82,7 @@ func TestPythonMethodsCallToolsNamedOtherwise(t *testing.T) {
 			}
 		}
 	}
-	files["holon/client.py"] = []byte(pythonRuntime)
+	files = map[string][]byte{"holon/apps/__init__.py": files["__init__.py"], "holon/client.py": []byte(pythonRuntime)}
 	files["typed.py"] = []byte(`from holon.apps import Inputs, Outputs, apps
 async def use(request: Inputs.schemas.runtime_run) -> Outputs.schemas.runtime_run:
     await apps.schemas.tools.runtime_run(code=1)

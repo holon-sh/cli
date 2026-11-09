@@ -128,6 +128,29 @@ export default createMcpHandler(() => {
   assert.deepEqual(units.tools, [{ name: "convert", inputSchema: { type: "object", description: "zod 9.9.9", properties: { unit: { type: "string", enum: ["cm", "in"] } } } }]);
 });
 
+test("a server that imports its generated clients extracts before holon has written them", t => {
+  const { root, extract } = unpackTooling(t);
+  const app = application(root, {
+    "package.json": '{"type":"module","imports":{"#holon-sh":"./generated/holon-sh/index.mjs"}}',
+    "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./*"] } } }),
+    "node_modules/holon-sh/package.json": '{"name":"holon-sh","type":"module","exports":{"./runtime":"./runtime.mjs"}}',
+    "node_modules/holon-sh/runtime.mjs": `export class ToolCallError extends Error {}
+export const createApps = (identity, contracts) => Object.freeze(Object.fromEntries(Object.keys(contracts).map(name => [name, {}])));
+export const bindApps = (identity, contracts, bindings) => createApps(identity, contracts);`,
+    "src/server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { apps, ToolCallError } from "../generated/holon-sh/index.mjs";
+import { createApps } from "@/generated/holon-sh/index.mjs";
+import { apps as mapped } from "#holon-sh";
+export default createMcpHandler(() => {
+  const server = new McpServer({ name: "caller", version: "1" });
+  if (ToolCallError && Object.keys({ ...apps, ...mapped, ...createApps({}) }).length === 0) server.registerTool("relay", {}, () => ({ content: [] }));
+  return server;
+}, { legacy: "reject" });`,
+  });
+  const { caller } = extract([{ name: "caller", path: app, entry: "src/server.ts" }]);
+  assert.deepEqual(caller.tools?.map(tool => tool.name), ["relay"], caller.diagnostic);
+});
+
 test("module-scope reads of the environment, clock and randomness give one contract", t => {
   const { root, extract } = unpackTooling(t);
   const app = application(root, {

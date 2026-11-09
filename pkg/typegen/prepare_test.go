@@ -44,21 +44,16 @@ func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing
 		}
 		defer prepared.Close()
 		stage := t.TempDir()
-		for dir, target := range map[string]string{"holon-sh": TargetTS, "holon-ui": TargetUI, "python": TargetPy} {
-			if err := os.MkdirAll(filepath.Join(stage, dir), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := prepared.WriteSlot("checkout", target, filepath.Join(stage, dir)); err != nil {
-				t.Fatal(err)
-			}
+		if err := prepared.WriteClients("checkout", stage); err != nil {
+			t.Fatal(err)
 		}
 		// The own server's tool is status; its dependency's is lookup.
 		aliased := test.alias != ""
-		node, python := read(t, stage, "holon-sh/generated/index.d.ts"), read(t, stage, "python/holon/apps/__init__.py")
+		node, python := read(t, stage, "generated/holon-sh/index.d.mts"), read(t, stage, "holon/apps/__init__.py")
 		if !strings.Contains(node, `"lookup"`) || strings.Contains(node, `"`+test.key+`": {`) != aliased || strings.Contains(python, "def status(") != aliased {
 			t.Fatalf("server clients under alias %q:\n%s\n%s", test.alias, node, python)
 		}
-		if browser := read(t, stage, "holon-ui/generated/index.d.ts"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `type OwnAppKey = "`+test.key+`"`) || strings.Contains(browser, `"checkout": {`) == aliased {
+		if browser := read(t, stage, "generated/holon-ui/index.d.mts"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `type OwnAppKey = "`+test.key+`"`) || strings.Contains(browser, `"checkout": {`) == aliased {
 			t.Fatalf("browser client under alias %q:\n%s", test.alias, browser)
 		}
 		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 1 {
@@ -151,7 +146,7 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	c, extract := checkoutConsumer(t, TargetTS)
 	bin := t.TempDir()
-	put(t, bin, "npm", "#!/bin/sh\nset -e\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh/generated\nprintf '%s' '{\"holon\":{\"slot\":\"generated\",\"contractVersion\":1}}' > node_modules/holon-sh/package.json\n")
+	put(t, bin, "npm", "#!/bin/sh\nset -e\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh\nprintf '%s' '{\"holon\":{\"contractVersion\":2}}' > node_modules/holon-sh/package.json\n")
 	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -160,8 +155,8 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Run: extract}); err != nil {
 		t.Fatalf("generate: %v\n%s", err, &output)
 	}
-	if client := read(t, c.Dir, "node_modules/holon-sh/generated/index.js"); !strings.Contains(client, `"lookup"`) {
-		t.Fatalf("installed runtime has no generated client:\n%s", client)
+	if client := read(t, c.Dir, "generated/holon-sh/index.mjs"); !strings.Contains(client, `"lookup"`) {
+		t.Fatalf("project has no generated client:\n%s", client)
 	}
 	put(t, bin, "npm", "#!/bin/sh\nexit 17\n")
 	if err := Generate(t.Context(), []Consumer{c}, Options{Run: extract}); err != nil {
@@ -177,39 +172,35 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	}
 }
 
-func TestGenerateGivesEachProjectItsOwnNodeSlot(t *testing.T) {
+// A runtime of another contract gets one install, which can bring it up to date, before generation stops.
+func TestGenerateRefusesARuntimeOfAnotherContract(t *testing.T) {
 	root := t.TempDir()
-	// first finds the hoisted package above it; second links to the same package, as pnpm does.
-	pkg := slotPackage(t, root, "holon-sh")
-	put(t, pkg, "generated/index.js", "placeholder")
-	writeProvider(t, filepath.Join(root, "orders"), "orders", pythonProvider)
-	var consumers []Consumer
-	for _, name := range []string{"first", "second"} {
-		dir := filepath.Join(root, name)
-		put(t, dir, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-		consumers = append(consumers, Consumer{Name: name, Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Path: filepath.Join(root, "orders")}}})
-	}
-	if err := os.MkdirAll(filepath.Join(root, "second/node_modules"), 0o755); err != nil {
+	put(t, root, "node_modules/holon-sh/package.json", `{"name":"holon-sh","version":"0.0.1-dev.6","holon":{"slot":"generated","contractVersion":1}}`)
+	app := filepath.Join(root, "app")
+	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
+	bin := t.TempDir()
+	put(t, bin, "npm", "#!/bin/sh\ntouch installed\n")
+	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(pkg, filepath.Join(root, "second/node_modules/holon-sh")); err != nil {
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil || !strings.Contains(err.Error(), "holon-sh 0.0.1-dev.6 keeps generated clients inside node_modules; upgrade it") || !isFile(filepath.Join(app, "installed")) {
+		t.Fatalf("contract 1 runtime = %v", err)
+	}
+}
+
+// Holon writes clients only through real directories inside the project.
+func TestGenerateRefusesASymlinkOutOfTheProject(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "generated")); err != nil {
 		t.Fatal(err)
 	}
-	options := Options{Run: fakeRun(map[string]any{"example.com/orders": extraction{Tools: []mcpcontract.Tool{lookupTool}}})}
-	if err := Generate(t.Context(), consumers, options); err == nil || !strings.Contains(err.Error(), "install a separate") {
-		t.Fatalf("shared slot not diagnosed: %v", err)
+	if err := writeSlot(dir, TargetTS, map[string][]byte{"index.mjs": []byte("// " + mcpcontract.Marker + " app=x\n")}); err == nil {
+		t.Fatal("wrote through a symlinked directory")
 	}
-	if got := read(t, pkg, "generated/index.js"); got != "placeholder" {
-		t.Fatal("shared slot changed before rejection")
-	}
-	if err := Generate(t.Context(), consumers[:1], options); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(read(t, pkg, "generated/index.js"), `"lookup"`) {
-		t.Fatal("first project's clients were not generated")
-	}
-	if err := Generate(t.Context(), consumers[1:], options); err == nil || !strings.Contains(err.Error(), "install a separate") {
-		t.Fatalf("a later project took over the slot: %v", err)
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatal("wrote outside the project")
 	}
 }
 
@@ -224,11 +215,16 @@ func TestSuppliedContractsRemainDistinct(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer prepared.Close()
-	if err := prepared.WriteSlot("caller", TargetPy, c.Dir); err != nil {
+	if err := prepared.WriteClients("caller", c.Dir); err != nil {
 		t.Fatal(err)
 	}
 	if module := read(t, c.Dir, "holon/apps/__init__.py"); !strings.Contains(module, "async def lookup(") || !strings.Contains(module, "async def status(") {
 		t.Fatal("pre-resolved contract did not generate a typed client")
+	}
+	// Python's bytecode cache beside the clients does not make them someone else's.
+	put(t, c.Dir, "holon/apps/__pycache__/__init__.cpython-313.pyc", "bytecode")
+	if err := prepared.WriteClients("caller", c.Dir); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -286,7 +282,7 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 	root := t.TempDir()
 	orders, app := filepath.Join(root, "orders"), filepath.Join(root, "app")
 	writeProvider(t, orders, "orders", pythonProvider)
-	slotPackage(t, app, nodePackages[TargetTS])
+	put(t, app, "package.json", "{}")
 	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Path: orders}}}
 	options := Options{Run: fakeRun(map[string]any{"example.com/orders": extraction{Tools: ordersMetadata().Schema.Tools}})}
 	committedContract(t, orders, ordersMetadata())

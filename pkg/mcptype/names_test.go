@@ -50,10 +50,10 @@ func declaredTypes(t *testing.T, target string, tools []mcpcontract.Tool) map[st
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, pattern := string(files["index.d.ts"]), `(?m)^export type (\w+) = .*$`
+	source, pattern := string(files["index.d.mts"]), `(?m)^export type (\w+) = .*$`
 	switch target {
 	case "python":
-		source, pattern = string(files["holon/apps/__init__.py"]), `(?m)^(\w+)(?: = _typing\.TypedDict\(|: _typing\.TypeAlias = ).*$`
+		source, pattern = string(files["__init__.py"]), `(?m)^(\w+)(?: = _typing\.TypedDict\(|: _typing\.TypeAlias = ).*$`
 	case "go":
 		source, pattern = string(files["types.go"]), `(?ms)^type (\w+) .*?\n\n`
 	}

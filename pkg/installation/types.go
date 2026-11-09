@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
@@ -17,14 +16,8 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-// The public SDKs whose generated/ slots receive TypeScript clients.
-const (
-	nodeRuntime = "holon-sh"
-	uiRuntime   = "holon-ui"
-)
-
 // preparedTypes is one path app's share of a typegen preparation: the snapshot its image is built
-// from, its contract, and the generated clients typegen writes into the snapshot's or the app's slots.
+// from, its contract, and the generated clients typegen writes into the snapshot or the app.
 type preparedTypes struct {
 	prepared    *typegen.Prepared
 	name        string
@@ -36,26 +29,8 @@ type preparedTypes struct {
 }
 
 type typeWorkspace struct {
-	mu       sync.Mutex // guards prepared and its writes, which a reload's preparation makes beside the loop
-	prepared *typegen.Prepared
 	accepted map[string]*preparedTypes
 	release  func()
-}
-
-func (w *typeWorkspace) publish(prepared *typegen.Prepared) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if err := prepared.Write(); err != nil {
-		return err
-	}
-	w.prepared = prepared
-	return nil
-}
-
-func (w *typeWorkspace) repair() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.prepared.Write()
 }
 
 func (w *typeWorkspace) close() {
@@ -238,8 +213,8 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		}
 		metadata[app.Name] = p.metadata
 	}
-	if w := options.types; w != nil {
-		if err := w.publish(prepared); err != nil {
+	if options.types != nil {
+		if err := prepared.Write(); err != nil {
 			return manifestSpec{}, nil, err
 		}
 	}

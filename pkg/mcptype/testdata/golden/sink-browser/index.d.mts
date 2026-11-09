@@ -1,6 +1,6 @@
 // holon-generated-apps-v1 app=chéck"out
-import type { ToolClient, EndpointBinding, CreateOptions } from "./runtime.js";
-export { ToolCallError } from "./runtime.js";
+import type { ToolClient, EndpointBinding, CreateOptions } from "holon-ui/runtime";
+export { ToolCallError } from "holon-ui/runtime";
 export type OrdersInputId = { "id": string; };
 export type OrdersInputX1startsDashKeyAllEtc = { "1starts"?: string; "Dash-Key"?: string; "all"?: ({ "a": string; } & { "b"?: number; }); "allConflict"?: ({ "a"?: string; } & { "a"?: number; }); "allNonObject"?: (string & { [key: string]: unknown; }); "annotated"?: string; "arrayRef"?: string; "closedEmpty"?: {  }; "constNum"?: 1e+21; "constObj"?: unknown; "constString"?: "it's \"quoted\"\n"; "cycle"?: OrdersInputNode; "dash-key"?: string; "emptyAll"?: unknown; "emptyAny"?: never; "falseSchema"?: never; "implicitTuple"?: ["x"?, ...unknown[]]; "literals": ("a" | 1 | 2.5 | -3 | true | null | unknown | unknown | 1.0 | 1e+21 | -0.0); "mapOf"?: { [key: string]: string; }; "multi"?: (string | null | Array<number> | unknown); "nested"?: Array<Array<{ "deep"?: null; }>>; "noType": { "p": boolean; }; "nodes"?: OrdersInputNodes; "numericType"?: { "p"?: boolean; }; "odd key with spaces"?: string; "oneOf"?: (string | number); "openObj"?: { "x"?: string; [key: string]: unknown; }; "openTuple"?: [boolean?, ...Array<number>]; "plainArray"?: Array<unknown>; "pointerEscape"?: OrdersInputABC; "rootRef"?: OrdersInputX1startsDashKeyAllEtc; "trueObj"?: { "x"?: string; [key: string]: unknown; }; "trueSchema"?: unknown; "tuple": [string, number?]; "unknownKeyword"?: unknown; };
 export type OrdersInputNode = { "next"?: OrdersInputNode; "value": number; };
@@ -147,9 +147,9 @@ export interface Resources {
 export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };
 export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
-export type { ExposeOptions, PageResult, PageSchema, PageInput, PageAnnotations, PageTool, PageHost } from "./runtime.js";
-export { registerPageTools } from "./runtime.js";
-export declare function exposeTools(app: Apps[keyof Apps], options?: import("./runtime.js").ExposeOptions): Promise<boolean>;
+export type { ExposeOptions, PageResult, PageSchema, PageInput, PageAnnotations, PageTool, PageHost } from "holon-ui/runtime";
+export { registerPageTools } from "holon-ui/runtime";
+export declare function exposeTools(app: Apps[keyof Apps], options?: import("holon-ui/runtime").ExposeOptions): Promise<boolean>;
 import { App as HostApp } from "@modelcontextprotocol/ext-apps";
 type OwnAppKey = "orders";
 export declare class App extends HostApp { readonly tools: Apps[OwnAppKey]["tools"]; readonly resources: Apps[OwnAppKey]["resources"]; readonly callTool: Apps[OwnAppKey]["callTool"] }

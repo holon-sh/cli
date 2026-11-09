@@ -76,7 +76,6 @@ type preparedConsumer struct {
 	server   *preparedSource
 	metadata *mcpcontract.Metadata
 	packages map[string]map[string][]byte // files by target
-	slot     slotMetadata
 	document *Document
 }
 
@@ -318,7 +317,6 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 		c.metadata.Schema = c.server.metadata.Schema
 	}
 	request := mcptype.GenerateRequest{Identity: identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + c.Name}
-	c.slot = slotMetadata{Marker: mcpcontract.Marker, App: c.Name, Identity: identity}
 	aliases := map[string]string{}
 	for _, source := range c.Sources {
 		metadata, err := p.resolve(ctx, source)
@@ -365,9 +363,9 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, alias string) (map[string][]byte, error) {
 	switch target {
 	case TargetTS:
-		request.Target, request.RuntimeSpecifier = "node", "../runtime.mjs"
+		request.Target = "node"
 	case TargetUI:
-		request.Target, request.RuntimeSpecifier = "browser", "../runtime.mjs"
+		request.Target = "browser"
 		alias = cmp.Or(alias, serverKey(own.Identity.Name), "app")
 	case TargetPy:
 		request.Target = "python"
@@ -417,59 +415,25 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 	return prepared.Write()
 }
 
-// Write validates all consumer slots before writing any of them. Callers hold AcquireLocks
-// and install dependencies before Prepare. Repeating Write repairs slots replaced by an install.
+// Write validates all consumer slots before writing any of them. Callers hold AcquireLocks and
+// Install dependencies before Prepare.
 func (p *Prepared) Write() error {
-	slots := map[[2]string]string{}
-	owners := map[string]string{}
 	for _, c := range p.consumers {
 		for _, target := range c.Targets {
-			dir := c.Dir
-			if pkg, ok := nodePackages[target]; ok {
-				var err error
-				if dir, err = InstalledRuntime(c.Dir, pkg); err != nil {
-					return fmt.Errorf("%s: %w", c.Name, err)
-				}
-				if prior, ok := owners[dir]; ok && prior != c.Name {
-					return fmt.Errorf("%s and %s share %s; install a separate %s for each project (avoid hoisting this package)", prior, c.Name, dir, pkg)
-				}
-				owners[dir] = c.Name
-			}
-			if err := validateSlot(target, dir, c.slot); err != nil {
+			if err := validateSlot(c.Dir, target); err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
 			}
-			slots[[2]string{c.Name, target}] = dir
 		}
 	}
 	for _, c := range p.consumers {
+		if err := c.write(c.Dir); err != nil {
+			return err
+		}
 		for _, target := range c.Targets {
-			if err := writeSlot(target, slots[[2]string{c.Name, target}], c.packages[target], c.slot); err != nil {
-				return fmt.Errorf("%s: %w", c.Name, err)
-			}
 			fmt.Fprintf(p.options.Stdout, "%s: generated %s types\n", c.Name, target)
 		}
 	}
 	return nil
-}
-
-func validateSlot(target, dir string, meta slotMetadata) error {
-	switch target {
-	case TargetPy:
-		return validatePythonSlot(dir)
-	case TargetGo:
-		return validateGoSlot(dir)
-	}
-	return validateNodeSlot(dir, meta)
-}
-
-func writeSlot(target, dir string, files map[string][]byte, meta slotMetadata) error {
-	switch target {
-	case TargetPy:
-		return writePythonSlot(dir, files)
-	case TargetGo:
-		return writeGoSlot(dir, files)
-	}
-	return writeNodeSlot(dir, files, meta)
 }
 
 // Targets reports the prepared targets of a consumer, in the order given; none for an unknown one.
@@ -480,32 +444,27 @@ func (p *Prepared) Targets(consumer string) []string {
 	return nil
 }
 
-func (p *Prepared) files(consumer, target string) (*preparedConsumer, map[string][]byte, error) {
-	c := p.consumer(consumer)
-	if c == nil {
-		return nil, nil, fmt.Errorf("unknown consumer %q", consumer)
+// WriteClients writes a consumer's clients into dir, the project or a copy staged for an image, and
+// nothing for an unknown one. It refuses to overwrite files it did not generate, and leaves identical
+// clients untouched.
+func (p *Prepared) WriteClients(consumer, dir string) error {
+	if c := p.consumer(consumer); c != nil {
+		return c.write(dir)
 	}
-	files, ok := c.packages[target]
-	if !ok {
-		return nil, nil, fmt.Errorf("%s has no %s clients", consumer, target)
-	}
-	return c, files, nil
+	return nil
 }
 
-// WriteSlot writes the consumer's target clients into dir. For a Node target, dir is an installed
-// holon-sh or holon-ui package or a copy staged for an image, and the clients go in its generated/
-// slot with a holon-generated.json marker; otherwise dir is the project or its staged copy. It
-// refuses a slot that another consumer or the project owns, and leaves an identical one untouched.
-func (p *Prepared) WriteSlot(consumer, target, dir string) error {
-	c, files, err := p.files(consumer, target)
-	if err != nil {
-		return err
+func (c *preparedConsumer) write(dir string) error {
+	for _, target := range c.Targets {
+		if err := writeSlot(dir, target, c.packages[target]); err != nil {
+			return fmt.Errorf("%s: %w", c.Name, err)
+		}
 	}
-	return writeSlot(target, dir, files, c.slot)
+	return nil
 }
 
-// AcquireLocks locks each consumer directory and its installed Node slots until the returned
-// release function is called. A failure releases every acquired lock.
+// AcquireLocks locks each consumer directory until the returned release function is called. A
+// failure releases every acquired lock.
 func AcquireLocks(consumers []Consumer) (func(), error) {
 	var locks []*flock.Flock
 	release := func() {
@@ -529,11 +488,6 @@ func AcquireLocks(consumers []Consumer) (func(), error) {
 			return release, err
 		}
 		paths[real] = true
-		for _, pkg := range nodePackages {
-			if slot, err := InstalledRuntime(c.Dir, pkg); err == nil {
-				paths[slot] = true
-			}
-		}
 	}
 	for _, path := range slices.Sorted(maps.Keys(paths)) {
 		lock := flock.New(filepath.Join(directory, digest.FromString(path).Encoded()+".lock"))

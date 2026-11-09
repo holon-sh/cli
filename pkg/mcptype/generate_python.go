@@ -50,5 +50,5 @@ func generatePythonPackage(request generateRequest, catalogs map[string]catalog)
 		"apps = _clients()",
 		"def create_apps(bindings: _typing.Mapping[str, _Binding]) -> _Clients:\n    return _clients(bindings)",
 	}, "\n\n")
-	return map[string]string{"holon/apps/__init__.py": module + "\n"}
+	return map[string]string{"__init__.py": module + "\n"}
 }

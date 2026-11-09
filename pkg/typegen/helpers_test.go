@@ -74,12 +74,11 @@ func writeProvider(t *testing.T, root, name, source string) {
 	put(t, root, "server.json", string(mustJSON(t, map[string]any{"name": "example.com/" + name, "version": "1.0.0", "description": name})))
 }
 
-// slotPackage installs a minimal placeholder runtime package that declares a generation slot.
-func slotPackage(t *testing.T, app, pkg string) string {
+// runtimePackage installs a minimal runtime package that runs contract-version-2 clients.
+func runtimePackage(t *testing.T, app, pkg string) string {
 	t.Helper()
 	dir := filepath.Join(app, "node_modules", pkg)
-	put(t, dir, "package.json", `{"name":"`+pkg+`","exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
-	put(t, dir, "generated/holon-generated.json", string(mustJSON(t, slotMetadata{Marker: mcpcontract.Marker, Placeholder: true})))
+	put(t, dir, "package.json", `{"name":"`+pkg+`","version":"0.0.1","exports":{"./runtime":{"types":"./runtime.d.ts"}},"holon":{"contractVersion":2}}`)
 	return dir
 }
 
@@ -102,7 +101,7 @@ func typeScriptApp(t *testing.T) string {
 	app := t.TempDir()
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
 	put(t, app, "tsconfig.json", `{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true,"allowJs":true,"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext","allowImportingTsExtensions":true}}`)
-	put(t, slotPackage(t, app, "holon-sh"), "runtime.d.ts", "export type ToolClient<I, O, R> = unknown;\nexport declare class ToolCallError {}\nexport type EndpointBinding = unknown;\nexport type CreateOptions = unknown;\n")
+	put(t, runtimePackage(t, app, "holon-sh"), "runtime.d.ts", "export type ToolClient<I, O, R> = unknown;\nexport declare class ToolCallError {}\nexport type EndpointBinding = unknown;\nexport type CreateOptions = unknown;\n")
 	linkTypeScript(t, app)
 	return app
 }

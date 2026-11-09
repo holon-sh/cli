@@ -45,11 +45,10 @@ func writeCLIFile(t *testing.T, root, name, content string) {
 	}
 }
 
-func installCLISlot(t *testing.T, root string) {
+func installCLIRuntime(t *testing.T, root string) {
 	t.Helper()
 	for _, pkg := range []string{"holon-sh", "holon-ui"} {
-		writeCLIFile(t, root, "node_modules/"+pkg+"/package.json", `{"name":"`+pkg+`","exports":{".":{"types":"./generated/index.d.ts"}},"holon":{"slot":"generated","contractVersion":1}}`)
-		writeCLIFile(t, root, "node_modules/"+pkg+"/generated/holon-generated.json", `{"marker":"`+mcpcontract.Marker+`","placeholder":true}`)
+		writeCLIFile(t, root, "node_modules/"+pkg+"/package.json", `{"name":"`+pkg+`","holon":{"contractVersion":2}}`)
 	}
 }
 
@@ -115,7 +114,7 @@ func TestProjectRunsForEachApp(t *testing.T) {
 `)
 	view := filepath.Join(root, "view")
 	writeCLIFile(t, view, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
-	installCLISlot(t, view)
+	installCLIRuntime(t, view)
 	var requires []string
 	for _, alias := range []string{"docs", "orders", "search"} {
 		requires = append(requires, `"`+alias+`":{"name":"example.com/`+alias+`","version":"1.0.0"}`)
@@ -143,8 +142,8 @@ func TestProjectRunsForEachApp(t *testing.T) {
 		t.Fatalf("view sources = %+v", sources)
 	}
 
-	// check reaches the app's slot, not the project root, which declares no runtime of its own.
-	run(t, filepath.Join(view, "node_modules/holon-sh")+" has no generated clients", "check", "--no-generate")
+	// check reaches the app's clients, not the project root, which declares no runtime of its own.
+	run(t, filepath.Join(view, "generated/holon-sh")+" has no generated clients", "check", "--no-generate")
 	run(t, "-s names one app's dependencies; pass that app's DIR", "check", "-s", "x")
 }
 
@@ -165,7 +164,7 @@ func TestUsageErrors(t *testing.T) {
 	}
 	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
 	run(t, "holon-sh is not installed", "check", "--no-generate")
-	installCLISlot(t, root)
+	installCLIRuntime(t, root)
 	writeCLIFile(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout"`+requiresOrders)
 	run(t, "example.com/orders@1.0.0", "types", "generate")
 }

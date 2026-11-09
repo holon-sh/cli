@@ -1,9 +1,11 @@
 package installation
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 
@@ -21,6 +23,14 @@ func snapshotSource(app manifestApp, destination string) (string, error) {
 		return "", fmt.Errorf("build context for %s must not contain Holon's certificate authority directory", app.Name)
 	}
 	return typegen.SnapshotSource(app.Name, app.Path, destination)
+}
+
+func readTypeJSON(path string, value any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, value)
 }
 
 func sourceEntry(root string) (string, error) {

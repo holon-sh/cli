@@ -19,25 +19,22 @@ func Check(ctx context.Context, dir string, options Options) error {
 	}
 	var languages []string
 	for _, target := range targets {
-		switch target {
-		case TargetGo:
+		if target == TargetGo {
 			return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
-		case TargetTS, TargetUI:
-			slot, err := InstalledRuntime(dir, nodePackages[target])
-			if err != nil {
+		}
+		if pkg, ok := nodePackages[target]; ok {
+			if err := installedRuntime(dir, pkg); err != nil {
 				return err
 			}
-			var meta slotMetadata
-			if err := readTypeJSON(filepath.Join(slot, "generated", "holon-generated.json"), &meta); err != nil || meta.Placeholder {
-				return fmt.Errorf("%s has no generated clients; run holon types generate", slot)
-			}
-			languages = append(languages, "typescript")
-		case TargetPy:
-			if !generatedPython(filepath.Join(dir, "holon")) {
-				return fmt.Errorf("%s has no generated clients; run holon types generate", dir)
-			}
-			languages = append(languages, "python")
 		}
+		if !generatedSlot(dir, target) {
+			return fmt.Errorf("%s has no generated clients; run holon types generate", SlotDirectory(dir, target))
+		}
+		language := "typescript"
+		if target == TargetPy {
+			language = "python"
+		}
+		languages = append(languages, language)
 	}
 	root, err := os.MkdirTemp("", "holon-types-")
 	if err != nil {
@@ -93,14 +90,11 @@ func (p *Prepared) CheckEntry(consumer string) (entry, language string, ok bool)
 }
 
 func pythonEnvironment(dir, fallback string) string {
-	for current := dir; ; current = filepath.Dir(current) {
+	for current := range ancestors(dir) {
 		for _, venv := range []string{".venv", "venv"} {
 			if python := filepath.Join(current, venv, "bin", "python"); isFile(python) {
 				return python
 			}
-		}
-		if filepath.Dir(current) == current {
-			break
 		}
 	}
 	if active := os.Getenv("VIRTUAL_ENV"); active != "" && isFile(filepath.Join(active, "bin", "python")) {

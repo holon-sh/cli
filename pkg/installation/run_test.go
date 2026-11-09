@@ -24,7 +24,6 @@ import (
 
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
-	"github.com/holon-sh/cli/pkg/typegen"
 	"golang.org/x/oauth2"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -397,7 +396,7 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 	output, _, _ := newProgressOutput(io.Discard, &stream, false, h.run.clock())
 	dev := devLoop{
 		manager: manager, name: "gentle-otter-482", clock: h.run.clock(),
-		options: buildOptions{output: output, types: &typeWorkspace{prepared: new(typegen.Prepared)}},
+		options: buildOptions{output: output},
 	}
 	for _, ready := range []string{"False", "True"} {
 		responses <- protocol.SessionResponse{Generation: 1, Conditions: []protocol.Condition{
@@ -430,7 +429,7 @@ func TestDevStopsWhenReauthenticationIsRequired(t *testing.T) {
 	if err := manager.loginInteractive(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	dev := devLoop{manager: manager, name: "gentle-otter-482", options: buildOptions{types: &typeWorkspace{prepared: new(typegen.Prepared)}}}
+	dev := devLoop{manager: manager, name: "gentle-otter-482"}
 	if err := dev.poll(manager.Session(t.Context(), dev.name)); !errors.Is(err, errReauthenticationRequired) {
 		t.Fatalf("poll = %v, want %v", err, errReauthenticationRequired)
 	}

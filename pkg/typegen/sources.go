@@ -1,8 +1,8 @@
-// Package typegen turns MCP server sources into typed client slots.
+// Package typegen turns MCP server sources into typed clients written into the projects that call them.
 //
 // A Consumer is a project directory that receives clients for the servers it names as Sources.
 // Sources can be supplied explicitly or read from sh.holon.requires with DeclaredSources.
-// The caller chooses which SDK slots receive them; unresolved sources are errors.
+// The caller chooses which targets receive them; unresolved sources are errors.
 package typegen
 
 import (
@@ -25,12 +25,12 @@ const dockerignoreFile = ".dockerignore"
 // appName constrains aliases and target names: a DNS label usable as apps.<alias>.
 var appName = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 
-// Targets name the SDK slot a consumer receives clients in.
+// Targets name the language and runtime a consumer receives clients for; slots names where they go.
 const (
-	TargetTS = "ts" // node_modules/holon-sh/generated, resolved upward from the consumer
+	TargetTS = "ts"
 	TargetUI = "ui"
-	TargetPy = "py" // holon/apps/__init__.py in the consumer
-	TargetGo = "go" // holon/ Go package in the consumer
+	TargetPy = "py"
+	TargetGo = "go"
 )
 
 var targets = []string{TargetTS, TargetUI, TargetPy, TargetGo}
@@ -134,15 +134,15 @@ func (s Source) validate() error {
 
 // Consumer is a project directory that receives typed clients.
 type Consumer struct {
-	// Name owns the written slots (holon-generated.json, the Python banner) and labels output.
+	// Name signs the generated files' banners and labels output.
 	Name string
 	// Dir is the absolute project directory.
 	Dir string
 	// Server is the consumer's own MCP server, a path source inside Dir. It supplies the
 	// consumer's identity, contract (Metadata) and check configuration. Browser clients call it
-	// under its derived name; an Alias replaces that name and adds the client to every other slot.
+	// under its derived name; an Alias replaces that name and adds the client to every other target.
 	Server *Source
-	// Targets are the slots to write.
+	// Targets are the clients to write.
 	// A server can have no targets when only its contract is needed.
 	Targets []string
 	// Sources are the servers that become apps.<alias> clients.

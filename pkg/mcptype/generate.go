@@ -74,16 +74,8 @@ func (r generateRequest) validate() error {
 			return err
 		}
 	}
-	for _, option := range []struct {
-		name  string
-		value string
-	}{{"runtime_specifier", r.RuntimeSpecifier}, {"banner", r.Banner}} {
-		if option.value == "" {
-			continue
-		}
-		if strings.TrimSpace(option.value) == "" || strings.ContainsFunc(option.value, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) {
-			return fmt.Errorf("%s must be nonempty and contain no line breaks or control characters", option.name)
-		}
+	if r.Banner != "" && (strings.TrimSpace(r.Banner) == "" || strings.ContainsFunc(r.Banner, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' })) {
+		return errors.New("banner must be nonempty and contain no line breaks or control characters")
 	}
 	if r.Target == "go" && r.GoModule == "" {
 		return errors.New("go_module is required for the go target")

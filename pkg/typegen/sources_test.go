@@ -2,13 +2,14 @@ package typegen
 
 import (
 	"errors"
-	"github.com/holon-sh/protocol"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/holon-sh/protocol"
 )
 
 func TestResolveDocumentFindsServerSources(t *testing.T) {
@@ -80,7 +81,7 @@ func TestPrepareRejectsInvalidConsumers(t *testing.T) {
 
 func TestGenerateKeepsFilesItDidNotWrite(t *testing.T) {
 	for _, test := range []struct{ target, file string }{
-		{TargetTS, "node_modules/holon-sh/generated/index.js"},
+		{TargetTS, "generated/holon-sh/index.mjs"},
 		{TargetPy, "holon.py"},
 		{TargetPy, "holon/__init__.py"},
 		{TargetPy, "holon/apps/__init__.py"},
@@ -88,7 +89,7 @@ func TestGenerateKeepsFilesItDidNotWrite(t *testing.T) {
 	} {
 		t.Run(test.file, func(t *testing.T) {
 			dir := t.TempDir()
-			put(t, dir, "node_modules/holon-sh/package.json", `{"holon":{"slot":"generated","contractVersion":1}}`)
+			runtimePackage(t, dir, "holon-sh")
 			put(t, dir, "requirements.txt", "holon-sh\n")
 			put(t, dir, test.file, "user content")
 			c := Consumer{Name: "app", Dir: dir, Targets: []string{test.target}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
@@ -126,6 +127,22 @@ dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetP
 				t.Fatalf("targets = %v, %v; want %v", got, err, test.want)
 			}
 		})
+	}
+}
+
+// Install maps a project's clients in package.json as a package manager edits it: one member added,
+// in the file's layout, and a mapping the project already has kept.
+func TestAddImportKeepsPackageJSONAsWritten(t *testing.T) {
+	const entry = `"#holon-sh": "./generated/holon-sh/index.mjs"`
+	for _, c := range []struct{ in, out string }{
+		{"{\n  \"name\": \"a\",\n  \"files\": [\"dist\"]\n}\n", "{\n  \"name\": \"a\",\n  \"files\": [\"dist\"],\n  \"imports\": {\n    " + entry + "\n  }\n}\n"},
+		{"{\r\n\t\"imports\": {\r\n\t\t\"#lib\": \"./lib.js\"\r\n\t}\r\n}", "{\r\n\t\"imports\": {\r\n\t\t\"#lib\": \"./lib.js\",\r\n\t\t" + entry + "\r\n\t}\r\n}"},
+		{`{"imports":{"#holon-sh":{"browser":"./x.mjs"}}}`, ""},
+	} {
+		out, err := addImport([]byte(c.in), "#holon-sh", "./generated/holon-sh/index.mjs")
+		if err != nil || string(out) != c.out {
+			t.Errorf("addImport(%q) = %q, %v; want %q", c.in, out, err, c.out)
+		}
 	}
 }
 

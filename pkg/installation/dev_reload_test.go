@@ -393,7 +393,7 @@ func TestDevSaveStopsTheLastPreparation(t *testing.T) {
 	from := len(f.stderr.String())
 	sourceFiles(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
 	f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha ready") })
-	if err := os.RemoveAll(filepath.Join(alpha, "node_modules", nodeRuntime)); err != nil {
+	if err := os.RemoveAll(filepath.Join(alpha, "node_modules", "holon-sh")); err != nil {
 		t.Fatal(err)
 	}
 	runs := func() []string {
