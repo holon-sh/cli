@@ -10,6 +10,9 @@ import (
 	"slices"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/moby/buildkit/client"
+	gateway "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/util/staticfs"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/tonistiigi/fsutil"
@@ -149,14 +152,17 @@ func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
 }
 
 func (r buildRequest) pushOverlay(ctx context.Context, unless string, progress io.Writer) (string, error) {
-	if r.buildOutput != "" {
-		if err := r.exportOutput(ctx, progress); err != nil {
-			return "", err
-		}
-	}
 	source, err := fsutil.NewFS(r.Source)
 	if err != nil {
 		return "", err
+	}
+	if r.plan.Output != "" {
+		recipe := staticfs.NewFS()
+		recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(r.plan.Output))
+		local := client.ExportEntry{Type: client.ExporterLocal, OutputDir: r.Source}
+		if _, err := r.solve(ctx, r.Platforms[0], recipe, source, progress, local, func(context.Context, gateway.Client, *gateway.Result) error { return nil }); err != nil {
+			return "", err
+		}
 	}
 	stable, err := fsutil.NewFilterFS(source, &fsutil.FilterOpt{Map: stableStat})
 	if err != nil {

@@ -154,7 +154,7 @@ func publishPlatform(
 	ctx context.Context, platform string, request buildRequest, source fsutil.FS, progress io.Writer,
 ) (ocispec.Descriptor, error) {
 	recipe := staticfs.NewFS()
-	recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(request.dockerfile))
+	recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(request.plan.Dockerfile))
 	var runtimeKey string
 	if len(request.Start) != 0 {
 		arch := strings.TrimPrefix(platform, "linux/")
@@ -262,18 +262,6 @@ func publishPlatform(
 	}
 	descriptor.Platform = &ocispec.Platform{OS: "linux", Architecture: strings.TrimPrefix(platform, "linux/")}
 	return descriptor, nil
-}
-
-func (r buildRequest) exportOutput(ctx context.Context, progress io.Writer) error {
-	source, err := fsutil.NewFS(r.Source)
-	if err != nil {
-		return err
-	}
-	recipe := staticfs.NewFS()
-	recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(r.buildOutput))
-	_, err = r.solve(ctx, r.Platforms[0], recipe, source, progress, client.ExportEntry{Type: client.ExporterLocal, OutputDir: r.Source},
-		func(context.Context, gateway.Client, *gateway.Result) error { return nil })
-	return err
 }
 
 func (r buildRequest) solve(

@@ -3,13 +3,10 @@
 package installation
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,9 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
-	"github.com/klauspost/compress/zstd"
 	"github.com/moby/buildkit/util/staticfs"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	fstypes "github.com/tonistiigi/fsutil/types"
@@ -42,7 +39,7 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 		request := buildRequest{
 			app: manifestApp{Name: "alpha", Path: value}, upload: &imageUpload{grant: grant},
 			Env: options.Env, httpClient: options.HTTPClient, builders: options.builders,
-			dockerfile: "FROM scratch\nCOPY value /value\nENV RECIPE=" + value + "\n",
+			plan: kiln.Result{Dockerfile: "FROM scratch\nCOPY value /value\nENV RECIPE=" + value + "\n"},
 		}
 		descriptor, err := publishPlatform(t.Context(), "linux/"+runtime.GOARCH, request, source, io.Discard)
 		if err != nil {
@@ -59,18 +56,8 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		decoder, err := zstd.NewReader(bytes.NewReader(data))
-		if err != nil {
-			t.Fatal(err)
-		}
-		archive := tar.NewReader(decoder)
-		if _, err := archive.Next(); err != nil {
-			t.Fatal(err)
-		}
-		data, err = io.ReadAll(archive)
-		decoder.Close()
-		if err != nil || string(data) != value {
-			t.Fatalf("%s source = %q, want %q: %v", value, data, value, err)
+		if got := overlayEntries(t, data)["value"]; string(got) != value {
+			t.Fatalf("%s source = %q, want %q", value, got, value)
 		}
 	}
 }
@@ -148,24 +135,14 @@ func TestDockerSourceBuild(t *testing.T) {
 		})
 		development := options
 		development.development = true
-		_, overlay, err := buildSource(t.Context(), prepareBuild(t, app).Apps[0], upload, development)
-		if err != nil {
+		prepared := prepareBuild(t, app).Apps[0]
+		if _, _, err := buildSource(t.Context(), prepared, upload, development); err != nil {
 			t.Fatal(err)
 		}
-		repository, err := imageRepository(grant.Registry+"/"+grant.Repositories["alpha"], grant.Grant, options.HTTPClient)
-		if err != nil {
-			t.Fatal(err)
-		}
-		descriptor, err := repository.Blobs().Resolve(t.Context(), overlay)
-		if err != nil {
-			t.Fatal(err)
-		}
-		blob, err := content.FetchAll(t.Context(), repository.Blobs(), descriptor)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if entries := overlayEntries(t, blob); string(entries["server.py"]) != "app = None" || string(entries["dist/index.html"]) != "built\n" {
-			t.Fatalf("overlay entries = %q", slices.Sorted(maps.Keys(entries)))
+		for name, want := range map[string]string{"server.py": "app = None", "dist/index.html": "built\n"} {
+			if got, err := os.ReadFile(filepath.Join(prepared.resolved.types.root, name)); string(got) != want {
+				t.Fatalf("overlay %s = %q: %v", name, got, err)
+			}
 		}
 	})
 	t.Run("build cancellation", func(t *testing.T) {
