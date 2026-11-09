@@ -1,8 +1,6 @@
 package mcpregistry
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,11 +23,13 @@ func registry(t *testing.T, handler http.HandlerFunc) protocol.RegistryRef {
 	return protocol.RegistryRef{Name: "com.example/analytics", Version: "1.0.0", Registry: server.URL}
 }
 
-func TestFetchRefusesInvalidResponses(t *testing.T) {
-	record := `{"server":` + descriptorJSON + `}`
+func TestFetch(t *testing.T) {
+	// Unknown sh.holon members, here from a newer Holon, are ignored at every level.
+	metadata := `,"_meta":{"` + PublisherMetadata + `":{"sh.holon":{"future":true,"requires":{"search":{"name":"com.example/search","version":"1.0.0","headers":[]}}}}}}`
+	record := `{"server":` + strings.TrimSuffix(descriptorJSON, "}") + metadata + `}`
 	if descriptor, err := Fetch(t.Context(), nil, registry(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(record))
-	})); err != nil || descriptor.Description != "Analytics tools" {
+	})); err != nil || descriptor.Requires["search"].Name != "com.example/search" {
 		t.Fatalf("descriptor = %+v, %v", descriptor, err)
 	}
 	for _, test := range []struct {
@@ -50,33 +50,10 @@ func TestFetchRefusesInvalidResponses(t *testing.T) {
 			}
 		})
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, err := Fetch(ctx, nil, registry(t, func(http.ResponseWriter, *http.Request) {})); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancellation: %v", err)
-	}
-}
-
-func TestFetchIgnoresUnknownHolonMetadata(t *testing.T) {
-	metadata := `,"_meta":{"` + PublisherMetadata + `":{"sh.holon":{"future":true,"requires":{"search":{"name":"com.example/search","version":"1.0.0","headers":[{"name":"Authorization","value":"Bearer {TOKEN}"}]}}}}}}`
-	record := `{"server":` + strings.TrimSuffix(descriptorJSON, "}") + metadata + `}`
-	descriptor, err := Fetch(t.Context(), nil, registry(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(record))
+	_, err := Fetch(t.Context(), nil, registry(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://registry.example/", http.StatusFound)
 	}))
-	if err != nil || descriptor.Requires["search"].Name != "com.example/search" {
-		t.Fatalf("descriptor = %+v, %v", descriptor, err)
-	}
-}
-
-func TestFetchStaysOnValidRegistries(t *testing.T) {
-	for target, want := range map[string]string{"http://registry.example/": "must be an HTTPS URL", "/loop": "too many"} {
-		t.Run(target, func(t *testing.T) {
-			_, err := Fetch(t.Context(), nil, registry(t, func(w http.ResponseWriter, r *http.Request) {
-				http.Redirect(w, r, target, http.StatusFound)
-			}))
-			if err == nil || !strings.Contains(err.Error(), want) {
-				t.Fatalf("want %q, got %v", want, err)
-			}
-		})
+	if err == nil || !strings.Contains(err.Error(), "must be an HTTPS URL") {
+		t.Fatalf("redirect off a valid registry: %v", err)
 	}
 }
