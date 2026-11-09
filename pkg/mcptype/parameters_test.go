@@ -2,6 +2,7 @@ package mcptype
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestParametersReadReferencesAndNullableStrings(t *testing.T) {
 		"tree":{"$ref":"#/$defs/Tree"}},
 		"$defs":{"Item":{"type":"object","properties":{"sku":{"type":"string"}}},
 			"Tree":{"type":"object","properties":{"children":{"type":"array","items":{"$ref":"#/$defs/Tree"}}}}}}`
-	got, err := Parameters(context.Background(), []byte(schema))
+	got, err := Parameters(context.Background(), json.RawMessage(schema))
 	if err != nil {
 		t.Fatal(err)
 	}

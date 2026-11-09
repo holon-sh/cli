@@ -222,19 +222,10 @@ func writeSection[T any](w io.Writer, title string, items []T, line func(T) (hea
 	}
 }
 
-// parameters reads a tool's input schema as the generated clients do.
-func parameters(ctx context.Context, schema any) ([]mcptype.Parameter, error) {
-	data, err := json.Marshal(schema)
-	if err != nil {
-		return nil, err
-	}
-	return mcptype.Parameters(ctx, data)
-}
-
 // signature summarizes a tool's parameters, the required ones first: name: type, or name?: type
 // when optional. A schema the generated clients cannot read shows as "…".
 func signature(ctx context.Context, schema any) string {
-	parameters, err := parameters(ctx, schema)
+	parameters, err := mcptype.Parameters(ctx, schema)
 	if err != nil {
 		return "…"
 	}
@@ -265,7 +256,7 @@ func callArguments(ctx context.Context, schema any, pairs []string, raw string, 
 		}
 	}
 	// A schema the generated clients cannot read takes every VALUE as JSON; the server still validates.
-	parameters, _ := parameters(ctx, schema)
+	parameters, _ := mcptype.Parameters(ctx, schema)
 	seen := map[string]bool{}
 	for _, pair := range pairs {
 		key, value, ok := strings.Cut(pair, "=")

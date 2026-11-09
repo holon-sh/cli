@@ -18,8 +18,8 @@ type Parameter struct {
 
 // Parameters returns the properties of a tool's input schema, by name. A schema that is not an
 // object has none.
-func Parameters(ctx context.Context, inputSchema []byte) ([]Parameter, error) {
-	schema, err := decodeJSON(inputSchema)
+func Parameters(ctx context.Context, inputSchema any) ([]Parameter, error) {
+	schema, err := marshal(ctx, inputSchema)
 	if err != nil {
 		return nil, err
 	}
