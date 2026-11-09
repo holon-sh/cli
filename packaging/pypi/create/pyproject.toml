@@ -1,0 +1,15 @@
+[build-system]
+requires = ["pdm-backend==2.5.0"]
+build-backend = "pdm.backend"
+
+[project]
+name = "create-holon-app"
+version = "0.0.0"
+description = "Create a Holon app: runs holon init from holon-types"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["holon-types"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD-PARTY-NOTICES"]
+urls.Repository = "https://github.com/holon-sh/cli"
+scripts.create-holon-app = "create_holon_app:main"

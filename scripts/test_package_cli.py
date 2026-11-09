@@ -21,10 +21,10 @@ class PackageTests(unittest.TestCase):
                 subprocess.run([
                     sys.executable, str(ROOT / "scripts/package_cli.py"), "--target", "_".join(host),
                     "--version", "1.2.3-rc.1", "--out", str(output),
-                    "--format", "tarball", "--format", "wheel", "--format", "npm-platform", "--format", "npm-launcher",
+                    "--format", "tarball", "--format", "wheel", "--format", "npm-platform", "--format", "launcher",
                 ], check=True, capture_output=True)
                 packages.append({p.name: hashlib.sha256(p.read_bytes()).digest() for p in output.iterdir()})
-            self.assertEqual(len(packages[0]), 4)
+            self.assertEqual(len(packages[0]), 6)
             self.assertEqual(packages[0], packages[1])
             with tarfile.open(output / "holon-types-1.2.3-rc.1.tgz") as archive:
                 launcher = json.load(archive.extractfile("package/package.json"))

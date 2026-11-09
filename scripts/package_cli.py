@@ -94,10 +94,21 @@ def build_binary(binary: Path, target: Target, version: str) -> None:
     subprocess.run(["go", "build", "-tags", "kiln", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
 
 
-def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None:
+def build_pdm_wheel(package: Path, dist: Path, metadata: dict, settings: dict) -> None:
+    """Add the license files to the pdm project in package, update its metadata and build its wheel."""
     from pdm.backend import build_wheel
     from pdm.backend.config import Config
 
+    for name in ("LICENSE", "NOTICE", "THIRD-PARTY-NOTICES"):
+        shutil.copyfile(ROOT / name, package / name)
+    config = Config.from_pyproject(package)
+    config.metadata.update(metadata)
+    config.write_to(package / "pyproject.toml")
+    with chdir(package):
+        build_wheel(str(dist), settings)
+
+
+def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None:
     with tempfile.TemporaryDirectory(prefix="holon-wheel-") as directory:
         package = Path(directory)
         source = ROOT / "packaging/pypi"
@@ -106,15 +117,8 @@ def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None
         shutil.copyfile(binary, package / "holon_types/bin/holon")
         (package / "holon_types/bin/holon").chmod(0o755)
         shutil.copyfile(ROOT / "README.md", package / "README.md")
-        shutil.copyfile(ROOT / "LICENSE", package / "LICENSE")
-        shutil.copyfile(ROOT / "NOTICE", package / "NOTICE")
-        shutil.copyfile(ROOT / "THIRD-PARTY-NOTICES", package / "THIRD-PARTY-NOTICES")
         shutil.copyfile(source / "pyproject.toml", package / "pyproject.toml")
-        config = Config.from_pyproject(package)
-        config.metadata["version"] = version
-        config.write_to(package / "pyproject.toml")
-        with chdir(package):
-            build_wheel(str(dist), {"--python-tag": "py3", "--py-limited-api": "none", "--plat-name": tags})
+        build_pdm_wheel(package, dist, {"version": version}, {"--python-tag": "py3", "--py-limited-api": "none", "--plat-name": tags})
 
 
 def write_npm_package(dist: Path, manifest: dict, source: Path, executable: str, readme: Path) -> None:
@@ -131,12 +135,22 @@ def write_npm_package(dist: Path, manifest: dict, source: Path, executable: str,
         subprocess.run(["npm", "pack", "--ignore-scripts", "--offline", "--pack-destination", str(dist)], cwd=package, check=True)
 
 
-def write_npm_launcher(dist: Path, version: str) -> None:
+def write_launchers(dist: Path, version: str) -> None:
+    """Write the packages without a binary: holon-types on npm, and create-holon-app on npm and PyPI."""
     source = ROOT / "packaging/npm/launcher"
     manifest = json.loads((source / "package.json").read_text())
     manifest["version"] = version
     manifest["optionalDependencies"] = {target.npm_name: version for target in TARGETS}
     write_npm_package(dist, manifest, source / "bin/holon.js", "holon.js", ROOT / "README.md")
+    source = ROOT / "packaging/npm/create"
+    manifest = json.loads((source / "package.json").read_text())
+    manifest["version"] = version
+    manifest["dependencies"] = {"holon-types": version}
+    write_npm_package(dist, manifest, source / "bin/create-holon-app.js", "create-holon-app.js", source / "README.md")
+    with tempfile.TemporaryDirectory(prefix="holon-wheel-") as directory:
+        package = Path(directory)
+        shutil.copytree(ROOT / "packaging/pypi/create", package, dirs_exist_ok=True)
+        build_pdm_wheel(package, dist, {"version": version, "dependencies": [f"holon-types=={version}"]}, {})
 
 
 def write_npm_platform(binary: Path, dist: Path, version: str, target: Target) -> None:
@@ -157,18 +171,19 @@ def main() -> None:
     parser.add_argument("--version", default="0.0.1")
     parser.add_argument("--target", choices=[target.platform for target in TARGETS])
     parser.add_argument("--binary", type=Path, help="Package a prebuilt binary instead of building one")
-    parser.add_argument("--format", action="append", choices=["tarball", "wheel", "npm-platform", "npm-launcher"], dest="formats")
+    parser.add_argument("--format", action="append", choices=["tarball", "wheel", "npm-platform", "launcher"], dest="formats")
     parser.add_argument("--out", type=Path, default=ROOT / "dist")
     args = parser.parse_args()
     if not VERSION_PATTERN.fullmatch(args.version):
         parser.error("version must be X.Y.Z or X.Y.Z-{alpha,beta,rc,dev}.N")
     formats = set(args.formats or ["tarball"])
-    if formats - {"npm-launcher"} and not args.target:
+    if formats - {"launcher"} and not args.target:
         parser.error("--target is required for tarball, wheel and npm-platform")
     dist = args.out.resolve()
     dist.mkdir(parents=True, exist_ok=True)
-    if formats == {"npm-launcher"}:
-        write_npm_launcher(dist, args.version)
+    if "launcher" in formats:
+        write_launchers(dist, args.version)
+    if formats == {"launcher"}:
         return
     target = Target(*args.target.split("_"))
     with tempfile.TemporaryDirectory(prefix="holon-package-") as directory:
@@ -182,8 +197,6 @@ def main() -> None:
             write_wheel(binary, dist, args.version, tags)
         if "npm-platform" in formats:
             write_npm_platform(binary, dist, args.version, target)
-        if "npm-launcher" in formats:
-            write_npm_launcher(dist, args.version)
 
 
 if __name__ == "__main__":
