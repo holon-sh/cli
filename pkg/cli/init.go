@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"fmt"
 	"io"
@@ -153,14 +154,22 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 		case typegen.TargetGo:
 			commands = append(commands, []string{"go", "get", typegen.GoRuntimeModule + "@latest"})
 		case typegen.TargetPy:
-			dependencies, dev, err := project.PythonRequirements()
-			if err != nil {
-				return err
+			var installs bytes.Buffer
+			if err := commandenv.RunStreaming(cmd.Context(), dir, "uv", []string{"export", "--no-hashes", "--quiet"}, nil, nil, &installs, stderr); err != nil {
+				return fmt.Errorf("uv export in %s: %w", dirArg, err)
 			}
-			if len(dependencies) > 0 {
+			installed := map[string]bool{}
+			for line := range strings.Lines(installs.String()) {
+				installed[typegen.PythonName(line)] = true
+			}
+			missing := func(requirements []string) []string {
+				return slices.DeleteFunc(requirements, func(r string) bool { return installed[typegen.PythonName(r)] })
+			}
+			dependencies, dev := project.PythonRequirements()
+			if dependencies = missing(dependencies); len(dependencies) > 0 {
 				commands = append(commands, append([]string{"uv", "add", "--frozen"}, dependencies...))
 			}
-			if len(dev) > 0 {
+			if dev = missing(dev); len(dev) > 0 {
 				commands = append(commands, append([]string{"uv", "add", "--frozen", "--dev"}, dev...))
 			}
 			commands = append(commands, []string{"uv", "sync"})

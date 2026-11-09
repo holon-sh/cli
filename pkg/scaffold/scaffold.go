@@ -298,17 +298,9 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	}
 }
 
-// PythonRequirements are the requirements the app needs that uv sync would not install from its
-// Python project: dependencies, and development ones.
-func (p Project) PythonRequirements() (dependencies, dev []string, err error) {
-	declared, err := typegen.PythonDependencies(p.Dir)
-	if err != nil {
-		return nil, nil, err
-	}
-	missing := func(requirements ...string) []string {
-		return slices.DeleteFunc(requirements, func(r string) bool { return declared[typegen.PythonName(r)] })
-	}
-	return missing(typegen.PythonRuntime+"=="+p.Versions.HolonPy, "mcp>=2.3,<3"), missing("mypy>=2.4,<3"), nil
+// PythonRequirements are the Python requirements the app needs: dependencies, and development ones.
+func (p Project) PythonRequirements() (dependencies, dev []string) {
+	return []string{typegen.PythonRuntime + "==" + p.Versions.HolonPy, "mcp>=2.3,<3"}, []string{"mypy>=2.4,<3"}
 }
 
 // appendLines appends to a file's text each line of more it lacks.

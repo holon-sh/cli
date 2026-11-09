@@ -41,14 +41,8 @@ func TestWrite(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := map[string]string{"holon-ui": project.Versions.HolonUI, "holon-sh": ""}
-			switch language {
-			case "ts":
+			if language == "ts" {
 				want["holon-sh"] = project.Versions.HolonSH
-			case "py":
-				dependencies, dev, err := project.PythonRequirements()
-				if err != nil || !slices.Equal(dependencies, []string{"holon-sh==3.0.0", "mcp>=2.3,<3"}) || !slices.Equal(dev, []string{"mypy>=2.4,<3"}) {
-					t.Errorf("PythonRequirements = %v, %v, %v; want every requirement", dependencies, dev, err)
-				}
 			}
 			for name, version := range want {
 				if pkg.Dependencies[name] != version {
@@ -64,7 +58,7 @@ func TestWrite(t *testing.T) {
 
 func TestWriteBesideAProject(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "billing")
-	put(t, dir, "pyproject.toml", "[project]\nname = \"billing\"\ndependencies = [\"MCP>=2.4\"]\n\n[dependency-groups]\nlint = [\"mypy\", {include-group = \"dev\"}]\n")
+	put(t, dir, "pyproject.toml", "[project]\nname = \"billing\"\n")
 	put(t, dir, ".gitignore", ".venv\n")
 	put(t, dir, "package.json", "{\n  \"name\": \"billing\",\n  \"scripts\": {\n    \"build\": \"tsc\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^7.0.0\"\n  }\n}\n")
 	project := Project{Dir: dir, Language: "py", Name: "com.example/billing", Versions: versions}
@@ -84,10 +78,6 @@ func TestWriteBesideAProject(t *testing.T) {
 	}
 	if len(notes) != 1 || !strings.Contains(notes[0], "build script") {
 		t.Errorf("notes = %v", notes)
-	}
-	dependencies, dev, err := project.PythonRequirements()
-	if err != nil || !slices.Equal(dependencies, []string{"holon-sh==3.0.0"}) || !slices.Equal(dev, []string{"mypy>=2.4,<3"}) {
-		t.Errorf("PythonRequirements = %v, %v, %v; want holon-sh, and mypy, which uv sync leaves out of the lint group", dependencies, dev, err)
 	}
 }
 
