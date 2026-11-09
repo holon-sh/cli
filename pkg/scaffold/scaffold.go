@@ -26,11 +26,9 @@ var templates embed.FS
 
 // Versions are the Holon SDK versions an app pins.
 type Versions struct {
-	HolonSH string // holon-sh on npm, for a TypeScript server
-	HolonUI string // holon-ui on npm, for the view
-	HolonPy string // holon-sh on PyPI, for a Python server
-	// HolonTypes is holon-types, the holon CLI, on npm for a TypeScript server or on PyPI for a
-	// Python one.
+	HolonSH    string // holon-sh on npm, for a TypeScript server
+	HolonUI    string // holon-ui on npm, for the view
+	HolonPy    string // holon-sh on PyPI, for a Python server
 	HolonTypes string
 }
 
@@ -260,8 +258,7 @@ func (p Project) render() (map[string][]byte, error) {
 }
 
 // addPackages adds the npm packages the app needs to package.json data, and the view's build script
-// when the project has none. Holon's packages get the versions resolved for this holon, since they must
-// agree on the clients it writes; the project keeps any version it declares of the others.
+// when the project has none.
 func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	var pkg typegen.PackageJSON
 	if err := json.Unmarshal(data, &pkg); err != nil {
@@ -309,8 +306,8 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	}
 }
 
-// PythonRequirements are the Python requirements the app needs: dependencies, and development ones.
-// holon-types brings mypy, which holon types check runs.
+// PythonRequirements are the Python requirements the app needs: dependencies, which a project
+// declares directly, and development ones, which it only needs installed.
 func (p Project) PythonRequirements() (dependencies, dev []string) {
 	return []string{typegen.PythonRuntime + "==" + p.Versions.HolonPy, "mcp>=2.3,<3"}, []string{cliPackage + "==" + p.Versions.HolonTypes}
 }

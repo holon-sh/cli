@@ -149,7 +149,6 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 		case typegen.TargetGo:
 			commands = append(commands, []string{"go", "get", typegen.GoRuntimeModule + "@latest"})
 		case typegen.TargetPy:
-			// uv add replaces any version the project already declares.
 			dependencies, dev := project.PythonRequirements()
 			commands = append(commands, append([]string{"uv", "add", "--frozen"}, dependencies...),
 				append([]string{"uv", "add", "--frozen", "--dev"}, dev...), []string{"uv", "sync"})

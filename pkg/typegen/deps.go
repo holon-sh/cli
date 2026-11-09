@@ -42,7 +42,6 @@ func (p PackageJSON) Declares(pkg string) bool {
 	return p.Section(pkg) != ""
 }
 
-// Section is the package.json member that declares pkg, or "" when none does.
 func (p PackageJSON) Section(pkg string) string {
 	for name, section := range map[string]map[string]string{"dependencies": p.Dependencies, "devDependencies": p.DevDependencies, "peerDependencies": p.PeerDependencies, "optionalDependencies": p.OptionalDependencies} {
 		if section[pkg] != "" {

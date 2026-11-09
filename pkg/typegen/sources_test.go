@@ -132,8 +132,8 @@ dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetP
 	}
 }
 
-// Install maps a project's clients in package.json as a package manager edits it: one member added or
-// replaced, in the file's layout, and nothing when the mapping is already there.
+// Install maps a project's clients in package.json as a package manager edits it: one member added,
+// in the file's layout.
 func TestSetImportKeepsPackageJSONAsWritten(t *testing.T) {
 	const entry = `"#holon-sh": "./generated/holon-sh/index.mjs"`
 	for _, c := range []struct{ in, out string }{
