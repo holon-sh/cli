@@ -24,7 +24,6 @@ func registry(t *testing.T, handler http.HandlerFunc) protocol.RegistryRef {
 }
 
 func TestFetch(t *testing.T) {
-	// Unknown sh.holon members, here from a newer Holon, are ignored at every level.
 	metadata := `,"_meta":{"` + PublisherMetadata + `":{"sh.holon":{"future":true,"requires":{"search":{"name":"com.example/search","version":"1.0.0","headers":[]}}}}}}`
 	record := `{"server":` + strings.TrimSuffix(descriptorJSON, "}") + metadata + `}`
 	if descriptor, err := Fetch(t.Context(), nil, registry(t, func(w http.ResponseWriter, _ *http.Request) {
