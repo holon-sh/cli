@@ -8,10 +8,8 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = ["holon-sh=={{.Versions.HolonPy}}", "mcp>=2.3,<3"]
 
-# holon types check runs mypy in this environment.
 [dependency-groups]
 dev = ["mypy>=2.4,<3"]
 
-# Holon runs server.py from the source directory, so the project installs only its dependencies.
 [tool.setuptools]
 packages = []

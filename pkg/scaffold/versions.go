@@ -93,7 +93,6 @@ func (r Registries) get(ctx context.Context, location string, value any) error {
 	if err != nil {
 		return err
 	}
-	// The full document: npm's abbreviated one leaves out the holon field.
 	request.Header.Set("Accept", "application/json")
 	response, err := r.Client.Do(request)
 	if err != nil {

@@ -16,9 +16,13 @@ import (
 var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`)
 var wildcardVersion = regexp.MustCompile(`(^|\.)[xX](\.|$)`)
 
+func ValidServerName(name string) bool {
+	return len(name) <= 200 && serverNamePattern.MatchString(name)
+}
+
 // validRegistryRef also requires a name and an exact version that the MCP Registry accepts.
 func validRegistryRef(r protocol.RegistryRef) error {
-	if len(r.Name) > 200 || !serverNamePattern.MatchString(r.Name) {
+	if !ValidServerName(r.Name) {
 		return errors.New("server name must have the form namespace/name")
 	}
 	if len(r.Version) > 255 || strings.ContainsAny(r.Version, "^~<>=*| \t\r\n") || wildcardVersion.MatchString(r.Version) {

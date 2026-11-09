@@ -89,7 +89,6 @@ func (p Project) Write() ([]string, error) {
 			if err := parsed.Execute(&rendered, data); err != nil {
 				return err
 			}
-			// Dotfiles are kept as _name so that they neither affect this repository nor need care when embedding.
 			relative := strings.TrimPrefix(name, root+"/")
 			if base := path.Base(relative); strings.HasPrefix(base, "_") {
 				relative = path.Join(path.Dir(relative), "."+base[1:])

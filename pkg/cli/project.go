@@ -28,13 +28,7 @@ type projectApp struct {
 // app's endpoint. Other dependencies keep their sh.holon.requires registry reference. Without a
 // manifest it returns nil.
 func projectConsumers(dir string) ([]typegen.Consumer, error) {
-	var file string
-	for _, name := range projectFiles {
-		if _, err := os.Lstat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
-			file = filepath.Join(dir, name)
-			break
-		}
-	}
+	file := projectFile(dir)
 	if file == "" {
 		return nil, nil
 	}
@@ -88,4 +82,13 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 		return nil, fmt.Errorf("%s: no path app declares a Holon SDK runtime or keeps an MCP server", file)
 	}
 	return consumers, nil
+}
+
+func projectFile(dir string) string {
+	for _, name := range projectFiles {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
+			return filepath.Join(dir, name)
+		}
+	}
+	return ""
 }

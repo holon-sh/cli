@@ -9,7 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/holon-sh/protocol"
@@ -19,9 +19,6 @@ import (
 	"github.com/holon-sh/cli/pkg/scaffold"
 	"github.com/holon-sh/cli/pkg/typegen"
 )
-
-// serverName is the MCP Registry's server name pattern: a reverse-DNS namespace and a name.
-var serverName = regexp.MustCompile(`^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`)
 
 // NewInitCommand builds holon init, which creates an app.
 func NewInitCommand() *cobra.Command {
@@ -71,11 +68,10 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 			return err
 		}
 	}
-	switch language {
-	case "py", "ts":
-	case "go":
+	switch {
+	case language == "go":
 		return errors.New("--lang go is not available yet: a Go server cannot serve its view until sdk-go and Kiln support a frontend")
-	default:
+	case !slices.Contains(scaffold.Languages, language):
 		return fmt.Errorf("--lang %q: use py or ts", language)
 	}
 	if name == "" {
@@ -86,7 +82,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 			}
 		}
 	}
-	if !serverName.MatchString(name) || typegen.ServerKey(name) == "" {
+	if !typegen.ValidServerName(name) || typegen.ServerKey(name) == "" {
 		return fmt.Errorf("%s is not an MCP server name such as io.github.acme/%s", name, app)
 	}
 	manifest, appPath, err := manifestFor(dir)
@@ -114,8 +110,6 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	}
 	fmt.Fprintf(stderr, "%s: added to %s\n", app, manifest)
 
-	// Python dependencies first, so that generating finds the server's packages; generating installs
-	// the Node.js ones itself.
 	if language == "py" {
 		if _, err := exec.LookPath("uv"); err != nil {
 			return fmt.Errorf("uv is not installed (https://docs.astral.sh/uv/); install it, then run uv sync and holon types generate in %s", dirArg)
@@ -156,10 +150,8 @@ func manifestFor(dir string) (manifest, path string, err error) {
 		return "", "", err
 	}
 	if relative, err := filepath.Rel(working, dir); err == nil && relative != "." && filepath.IsLocal(relative) {
-		for _, name := range projectFiles {
-			if _, err := os.Lstat(filepath.Join(working, name)); err == nil {
-				return filepath.Join(working, name), filepath.ToSlash(relative), nil
-			}
+		if file := projectFile(working); file != "" {
+			return file, filepath.ToSlash(relative), nil
 		}
 	}
 	return filepath.Join(dir, "holon.yaml"), ".", nil

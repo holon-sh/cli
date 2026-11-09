@@ -4,7 +4,6 @@ from mcp.server import MCPServer
 from mcp.server.apps import APP_MIME_TYPE
 
 here = Path(__file__).parent
-# Holon serves the page built into dist/web at /{{.App}}/.
 frontend = here / "dist/web"
 view = "ui://{{.App}}/view.html"
 

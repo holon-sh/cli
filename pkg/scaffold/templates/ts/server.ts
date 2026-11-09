@@ -3,7 +3,6 @@ import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-// Holon serves the page built into dist/web at /{{.App}}/.
 export const frontend = new URL("./dist/web/", import.meta.url);
 const view = "ui://{{.App}}/view.html";
 
