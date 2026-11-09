@@ -23,16 +23,16 @@ const targetHelp = "TARGET is an MCP server's URL, [ALIAS=]URL to send <ALIAS>_M
 func newList() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{Use: "list TARGET", Short: "List an MCP server's tools, prompts and resources", Long: "List an MCP server's tools, prompts, resources and resource templates, after its name, version, negotiated protocol version and instructions.\n\n" + targetHelp, Example: `  # A remote server
-  holon list https://mcp.context7.com/mcp
+  holon list https://huggingface.co/mcp
 
   # A dependency the server.json here declares
-  holon list context7
+  holon list huggingface
 
   # A server that requires a token: DOCS_MCP_TOKEN is sent to it as a bearer token
   DOCS_MCP_TOKEN=... holon list docs=https://mcp.example.com/mcp
 
   # Everything the server reported, schemas included
-  holon list context7 --json`, Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+  holon list huggingface --json`, Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		session, err := connect(cmd, args[0])
 		if err != nil {
 			return err
@@ -57,16 +57,16 @@ func newCall() *cobra.Command {
 	var raw string
 	cmd := &cobra.Command{Use: "call TARGET TOOL [KEY=VALUE...]", Short: "Call a tool on an MCP server", Long: "Call a tool on an MCP server and print its result: the structured content when the tool returns some, otherwise its text. A result the tool marks as an error exits 1.\n\n" +
 		"Each KEY=VALUE is one argument. VALUE is read as JSON (5, true, [1,2], {\"a\":1}), or else as a string, so q=hello sends \"hello\"; quote a string that reads as JSON, as in id='\"123\"'. --args supplies a JSON object of arguments, which KEY=VALUE pairs override.\n\n" + targetHelp, Example: `  # Call a remote server's tool
-  holon call https://mcp.context7.com/mcp resolve-library-id libraryName=Next.js query="app router"
+  holon call https://huggingface.co/mcp hub_repo_search query=llama limit=3
 
   # A dependency the server.json here declares
-  holon call context7 resolve-library-id libraryName=Next.js query="app router"
+  holon call huggingface hub_repo_search query=llama limit=3
 
   # Arguments as a JSON object
-  holon call context7 resolve-library-id --args '{"libraryName":"Next.js","query":"app router"}'
+  holon call huggingface hub_repo_search --args '{"query":"llama","limit":3}'
 
   # The complete MCP result
-  holon call context7 resolve-library-id libraryName=Next.js query="app router" --json`, Args: cobra.MinimumNArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+  holon call huggingface hub_repo_search query=llama limit=3 --json`, Args: cobra.MinimumNArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		session, err := connect(cmd, args[0])
 		if err != nil {
 			return err

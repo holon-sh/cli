@@ -101,8 +101,7 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 		Use:   "dev [APP[=SOURCE]...]",
 		Short: "Run a development session",
 		Long: "Run apps and their required dependencies. Each app uses /<app-name>/ on the session host. " +
-			"Every change type-checks the app's calls to the apps it requires. Without --detach, the session lasts five to " +
-			"ten minutes after the command exits, for the next holon dev of the same apps to pick up.\n\n" + appsHelp,
+			"Every change type-checks the app's calls to the apps it requires.\n\n" + appsHelp,
 		Example: `  # Run every app in holon.yaml
   holon dev
 
@@ -111,7 +110,7 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 
   # Run an app from a directory, an MCP Registry server version URL, or an https MCP endpoint
   holon dev chat=../chat
-  holon dev docs=https://mcp.context7.com/mcp
+  holon dev hf=https://huggingface.co/mcp
 
   # Exit once the session is ready and print it as JSON
   holon dev --detach --json`,
