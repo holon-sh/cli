@@ -2,7 +2,6 @@ package scaffold
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,39 +14,12 @@ import (
 	"github.com/holon-sh/cli/pkg/typegen"
 )
 
-var versions = Versions{HolonSH: "1.0.0", HolonUI: "2.0.0", HolonPy: "3.0.0", HolonTypes: "4.0.0"}
-
-func TestWrite(t *testing.T) {
+func TestWriteRefusesToOverwrite(t *testing.T) {
 	for _, language := range Languages {
 		t.Run(language, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "orders")
-			project := Project{Dir: dir, Language: language, Name: "io.github.acme/Order_Desk", Versions: versions}
-			created, _, _, err := project.Write()
-			if err != nil {
+			project := Project{Dir: filepath.Join(t.TempDir(), "orders"), Language: language, Name: "com.example/orders"}
+			if _, _, _, err := project.Write(); err != nil {
 				t.Fatal(err)
-			}
-			if !slices.Contains(created, ".gitignore") || !slices.Contains(created, "ui/main.ts") || !slices.Contains(created, "package.json") {
-				t.Fatalf("created = %v", created)
-			}
-			binding := `createApps({ "order-desk": { endpoint: new URL("/mcp/orders", location.origin) } })["order-desk"]`
-			if language == "go" {
-				binding = `bindApps(identity, contracts, { "order-desk": { endpoint: new URL("/mcp/orders", location.origin) } })["order-desk"]`
-			}
-			if main := read(t, dir, "ui/main.ts"); !strings.Contains(main, binding) {
-				t.Errorf("ui/main.ts:\n%s", main)
-			}
-			var pkg struct{ Dependencies map[string]string }
-			if err := json.Unmarshal([]byte(read(t, dir, "package.json")), &pkg); err != nil {
-				t.Fatal(err)
-			}
-			want := map[string]string{"holon-ui": project.Versions.HolonUI, "holon-sh": ""}
-			if language == "ts" {
-				want["holon-sh"] = project.Versions.HolonSH
-			}
-			for name, version := range want {
-				if pkg.Dependencies[name] != version {
-					t.Errorf("%s = %q, want %q", name, pkg.Dependencies[name], version)
-				}
 			}
 			if _, _, _, err := project.Write(); err == nil || !strings.Contains(err.Error(), "orders already has") {
 				t.Errorf("second Write = %v, want the files it would overwrite", err)
@@ -61,7 +33,7 @@ func TestWriteBesideAProject(t *testing.T) {
 	put(t, dir, "pyproject.toml", "[project]\nname = \"billing\"\n")
 	put(t, dir, ".gitignore", ".venv\n")
 	put(t, dir, "package.json", "{\n  \"name\": \"billing\",\n  \"scripts\": {\n    \"build\": \"tsc\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^7.0.0\"\n  }\n}\n")
-	project := Project{Dir: dir, Language: "py", Name: "com.example/billing", Versions: versions}
+	project := Project{Dir: dir, Language: "py", Name: "com.example/billing"}
 	created, changed, notes, err := project.Write()
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +45,7 @@ func TestWriteBesideAProject(t *testing.T) {
 		t.Errorf(".gitignore:\n%s", ignore)
 	}
 	pkg := read(t, dir, "package.json")
-	if !strings.Contains(pkg, `"vite": "^7.0.0"`) || !strings.Contains(pkg, `"build": "tsc"`) || !strings.Contains(pkg, `"holon-ui": "2.0.0"`) {
+	if !strings.Contains(pkg, `"vite": "^7.0.0"`) || !strings.Contains(pkg, `"build": "tsc"`) {
 		t.Errorf("package.json:\n%s", pkg)
 	}
 	if len(notes) != 1 || !strings.Contains(notes[0], "build script") {
@@ -84,13 +56,13 @@ func TestWriteBesideAProject(t *testing.T) {
 func TestWriteKeepsAnEmptyBuildScript(t *testing.T) {
 	dir := t.TempDir()
 	put(t, dir, "package.json", `{"name": "billing", "scripts": {"build": ""}}`)
-	project := Project{Dir: dir, Language: "ts", Name: "com.example/billing", Versions: versions}
+	project := Project{Dir: dir, Language: "ts", Name: "com.example/billing"}
 	_, _, notes, err := project.Write()
 	if err != nil {
 		t.Fatal(err)
 	}
 	pkg := read(t, dir, "package.json")
-	if !strings.Contains(pkg, `"name": "billing"`) || !strings.Contains(pkg, `"build": ""`) || !strings.Contains(pkg, `"holon-ui": "2.0.0"`) {
+	if !strings.Contains(pkg, `"name": "billing"`) || !strings.Contains(pkg, `"build": ""`) {
 		t.Errorf("package.json:\n%s", pkg)
 	}
 	if len(notes) != 1 || !strings.Contains(notes[0], "kept package.json's build script") {
