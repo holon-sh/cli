@@ -91,7 +91,7 @@ def build_binary(binary: Path, target: Target, version: str) -> None:
         env |= {"CC": "musl-gcc", "CGO_LDFLAGS": "-static"}
     else:
         env |= {"MACOSX_DEPLOYMENT_TARGET": "15.0", "CGO_CFLAGS": "-O2 -g -mmacosx-version-min=15.0", "CGO_LDFLAGS": "-mmacosx-version-min=15.0"}
-    subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
+    subprocess.run(["go", "build", "-tags", "kiln", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
 
 
 def write_wheel(binary: Path, dist: Path, version: str, tags: list[str]) -> None:

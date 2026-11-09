@@ -69,7 +69,9 @@ jobs:
           uv sync --project tooling/python
           echo "$PWD/tooling/python/.venv/bin" >> "$GITHUB_PATH"
       - run: npm ci --prefix tooling/typescript
-      - run: go test -vet=all -tags="${{ runner.os == 'Linux' && 'docker' || '' }}" ./...
+      - run: go test -vet=all -tags="kiln${{ runner.os == 'Linux' && ',docker' || '' }}" ./...
+      - name: Build without Kiln, as go install does
+        run: go vet ./...
   test-package:
     name: test-package (${{ matrix.target }})
     needs: [tooling, package-launcher]
@@ -112,6 +114,7 @@ jobs:
           .venv/bin/python -c "from mcp.server.mcpserver.tools import Tool; from pydantic import TypeAdapter"
           .venv/bin/python -m mypy --version
           .venv/bin/holon --version | grep -F "$VERSION"
+          .venv/bin/holon dev -p missing.yaml 2>&1 | grep -F "read manifest"
           npm install --prefix smoke "$PWD"/dist/*.tgz "$PWD"/launcher/*.tgz
           (cd smoke && npx --no-install holon --version | grep -F "$VERSION")
       - uses: actions/upload-artifact@v4
