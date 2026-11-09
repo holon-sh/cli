@@ -34,7 +34,7 @@ holon init orders --lang py
 const { result } = await server.tools.greet({ name: name.value });
 ```
 
-`holon init` pins the newest Holon SDK releases (on npm, those that read the clients it writes), installs the dependencies (`uv` for Python, `go get` for Go, the project's package manager for Node.js), generates the clients, and adds the app to `holon.yaml`. `holon types check` then type-checks the server and the view. A Go server's contract isn't read from its source, so its view calls `greet` untyped, and `go build` type-checks the server. Run the app with [`holon dev`](https://holon-labs.dev/docs/).
+`holon init` installs the dependencies (`uv` for Python, `go get` for Go, the project's package manager for Node.js), generates the clients, and adds the app to `holon.yaml`. `holon types check` then type-checks the server and the view. A Go server's contract isn't read from its source, so its view calls `greet` untyped, and `go build` type-checks the server. Run the app with [`holon dev`](https://holon-labs.dev/docs/).
 
 In an existing Go module, Python project or Node.js project, `holon init` adds the server and the view beside the project's files, and the dependencies to its `go.mod`, `pyproject.toml` or `package.json`:
 
@@ -45,7 +45,7 @@ holon init
 
 ## Example
 
-Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example uses the public [Context7](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4) server.
+Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example uses the public [Hugging Face](https://huggingface.co/docs/hub/en/hf-mcp-server) MCP server.
 
 ```json
 {
@@ -56,7 +56,7 @@ Declare dependencies under `sh.holon.requires` in your project's [`server.json`]
     "io.modelcontextprotocol.registry/publisher-provided": {
       "sh.holon": {
         "requires": {
-          "context7": { "name": "io.github.upstash/context7", "version": "4.4.4" }
+          "huggingface": { "url": "https://huggingface.co/mcp" }
         }
       }
     }
@@ -73,7 +73,7 @@ holon types check
 Or name the servers yourself. Any `-s` replaces the whole `requires` list, so `server.json` is not needed.
 
 ```sh
-holon types check -s https://mcp.context7.com/mcp
+holon types check -s huggingface=https://huggingface.co/mcp
 ```
 
 Call the server. A wrong tool name or argument is a type error.
@@ -84,13 +84,16 @@ Call the server. A wrong tool name or argument is a type error.
 ```python
 from holon.apps import apps
 
-await apps.context7.tools.resolve_library_id(libraryName="Next.js", query="app router")
+await apps.huggingface.tools.hub_repo_search(query="llama")
 
-await apps.context7.tools.resolve_library_id(libraryName=1, query="app router")
-# error: Argument "libraryName" to "resolve_library_id" of "Context7Tools" has incompatible type "int"; expected "str"  [arg-type]
+await apps.huggingface.tools.hub_repo_search(limit="3")
+# error: Argument "limit" to "hub_repo_search" of "HuggingfaceTools" has incompatible type "str"; expected "float"  [arg-type]
 
-await apps.context7.tools.resolve_library(libraryName="Next.js", query="app router")
-# error: "Context7Tools" has no attribute "resolve_library"; maybe "resolve_library_id"?  [attr-defined]
+await apps.huggingface.tools.hub_repo_details()
+# error: Missing named argument "repo_ids" for "hub_repo_details" of "HuggingfaceTools"  [call-arg]
+
+await apps.huggingface.tools.hub_search(query="llama")
+# error: "HuggingfaceTools" has no attribute "hub_search"; maybe "hub_repo_search"?  [attr-defined]
 ```
 
 </details>
@@ -101,17 +104,16 @@ await apps.context7.tools.resolve_library(libraryName="Next.js", query="app rout
 ```ts
 import { apps } from "#holon-sh";
 
-const libraries = await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js", query: "app router" });
-libraries.content; // Context7 declares no output schema, so the complete result is returned
+await apps.huggingface.tools.hub_repo_search({ query: "llama" });
 
-await apps.context7.tools["resolve-library-id"]({ libraryName: 1, query: "app router" });
-// error TS2322: Type 'number' is not assignable to type 'string'.
+await apps.huggingface.tools.hub_repo_search({ limit: "3" });
+// error TS2322: Type 'string' is not assignable to type 'number'.
 
-await apps.context7.tools["resolve-library-id"]({ libraryName: "Next.js" });
-// error TS2741: Property '"query"' is missing in type '{ libraryName: string; }' but required in type '{ libraryName: string; query: string; }'.
+await apps.huggingface.tools.hub_repo_details({});
+// error TS2741: Property '"repo_ids"' is missing in type '{}' but required in type '{ config?: string | undefined; limit?: number | undefined; offset?: number | undefined; operations?: ("dataset_preview" | "dataset_structure" | "overview")[] | undefined; repo_ids: string[]; repo_type?: "dataset" | ... 2 more ... | undefined; split?: string | undefined; }'.
 
-await apps.context7.tools["resolve-library"]({ libraryName: "Next.js", query: "app router" });
-// error TS2551: Property 'resolve-library' does not exist on type '{ readonly "query-docs": (input: { language?: string | undefined; libraryId: string; query: string; }, options?: CallOptions | undefined) => Promise<CompleteResult<unknown>>; readonly "resolve-library-id": (input: { ...; }, options?: CallOptions | undefined) => Promise<...>; }'. Did you mean 'resolve-library-id'?
+await apps.huggingface.tools.hub_search({ query: "llama" });
+// error TS2339: Property 'hub_search' does not exist on type '{ readonly hf_fs: (input: { operations: { args: string[]; cmd: "attach" | "cat" | "find" | "ls" | "search" | "stat"; }[]; }, options?: ToolCallOptions | undefined) => Promise<{ results: ({ ...; } | { ...; })[]; truncated?: boolean | undefined; truncation_reason?: "output_budget" | undefined; }>; readonly hf_whoami: ...'.
 ```
 
 </details>
@@ -214,7 +216,7 @@ holon types check -s https://registry.modelcontextprotocol.io/v0.1/servers/io.gi
 An endpoint URL. The running server is asked for `tools/list` and `resources/list`.
 
 ```sh
-holon types check -s https://mcp.context7.com/mcp
+holon types check -s https://huggingface.co/mcp
 ```
 
 If the server requires a token, name it and set `<ALIAS>_MCP_TOKEN`. The token is sent only to that URL's origin, as a bearer token, and is not written anywhere.
@@ -235,14 +237,10 @@ holon types check -s docs=https://mcp.example.com/mcp
 Create an app in DIR, or the working directory: an MCP server in Go, Python or TypeScript, and a
 view it serves as an MCP App and as a page. The app is named after DIR.
 
-In an empty or absent DIR, holon init writes a new project. In a Go module (go.mod), a Python
-project (pyproject.toml) or a Node.js project (package.json), it adds the server and the view beside
-the project's own files: Go and Python dependencies through go get and uv, npm packages into
-package.json, and lines to .gitignore. It leaves the project's scripts and tsconfig.json as written.
+In an empty or absent DIR, holon init writes a new project.
 
-holon init pins the newest Holon SDK releases, on npm those that read the clients this holon writes,
-installs the dependencies, generates the clients, and adds the app to the working directory's
-holon.yaml when DIR is inside it, or else to DIR's.
+holon init installs the dependencies, generates the clients, and adds the app to the working
+directory's holon.yaml when DIR is inside it, or else to DIR's.
 
 Usage:
   holon init [DIR] [flags]
@@ -296,7 +294,7 @@ Examples:
   holon types generate -s ../orders
   holon types generate -s ../orders/server.py
   holon types generate -s https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4
-  holon types generate -s docs=https://mcp.context7.com/mcp
+  holon types generate -s hf=https://huggingface.co/mcp
 
   # A remote MCP server that requires a token: DOCS_MCP_TOKEN is sent to it as a bearer token
   DOCS_MCP_TOKEN=... holon types generate -s docs=https://mcp.example.com/mcp

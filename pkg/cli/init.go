@@ -30,14 +30,10 @@ func NewInitCommand() *cobra.Command {
 		Long: `Create an app in DIR, or the working directory: an MCP server in Go, Python or TypeScript, and a
 view it serves as an MCP App and as a page. The app is named after DIR.
 
-In an empty or absent DIR, holon init writes a new project. In a Go module (go.mod), a Python
-project (pyproject.toml) or a Node.js project (package.json), it adds the server and the view beside
-the project's own files: Go and Python dependencies through go get and uv, npm packages into
-package.json, and lines to .gitignore. It leaves the project's scripts and tsconfig.json as written.
+In an empty or absent DIR, holon init writes a new project.
 
-holon init pins the newest Holon SDK releases, on npm those that read the clients this holon writes,
-installs the dependencies, generates the clients, and adds the app to the working directory's
-holon.yaml when DIR is inside it, or else to DIR's.`,
+holon init installs the dependencies, generates the clients, and adds the app to the working
+directory's holon.yaml when DIR is inside it, or else to DIR's.`,
 		Example: `  # A Go app in ./orders
   holon init orders --lang go
 

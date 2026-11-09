@@ -158,7 +158,7 @@ func TestParseSource(t *testing.T) {
 		{arg: "orders=../orders/server.py", want: Source{Alias: "orders", Path: filepath.Join(cwd, "../orders/server.py")}},
 		{arg: "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4", want: Source{Registry: &protocol.RegistryRef{Name: "io.github.upstash/context7", Version: "4.4.4", Registry: "https://registry.modelcontextprotocol.io"}}},
 		{arg: "docs=https://registry.example/v0/servers/example.com%2Fdocs/versions/1.0.0", want: Source{Alias: "docs", Registry: &protocol.RegistryRef{Name: "example.com/docs", Version: "1.0.0", Registry: "https://registry.example"}}},
-		{arg: "https://mcp.context7.com/mcp", want: Source{Endpoint: "https://mcp.context7.com/mcp"}},
+		{arg: "https://huggingface.co/mcp", want: Source{Endpoint: "https://huggingface.co/mcp"}},
 	} {
 		got, err := ParseSource(test.arg)
 		if err != nil || !reflect.DeepEqual(got, test.want) {

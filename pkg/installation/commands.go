@@ -111,7 +111,7 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 
   # Run an app from a directory, an MCP Registry server version URL, or an https MCP endpoint
   holon dev chat=../chat
-  holon dev docs=https://mcp.context7.com/mcp
+  holon dev hf=https://huggingface.co/mcp
 
   # Exit once the session is ready and print it as JSON
   holon dev --detach --json`,
