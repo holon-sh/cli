@@ -37,7 +37,7 @@ func ancestors(dir string) iter.Seq[string] {
 // clients this CLI generates.
 func installedRuntime(root, pkg string) error {
 	for dir := range ancestors(root) {
-		var installed packageJSON
+		var installed PackageJSON
 		err := readTypeJSON(filepath.Join(dir, "node_modules", pkg, "package.json"), &installed)
 		if errors.Is(err, os.ErrNotExist) {
 			continue

@@ -370,7 +370,7 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 	case TargetPy:
 		request.Target = "python"
 	case TargetGo:
-		request.Target, request.GoModule = "go", goRuntimeModule
+		request.Target, request.GoModule = "go", GoRuntimeModule
 	}
 	if own.Schema != nil && alias != "" {
 		if _, exists := request.Contracts[alias]; exists {

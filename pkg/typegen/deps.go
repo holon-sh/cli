@@ -6,34 +6,45 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/modfile"
 
+	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcptype"
 )
 
-type packageJSON struct {
-	Name, Version                                                         string
+// PackageJSON is what Holon reads of a package.json.
+type PackageJSON struct {
+	Name, Version, Main                                                   string
 	PackageManager                                                        string `json:"packageManager"`
+	Scripts                                                               map[string]string
 	Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
 	Holon                                                                 struct {
 		ContractVersion int `json:"contractVersion"`
 	}
 }
 
-func (p packageJSON) declares(pkg string) bool {
+// Launches reports whether the package starts itself, through main or a start script, so that
+// Holon runs it instead of importing its server entry.
+func (p PackageJSON) Launches() bool {
+	return p.Main != "" || p.Scripts["start"] != ""
+}
+
+func (p PackageJSON) Declares(pkg string) bool {
 	return p.Dependencies[pkg] != "" || p.DevDependencies[pkg] != "" || p.PeerDependencies[pkg] != "" || p.OptionalDependencies[pkg] != ""
 }
 
 // packageManager is the project's declared package manager, else the one its nearest lockfile
 // belongs to, else npm.
-func packageManager(dir string, pkg packageJSON) string {
+func packageManager(dir string, pkg PackageJSON) string {
 	if manager, _, _ := strings.Cut(pkg.PackageManager, "@"); manager != "" {
 		return manager
 	}
@@ -50,7 +61,7 @@ func packageManager(dir string, pkg packageJSON) string {
 // PackageManager is the package manager of the Node.js project in dir: the one its package.json
 // declares, else the one its nearest lockfile belongs to, else npm.
 func PackageManager(dir string) (string, error) {
-	var manifest packageJSON
+	var manifest PackageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
@@ -70,7 +81,7 @@ func Install(ctx context.Context, consumers []Consumer, options Options) error {
 			var err error
 			switch target {
 			case TargetTS, TargetUI:
-				if err = ensureNodeRuntime(ctx, c.Dir, nodePackages[target], o); err == nil {
+				if err = ensureNodeRuntime(ctx, c.Dir, NodePackages[target], o); err == nil {
 					err = mapClients(c.Dir, target, o)
 				}
 			case TargetPy:
@@ -89,7 +100,7 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 	if installedRuntime(dir, pkg) == nil {
 		return nil
 	}
-	var manifest packageJSON
+	var manifest PackageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("%s has no package.json; create one and run npm install %s", dir, pkg)
@@ -97,7 +108,7 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 		return err
 	}
 	manager := packageManager(dir, manifest)
-	if !manifest.declares(pkg) {
+	if !manifest.Declares(pkg) {
 		verb := "add"
 		if manager == "npm" {
 			verb = installCommand
@@ -108,11 +119,7 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 	if err := validateEnv(o.Env); err != nil {
 		return err
 	}
-	command := exec.CommandContext(ctx, manager, installCommand)
-	command.Dir = dir
-	command.Env = append(command.Environ(), o.Env...)
-	command.Stdout, command.Stderr = o.Stderr, o.Stderr
-	if err := command.Run(); err != nil {
+	if err := commandenv.RunStreaming(ctx, dir, manager, []string{installCommand}, nil, append(os.Environ(), o.Env...), o.Stderr, o.Stderr); err != nil {
 		return fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
 	}
 	return installedRuntime(dir, pkg)
@@ -129,7 +136,7 @@ func mapClients(dir, target string, o Options) error {
 	if err != nil {
 		return err
 	}
-	name := "#" + nodePackages[target]
+	name := "#" + NodePackages[target]
 	if data, err = AddPackageMember(data, "imports", name, "./"+slots[target]+"/"+mcptype.TypeScriptModule); err != nil || data == nil {
 		return err
 	}
@@ -140,17 +147,8 @@ func mapClients(dir, target string, o Options) error {
 // AddPackageMember returns the package.json data with name set to value as the last member of its
 // top-level object member object, which it adds last when absent, laid out as the file lays out its
 // first member and leaving the rest as written; nil when object already has name.
-func AddPackageMember(data []byte, object, name string, value any) ([]byte, error) {
-	var encoded bytes.Buffer
-	encoder := json.NewEncoder(&encoded)
-	encoder.SetEscapeHTML(false)
-	for _, v := range []any{object, name, value} {
-		if err := encoder.Encode(v); err != nil {
-			return nil, err
-		}
-	}
-	texts := strings.Split(strings.TrimSuffix(encoded.String(), "\n"), "\n")
-	objectKey, entry := texts[0], texts[1]+": "+texts[2]
+func AddPackageMember(data []byte, object, name, value string) ([]byte, error) {
+	entry := fmt.Sprintf("%q: %q", name, value)
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 		return nil, errors.New("package.json is not a JSON object")
@@ -203,24 +201,24 @@ func AddPackageMember(data []byte, object, name string, value any) ([]byte, erro
 			return nil, err
 		}
 	}
-	return member(open, end, "", objectKey+": {"+newline+indent+indent+entry+newline+indent+"}"), nil
+	return member(open, end, "", strconv.Quote(object)+": {"+newline+indent+indent+entry+newline+indent+"}"), nil
 }
 
 // ErrNoRuntime identifies a project without a declared Holon SDK runtime.
-var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh or holon-ui in package.json, on holon-sh in pyproject.toml, or on " + goRuntimeModule + " in go.mod")
+var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh or holon-ui in package.json, on holon-sh in pyproject.toml, or on " + GoRuntimeModule + " in go.mod")
 
-// goRuntimeModule is the runtime module that generated Go clients import.
-const goRuntimeModule = "github.com/holon-sh/sdk-go"
+// GoRuntimeModule is the runtime module that generated Go clients import.
+const GoRuntimeModule = "github.com/holon-sh/sdk-go"
 
 // DeclaredTargets are the slots a project's SDK dependencies declare. None is an error.
 func DeclaredTargets(dir string) ([]string, error) {
 	var targets []string
-	var manifest packageJSON
+	var manifest PackageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	for _, target := range []string{TargetTS, TargetUI} {
-		if manifest.declares(nodePackages[target]) {
+		if manifest.Declares(NodePackages[target]) {
 			targets = append(targets, target)
 		}
 	}
@@ -238,17 +236,98 @@ func DeclaredTargets(dir string) ([]string, error) {
 
 func requiresGoRuntime(data []byte) bool {
 	file, err := modfile.ParseLax("go.mod", data, nil)
-	return err == nil && slices.ContainsFunc(file.Require, func(require *modfile.Require) bool { return require.Mod.Path == goRuntimeModule })
+	return err == nil && slices.ContainsFunc(file.Require, func(require *modfile.Require) bool { return require.Mod.Path == GoRuntimeModule })
 }
 
-var pythonRuntime = regexp.MustCompile(`(?im)(?:^|["'\s])holon[-_]sh(?:\[|[\s"'<=>!~;]|$)`)
+// PythonRuntime is the Python package that generated Python clients import.
+const PythonRuntime = "holon-sh"
 
 // ensurePythonRuntime requires holon-sh among the project's declared Python dependencies.
 func ensurePythonRuntime(dir string) error {
-	for _, name := range []string{"pyproject.toml", "requirements.txt", "requirements.in"} {
-		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil && pythonRuntime.Match(data) {
-			return nil
+	declared, err := PythonDependencies(dir)
+	if err != nil {
+		return err
+	}
+	if !declared[PythonRuntime] {
+		return fmt.Errorf("%s does not depend on holon-sh; run uv add holon-sh (or add it to requirements.txt)", dir)
+	}
+	return nil
+}
+
+// requirementName captures the project name a Python requirement starts with.
+var requirementName = regexp.MustCompile(`^\s*([A-Za-z0-9][A-Za-z0-9._-]*)`)
+
+var nameSeparators = regexp.MustCompile(`[-_.]+`)
+
+// PythonName is a Python requirement's project name, normalized as PEP 503 compares names.
+func PythonName(requirement string) string {
+	match := requirementName.FindStringSubmatch(requirement)
+	if match == nil {
+		return ""
+	}
+	return strings.ToLower(nameSeparators.ReplaceAllString(match[1], "-"))
+}
+
+// PythonDependencies are the projects a Python project in dir declares, by PythonName: in
+// pyproject.toml's dependencies, optional dependencies, dependency groups, and uv and Poetry
+// development dependencies, and in requirements.txt and requirements.in.
+func PythonDependencies(dir string) (map[string]bool, error) {
+	declared := map[string]bool{}
+	note := func(requirements ...string) {
+		for _, requirement := range requirements {
+			if name := PythonName(requirement); name != "" {
+				declared[name] = true
+			}
 		}
 	}
-	return fmt.Errorf("%s does not depend on holon-sh; run uv add holon-sh (or add it to requirements.txt)", dir)
+	for _, name := range []string{"requirements.txt", "requirements.in"} {
+		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+			note(strings.Split(string(data), "\n")...)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))
+	if errors.Is(err, os.ErrNotExist) {
+		return declared, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var project struct {
+		Project struct {
+			Dependencies         []string            `toml:"dependencies"`
+			OptionalDependencies map[string][]string `toml:"optional-dependencies"`
+		} `toml:"project"`
+		Groups map[string][]any `toml:"dependency-groups"`
+		Tool   struct {
+			UV struct {
+				Dev []string `toml:"dev-dependencies"`
+			} `toml:"uv"`
+			Poetry struct {
+				Dependencies map[string]any `toml:"dependencies"`
+				Group        map[string]struct {
+					Dependencies map[string]any `toml:"dependencies"`
+				} `toml:"group"`
+			} `toml:"poetry"`
+		} `toml:"tool"`
+	}
+	if err := toml.Unmarshal(data, &project); err != nil {
+		return nil, fmt.Errorf("%s: %w", filepath.Join(dir, "pyproject.toml"), err)
+	}
+	note(project.Project.Dependencies...)
+	note(project.Tool.UV.Dev...)
+	for _, optional := range project.Project.OptionalDependencies {
+		note(optional...)
+	}
+	for _, group := range project.Groups {
+		for _, entry := range group {
+			if requirement, ok := entry.(string); ok {
+				note(requirement)
+			}
+		}
+	}
+	note(slices.Collect(maps.Keys(project.Tool.Poetry.Dependencies))...)
+	for _, group := range project.Tool.Poetry.Group {
+		note(slices.Collect(maps.Keys(group.Dependencies))...)
+	}
+	return declared, nil
 }

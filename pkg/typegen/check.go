@@ -11,22 +11,22 @@ import (
 	"github.com/holon-sh/cli/pkg/tooling"
 )
 
+// checkers type-check each target's clients; the Go compiler checks Go's.
+var checkers = map[string]string{TargetTS: "typescript", TargetUI: "typescript", TargetPy: "python"}
+
 func Check(ctx context.Context, dir string, options Options) error {
 	o := options.defaults()
 	targets, err := DeclaredTargets(dir)
 	if err != nil {
 		return err
 	}
-	// The Go compiler checks Go clients, so a Go project's view is all that is left to check here.
-	if slices.Equal(targets, []string{TargetGo}) {
-		return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
-	}
 	var languages []string
 	for _, target := range targets {
-		if target == TargetGo {
+		language, ok := checkers[target]
+		if !ok {
 			continue
 		}
-		if pkg, ok := nodePackages[target]; ok {
+		if pkg, ok := NodePackages[target]; ok {
 			if err := installedRuntime(dir, pkg); err != nil {
 				return err
 			}
@@ -34,11 +34,10 @@ func Check(ctx context.Context, dir string, options Options) error {
 		if !generatedSlot(dir, target) {
 			return fmt.Errorf("%s has no generated clients; run holon types generate", SlotDirectory(dir, target))
 		}
-		language := "typescript"
-		if target == TargetPy {
-			language = "python"
-		}
 		languages = append(languages, language)
+	}
+	if len(languages) == 0 {
+		return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
 	}
 	root, err := os.MkdirTemp("", "holon-types-")
 	if err != nil {

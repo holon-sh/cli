@@ -265,7 +265,7 @@ func loadDockerImage(t *testing.T, source content.ReadOnlyStorage, descriptor oc
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		_ = commandenv.RunStreaming(ctx, "docker", []string{"image", "rm", tag}, nil, nil, io.Discard, io.Discard)
+		_ = commandenv.RunStreaming(ctx, "", "docker", []string{"image", "rm", tag}, nil, nil, io.Discard, io.Discard)
 	})
 }
 
@@ -274,7 +274,7 @@ func dockerTest(t *testing.T, args ...string) string {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	var output strings.Builder
-	if err := commandenv.RunStreaming(ctx, "docker", args, nil, nil, &output, os.Stderr); err != nil {
+	if err := commandenv.RunStreaming(ctx, "", "docker", args, nil, nil, &output, os.Stderr); err != nil {
 		t.Fatalf("docker %v: %v\n%s", args, err, output.String())
 	}
 	return strings.TrimSpace(output.String())

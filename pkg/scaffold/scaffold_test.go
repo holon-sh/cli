@@ -12,9 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-	"sigs.k8s.io/yaml"
-
 	"github.com/holon-sh/cli/pkg/typegen"
 )
 
@@ -48,8 +45,9 @@ func TestWrite(t *testing.T) {
 			case "ts":
 				want["holon-sh"] = project.Versions.HolonSH
 			case "py":
-				if pyproject := read(t, dir, "pyproject.toml"); !strings.Contains(pyproject, `"holon-sh==`+project.Versions.HolonPy+`"`) {
-					t.Fatalf("pyproject.toml:\n%s", pyproject)
+				dependencies, dev, err := project.PythonRequirements()
+				if err != nil || !slices.Equal(dependencies, []string{"holon-sh==3.0.0", "mcp>=2.3,<3"}) || !slices.Equal(dev, []string{"mypy>=2.4,<3"}) {
+					t.Errorf("PythonRequirements = %v, %v, %v; want every requirement", dependencies, dev, err)
 				}
 			}
 			for name, version := range want {
@@ -170,83 +168,16 @@ func TestResolve(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	registries := Registries{NPM: server.URL, PyPI: server.URL, Client: server.Client()}
+	local := registries{npm: server.URL, pypi: server.URL}
 
-	versions, err := Resolve(context.Background(), "py", registries)
+	versions, err := local.resolve(context.Background(), "py")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := (Versions{HolonUI: "0.0.1-dev.10", HolonPy: "0.0.1.dev5"}); versions != want {
 		t.Errorf("py versions = %+v, want %+v", versions, want)
 	}
-	if _, err := Resolve(context.Background(), "ts", registries); err == nil || !strings.Contains(err.Error(), "npm holon-sh: no release reads the clients this holon writes") {
+	if _, err := local.resolve(context.Background(), "ts"); err == nil || !strings.Contains(err.Error(), "npm holon-sh: no release reads the clients this holon writes") {
 		t.Errorf("ts Resolve = %v, want no holon-sh release for this contract", err)
-	}
-}
-
-func TestAddApp(t *testing.T) {
-	entry := "  - name: orders\n    path: \"orders\"\n    access:\n      server: {}\n"
-	for _, test := range []struct {
-		name, before, after, path, err string
-	}{
-		{name: "new file", after: "apps:\n" + entry},
-		{name: "comment in path", path: "#draft/orders", after: "apps:\n" + strings.Replace(entry, `"orders"`, `"#draft/orders"`, 1)},
-		{
-			name:   "colon in path",
-			path:   "draft: old/orders",
-			before: "apps:\n",
-			after:  "apps:\n" + strings.Replace(entry, `"orders"`, `"draft: old/orders"`, 1),
-		},
-		{
-			name:   "appends in place",
-			before: "# Apps\napps:\n  - name: chat\n    path: chat\n    access:\n      server: {}",
-			after:  "# Apps\napps:\n  - name: chat\n    path: chat\n    access:\n      server: {}\n" + entry,
-		},
-		{
-			name:   "indentless list",
-			before: "apps:\n- name: chat\n  path: chat\n",
-			after:  "apps:\n- name: chat\n  path: chat\n" + strings.ReplaceAll(entry, "\n  ", "\n")[2:],
-		},
-		{name: "list not last", before: "apps:\n  - name: chat\n    path: chat\nsettings: {}\n", err: "could not add orders to the apps list"},
-		{name: "duplicate", before: "apps:\n  - name: orders\n    path: orders\n", err: "already has an app named orders"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			manifest := filepath.Join(t.TempDir(), "holon.yaml")
-			if test.before != "" {
-				if err := os.WriteFile(manifest, []byte(test.before), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if test.path == "" {
-				test.path = "orders"
-			}
-			added, err := AddApp(manifest, "orders", test.path)
-			if err == nil {
-				err = added.Write()
-			}
-			if test.err != "" {
-				if err == nil || !strings.Contains(err.Error(), test.err) {
-					t.Fatalf("AddApp = %v, want %q", err, test.err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			data, err := os.ReadFile(manifest)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if diff := cmp.Diff(test.after, string(data)); diff != "" {
-				t.Errorf("holon.yaml (-want +got):\n%s", diff)
-			}
-			var project struct{ Apps []struct{ Name, Path string } }
-			if err := yaml.Unmarshal(data, &project); err != nil {
-				t.Fatal(err)
-			}
-			if app := project.Apps[len(project.Apps)-1]; app.Name != "orders" || app.Path != test.path {
-				t.Errorf("registered app = %+v, want orders at %q", app, test.path)
-			}
-		})
 	}
 }

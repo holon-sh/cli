@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/scaffold"
 	"github.com/holon-sh/cli/pkg/typegen"
 )
@@ -111,12 +112,12 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	if err != nil {
 		return err
 	}
-	manifest, err := scaffold.AddApp(manifestPath, app, appPath)
+	manifest, err := addApp(manifestPath, app, appPath)
 	if err != nil {
 		return err
 	}
 
-	if project.Versions, err = scaffold.Resolve(cmd.Context(), language, scaffold.DefaultRegistries()); err != nil {
+	if project.Versions, err = scaffold.Resolve(cmd.Context(), language); err != nil {
 		return err
 	}
 	stderr := cmd.ErrOrStderr()
@@ -130,50 +131,57 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	if len(changed) > 0 {
 		fmt.Fprintf(stderr, "%s: updated %s\n", app, strings.Join(changed, ", "))
 	}
-	if err := manifest.Write(); err != nil {
+	if err := manifest.write(); err != nil {
 		return err
 	}
-	fmt.Fprintf(stderr, "%s: added to %s\n", app, scaffold.Relative(manifest.Path))
+	fmt.Fprintf(stderr, "%s: added to %s\n", app, scaffold.Relative(manifest.path))
 
-	var commands [][]string
-	switch language {
-	case "go":
-		commands = append(commands, []string{"go", "get", "github.com/holon-sh/sdk-go@latest"})
-	case "py":
-		dependencies, dev, err := project.PythonRequirements()
-		if err != nil {
-			return err
+	run := func(args ...string) error {
+		fmt.Fprintf(stderr, "%s: %s\n", app, strings.Join(args, " "))
+		if err := commandenv.RunStreaming(cmd.Context(), dir, args[0], args[1:], nil, nil, stderr, stderr); err != nil {
+			return fmt.Errorf("%s in %s: %w", strings.Join(args, " "), dirArg, err)
 		}
-		if len(dependencies) > 0 {
-			commands = append(commands, append([]string{"uv", "add"}, dependencies...))
-		}
-		if len(dev) > 0 {
-			commands = append(commands, append([]string{"uv", "add", "--dev"}, dev...))
-		}
-		commands = append(commands, []string{"uv", "sync"})
+		return nil
 	}
 	manager, err := typegen.PackageManager(dir)
 	if err != nil {
 		return err
 	}
-	commands = append(commands, []string{manager, "install"})
-	for _, command := range commands {
-		if err = execute(cmd, dir, dirArg, command...); err != nil {
-			break
+	install := func() error {
+		var commands [][]string
+		switch language {
+		case typegen.TargetGo:
+			commands = append(commands, []string{"go", "get", typegen.GoRuntimeModule + "@latest"})
+		case typegen.TargetPy:
+			dependencies, dev, err := project.PythonRequirements()
+			if err != nil {
+				return err
+			}
+			if len(dependencies) > 0 {
+				commands = append(commands, append([]string{"uv", "add", "--frozen"}, dependencies...))
+			}
+			if len(dev) > 0 {
+				commands = append(commands, append([]string{"uv", "add", "--frozen", "--dev"}, dev...))
+			}
+			commands = append(commands, []string{"uv", "sync"})
 		}
-	}
-	if err == nil {
-		var c typegen.Consumer
-		if c, err = consumer(dir, nil); err == nil {
-			err = typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: io.Discard, Stderr: stderr})
+		for _, command := range append(commands, []string{manager, "install"}) {
+			if err := run(command...); err != nil {
+				return err
+			}
 		}
+		c, err := consumer(dir, nil)
+		if err != nil {
+			return err
+		}
+		return typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: io.Discard, Stderr: stderr})
 	}
-	if err != nil {
+	if err := install(); err != nil {
 		return fmt.Errorf("%w\nthe app is written; run holon types generate in %s once that is fixed", err, dirArg)
 	}
-	if language == "go" {
+	if language == typegen.TargetGo {
 		for _, command := range [][]string{{manager, "run", "build"}, {"go", "mod", "tidy"}} {
-			if err := execute(cmd, dir, dirArg, command...); err != nil {
+			if err := run(command...); err != nil {
 				return err
 			}
 		}
@@ -197,21 +205,8 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 
 // tools are the toolchains an app in a language needs besides Node.js.
 var tools = map[string]struct{ name, download string }{
-	"go": {"go", "https://go.dev/dl/"},
-	"py": {"uv", "https://docs.astral.sh/uv/"},
-}
-
-// execute runs a command in dir, the app's directory, which the user named dirArg.
-func execute(cmd *cobra.Command, dir, dirArg string, args ...string) error {
-	command := strings.Join(args, " ")
-	stderr := cmd.ErrOrStderr()
-	fmt.Fprintf(stderr, "%s: %s\n", scaffold.AppName(dir), command)
-	run := exec.CommandContext(cmd.Context(), args[0], args[1:]...)
-	run.Dir, run.Stdout, run.Stderr = dir, stderr, stderr
-	if err := run.Run(); err != nil {
-		return fmt.Errorf("%s in %s: %w", command, dirArg, err)
-	}
-	return nil
+	typegen.TargetGo: {"go", "https://go.dev/dl/"},
+	typegen.TargetPy: {"uv", "https://docs.astral.sh/uv/"},
 }
 
 // manifestFor is the holon.yaml an app in dir joins, and the app's path in it: the working
@@ -221,7 +216,7 @@ func manifestFor(dir string) (manifest, path string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	if relative, err := filepath.Rel(working, dir); err == nil && relative != "." && filepath.IsLocal(relative) {
+	if relative, err := filepath.Rel(working, dir); err == nil && filepath.IsLocal(relative) {
 		if file := projectFile(working); file != "" {
 			return file, filepath.ToSlash(relative), nil
 		}

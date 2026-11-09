@@ -6,7 +6,7 @@ const greeting = document.querySelector<HTMLOutputElement>("#greeting")!;
 
 const view = import.meta.env.MODE === "mcp" ? new App({ name: "{{.App}}", version: "0.1.0" }) : undefined;
 await view?.connect();
-const server = view ?? createApps({ {{.KeyJSON}}: { endpoint: new URL("/mcp/{{.App}}", location.origin) } })[{{.KeyJSON}}];
+const server = view ?? createApps({ "{{.Key}}": { endpoint: new URL("/mcp/{{.App}}", location.origin) } })["{{.Key}}"];
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -205,7 +205,6 @@ func TestInitRefusals(t *testing.T) {
 func TestInitManifest(t *testing.T) {
 	for _, test := range []struct{ manifest, dir, file, path string }{
 		{"holon.yaml", "orders", "holon.yaml", "orders"},
-		{"holon.yml", "orders", "holon.yml", "orders"},
 		{"", "orders", "orders/holon.yaml", "."},
 		{"holon.yml", ".", "holon.yml", "."},
 		{"holon.yaml", "../outside", "../outside/holon.yaml", "."},

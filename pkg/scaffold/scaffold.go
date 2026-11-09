@@ -14,13 +14,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"text/template"
-
-	"github.com/pelletier/go-toml/v2"
 
 	"github.com/holon-sh/cli/pkg/typegen"
 )
@@ -36,7 +32,7 @@ type Versions struct {
 }
 
 // Languages are the languages an app can be written in, by their --lang names.
-var Languages = []string{"go", "py", "ts"}
+var Languages = []string{typegen.TargetGo, typegen.TargetPy, typegen.TargetTS}
 
 // Project is an app in Dir, whose MCP server is named Name.
 type Project struct {
@@ -49,111 +45,92 @@ func AppName(dir string) string {
 	return typegen.ServerKey(filepath.Base(dir))
 }
 
-// manifests are the files a language's existing project keeps its dependencies in.
-var manifests = map[string]string{"go": "go.mod", "py": "pyproject.toml", "ts": "package.json"}
-
 // build builds the view: a page into dist/web, and the single file the server returns into dist/mcp.
 const build = "vite build && vite build --mode mcp"
+
+// shared are the files an existing project may already have: the app merges into package.json and
+// .gitignore, and leaves the others as written.
+var shared = []string{"package.json", ".gitignore", "tsconfig.json", "pyproject.toml", "go.mod", ".python-version"}
 
 // Detect reports whether dir holds a project, and the languages an app there can be written in: any
 // into an empty or absent directory, and otherwise the languages whose manifests dir has.
 func Detect(dir string) (languages []string, existing bool, err error) {
-	if err := Empty(dir); err == nil {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) || err == nil && len(entries) == 0 {
 		return Languages, false, nil
-	} else if !errors.Is(err, errNotEmpty) {
+	}
+	if err != nil {
 		return nil, false, err
 	}
 	for _, language := range Languages {
-		if isFile(filepath.Join(dir, manifests[language])) {
+		if isFile(filepath.Join(dir, typegen.Manifests[language])) {
 			languages = append(languages, language)
 		}
 	}
 	return languages, true, nil
 }
 
-var errNotEmpty = errors.New("not empty")
-
-// Empty accepts an empty or absent directory.
-func Empty(dir string) error {
-	entries, err := os.ReadDir(dir)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return nil
-	case err != nil:
-		return err
-	case len(entries) > 0:
-		return fmt.Errorf("%s is %w", dir, errNotEmpty)
-	}
-	return nil
-}
-
 // Check reports why the app cannot be written: in an existing project, a file the app adds that is
 // already there, another server entry, or a project Holon would not run the server of.
 func (p Project) Check() error {
-	_, _, err := p.check()
-	return err
-}
-
-func (p Project) check() (files map[string][]byte, existing bool, err error) {
-	if _, ok := manifests[p.Language]; !ok {
-		return nil, false, fmt.Errorf("unsupported language %q", p.Language)
-	}
-	_, existing, err = Detect(p.Dir)
-	if err != nil {
-		return nil, existing, err
-	}
-	files, err = p.render()
+	_, existing, err := Detect(p.Dir)
 	if err != nil || !existing {
-		return files, existing, err
+		return err
 	}
 	base := filepath.Base(p.Dir)
-	manifest := manifests[p.Language]
-	if !isFile(filepath.Join(p.Dir, manifest)) {
-		return nil, existing, fmt.Errorf("%s has no %s: holon init adds a %s app beside one, or creates the app in an empty directory", base, manifest, p.Language)
+	manifest := filepath.Join(p.Dir, typegen.Manifests[p.Language])
+	if !isFile(manifest) {
+		return fmt.Errorf("%s has no %s: holon init adds a %s app beside one, or creates the app in an empty directory", base, filepath.Base(manifest), p.Language)
 	}
-	for _, lock := range []string{"poetry.lock", "pdm.lock"} {
-		if p.Language == "py" && isFile(filepath.Join(p.Dir, lock)) {
-			return nil, existing, fmt.Errorf("%s has %s: holon init adds Python dependencies with uv, so create the app in its own directory instead, such as holon init %s", base, lock, p.beside())
+	switch p.Language {
+	case typegen.TargetPy:
+		for _, lock := range []string{"poetry.lock", "pdm.lock"} {
+			if isFile(filepath.Join(p.Dir, lock)) {
+				return fmt.Errorf("%s has %s: holon init adds Python dependencies with uv, so create the app in its own directory instead, such as holon init %s", base, lock, p.beside())
+			}
+		}
+	case typegen.TargetTS:
+		var pkg typegen.PackageJSON
+		data, err := os.ReadFile(manifest)
+		if err == nil {
+			err = json.Unmarshal(data, &pkg)
+		}
+		if err != nil {
+			return err
+		}
+		if pkg.Launches() {
+			return fmt.Errorf("%s's package.json has main or a start script, which Holon would run instead of server.ts; create the app in its own directory instead, such as holon init %s", base, p.beside())
 		}
 	}
-	if p.Language == "ts" {
-		var pkg struct {
-			Main    string            `json:"main"`
-			Scripts map[string]string `json:"scripts"`
-		}
-		if err := readJSON(filepath.Join(p.Dir, "package.json"), &pkg); err != nil {
-			return nil, existing, err
-		}
-		if pkg.Main != "" || pkg.Scripts["start"] != "" {
-			return nil, existing, fmt.Errorf("%s's package.json has main or a start script, which Holon would run instead of server.ts; create the app in its own directory instead, such as holon init %s", base, p.beside())
-		}
+	files, err := p.templates()
+	if err != nil {
+		return err
 	}
 	var conflicts []string
 	if entry, err := typegen.SourceEntry(p.Dir); err != nil || entry != "" {
 		conflicts = append(conflicts, cmp.Or(entry, "server entries"))
 	}
-	if p.Language == "go" {
-		if sources, _ := filepath.Glob(filepath.Join(p.Dir, "*.go")); len(sources) > 0 {
-			conflicts = append(conflicts, filepath.Base(sources[0]))
+	patterns := []string{"vite.config.*"}
+	if p.Language == typegen.TargetGo {
+		patterns = append(patterns, "*.go")
+	}
+	for _, pattern := range patterns {
+		matches, _ := filepath.Glob(filepath.Join(p.Dir, pattern))
+		for _, match := range matches {
+			conflicts = append(conflicts, filepath.Base(match))
 		}
 	}
-	for _, name := range []string{"vite.config.ts", "vite.config.js", "vite.config.mjs", "vite.config.mts", "vite.config.cjs", "vite.config.cts"} {
-		if exists(filepath.Join(p.Dir, name)) {
-			conflicts = append(conflicts, name)
-		}
-	}
-	for _, name := range slices.Sorted(maps.Keys(files)) {
+	for name := range files {
 		top, _, _ := strings.Cut(name, "/")
-		if policies[name] == "" && exists(filepath.Join(p.Dir, top)) {
+		if !slices.Contains(shared, name) && exists(filepath.Join(p.Dir, top)) {
 			conflicts = append(conflicts, top)
 		}
 	}
 	slices.Sort(conflicts)
-	conflicts = slices.Compact(conflicts)
-	if len(conflicts) > 0 {
-		return nil, existing, fmt.Errorf("%s already has %s; create the app in its own directory instead, such as holon init %s", base, strings.Join(conflicts, ", "), p.beside())
+	if conflicts = slices.Compact(conflicts); len(conflicts) > 0 {
+		return fmt.Errorf("%s already has %s; create the app in its own directory instead, such as holon init %s", base, strings.Join(conflicts, ", "), p.beside())
 	}
-	return files, existing, nil
+	return nil
 }
 
 // beside is a directory of its own to suggest for the app, inside the project, as the working
@@ -172,96 +149,66 @@ func Relative(path string) string {
 	return path
 }
 
-// policies say how Write treats a file the project may already have: merge into it, keep it, or
-// write it only into a new project. Other files must be absent.
-var policies = map[string]string{
-	"package.json":    "merge",
-	".gitignore":      "merge",
-	"tsconfig.json":   "keep",
-	"pyproject.toml":  "keep",
-	"go.mod":          "keep",
-	".python-version": "new",
-}
-
 // Write writes the app after Check accepts it, and returns the files it created and those it
-// changed. An existing project keeps its pyproject.toml, tsconfig.json and scripts, gains the npm
-// packages the app needs in its package.json, and gains the app's lines in its .gitignore; notes say
-// what the project may still need.
+// changed. An existing project keeps its manifest, tsconfig.json and scripts, gains the npm packages
+// the app needs in its package.json and the app's lines in its .gitignore; notes say what the
+// project may still need.
 func (p Project) Write() (created, changed, notes []string, err error) {
-	files, existing, err := p.check()
+	if err := p.Check(); err != nil {
+		return nil, nil, nil, err
+	}
+	existing := isFile(filepath.Join(p.Dir, typegen.Manifests[p.Language]))
+	files, err := p.render()
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		data, target := files[name], filepath.Join(p.Dir, filepath.FromSlash(name))
-		present := isFile(target)
-		switch policies[name] {
-		case "keep":
+		current, err := os.ReadFile(target)
+		present := err == nil
+		switch {
+		case name == ".python-version" && existing:
+			continue
+		case present && slices.Contains([]string{"tsconfig.json", "pyproject.toml", "go.mod"}, name):
+			if name == "tsconfig.json" {
+				notes = append(notes, "kept tsconfig.json: holon types check uses it, so it must include ui/ with the DOM library and the node and vite/client types")
+			}
+			continue
+		case name == ".gitignore" && present:
+			data = appendLines(current, data)
+		case name == "package.json":
 			if present {
-				if name == "tsconfig.json" {
-					notes = append(notes, "kept tsconfig.json: holon types check uses it, so it must include ui/ with the DOM library and the node and vite/client types")
-				}
-				continue
+				data = current
 			}
-		case "new":
-			if existing {
-				continue
+			var note string
+			if data, note, err = p.addPackages(data); err != nil {
+				return created, changed, notes, fmt.Errorf("%s: %w", target, err)
 			}
-		case "merge":
-			var current []byte
-			if present {
-				if current, err = os.ReadFile(target); err != nil {
-					return created, changed, notes, err
-				}
-				if name == ".gitignore" {
-					data = appendLines(current, data)
-				} else {
-					data = current
-				}
-			}
-			if name == "package.json" {
-				var note string
-				if data, note, err = p.addPackages(data); err != nil {
-					return created, changed, notes, fmt.Errorf("%s: %w", target, err)
-				}
-				if note != "" {
-					notes = append(notes, note)
-				}
-			}
-			if present {
-				if bytes.Equal(current, data) {
-					continue
-				}
-				if err := os.WriteFile(target, data, 0o644); err != nil {
-					return created, changed, notes, err
-				}
-				changed = append(changed, name)
-				continue
+			if note != "" {
+				notes = append(notes, note)
 			}
 		}
-		if err := create(target, data); err != nil {
-			return created, changed, notes, err
+		switch {
+		case !present:
+			if err := create(target, data); err != nil {
+				return created, changed, notes, err
+			}
+			created = append(created, name)
+		case !bytes.Equal(current, data):
+			if err := os.WriteFile(target, data, 0o644); err != nil {
+				return created, changed, notes, err
+			}
+			changed = append(changed, name)
 		}
-		created = append(created, name)
 	}
 	return created, changed, notes, nil
 }
 
-// render executes the language's templates and then the view's that the language has no file for,
-// by their paths in the project. Go files are kept as .tmpl, so that a go.mod leaves no directory
-// out of the embed and no .go file builds with the CLI.
-func (p Project) render() (map[string][]byte, error) {
-	key, err := json.Marshal(typegen.ServerKey(p.Name))
-	if err != nil {
-		return nil, err
-	}
-	dependencies, dev := p.pythonRequirements()
-	data := struct {
-		App, Name, KeyJSON string
-		Python             struct{ Dependencies, Dev string }
-	}{App: AppName(p.Dir), Name: p.Name, KeyJSON: string(key)}
-	data.Python.Dependencies, data.Python.Dev = tomlArray(dependencies), tomlArray(dev)
-	files := map[string][]byte{}
+// templates maps each file of the app to the template it is rendered from: the language's own, and
+// the view's that the language has none for. Go files are kept as .tmpl, so that a go.mod leaves no
+// directory out of the embed and no .go file builds with the CLI; dotfiles are kept as _name.
+func (p Project) templates() (map[string]string, error) {
+	files := map[string]string{}
 	for _, root := range []string{"templates/" + p.Language, "templates/ui"} {
 		err := fs.WalkDir(templates, root, func(name string, entry fs.DirEntry, err error) error {
 			if err != nil || entry.IsDir() {
@@ -271,22 +218,9 @@ func (p Project) render() (map[string][]byte, error) {
 			if base := path.Base(relative); strings.HasPrefix(base, "_") {
 				relative = path.Join(path.Dir(relative), "."+base[1:])
 			}
-			if _, ok := files[relative]; ok {
-				return nil
+			if _, ok := files[relative]; !ok {
+				files[relative] = name
 			}
-			source, err := templates.ReadFile(name)
-			if err != nil {
-				return err
-			}
-			parsed, err := template.New(name).Option("missingkey=error").Parse(string(source))
-			if err != nil {
-				return err
-			}
-			var rendered bytes.Buffer
-			if err := parsed.Execute(&rendered, data); err != nil {
-				return err
-			}
-			files[relative] = rendered.Bytes()
 			return nil
 		})
 		if err != nil {
@@ -296,20 +230,43 @@ func (p Project) render() (map[string][]byte, error) {
 	return files, nil
 }
 
+// render executes the app's templates, by the paths of their files in the project.
+func (p Project) render() (map[string][]byte, error) {
+	sources, err := p.templates()
+	if err != nil {
+		return nil, err
+	}
+	data := struct{ App, Name, Key string }{AppName(p.Dir), p.Name, typegen.ServerKey(p.Name)}
+	files := map[string][]byte{}
+	for relative, name := range sources {
+		source, err := templates.ReadFile(name)
+		if err != nil {
+			return nil, err
+		}
+		parsed, err := template.New(name).Parse(string(source))
+		if err != nil {
+			return nil, err
+		}
+		var rendered bytes.Buffer
+		if err := parsed.Execute(&rendered, data); err != nil {
+			return nil, err
+		}
+		files[relative] = rendered.Bytes()
+	}
+	return files, nil
+}
+
 // addPackages adds the npm packages the app needs to package.json data, keeping any version the
 // project already declares, and the view's build script when the project has none.
 func (p Project) addPackages(data []byte) ([]byte, string, error) {
-	var pkg struct {
-		Scripts                                                               map[string]string
-		Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
-	}
+	var pkg typegen.PackageJSON
 	if err := json.Unmarshal(data, &pkg); err != nil {
 		return nil, "", err
 	}
-	dependencies := map[string]string{"@modelcontextprotocol/ext-apps": "^2.0.4", "holon-ui": p.Versions.HolonUI}
-	if p.Language == "ts" {
+	dependencies := map[string]string{"@modelcontextprotocol/ext-apps": "^2.0.4", typegen.NodePackages[typegen.TargetUI]: p.Versions.HolonUI}
+	if p.Language == typegen.TargetTS {
 		dependencies["@modelcontextprotocol/server"] = "^2.4.0"
-		dependencies["holon-sh"] = p.Versions.HolonSH
+		dependencies[typegen.NodePackages[typegen.TargetTS]] = p.Versions.HolonSH
 		dependencies["zod"] = "^4.6.7"
 	}
 	dev := map[string]string{"@types/node": "^26.6.6", "typescript": "^7.0.2", "vite": "^8.3.7", "vite-plugin-singlefile": "^2.3.4"}
@@ -318,7 +275,7 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 		packages map[string]string
 	}{{"dependencies", dependencies}, {"devDependencies", dev}} {
 		for _, name := range slices.Sorted(maps.Keys(section.packages)) {
-			if pkg.Dependencies[name] != "" || pkg.DevDependencies[name] != "" || pkg.PeerDependencies[name] != "" || pkg.OptionalDependencies[name] != "" {
+			if pkg.Declares(name) {
 				continue
 			}
 			updated, err := typegen.AddPackageMember(data, section.name, name, section.packages[name])
@@ -341,73 +298,17 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	}
 }
 
-// requirement captures a Python requirement's project name.
-var requirement = regexp.MustCompile(`^\s*([A-Za-z0-9][A-Za-z0-9._-]*)`)
-
-// PythonRequirements are the requirements the app needs that its pyproject.toml does not declare:
-// dependencies, and development ones in any dependency group.
+// PythonRequirements are the requirements the app needs that its Python project does not declare:
+// dependencies, and development ones.
 func (p Project) PythonRequirements() (dependencies, dev []string, err error) {
-	data, err := os.ReadFile(filepath.Join(p.Dir, "pyproject.toml"))
+	declared, err := typegen.PythonDependencies(p.Dir)
 	if err != nil {
 		return nil, nil, err
 	}
-	var project struct {
-		Project struct {
-			Dependencies []string `toml:"dependencies"`
-		} `toml:"project"`
-		Groups map[string][]any `toml:"dependency-groups"`
-		Tool   struct {
-			UV struct {
-				Dev []string `toml:"dev-dependencies"`
-			} `toml:"uv"`
-		} `toml:"tool"`
-	}
-	if err := toml.Unmarshal(data, &project); err != nil {
-		return nil, nil, fmt.Errorf("pyproject.toml: %w", err)
-	}
-	declared := map[string]bool{}
-	note := func(entries []string) {
-		for _, entry := range entries {
-			if match := requirement.FindStringSubmatch(entry); match != nil {
-				declared[pythonName(match[1])] = true
-			}
-		}
-	}
-	note(project.Project.Dependencies)
-	note(project.Tool.UV.Dev)
-	for _, group := range project.Groups {
-		for _, entry := range group {
-			if text, ok := entry.(string); ok {
-				note([]string{text})
-			}
-		}
-	}
 	missing := func(requirements ...string) []string {
-		return slices.DeleteFunc(requirements, func(r string) bool {
-			return declared[pythonName(requirement.FindStringSubmatch(r)[1])]
-		})
+		return slices.DeleteFunc(requirements, func(r string) bool { return declared[typegen.PythonName(r)] })
 	}
-	dependencies, dev = p.pythonRequirements()
-	return missing(dependencies...), missing(dev...), nil
-}
-
-func (p Project) pythonRequirements() (dependencies, dev []string) {
-	return []string{"holon-sh==" + p.Versions.HolonPy, "mcp>=2.3,<3"}, []string{"mypy>=2.4,<3"}
-}
-
-func tomlArray(values []string) string {
-	quoted := make([]string, len(values))
-	for i, value := range values {
-		quoted[i] = strconv.Quote(value)
-	}
-	return "[" + strings.Join(quoted, ", ") + "]"
-}
-
-var separators = regexp.MustCompile(`[-_.]+`)
-
-// pythonName normalizes a Python project name, as PEP 503 compares them.
-func pythonName(name string) string {
-	return strings.ToLower(separators.ReplaceAllString(name, "-"))
+	return missing(typegen.PythonRuntime+"=="+p.Versions.HolonPy, "mcp>=2.3,<3"), missing("mypy>=2.4,<3"), nil
 }
 
 // appendLines appends to a file's text each line of more it lacks.
@@ -442,14 +343,6 @@ func create(target string, data []byte) error {
 		return err
 	}
 	return file.Close()
-}
-
-func readJSON(path string, value any) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, value)
 }
 
 func isFile(path string) bool {

@@ -36,7 +36,10 @@ const (
 
 var targets = []string{TargetTS, TargetUI, TargetPy, TargetGo}
 
-var nodePackages = map[string]string{TargetTS: "holon-sh", TargetUI: "holon-ui"}
+var NodePackages = map[string]string{TargetTS: "holon-sh", TargetUI: "holon-ui"}
+
+// Manifests are the files that declare each target's runtime dependency.
+var Manifests = map[string]string{TargetTS: "package.json", TargetUI: "package.json", TargetPy: "pyproject.toml", TargetGo: "go.mod"}
 
 // Source is one MCP server whose contract becomes a client, supplied explicitly or declared in
 // sh.holon.requires. Exactly one of Path, Registry, Endpoint or Document is set.

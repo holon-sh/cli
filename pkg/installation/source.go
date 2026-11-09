@@ -38,14 +38,11 @@ func sourceEntry(root string) (string, error) {
 	if err != nil || !slices.Contains([]string{".ts", ".js"}, filepath.Ext(entry)) {
 		return entry, err
 	}
-	var metadata struct {
-		Scripts map[string]string `json:"scripts"`
-		Main    string            `json:"main"`
-	}
-	if err := readTypeJSON(filepath.Join(root, "package.json"), &metadata); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	var pkg typegen.PackageJSON
+	if err := readTypeJSON(filepath.Join(root, "package.json"), &pkg); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
-	if metadata.Scripts["start"] != "" || metadata.Main != "" {
+	if pkg.Launches() {
 		return "", nil
 	}
 	return entry, nil
