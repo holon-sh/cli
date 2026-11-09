@@ -1,0 +1,10 @@
+{
+  "name": "create-holon-app",
+  "version": "0.0.0",
+  "description": "Create a Holon app: runs holon init from holon-types",
+  "repository": { "type": "git", "url": "git+https://github.com/holon-sh/cli.git" },
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": { "create-holon-app": "bin/create-holon-app.js" },
+  "engines": { "node": ">=22" }
+}

@@ -24,13 +24,16 @@ class PackageTests(unittest.TestCase):
                     "--format", "tarball", "--format", "wheel", "--format", "npm-platform", "--format", "npm-launcher",
                 ], check=True, capture_output=True)
                 packages.append({p.name: hashlib.sha256(p.read_bytes()).digest() for p in output.iterdir()})
-            self.assertEqual(len(packages[0]), 4)
+            self.assertEqual(len(packages[0]), 5)
             self.assertEqual(packages[0], packages[1])
             with tarfile.open(output / "holon-types-1.2.3-rc.1.tgz") as archive:
                 launcher = json.load(archive.extractfile("package/package.json"))
             self.assertEqual(launcher["optionalDependencies"], {name: "1.2.3-rc.1" for name in (
                 "holon-types-darwin-arm64", "holon-types-darwin-x64", "holon-types-linux-arm64", "holon-types-linux-x64",
             )})
+            with tarfile.open(output / "create-holon-app-1.2.3-rc.1.tgz") as archive:
+                create = json.load(archive.extractfile("package/package.json"))
+            self.assertEqual(create["dependencies"], {"holon-types": "1.2.3-rc.1"})
             for package in output.iterdir():
                 with (zipfile.ZipFile if package.suffix == ".whl" else tarfile.open)(package) as archive:
                     names = archive.namelist() if package.suffix == ".whl" else archive.getnames()

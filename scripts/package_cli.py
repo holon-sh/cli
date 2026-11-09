@@ -139,6 +139,14 @@ def write_npm_launcher(dist: Path, version: str) -> None:
     write_npm_package(dist, manifest, source / "bin/holon.js", "holon.js", ROOT / "README.md")
 
 
+def write_npm_create(dist: Path, version: str) -> None:
+    source = ROOT / "packaging/npm/create"
+    manifest = json.loads((source / "package.json").read_text())
+    manifest["version"] = version
+    manifest["dependencies"] = {"holon-types": version}
+    write_npm_package(dist, manifest, source / "bin/create-holon-app.js", "create-holon-app.js", source / "README.md")
+
+
 def write_npm_platform(binary: Path, dist: Path, version: str, target: Target) -> None:
     manifest = {
         "name": target.npm_name,
@@ -169,6 +177,7 @@ def main() -> None:
     dist.mkdir(parents=True, exist_ok=True)
     if formats == {"npm-launcher"}:
         write_npm_launcher(dist, args.version)
+        write_npm_create(dist, args.version)
         return
     target = Target(*args.target.split("_"))
     with tempfile.TemporaryDirectory(prefix="holon-package-") as directory:
@@ -184,6 +193,7 @@ def main() -> None:
             write_npm_platform(binary, dist, args.version, target)
         if "npm-launcher" in formats:
             write_npm_launcher(dist, args.version)
+            write_npm_create(dist, args.version)
 
 
 if __name__ == "__main__":
