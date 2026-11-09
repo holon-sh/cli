@@ -248,7 +248,7 @@ func ensurePythonRuntime(dir string) error {
 	if err != nil {
 		return err
 	}
-	if !declared[PythonRuntime] {
+	if _, ok := declared[PythonRuntime]; !ok {
 		return fmt.Errorf("%s does not depend on holon-sh; run uv add holon-sh (or add it to requirements.txt)", dir)
 	}
 	return nil
@@ -268,21 +268,22 @@ func PythonName(requirement string) string {
 	return strings.ToLower(nameSeparators.ReplaceAllString(match[1], "-"))
 }
 
-// PythonDependencies are the projects a Python project in dir declares, by PythonName: in
-// pyproject.toml's dependencies, optional dependencies, dependency groups, and uv and Poetry
-// development dependencies, and in requirements.txt and requirements.in.
+// PythonDependencies are the projects a Python project in dir declares, by PythonName, each mapped
+// to whether uv sync installs it by default: true for pyproject.toml's dependencies, its dev
+// dependency group and uv's dev-dependencies; false for optional dependencies, other groups,
+// Poetry's and PDM's tables, and requirements files.
 func PythonDependencies(dir string) (map[string]bool, error) {
 	declared := map[string]bool{}
-	note := func(requirements ...string) {
+	note := func(installed bool, requirements ...string) {
 		for _, requirement := range requirements {
 			if name := PythonName(requirement); name != "" {
-				declared[name] = true
+				declared[name] = declared[name] || installed
 			}
 		}
 	}
 	for _, name := range []string{"requirements.txt", "requirements.in"} {
 		if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
-			note(strings.Split(string(data), "\n")...)
+			note(false, strings.Split(string(data), "\n")...)
 		}
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))
@@ -291,6 +292,9 @@ func PythonDependencies(dir string) (map[string]bool, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	type poetryTable struct {
+		Dependencies map[string]any `toml:"dependencies"`
 	}
 	var project struct {
 		Project struct {
@@ -303,31 +307,37 @@ func PythonDependencies(dir string) (map[string]bool, error) {
 				Dev []string `toml:"dev-dependencies"`
 			} `toml:"uv"`
 			Poetry struct {
-				Dependencies map[string]any `toml:"dependencies"`
-				Group        map[string]struct {
-					Dependencies map[string]any `toml:"dependencies"`
-				} `toml:"group"`
+				poetryTable
+				Dev   map[string]any         `toml:"dev-dependencies"`
+				Group map[string]poetryTable `toml:"group"`
 			} `toml:"poetry"`
+			PDM struct {
+				Dev map[string][]string `toml:"dev-dependencies"`
+			} `toml:"pdm"`
 		} `toml:"tool"`
 	}
 	if err := toml.Unmarshal(data, &project); err != nil {
 		return nil, fmt.Errorf("%s: %w", filepath.Join(dir, "pyproject.toml"), err)
 	}
-	note(project.Project.Dependencies...)
-	note(project.Tool.UV.Dev...)
-	for _, optional := range project.Project.OptionalDependencies {
-		note(optional...)
-	}
-	for _, group := range project.Groups {
-		for _, entry := range group {
+	note(true, project.Project.Dependencies...)
+	note(true, project.Tool.UV.Dev...)
+	for group, entries := range project.Groups {
+		for _, entry := range entries {
 			if requirement, ok := entry.(string); ok {
-				note(requirement)
+				note(group == "dev", requirement)
 			}
 		}
 	}
-	note(slices.Collect(maps.Keys(project.Tool.Poetry.Dependencies))...)
+	for _, optional := range project.Project.OptionalDependencies {
+		note(false, optional...)
+	}
+	for _, dev := range project.Tool.PDM.Dev {
+		note(false, dev...)
+	}
+	note(false, slices.Collect(maps.Keys(project.Tool.Poetry.Dependencies))...)
+	note(false, slices.Collect(maps.Keys(project.Tool.Poetry.Dev))...)
 	for _, group := range project.Tool.Poetry.Group {
-		note(slices.Collect(maps.Keys(group.Dependencies))...)
+		note(false, slices.Collect(maps.Keys(group.Dependencies))...)
 	}
 	return declared, nil
 }

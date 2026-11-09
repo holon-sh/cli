@@ -86,8 +86,8 @@ func TestWriteBesideAProject(t *testing.T) {
 		t.Errorf("notes = %v", notes)
 	}
 	dependencies, dev, err := project.PythonRequirements()
-	if err != nil || !slices.Equal(dependencies, []string{"holon-sh==3.0.0"}) || len(dev) != 0 {
-		t.Errorf("PythonRequirements = %v, %v, %v; want holon-sh only", dependencies, dev, err)
+	if err != nil || !slices.Equal(dependencies, []string{"holon-sh==3.0.0"}) || !slices.Equal(dev, []string{"mypy>=2.4,<3"}) {
+		t.Errorf("PythonRequirements = %v, %v, %v; want holon-sh, and mypy, which uv sync leaves out of the lint group", dependencies, dev, err)
 	}
 }
 

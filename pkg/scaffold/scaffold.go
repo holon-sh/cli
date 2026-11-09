@@ -298,8 +298,8 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	}
 }
 
-// PythonRequirements are the requirements the app needs that its Python project does not declare:
-// dependencies, and development ones.
+// PythonRequirements are the requirements the app needs that uv sync would not install from its
+// Python project: dependencies, and development ones.
 func (p Project) PythonRequirements() (dependencies, dev []string, err error) {
 	declared, err := typegen.PythonDependencies(p.Dir)
 	if err != nil {

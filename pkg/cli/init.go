@@ -99,9 +99,13 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	if !typegen.ValidServerName(name) || typegen.ServerKey(name) == "" {
 		return fmt.Errorf("%s is not an MCP server name such as io.github.acme/%s", name, app)
 	}
-	if tool, ok := tools[language]; ok {
-		if _, err := exec.LookPath(tool.name); err != nil {
-			return fmt.Errorf("a %s app needs %s (%s); install it and run holon init again", language, tool.name, tool.download)
+	manager, err := typegen.PackageManager(dir)
+	if err != nil {
+		return err
+	}
+	for _, tool := range []string{tools[language], manager} {
+		if _, err := exec.LookPath(tool); tool != "" && err != nil {
+			return fmt.Errorf("a %s app needs %s; install it and run holon init again", language, tool)
 		}
 	}
 	project := scaffold.Project{Dir: dir, Language: language, Name: name}
@@ -142,10 +146,6 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 			return fmt.Errorf("%s in %s: %w", strings.Join(args, " "), dirArg, err)
 		}
 		return nil
-	}
-	manager, err := typegen.PackageManager(dir)
-	if err != nil {
-		return err
 	}
 	install := func() error {
 		var commands [][]string
@@ -203,11 +203,8 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	return nil
 }
 
-// tools are the toolchains an app in a language needs besides Node.js.
-var tools = map[string]struct{ name, download string }{
-	typegen.TargetGo: {"go", "https://go.dev/dl/"},
-	typegen.TargetPy: {"uv", "https://docs.astral.sh/uv/"},
-}
+// tools are the toolchains an app in a language needs besides its Node.js package manager.
+var tools = map[string]string{typegen.TargetGo: "go", typegen.TargetPy: "uv"}
 
 // manifestFor is the holon.yaml an app in dir joins, and the app's path in it: the working
 // directory's when dir is inside it, or else dir's.
