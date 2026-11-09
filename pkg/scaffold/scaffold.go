@@ -77,6 +77,16 @@ func (p Project) Write() ([]string, error) {
 			if err != nil || entry.IsDir() {
 				return err
 			}
+			// Go files are kept as .tmpl: a go.mod would leave its directory out of the embed, and a .go
+			// file would build with the CLI.
+			relative := strings.TrimSuffix(strings.TrimPrefix(name, root+"/"), ".tmpl")
+			if base := path.Base(relative); strings.HasPrefix(base, "_") {
+				relative = path.Join(path.Dir(relative), "."+base[1:])
+			}
+			// A language's own file replaces the shared one.
+			if slices.Contains(written, relative) {
+				return nil
+			}
 			source, err := templates.ReadFile(name)
 			if err != nil {
 				return err
@@ -88,16 +98,6 @@ func (p Project) Write() ([]string, error) {
 			var rendered bytes.Buffer
 			if err := parsed.Execute(&rendered, data); err != nil {
 				return err
-			}
-			// Go files are kept as .tmpl: a go.mod would leave its directory out of the embed, and a .go
-			// file would build with the CLI.
-			relative := strings.TrimSuffix(strings.TrimPrefix(name, root+"/"), ".tmpl")
-			if base := path.Base(relative); strings.HasPrefix(base, "_") {
-				relative = path.Join(path.Dir(relative), "."+base[1:])
-			}
-			// A language's own file replaces the shared one.
-			if slices.Contains(written, relative) {
-				return nil
 			}
 			target := filepath.Join(p.Dir, filepath.FromSlash(relative))
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
