@@ -13,10 +13,10 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-// contractVersion is the generated-client contract the holon-sh and holon-ui packages declare as
+// ContractVersion is the generated-client contract the holon-sh and holon-ui packages declare as
 // holon.contractVersion: clients live in the project, in generated/holon-sh or generated/holon-ui,
 // and import the runtime as holon-sh/runtime or holon-ui/runtime.
-const contractVersion = 2
+const ContractVersion = 2
 
 // slots are the project directories each target's generated clients occupy.
 var slots = map[string]string{TargetTS: "generated/holon-sh", TargetUI: "generated/holon-ui", TargetPy: "holon/apps", TargetGo: "holon"}
@@ -47,10 +47,10 @@ func installedRuntime(root, pkg string) error {
 		}
 		name := strings.TrimSpace(pkg + " " + installed.Version)
 		switch {
-		case installed.Holon.ContractVersion < contractVersion:
-			return fmt.Errorf("%s keeps generated clients inside node_modules; upgrade it to a release that reads them from the project (holon.contractVersion %d)", name, contractVersion)
-		case installed.Holon.ContractVersion > contractVersion:
-			return fmt.Errorf("%s expects generated client contract %d; this holon writes contract %d, so upgrade holon", name, installed.Holon.ContractVersion, contractVersion)
+		case installed.Holon.ContractVersion < ContractVersion:
+			return fmt.Errorf("%s keeps generated clients inside node_modules; upgrade it to a release that reads them from the project (holon.contractVersion %d)", name, ContractVersion)
+		case installed.Holon.ContractVersion > ContractVersion:
+			return fmt.Errorf("%s expects generated client contract %d; this holon writes contract %d, so upgrade holon", name, installed.Holon.ContractVersion, ContractVersion)
 		}
 		return nil
 	}

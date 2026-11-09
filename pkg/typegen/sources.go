@@ -245,9 +245,9 @@ func serverEntry(path string) (root, entry, language string, err error) {
 
 var notKey = regexp.MustCompile(`[^a-z0-9-]+`)
 
-// serverKey is the client name derived from a server name: its last segment, lower-cased, with
+// ServerKey is the client name derived from a server name: its last segment, lower-cased, with
 // runs of other characters as hyphens, trimmed to a 49-character label.
-func serverKey(serverName string) string {
+func ServerKey(serverName string) string {
 	key := serverName[strings.LastIndex(serverName, "/")+1:]
 	key = strings.Trim(notKey.ReplaceAllString(strings.ToLower(key), "-"), "-")
 	return strings.TrimRight(key[:min(len(key), 49)], "-")

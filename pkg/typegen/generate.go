@@ -326,7 +326,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 		if metadata.Schema == nil {
 			return fmt.Errorf("%s: %s has no contract", c.Name, source)
 		}
-		alias := cmp.Or(source.Alias, serverKey(metadata.Identity.Name))
+		alias := cmp.Or(source.Alias, ServerKey(metadata.Identity.Name))
 		if !appName.MatchString(alias) {
 			return fmt.Errorf("%s: cannot derive a client name from %q; write ALIAS=%s", c.Name, metadata.Identity.Name, source)
 		}
@@ -366,7 +366,7 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 		request.Target = "node"
 	case TargetUI:
 		request.Target = "browser"
-		alias = cmp.Or(alias, serverKey(own.Identity.Name), "app")
+		alias = cmp.Or(alias, ServerKey(own.Identity.Name), "app")
 	case TargetPy:
 		request.Target = "python"
 	case TargetGo:

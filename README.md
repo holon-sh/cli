@@ -21,6 +21,21 @@ Or with [Go](https://go.dev/doc/install) 1.27+:
 go install github.com/holon-sh/cli/cmd/holon@latest
 ```
 
+## Create an app
+
+```sh
+holon init orders --lang py
+```
+
+`--lang ts` writes the server in TypeScript instead. Either way the app has an MCP server with one tool, `greet`, and a view the server returns as an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) and Holon serves as a page. The view calls the tool through a typed client:
+
+```ts
+// orders/ui/main.ts
+const { result } = await server.tools.greet({ name: name.value });
+```
+
+`holon init` pins the Holon SDKs that read the clients it writes, installs the dependencies (`uv` for Python, the project's package manager for Node.js), generates the clients, and adds the app to `holon.yaml`. `holon types check` then type-checks the server and the view. Run the app with [`holon dev`](https://holon-labs.dev/docs/).
+
 ## Example
 
 Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example uses the public [Context7](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4) server.
@@ -205,6 +220,35 @@ holon types check -s docs=https://mcp.example.com/mcp
 </details>
 
 ## Reference
+
+<details open>
+<summary><code>holon init</code></summary>
+
+```text
+Create an app in DIR, or the working directory: an MCP server in Python or TypeScript, and a view it
+serves as an MCP App and as a page.
+
+DIR must be empty or absent; its name is the app's name. holon init pins the Holon SDKs that read the
+clients this holon writes, installs the dependencies, generates the clients, and adds the app to the
+working directory's holon.yaml when DIR is inside it, or else writes one in DIR.
+
+Usage:
+  holon init [DIR] [flags]
+
+Examples:
+  # A Python app in ./orders
+  holon init orders --lang py
+
+  # A TypeScript app in the working directory, with its MCP server name
+  holon init --lang ts --name io.github.acme/orders
+
+Flags:
+  -h, --help          help for init
+      --lang string   The server's language: py or ts
+      --name string   The MCP server name (default com.example/APP)
+```
+
+</details>
 
 <details open>
 <summary><code>holon types generate</code></summary>
