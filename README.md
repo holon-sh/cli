@@ -28,13 +28,6 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 holon init orders --lang py
 ```
 
-```ts
-// orders/ui/main.ts
-const { result } = await server.tools.greet({ name: name.value });
-```
-
-`holon init` installs the dependencies (`uv` for Python, `go get` for Go, the project's package manager for Node.js), generates the clients, and adds the app to `holon.yaml`. `holon types check` then type-checks the server and the view. A Go server's contract isn't read from its source, so its view calls `greet` untyped, and `go build` type-checks the server. Run the app with [`holon dev`](https://holon-labs.dev/docs/).
-
 ## Example
 
 Declare dependencies under `sh.holon.requires` in your project's [`server.json`](https://modelcontextprotocol.io/registry/quickstart#step-4-create-server-json) ([publisher-provided metadata](https://modelcontextprotocol.io/registry/faq#can-i-add-custom-metadata-when-publishing)). This example uses the public [Hugging Face](https://huggingface.co/docs/hub/en/hf-mcp-server) MCP server.
