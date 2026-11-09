@@ -71,7 +71,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 }
 
 func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *preparedTypes) (buildRequest, error) {
-	config, start, err := stageSnapshot(app, p)
+	start, err := stageSnapshot(app, p)
 	if err != nil {
 		return buildRequest{}, err
 	}
@@ -80,7 +80,7 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 		return buildRequest{}, err
 	}
 	request := buildRequest{
-		Request: kiln.Request{ConfigFilePath: config, Source: p.root, Start: start, Development: o.development && start != nil},
+		Request: kiln.Request{Source: p.root, Start: start, Development: o.development && start != nil},
 		Env:     env, app: app, httpClient: o.HTTPClient, builders: o.builders, output: o.output,
 	}
 	for _, arch := range buildArchitectures(o.architectures) {
@@ -145,24 +145,22 @@ func buildArchitectures(configured []string) []string {
 }
 
 // stageSnapshot fills p's snapshot as an image build or a source overlay reads it: the generated clients,
-// then the SDK launcher for a hosted entry. It returns the build configuration and start command, either
-// of which may be empty.
-func stageSnapshot(app manifestApp, p *preparedTypes) (string, []string, error) {
-	config, err := stageTypes(p)
-	if err != nil {
-		return "", nil, err
+// then the SDK launcher for a hosted entry. It returns the start command, which may be empty.
+func stageSnapshot(app manifestApp, p *preparedTypes) ([]string, error) {
+	if err := stageTypes(p); err != nil {
+		return nil, err
 	}
 	if _, err := hookartifact.Discover(os.DirFS(p.root)); err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	var entry string
 	if !app.resolved.stdio {
+		var err error
 		if entry, err = sourceEntry(p.root); err != nil {
-			return "", nil, err
+			return nil, err
 		}
 	}
-	start, err := stageLauncher(p.root, entry)
-	return config, start, err
+	return stageLauncher(p.root, entry)
 }
 
 func hostedEntry(entry string) bool {

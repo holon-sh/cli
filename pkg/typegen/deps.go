@@ -68,8 +68,8 @@ func Install(ctx context.Context, consumers []Consumer, options Options) error {
 
 func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 	const installCommand = "install"
-	if _, err := InstalledRuntime(dir, pkg); err == nil {
-		return nil
+	if err := installedRuntime(dir, pkg); !errors.Is(err, errNotInstalled) {
+		return err
 	}
 	var manifest packageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil {
@@ -97,8 +97,7 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
 	}
-	_, err := InstalledRuntime(dir, pkg)
-	return err
+	return installedRuntime(dir, pkg)
 }
 
 // ErrNoRuntime identifies a project without a declared Holon SDK runtime.

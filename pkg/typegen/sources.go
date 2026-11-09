@@ -27,8 +27,8 @@ var appName = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
 
 // Targets name the SDK slot a consumer receives clients in.
 const (
-	TargetTS = "ts" // node_modules/holon-sh/generated, resolved upward from the consumer
-	TargetUI = "ui"
+	TargetTS = "ts" // generated/holon-sh/ in the consumer
+	TargetUI = "ui" // generated/holon-ui/ in the consumer
 	TargetPy = "py" // holon/apps/__init__.py in the consumer
 	TargetGo = "go" // holon/ Go package in the consumer
 )
@@ -134,7 +134,7 @@ func (s Source) validate() error {
 
 // Consumer is a project directory that receives typed clients.
 type Consumer struct {
-	// Name owns the written slots (holon-generated.json, the Python banner) and labels output.
+	// Name signs the generated files' banners and labels output.
 	Name string
 	// Dir is the absolute project directory.
 	Dir string

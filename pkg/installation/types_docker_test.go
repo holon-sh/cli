@@ -14,7 +14,6 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/holon-sh/cli/pkg/appartifact"
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
 
@@ -26,7 +25,7 @@ func TestDockerAutomaticTypes(t *testing.T) {
 	const pkg = `{"type":"module","engines":{"node":">=22.20.0 <23"},
 "dependencies":{"@modelcontextprotocol/server":"2.3.1","holon-sh":"^0.0.1-dev.2","holon-ui":"^0.0.1-dev.0","zod":"4.6.5"},
 "devDependencies":{"typescript":"7.0.2"},
-"scripts":{"build":"node --input-type=module -e \"import {apps} from 'holon-sh'; import {App} from 'holon-ui'; ` +
+"scripts":{"build":"node --input-type=module -e \"import {apps} from './generated/holon-sh/index.js'; import {App} from './generated/holon-ui/index.js'; ` +
 		`if (!apps.orders || typeof App !== 'function') throw Error('missing generated import')\""}}`
 	const config = `{"compilerOptions":{"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext",
 "strict":true,"skipLibCheck":true,"noEmit":true},"include":["server.ts"]}`
@@ -37,7 +36,7 @@ export default createMcpHandler(() => {
     ({id}) => ({content:[{type:"text",text:String(id)}],structuredContent:{total:5}}));
   return server;
 });`
-	caller := `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; import {z} from "zod"; import {apps} from "holon-sh";
+	caller := `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; import {z} from "zod"; import {apps} from "./generated/holon-sh/index.js";
 export default createMcpHandler(() => {
   const server=new McpServer({name:"checkout",version:"1"});
   server.registerTool("checkout", {inputSchema:z.object({id:z.string()})}, async ({id}) => {
@@ -77,10 +76,7 @@ export default createMcpHandler(() => {
 		}
 		sourceFiles(t, path, map[string]string{"package.json": packageJSON, lockName: string(lock), "tsconfig.json": config, "server.ts": code})
 		installRuntime(t, path)
-		sourceFiles(t, path, map[string]string{
-			"node_modules/holon-ui/package.json":                   `{"name":"holon-ui","holon":{"slot":"generated","contractVersion":1}}`,
-			"node_modules/holon-ui/generated/holon-generated.json": `{"marker":"` + mcpcontract.Marker + `","placeholder":true}`,
-		})
+		sourceFiles(t, path, map[string]string{"node_modules/holon-ui/package.json": `{"name":"holon-ui","holon":{"contractVersion":2}}`})
 		app := manifestApp{Name: name, Path: path, resolved: resolvedApp{App: protocol.App{Name: name, Port: 3000}}}
 		if name == "checkout" {
 			app.resolved.descriptor = &mcpregistry.Descriptor{Name: "io.github.example/checkout", Version: "1.0.0", Requires: map[string]mcpregistry.Requirement{
@@ -100,7 +96,7 @@ export default createMcpHandler(() => {
 	options.Env = append(options.Env, "DOCKER_CONTEXT="+os.Getenv("DOCKER_CONTEXT"))
 	editor := func(app manifestApp, name string) string {
 		t.Helper()
-		data, err := os.ReadFile(filepath.Join(app.Path, "node_modules/holon-sh/generated", name))
+		data, err := os.ReadFile(filepath.Join(app.Path, "generated/holon-sh", name))
 		if err != nil {
 			t.Fatal(err)
 		}

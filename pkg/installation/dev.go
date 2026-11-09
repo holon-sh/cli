@@ -347,7 +347,6 @@ func (d *devLoop) readSession(ctx context.Context) (<-chan sessionRead, context.
 }
 
 func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
-	d.options.output.problem("editor imports", d.options.types.repair())
 	if expiry, err := time.Parse(time.RFC3339Nano, d.session.ExpiresAt); err == nil && !expiry.After(d.clock.Now()) {
 		return errors.New("development session lease expired")
 	}

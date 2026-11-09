@@ -51,14 +51,14 @@ export function createSandbox(root, vendor) {
     globalThis.process = Object.freeze({ env: {}, platform: "linux", arch: "x64", versions: Object.freeze({ node }), cwd: () => cwd, exit: control("exit"), on: control("on"), nextTick: control("nextTick") });
   }`, context, { filename: "holon:stub" })(stub, root, process.versions.node);
   const parse = vm.runInContext("JSON.parse", context);
-  const modules = new Map(), files = new Map(), commonjs = new Map(), builtins = new Map(), maps = new Map();
+  const modules = new Map(), files = new Map(), commonjs = new Map(), builtins = new Map(), maps = new Map(), generated = new Map();
   const paths = tsconfigPaths(root);
 
   function resolveSpecifier(specifier, referrer, conditions) {
     if (specifier.startsWith("node:") || module.isBuiltin(specifier)) return { builtin: specifier.replace(/^node:/, "") };
     if (/^(\.{1,2}(\/|$)|\/)/.test(specifier) || specifier.startsWith("file:")) {
       const target = specifier.startsWith("file:") ? fileURLToPath(specifier) : resolve(dirname(referrer), specifier);
-      return { file: candidate(target) ?? fail(`Cannot find ${specifier} imported from ${referrer}`) };
+      return { file: candidate(target) ?? emptyClients(target) ?? fail(`Cannot find ${specifier} imported from ${referrer}`) };
     }
     if (!referrer.split(sep).includes("node_modules")) {
       for (const target of paths(specifier)) {
@@ -74,6 +74,21 @@ export function createSandbox(root, vendor) {
     }
     if (schemaPackages.has(name) && existsSync(join(vendor, name, "package.json"))) return { file: packageFile(join(vendor, name), `.${subpath ?? ""}`, conditions) };
     throw new MissingPackage(`Cannot find package ${name} imported from ${referrer}; install the application's dependencies or commit holon-contract.json`, { cause: name });
+  }
+
+  // A server that calls other servers imports the clients holon generates for it, which do not exist
+  // before the first generation. Like Python's holon.apps, they are then a module with no clients.
+  function emptyClients(target) {
+    const match = target.match(/^(.*[\\/]generated[\\/]holon-sh)(?:[\\/]index(?:\.[mc]?[jt]s)?)?$/);
+    if (!match) return;
+    const file = join(match[1], "index.mjs");
+    generated.set(file, `import { createApps as create, bindApps } from "holon-sh/runtime";
+export { ToolCallError } from "holon-sh/runtime";
+const identity = { name: "holon-contract", version: "0", requires: {} };
+export const apps = create(identity, {});
+export function createApps(bindings, options) { return bindApps(identity, {}, bindings, options); }
+`);
+    return file;
   }
 
   function packageFile(pkg, subpath, conditions) {
@@ -112,7 +127,7 @@ export function createSandbox(root, vendor) {
   }
 
   function source(file, url, kind) {
-    const text = readFileSync(file, "utf8");
+    const text = generated.get(file) ?? readFileSync(file, "utf8");
     if (!/\.[mc]?tsx?$/.test(file)) return text;
     const { outputText, sourceMapText } = ts.transpileModule(text, { fileName: file, compilerOptions: { module: kind, target: ts.ScriptTarget.ES2022, sourceMap: true, jsx: ts.JsxEmit.ReactJSX, experimentalDecorators: true, esModuleInterop: true } });
     maps.set(url, new module.SourceMap(JSON.parse(sourceMapText)));

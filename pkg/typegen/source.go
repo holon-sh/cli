@@ -41,8 +41,12 @@ func GeneratedSource(root, path string) bool {
 	}) {
 		return true
 	}
-	managed := filepath.Join(root, "holon")
-	return pathInsideContext(path, managed) && generatedGo(managed) || pathInsideContext(path, filepath.Join(managed, "apps")) && generatedPython(managed)
+	for _, target := range []string{TargetGo, TargetTS, TargetUI} {
+		if directory := slotDirectory(root, target); pathInsideContext(path, directory) && generatedDirectory(directory) {
+			return true
+		}
+	}
+	return pathInsideContext(path, slotDirectory(root, TargetPy)) && generatedPython(filepath.Join(root, "holon"))
 }
 
 // SnapshotSource copies dir into destination (or only fingerprints it when destination is empty),

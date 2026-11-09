@@ -63,7 +63,7 @@ func main() {
 	if err != nil || !strings.Contains(string(clients), `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(string(clients), " GetOrder(") {
 		t.Fatalf("the app's Go clients for its editor: %v\n%s", err, clients)
 	}
-	if _, err := stageTypes(p); err != nil {
+	if err := stageTypes(p); err != nil {
 		t.Fatal(err)
 	}
 }

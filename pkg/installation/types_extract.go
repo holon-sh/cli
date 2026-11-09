@@ -80,8 +80,8 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 
 // runInImage builds source's image for this machine with Kiln, without the app's build step, which may need
 // the clients being prepared, and runs command there without network access, with the tooling at
-// /holon-tooling. It copies what the command printed to stdout. With generated, it first stages those
-// clients as an image build does; with checker, the command can import the Python type checker.
+// /holon-tooling. It copies what the command printed to stdout. With generated, it first copies those
+// clients into the app as an image build does; with checker, the command can import the Python type checker.
 func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdout io.Writer) error {
 	env, err := commandenv.Environ(o.Env)
 	if err != nil {
@@ -118,7 +118,7 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	recipe += "FROM " + final + " AS contract\n"
 	if generated != "" {
 		args = append(args, "--build-context", "generated="+generated)
-		recipe += "COPY --from=generated --chmod=755 . /app/\nRUN sh .holon-types/stage.sh\n"
+		recipe += "COPY --from=generated --chmod=755 . /app/\n"
 	}
 	words := make([]string, len(command))
 	for i, word := range command {

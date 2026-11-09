@@ -23,12 +23,10 @@ func Check(ctx context.Context, dir string, options Options) error {
 		case TargetGo:
 			return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
 		case TargetTS, TargetUI:
-			slot, err := InstalledRuntime(dir, nodePackages[target])
-			if err != nil {
+			if err := installedRuntime(dir, nodePackages[target]); err != nil {
 				return err
 			}
-			var meta slotMetadata
-			if err := readTypeJSON(filepath.Join(slot, "generated", "holon-generated.json"), &meta); err != nil || meta.Placeholder {
+			if slot := slotDirectory(dir, target); !generatedDirectory(slot) {
 				return fmt.Errorf("%s has no generated clients; run holon types generate", slot)
 			}
 			languages = append(languages, "typescript")
