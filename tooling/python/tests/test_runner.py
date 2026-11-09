@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+import sysconfig
 import tomllib
 from pathlib import Path
 from textwrap import dedent
@@ -87,9 +88,11 @@ def write(directory: Path, files: dict[str, str]) -> Path:
     return directory
 
 
-def extract(apps: dict[str, tuple[Path, str]]) -> dict[str, dict]:
+def extract(
+    apps: dict[str, tuple[Path, str]], python: Path | str = sys.executable
+) -> dict[str, dict]:
     """Each app's contract, or its diagnostic and the package it missed."""
-    extractor = [sys.executable, str(ROOT / "extract.py"), "contract"]
+    extractor = [python, str(ROOT / "extract.py"), "contract"]
     results = {}
     for name, (root, entry) in apps.items():
         run = subprocess.run(
@@ -182,6 +185,59 @@ def test_effects_and_missing_packages_fail_naming_them(tmp_path):
         assert f"contract evaluation has no {capability}" in diagnostic, diagnostic
     assert result["missing"]["missing"] == "requests"
     assert result["typed"]["tools"] == []
+
+
+# Stands in for holon-sh, which ships a holon.apps that raises until the project generates its own.
+SDK = {
+    "holon/client.py": """
+        class Apps:
+            def __init__(self, *args):
+                pass
+    """,
+    "holon/apps/__init__.py": """
+        raise ImportError("no generated holon.apps on sys.path: run `holon types generate`")
+    """,
+}
+
+CALLER = """
+    import holon.apps
+    from holon.apps import apps
+    from mcp.server import MCPServer
+
+    server = MCPServer(getattr(holon.apps, "SOURCE", "empty"))
+"""
+
+GENERATED = """\
+    # holon-generated-apps-v1 app=caller
+    SOURCE = "generated"
+    apps = None
+"""
+
+
+def environment(directory: Path, files: dict[str, str]) -> Path:
+    """A virtual environment holding files, which also sees the packages these tests run with."""
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", directory], check=True
+    )
+    python = directory / "bin" / "python"
+    purelib = subprocess.run(
+        [python, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    write(Path(purelib), files | {"tests.pth": sysconfig.get_paths()["purelib"]})
+    return python
+
+
+def test_holon_apps_is_empty_until_the_project_generates_it(tmp_path):
+    python = environment(tmp_path / "env", SDK)
+    app = write(tmp_path / "caller", {"server.py": CALLER})
+    result = extract({"caller": (app, "server.py")}, python)["caller"]
+    assert result.get("serverInfo", {}).get("name") == "empty", result
+    write(app, {"holon/apps/__init__.py": GENERATED})
+    result = extract({"caller": (app, "server.py")}, python)["caller"]
+    assert result.get("serverInfo", {}).get("name") == "generated", result
 
 
 def test_requirements_list_the_project_dependencies():

@@ -39,6 +39,8 @@ if TYPE_CHECKING:
     from mcp.server import MCPServer, Server
 
 RESOURCE_SCHEMA = "sh.holon/outputSchema"
+# Generated clients open with this banner (mcpcontract.Marker); holon-sh's own holon.apps does not.
+GENERATED = b"# holon-generated-apps-v1 app="
 STDLIB = Path(sysconfig.get_paths()["stdlib"]).resolve()
 EPOCH = 315532800  # 1980-01-01T00:00:00Z, the instant the frozen clock shows
 MONOTONIC = time.monotonic
@@ -82,7 +84,7 @@ class Finder(importlib.abc.MetaPathFinder):
             return None
         search = self.search if path is None else path
         spec = importlib.machinery.PathFinder.find_spec(name, search, target)
-        if name == "holon.apps" and (spec is None or spec.origin is None):
+        if name == "holon.apps" and not generated(spec):
             return importlib.machinery.ModuleSpec(name, EmptyApps())
         if spec is None and path is None:
             raise MissingModule(
@@ -91,6 +93,14 @@ class Finder(importlib.abc.MetaPathFinder):
                 name=name,
             )
         return spec
+
+
+def generated(spec: importlib.machinery.ModuleSpec | None) -> bool:
+    """Whether spec is the project's generated clients, not a stand-in such as holon-sh's own."""
+    if spec is None or spec.origin is None:
+        return False
+    with open(spec.origin, "rb") as module:
+        return module.read(len(GENERATED)) == GENERATED
 
 
 class EmptyApps(importlib.abc.Loader):

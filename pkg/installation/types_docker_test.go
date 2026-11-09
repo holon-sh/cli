@@ -213,7 +213,7 @@ async def checkout(id: str) -> float:
 		}
 		sourceFiles(t, app.Path, map[string]string{
 			"server.py": code,
-			"requirements.txt": "holon-sh @ https://github.com/holon-sh/sdk-py/archive/a27a936f197af164a4c92c593916a64c74e60ad9.tar.gz\n" +
+			"requirements.txt": "holon-sh @ https://github.com/holon-sh/sdk-py/archive/4307c4f2b0a6982e4f7fd0e5a746c73e57e88428.tar.gz\n" +
 				"mcp==2.3.0\n",
 			"railpack.json": `{"provider":"python","steps":{"build":{"commands":[` +
 				`"python -c 'from holon.apps import apps; assert apps.orders'"]}}}`,
