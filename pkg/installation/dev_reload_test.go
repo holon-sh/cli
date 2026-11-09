@@ -207,8 +207,8 @@ func TestDevSaves(t *testing.T) {
 			lines: []string{"no app changed"},
 		},
 		{
-			name:  "a module under ui/ reloads and rebuilds, since the frontend build reads it",
-			saves: []map[string]string{{"alpha/ui/main.ts": "export const edited = true"}}, lines: []string{"remote update requested"}, reloads: 1, rebuilt: true,
+			name:  "a dependency manifest reloads and rebuilds",
+			saves: []map[string]string{{"alpha/pyproject.toml": alphaProject + "dependencies = [\"idna\"]\n"}}, lines: []string{"remote update requested"}, reloads: 1, rebuilt: true,
 		},
 		{
 			name: "a failed reload is reported and rebuilds nothing", failReload: true,
@@ -339,6 +339,11 @@ func (f *reloadFixture) overlay(t *testing.T, digest string) map[string][]byte {
 	f.registry.mu.Lock()
 	blob := f.registry.items["holon/upload/alpha/blobs/"+digest].data
 	f.registry.mu.Unlock()
+	return overlayEntries(t, blob)
+}
+
+func overlayEntries(t *testing.T, blob []byte) map[string][]byte {
+	t.Helper()
 	decoder, err := zstd.NewReader(bytes.NewReader(blob))
 	if err != nil {
 		t.Fatal(err)
@@ -388,21 +393,15 @@ func TestDevSaveStopsTheLastPreparation(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	f := startReloadFixture(t, true)
-	alpha := filepath.Join(f.root, "alpha")
-	installRuntime(t, alpha)
-	from := len(f.stderr.String())
-	sourceFiles(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
-	f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha ready") })
-	if err := os.RemoveAll(filepath.Join(alpha, "node_modules", nodeRuntime)); err != nil {
-		t.Fatal(err)
-	}
 	runs := func() []string {
 		data, _ := os.ReadFile(started)
 		return strings.Fields(string(data))
 	}
-	for i, content := range []string{"second", "third"} {
+	for i, files := range []map[string]string{
+		{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`}, {"alpha/tools.py": "second"},
+	} {
 		from := len(f.stderr.String())
-		sourceFiles(t, f.root, map[string]string{"alpha/tools.py": content})
+		sourceFiles(t, f.root, files)
 		f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha reloaded") && len(runs()) == i+1 })
 	}
 	pid, err := strconv.Atoi(runs()[0])

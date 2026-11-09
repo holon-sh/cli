@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -133,6 +135,37 @@ func TestDockerSourceBuild(t *testing.T) {
 		failed.Stderr = progressFunc(func([]byte) (int, error) { return 0, want })
 		if _, _, err := buildSource(t.Context(), prepareBuild(t, manifest).Apps[0], upload, failed); !errors.Is(err, want) {
 			t.Fatalf("progress error: %v", err)
+		}
+	})
+	t.Run("development overlay holds the build output", func(t *testing.T) {
+		app := buildManifest(t, t.TempDir())
+		if err := os.Remove(filepath.Join(app.Apps[0].Path, "server.js")); err != nil {
+			t.Fatal(err)
+		}
+		sourceFiles(t, app.Apps[0].Path, map[string]string{
+			"pyproject.toml": alphaProject, "server.py": "app = None",
+			"package.json": `{"private":true,"engines":{"node":">=22.20.0 <23"},"scripts":{"build":"mkdir -p dist && echo built > dist/index.html"}}`,
+		})
+		development := options
+		development.development = true
+		_, overlay, err := buildSource(t.Context(), prepareBuild(t, app).Apps[0], upload, development)
+		if err != nil {
+			t.Fatal(err)
+		}
+		repository, err := imageRepository(grant.Registry+"/"+grant.Repositories["alpha"], grant.Grant, options.HTTPClient)
+		if err != nil {
+			t.Fatal(err)
+		}
+		descriptor, err := repository.Blobs().Resolve(t.Context(), overlay)
+		if err != nil {
+			t.Fatal(err)
+		}
+		blob, err := content.FetchAll(t.Context(), repository.Blobs(), descriptor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entries := overlayEntries(t, blob); string(entries["server.py"]) != "app = None" || string(entries["dist/index.html"]) != "built\n" {
+			t.Fatalf("overlay entries = %q", slices.Sorted(maps.Keys(entries)))
 		}
 	})
 	t.Run("build cancellation", func(t *testing.T) {

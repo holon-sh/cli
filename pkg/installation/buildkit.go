@@ -153,8 +153,6 @@ func (b *builderConnections) close() {
 func publishPlatform(
 	ctx context.Context, platform string, request buildRequest, source fsutil.FS, progress io.Writer,
 ) (ocispec.Descriptor, error) {
-	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(context.Canceled)
 	recipe := staticfs.NewFS()
 	recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(request.dockerfile))
 	var runtimeKey string
@@ -167,27 +165,6 @@ func publishPlatform(
 		recipe.Add(arch, &fstypes.Stat{Mode: 0o755}, binary)
 		runtimeKey = digest.FromBytes(binary).Encoded()
 	}
-	name := request.app.Name + " " + platform
-	connected := request.output.measure(name, "connect builder")
-	c, err := request.builders.connect(platform, request.Env)
-	connected()
-	if err != nil {
-		request.builders.clients.CompareAndDelete(platform, c)
-		return ocispec.Descriptor{}, err
-	}
-	credentials, err := imageRepository("registry-1.docker.io/library/unused", "", request.httpClient)
-	if err != nil {
-		return ocispec.Descriptor{}, err
-	}
-	authentication := authprovider.NewDockerAuthProvider(authprovider.DockerAuthProviderConfig{
-		AuthConfigProvider: func(ctx context.Context, host string, _ []string, _ authprovider.ExpireCachedAuthCheck) (dockerconfig.AuthConfig, error) {
-			credential, err := credentials.Client.(*registryauth.Client).Credential(ctx, host)
-			return dockerconfig.AuthConfig{
-				Username: credential.Username, Password: credential.Password,
-				IdentityToken: credential.RefreshToken, RegistryToken: credential.AccessToken,
-			}, err
-		},
-	})
 	quietContentStore()
 	directory, err := os.MkdirTemp("", "holon-export-*")
 	if err != nil {
@@ -198,42 +175,16 @@ func publishPlatform(
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	statuses := make(chan *client.SolveStatus)
-	display, _ := progressui.NewDisplay(progressFunc(func(data []byte) (int, error) {
-		n, err := progress.Write(data)
-		if err != nil {
-			cancel(err)
-		}
-		return n, err
-	}), progressui.PlainMode, progressui.WithDesc(name, ""))
-	var renderer sync.WaitGroup
-	renderer.Go(func() { _, _ = display.UpdateFrom(context.WithoutCancel(ctx), statuses) })
-	hostname, _ := os.Hostname()
-	solved := request.output.measure(name, "solve")
-	response, err := c.Build(ctx, client.SolveOpt{
-		SharedKey:   digest.FromBytes([]byte(hostname + "\x00" + platform)).Encoded(),
-		LocalMounts: map[string]fsutil.FS{"context": source, "dockerfile": recipe, "runtime": recipe},
-		Session:     []session.Attachable{authentication},
-		Exports: []client.ExportEntry{{Type: client.ExporterOCI, OutputStore: &sourceExport{Store: store, request: request}, Attrs: map[string]string{
-			"tar": "false", "source-date-epoch": "0", "oci-mediatypes": "true", "compression": "zstd", "compression-level": "1",
-		}}},
-	}, "holon", func(ctx context.Context, g gateway.Client) (*gateway.Result, error) {
-		input, err := llb.Local("context", llb.SharedKeyHint(digest.FromBytes([]byte(request.app.Path)).Encoded())).Marshal(ctx)
-		if err != nil {
-			return nil, err
-		}
-		result, err := g.Solve(ctx, gateway.SolveRequest{Frontend: "dockerfile.v0", FrontendOpt: map[string]string{
-			"platform": platform, "build-arg:SOURCE_DATE_EPOCH": "0",
-		}, FrontendInputs: map[string]*pb.Definition{"context": input.ToPB()}, Evaluate: true})
-		if err != nil {
-			return nil, err
-		}
+	export := client.ExportEntry{Type: client.ExporterOCI, OutputStore: &sourceExport{Store: store, request: request}, Attrs: map[string]string{
+		"tar": "false", "source-date-epoch": "0", "oci-mediatypes": "true", "compression": "zstd", "compression-level": "1",
+	}}
+	response, err := request.solve(ctx, platform, recipe, source, progress, export, func(ctx context.Context, g gateway.Client, result *gateway.Result) error {
 		var image ocispec.Image
 		if err := json.Unmarshal(result.Metadata[exptypes.ExporterImageConfigKey], &image); err != nil {
-			return nil, err
+			return err
 		}
 		if image.OS+"/"+image.Architecture != platform {
-			return nil, errors.New("build returned an unexpected image platform")
+			return errors.New("build returned an unexpected image platform")
 		}
 		image.Config.User = "10001:10001"
 		labels := map[string]string{}
@@ -243,7 +194,7 @@ func publishPlatform(
 		if len(request.Start) != 0 {
 			state, err := result.Ref.ToState()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			runtime := llb.Scratch().File(llb.Copy(
 				llb.Local("runtime", llb.IncludePatterns([]string{image.Architecture}), llb.SharedKeyHint(runtimeKey)), image.Architecture, ociimage.RuntimePath,
@@ -251,11 +202,11 @@ func publishPlatform(
 			))
 			definition, err := llb.Merge([]llb.State{state, runtime}).Marshal(ctx, llb.Platform(image.Platform))
 			if err != nil {
-				return nil, err
+				return err
 			}
 			hosted, err := g.Solve(ctx, gateway.SolveRequest{Definition: definition.ToPB(), Evaluate: true})
 			if err != nil {
-				return nil, err
+				return err
 			}
 			result.SetRef(hosted.Ref)
 			image.Config.Entrypoint = append([]string{ociimage.RuntimePath, "--transport=hosted-http", "--"}, request.Start...)
@@ -264,11 +215,9 @@ func publishPlatform(
 		}
 		data, _ := json.Marshal(image)
 		result.AddMeta(exptypes.ExporterImageConfigKey, data)
-		return result, nil
-	}, statuses)
-	renderer.Wait()
-	solved()
-	if err := cmp.Or(context.Cause(ctx), context.Cause(c.ctx), err); err != nil {
+		return nil
+	})
+	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	data, err := base64.StdEncoding.DecodeString(response.ExporterResponse[exptypes.ExporterImageDescriptorKey])
@@ -294,7 +243,7 @@ func publishPlatform(
 			return !written
 		}), err
 	}
-	pushed := request.output.measure(name, "push")
+	pushed := request.output.measure(request.app.Name+" "+platform, "push")
 	defer pushed()
 	if err := request.publish(ctx, func(repository *remote.Repository, grant protocol.UploadGrant) error {
 		copyOptions.PreCopy = func(ctx context.Context, descriptor ocispec.Descriptor) error {
@@ -313,6 +262,80 @@ func publishPlatform(
 	}
 	descriptor.Platform = &ocispec.Platform{OS: "linux", Architecture: strings.TrimPrefix(platform, "linux/")}
 	return descriptor, nil
+}
+
+func (r buildRequest) exportOutput(ctx context.Context, progress io.Writer) error {
+	source, err := fsutil.NewFS(r.Source)
+	if err != nil {
+		return err
+	}
+	recipe := staticfs.NewFS()
+	recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(r.buildOutput))
+	_, err = r.solve(ctx, r.Platforms[0], recipe, source, progress, client.ExportEntry{Type: client.ExporterLocal, OutputDir: r.Source},
+		func(context.Context, gateway.Client, *gateway.Result) error { return nil })
+	return err
+}
+
+func (r buildRequest) solve(
+	ctx context.Context, platform string, recipe *staticfs.FS, source fsutil.FS, progress io.Writer, export client.ExportEntry,
+	finish func(context.Context, gateway.Client, *gateway.Result) error,
+) (*client.SolveResponse, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(context.Canceled)
+	name := r.app.Name + " " + platform
+	connected := r.output.measure(name, "connect builder")
+	c, err := r.builders.connect(platform, r.Env)
+	connected()
+	if err != nil {
+		r.builders.clients.CompareAndDelete(platform, c)
+		return nil, err
+	}
+	credentials, err := imageRepository("registry-1.docker.io/library/unused", "", r.httpClient)
+	if err != nil {
+		return nil, err
+	}
+	authentication := authprovider.NewDockerAuthProvider(authprovider.DockerAuthProviderConfig{
+		AuthConfigProvider: func(ctx context.Context, host string, _ []string, _ authprovider.ExpireCachedAuthCheck) (dockerconfig.AuthConfig, error) {
+			credential, err := credentials.Client.(*registryauth.Client).Credential(ctx, host)
+			return dockerconfig.AuthConfig{
+				Username: credential.Username, Password: credential.Password,
+				IdentityToken: credential.RefreshToken, RegistryToken: credential.AccessToken,
+			}, err
+		},
+	})
+	statuses := make(chan *client.SolveStatus)
+	display, _ := progressui.NewDisplay(progressFunc(func(data []byte) (int, error) {
+		n, err := progress.Write(data)
+		if err != nil {
+			cancel(err)
+		}
+		return n, err
+	}), progressui.PlainMode, progressui.WithDesc(name, ""))
+	var renderer sync.WaitGroup
+	renderer.Go(func() { _, _ = display.UpdateFrom(context.WithoutCancel(ctx), statuses) })
+	hostname, _ := os.Hostname()
+	solved := r.output.measure(name, "solve")
+	response, err := c.Build(ctx, client.SolveOpt{
+		SharedKey:   digest.FromBytes([]byte(hostname + "\x00" + platform)).Encoded(),
+		LocalMounts: map[string]fsutil.FS{"context": source, "dockerfile": recipe, "runtime": recipe},
+		Session:     []session.Attachable{authentication},
+		Exports:     []client.ExportEntry{export},
+	}, "holon", func(ctx context.Context, g gateway.Client) (*gateway.Result, error) {
+		input, err := llb.Local("context", llb.SharedKeyHint(digest.FromBytes([]byte(r.app.Path)).Encoded())).Marshal(ctx)
+		if err != nil {
+			return nil, err
+		}
+		result, err := g.Solve(ctx, gateway.SolveRequest{Frontend: "dockerfile.v0", FrontendOpt: map[string]string{
+			"platform": platform, "build-arg:SOURCE_DATE_EPOCH": "0",
+		}, FrontendInputs: map[string]*pb.Definition{"context": input.ToPB()}, Evaluate: true})
+		if err != nil {
+			return nil, err
+		}
+		return result, finish(ctx, g, result)
+	}, statuses)
+	renderer.Wait()
+	solved()
+	return response, cmp.Or(context.Cause(ctx), context.Cause(c.ctx), err)
 }
 
 func (u *imageUpload) pushLayer(ctx context.Context, repository *remote.Repository, descriptor ocispec.Descriptor, source orascontent.Fetcher) error {

@@ -33,13 +33,14 @@ type buildApplication func(context.Context, buildRequest, io.Writer) (string, er
 type buildRequest struct {
 	kiln.Request
 
-	Env        []string
-	app        manifestApp
-	dockerfile string
-	upload     *imageUpload
-	httpClient *http.Client
-	builders   *builderConnections
-	output     *progressOutput
+	Env         []string
+	app         manifestApp
+	dockerfile  string
+	buildOutput string
+	upload      *imageUpload
+	httpClient  *http.Client
+	builders    *builderConnections
+	output      *progressOutput
 }
 
 func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, string, error) {
@@ -66,7 +67,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	if !request.Development {
 		return image, "", nil
 	}
-	overlay, err := request.pushOverlay(ctx, "")
+	overlay, err := request.pushOverlay(ctx, "", options.Stderr)
 	return image, overlay, err
 }
 
@@ -92,7 +93,7 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 	if err != nil {
 		return buildRequest{}, err
 	}
-	request.dockerfile = plan.Dockerfile
+	request.dockerfile, request.buildOutput = plan.Dockerfile, plan.Output
 	if request.Development {
 		p.inputs, err = imageInputs(ctx, plan.Dockerfile, p.root)
 	}

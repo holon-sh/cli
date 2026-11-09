@@ -120,8 +120,10 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) (outdated bool
 	d.options.output.status(app.Name, "reloading", progressWorking)
 	running := &d.session.Apps[slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })]
 	plan.upload = newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
-	overlay, err := plan.pushOverlay(ctx, running.Overlay)
+	logs := d.options.output.logs(d.options.Stderr)
+	overlay, err := plan.pushOverlay(ctx, running.Overlay, logs)
 	if err != nil {
+		logs.failed(app.Name)
 		return outdated, err
 	}
 	if overlay == running.Overlay {
@@ -146,7 +148,12 @@ func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
 	return fsutil.MapResultKeep
 }
 
-func (r buildRequest) pushOverlay(ctx context.Context, unless string) (string, error) {
+func (r buildRequest) pushOverlay(ctx context.Context, unless string, progress io.Writer) (string, error) {
+	if r.buildOutput != "" {
+		if err := r.exportOutput(ctx, progress); err != nil {
+			return "", err
+		}
+	}
 	source, err := fsutil.NewFS(r.Source)
 	if err != nil {
 		return "", err

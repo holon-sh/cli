@@ -216,13 +216,13 @@ func TestRunDevLifecycle(t *testing.T) {
 		if !slices.Equal(request.Platforms, []string{"linux/arm64"}) {
 			t.Errorf("session platforms = %v", request.Platforms)
 		}
-		switch edit, _ := os.ReadFile(filepath.Join(root, "alpha", "logic.txt")); string(edit) {
+		switch edit, _ := os.ReadFile(filepath.Join(root, "alpha", "package-lock.json")); string(edit) {
 		case "":
 			return firstBuild(ctx, request, progress)
 		case "broken":
 			return "", errors.New("rebuild failed")
 		case "superseded":
-			if err := os.WriteFile(filepath.Join(root, "alpha", "logic.txt"), []byte("fixed"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(root, "alpha", "package-lock.json"), []byte("fixed"), 0o644); err != nil {
 				return "", err
 			}
 		}
@@ -341,7 +341,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			})
 		}
 		await(stderr, "Configure API_KEY to start the session.", "request stream stopped")
-		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "broken"})
+		sourceFiles(t, root, map[string]string{"alpha/package-lock.json": "broken"})
 		await(stderr, "remote image preparation failed")
 		mu.Lock()
 		waiting = ""
@@ -352,7 +352,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		writeDescriptor(t, filepath.Join(root, "alpha", "server.json"), document)
 		await(stderr, "restart holon dev")
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
-		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "superseded"})
+		sourceFiles(t, root, map[string]string{"alpha/package-lock.json": "superseded"})
 		await(stderr, "remote update requested")
 		mu.Lock()
 		unavailable = true

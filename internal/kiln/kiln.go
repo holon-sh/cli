@@ -24,6 +24,7 @@ type Request struct {
 
 type Result struct {
 	Dockerfile string `json:"dockerfile"`
+	Output     string `json:"output"`
 }
 
 func Plan(ctx context.Context, request Request) (Result, error) {
