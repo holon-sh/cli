@@ -47,6 +47,16 @@ func packageManager(dir string, pkg packageJSON) string {
 	return "npm"
 }
 
+// PackageManager is the package manager of the Node.js project in dir: the one its package.json
+// declares, else the one its nearest lockfile belongs to, else npm.
+func PackageManager(dir string) (string, error) {
+	var manifest packageJSON
+	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	return packageManager(dir, manifest), nil
+}
+
 // Install installs missing declared SDK runtimes with the project's package manager, and maps
 // #holon-sh and #holon-ui to the clients in package.json. Call it before snapshotting sources: both
 // can change the project's package files.
@@ -120,16 +130,27 @@ func mapClients(dir, target string, o Options) error {
 		return err
 	}
 	name := "#" + nodePackages[target]
-	if data, err = addImport(data, name, "./"+slots[target]+"/"+mcptype.TypeScriptModule); err != nil || data == nil {
+	if data, err = AddPackageMember(data, "imports", name, "./"+slots[target]+"/"+mcptype.TypeScriptModule); err != nil || data == nil {
 		return err
 	}
 	fmt.Fprintf(o.Stderr, "%s: mapped %s in package.json\n", filepath.Base(dir), name)
 	return os.WriteFile(file, data, 0o644)
 }
 
-// addImport returns the package.json data with name mapped to target as its last import, laid out as
-// the file lays out its first member and leaving the rest as written; nil when it already maps name.
-func addImport(data []byte, name, target string) ([]byte, error) {
+// AddPackageMember returns the package.json data with name set to value as the last member of its
+// top-level object member object, which it adds last when absent, laid out as the file lays out its
+// first member and leaving the rest as written; nil when object already has name.
+func AddPackageMember(data []byte, object, name string, value any) ([]byte, error) {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	for _, v := range []any{object, name, value} {
+		if err := encoder.Encode(v); err != nil {
+			return nil, err
+		}
+	}
+	texts := strings.Split(strings.TrimSuffix(encoded.String(), "\n"), "\n")
+	objectKey, entry := texts[0], texts[1]+": "+texts[2]
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
 		return nil, errors.New("package.json is not a JSON object")
@@ -156,16 +177,15 @@ func addImport(data []byte, name, target string) ([]byte, error) {
 		err := decoder.Decode(new(json.RawMessage))
 		return int(decoder.InputOffset()), err
 	}
-	entry := fmt.Sprintf("%q: %q", name, target)
 	end := open
 	for decoder.More() {
 		key, err := decoder.Token()
 		if err != nil {
 			return nil, err
 		}
-		if key == "imports" {
+		if key == object {
 			if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
-				return nil, errors.New("package.json imports is not a JSON object")
+				return nil, fmt.Errorf("package.json %s is not a JSON object", object)
 			}
 			start := int(decoder.InputOffset())
 			last := start
@@ -183,7 +203,7 @@ func addImport(data []byte, name, target string) ([]byte, error) {
 			return nil, err
 		}
 	}
-	return member(open, end, "", `"imports": {`+newline+indent+indent+entry+newline+indent+"}"), nil
+	return member(open, end, "", objectKey+": {"+newline+indent+indent+entry+newline+indent+"}"), nil
 }
 
 // ErrNoRuntime identifies a project without a declared Holon SDK runtime.

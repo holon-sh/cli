@@ -18,36 +18,29 @@ import (
 	"github.com/holon-sh/cli/pkg/typegen"
 )
 
+var versions = Versions{HolonSH: "1.0.0", HolonUI: "2.0.0", HolonPy: "3.0.0"}
+
 func TestWrite(t *testing.T) {
 	for _, language := range Languages {
 		t.Run(language, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "orders")
-			project := Project{Dir: dir, Language: language, Name: "io.github.acme/Order_Desk", Versions: Versions{HolonSH: "1.0.0", HolonUI: "2.0.0", HolonPy: "3.0.0"}}
-			files, err := project.Write()
+			project := Project{Dir: dir, Language: language, Name: "io.github.acme/Order_Desk", Versions: versions}
+			created, _, _, err := project.Write()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Contains(files, ".gitignore") || !slices.Contains(files, "ui/main.ts") {
-				t.Fatalf("files = %v", files)
+			if !slices.Contains(created, ".gitignore") || !slices.Contains(created, "ui/main.ts") || !slices.Contains(created, "package.json") {
+				t.Fatalf("created = %v", created)
 			}
-			main, err := os.ReadFile(filepath.Join(dir, "ui", "main.ts"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			// A Go server has no generated client, so its view binds the runtime's untyped one.
 			binding := `createApps({ "order-desk": { endpoint: new URL("/mcp/orders", location.origin) } })["order-desk"]`
 			if language == "go" {
 				binding = `bindApps(identity, contracts, { "order-desk": { endpoint: new URL("/mcp/orders", location.origin) } })["order-desk"]`
 			}
-			if !strings.Contains(string(main), binding) {
+			if main := read(t, dir, "ui/main.ts"); !strings.Contains(main, binding) {
 				t.Errorf("ui/main.ts:\n%s", main)
 			}
-			data, err := os.ReadFile(filepath.Join(dir, "package.json"))
-			if err != nil {
-				t.Fatal(err)
-			}
 			var pkg struct{ Dependencies map[string]string }
-			if err := json.Unmarshal(data, &pkg); err != nil {
+			if err := json.Unmarshal([]byte(read(t, dir, "package.json")), &pkg); err != nil {
 				t.Fatal(err)
 			}
 			want := map[string]string{"holon-ui": project.Versions.HolonUI, "holon-sh": ""}
@@ -55,9 +48,8 @@ func TestWrite(t *testing.T) {
 			case "ts":
 				want["holon-sh"] = project.Versions.HolonSH
 			case "py":
-				data, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))
-				if err != nil || !strings.Contains(string(data), `"holon-sh==`+project.Versions.HolonPy+`"`) {
-					t.Fatalf("pyproject.toml = %s, %v", data, err)
+				if pyproject := read(t, dir, "pyproject.toml"); !strings.Contains(pyproject, `"holon-sh==`+project.Versions.HolonPy+`"`) {
+					t.Fatalf("pyproject.toml:\n%s", pyproject)
 				}
 			}
 			for name, version := range want {
@@ -65,11 +57,85 @@ func TestWrite(t *testing.T) {
 					t.Errorf("%s = %q, want %q", name, pkg.Dependencies[name], version)
 				}
 			}
-			if _, err := project.Write(); err == nil || !strings.Contains(err.Error(), "is not empty") {
-				t.Errorf("second Write = %v, want a not-empty error", err)
+			if _, _, _, err := project.Write(); err == nil || !strings.Contains(err.Error(), "orders already has") {
+				t.Errorf("second Write = %v, want the files it would overwrite", err)
 			}
 		})
 	}
+}
+
+func TestWriteBesideAProject(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "billing")
+	put(t, dir, "pyproject.toml", "[project]\nname = \"billing\"\ndependencies = [\"MCP>=2.4\"]\n\n[dependency-groups]\nlint = [\"mypy\", {include-group = \"dev\"}]\n")
+	put(t, dir, ".gitignore", ".venv\n")
+	put(t, dir, "package.json", "{\n  \"name\": \"billing\",\n  \"scripts\": {\n    \"build\": \"tsc\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^7.0.0\"\n  }\n}\n")
+	project := Project{Dir: dir, Language: "py", Name: "com.example/billing", Versions: versions}
+	created, changed, notes, err := project.Write()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(created, "server.py") || slices.Contains(created, ".python-version") || !slices.Equal(changed, []string{".gitignore", "package.json"}) {
+		t.Errorf("created %v, changed %v", created, changed)
+	}
+	if ignore := read(t, dir, ".gitignore"); !strings.HasPrefix(ignore, ".venv\n__pycache__/\n") || strings.Contains(ignore, ".venv/") {
+		t.Errorf(".gitignore:\n%s", ignore)
+	}
+	pkg := read(t, dir, "package.json")
+	if !strings.Contains(pkg, `"vite": "^7.0.0"`) || !strings.Contains(pkg, `"build": "tsc"`) || !strings.Contains(pkg, `"holon-ui": "2.0.0"`) {
+		t.Errorf("package.json:\n%s", pkg)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "build script") {
+		t.Errorf("notes = %v", notes)
+	}
+	dependencies, dev, err := project.PythonRequirements()
+	if err != nil || !slices.Equal(dependencies, []string{"holon-sh==3.0.0"}) || len(dev) != 0 {
+		t.Errorf("PythonRequirements = %v, %v, %v; want holon-sh only", dependencies, dev, err)
+	}
+}
+
+func TestCheckRefusesWhatHolonWouldNotRun(t *testing.T) {
+	for _, test := range []struct {
+		name, language string
+		files          map[string]string
+		err            string
+	}{
+		{"start script", "ts", map[string]string{"package.json": `{"scripts": {"start": "node app.js"}}`}, "Holon would run instead of server.ts"},
+		{"poetry", "py", map[string]string{"pyproject.toml": "", "poetry.lock": ""}, "has poetry.lock"},
+		{"server entry", "py", map[string]string{"pyproject.toml": "", "src/server.py": "import mcp"}, "already has src/server.py"},
+		{"no manifest", "ts", map[string]string{"pyproject.toml": ""}, "has no package.json"},
+		{"go package", "go", map[string]string{"go.mod": "module m\n", "main.go": "package main"}, "already has main.go"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, data := range test.files {
+				put(t, dir, name, data)
+			}
+			err := Project{Dir: dir, Language: test.language, Name: "com.example/a"}.Check()
+			if err == nil || !strings.Contains(err.Error(), test.err) {
+				t.Errorf("Check = %v, want %q", err, test.err)
+			}
+		})
+	}
+}
+
+func put(t *testing.T, dir, name, data string) {
+	t.Helper()
+	path := filepath.Join(dir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func read(t *testing.T, dir, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestResolve(t *testing.T) {
@@ -101,7 +167,7 @@ func TestResolve(t *testing.T) {
 	}
 }
 
-func TestRegister(t *testing.T) {
+func TestAddApp(t *testing.T) {
 	entry := "  - name: orders\n    path: \"orders\"\n    access:\n      server: {}\n"
 	for _, test := range []struct {
 		name, before, after, path, err string
@@ -137,10 +203,13 @@ func TestRegister(t *testing.T) {
 			if test.path == "" {
 				test.path = "orders"
 			}
-			err := Register(manifest, "orders", test.path)
+			added, err := AddApp(manifest, "orders", test.path)
+			if err == nil {
+				err = added.Write()
+			}
 			if test.err != "" {
 				if err == nil || !strings.Contains(err.Error(), test.err) {
-					t.Fatalf("Register = %v, want %q", err, test.err)
+					t.Fatalf("AddApp = %v, want %q", err, test.err)
 				}
 				return
 			}

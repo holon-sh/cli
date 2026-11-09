@@ -7,15 +7,5 @@
   },
   "scripts": {
     "build": "vite build && vite build --mode mcp"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^2.0.4",
-    "holon-ui": "{{.Versions.HolonUI}}"
-  },
-  "devDependencies": {
-    "@types/node": "^26.6.6",
-    "typescript": "^7.0.2",
-    "vite": "^8.3.7",
-    "vite-plugin-singlefile": "^2.3.4"
   }
 }

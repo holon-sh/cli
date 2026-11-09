@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "{{.App}}"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = ["holon-sh=={{.Versions.HolonPy}}", "mcp>=2.3,<3"]
+dependencies = {{.Python.Dependencies}}
 
 [dependency-groups]
-dev = ["mypy>=2.4,<3"]
+dev = {{.Python.Dev}}
 
 [tool.setuptools]
 packages = []

@@ -181,7 +181,7 @@ func TestInitRefusals(t *testing.T) {
 	}{
 		{[]string{"orders"}, "--lang is required"},
 		{[]string{"orders", "--lang", "rb"}, "use go, py or ts"},
-		{[]string{"Orders", "--lang", "py"}, "cannot name an app"},
+		{[]string{"_", "--lang", "py"}, "cannot name an app"},
 		{[]string{"orders", "--lang", "py", "--name", "Order Desk"}, "is not an MCP server name"},
 		{[]string{"orders", "--lang", "py", "--name", "io.github.acme/" + strings.Repeat("a", 200)}, "is not an MCP server name"},
 	} {
@@ -207,7 +207,7 @@ func TestInitManifest(t *testing.T) {
 		{"holon.yaml", "orders", "holon.yaml", "orders"},
 		{"holon.yml", "orders", "holon.yml", "orders"},
 		{"", "orders", "orders/holon.yaml", "."},
-		{"holon.yml", ".", "holon.yaml", "."},
+		{"holon.yml", ".", "holon.yml", "."},
 		{"holon.yaml", "../outside", "../outside/holon.yaml", "."},
 	} {
 		t.Run(test.manifest+"/"+test.dir, func(t *testing.T) {

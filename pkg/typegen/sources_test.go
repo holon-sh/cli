@@ -139,9 +139,9 @@ func TestAddImportKeepsPackageJSONAsWritten(t *testing.T) {
 		{"{\r\n\t\"imports\": {\r\n\t\t\"#lib\": \"./lib.js\"\r\n\t}\r\n}", "{\r\n\t\"imports\": {\r\n\t\t\"#lib\": \"./lib.js\",\r\n\t\t" + entry + "\r\n\t}\r\n}"},
 		{`{"imports":{"#holon-sh":{"browser":"./x.mjs"}}}`, ""},
 	} {
-		out, err := addImport([]byte(c.in), "#holon-sh", "./generated/holon-sh/index.mjs")
+		out, err := AddPackageMember([]byte(c.in), "imports", "#holon-sh", "./generated/holon-sh/index.mjs")
 		if err != nil || string(out) != c.out {
-			t.Errorf("addImport(%q) = %q, %v; want %q", c.in, out, err, c.out)
+			t.Errorf("AddPackageMember(%q) = %q, %v; want %q", c.in, out, err, c.out)
 		}
 	}
 }
