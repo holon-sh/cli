@@ -34,7 +34,7 @@ func ordersServer(t *testing.T) *httptest.Server {
 func TestListPrintsTheHandshakeAndEachListing(t *testing.T) {
 	live := ordersServer(t)
 	got := run(t, "", "list", live.URL)
-	for _, want := range []string{"example.com/orders 1.2.0 (protocol ", "\nLook orders up by id.\n", "\nTools (1)\n  read(id: string, count?: integer)\n      Read an order.\n\nPrompts (1)\n  summarize(id, tone?)\n"} {
+	for _, want := range []string{"example.com/orders 1.2.0 (protocol ", "\nLook orders up by id.\n", "\nTools (1)\n  read(id: string, count?: number)\n      Read an order.\n\nPrompts (1)\n  summarize(id, tone?)\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("list output lacks %q:\n%s", want, got)
 		}
