@@ -16,19 +16,15 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/protocol"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // ResolveDocument returns one source's contract document without writing anything: a path source
 // is extracted by running its server, a registry or endpoint source is fetched, and a supplied
 // document is validated and returned with its bytes.
 func ResolveDocument(ctx context.Context, source Source, options Options) (*Document, error) {
-	o := options.defaults()
-	if err := source.validate(); err != nil {
+	o, err := source.prepare(options)
+	if err != nil {
 		return nil, err
-	}
-	if source.from != "" {
-		fmt.Fprintf(o.Stderr, "%s: using %s from %s\n", source.Alias, source.Endpoint, source.from)
 	}
 	switch {
 	case source.Path != "":
@@ -131,14 +127,12 @@ func resolveRegistry(ctx context.Context, ref protocol.RegistryRef, o Options) (
 		}
 		return metadata, nil
 	}
-	for _, transport := range d.Remotes {
-		if transport.Type == "streamable-http" {
-			metadata, err := liveContract(ctx, transport.URL, &identity, o.HTTPClient)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", label, err)
-			}
-			return metadata, nil
+	if remote := d.StreamableRemote(); remote != "" {
+		metadata, err := liveContract(ctx, remote, &identity, o.HTTPClient)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", label, err)
 		}
+		return metadata, nil
 	}
 	return nil, fmt.Errorf("%s publishes neither an OCI package with a contract nor a streamable-http remote", label)
 }
@@ -147,12 +141,9 @@ func resolveRegistry(ctx context.Context, ref protocol.RegistryRef, o Options) (
 // the server's own serverInfo names the contract; a registry source supplies its record's identity.
 // MCP allows an empty serverInfo version, which SDKs report for a server that does not set one.
 func liveContract(ctx context.Context, location string, identity *mcpcontract.Identity, client *http.Client) (*Document, error) {
-	if err := mcpregistry.ValidateEndpoint(location); err != nil {
-		return nil, err
-	}
-	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon-types", Version: "0.0.1"}, nil).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: location, HTTPClient: client, DisableStandaloneSSE: true}, nil)
+	session, err := dial(ctx, location, client)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", location, err)
+		return nil, err
 	}
 	defer session.Close()
 	initialized := session.InitializeResult()

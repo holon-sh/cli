@@ -2,7 +2,8 @@
 //
 // A Consumer is a project directory that receives clients for the servers it names as Sources.
 // Sources can be supplied explicitly or read from sh.holon.requires with DeclaredSources.
-// The caller chooses which targets receive them; unresolved sources are errors.
+// The caller chooses which targets receive them; unresolved sources are errors. Connect opens a
+// session with a source's running server instead.
 package typegen
 
 import (
@@ -130,6 +131,17 @@ func (s Source) validate() error {
 		err = fmt.Errorf("%s: %w", s.from, err)
 	}
 	return err
+}
+
+func (s Source) prepare(options Options) (Options, error) {
+	o := options.defaults()
+	if err := s.validate(); err != nil {
+		return o, err
+	}
+	if s.from != "" {
+		fmt.Fprintf(o.Stderr, "%s: using %s from %s\n", s.Alias, s.Endpoint, s.from)
+	}
+	return o, nil
 }
 
 // Consumer is a project directory that receives typed clients.
