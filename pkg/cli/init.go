@@ -162,14 +162,9 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 			for line := range strings.Lines(installs.String()) {
 				installed[typegen.PythonName(line)] = true
 			}
-			missing := func(requirements []string) []string {
-				return slices.DeleteFunc(requirements, func(r string) bool { return installed[typegen.PythonName(r)] })
-			}
 			dependencies, dev := project.PythonRequirements()
-			if dependencies = missing(dependencies); len(dependencies) > 0 {
-				commands = append(commands, append([]string{"uv", "add", "--frozen"}, dependencies...))
-			}
-			if dev = missing(dev); len(dev) > 0 {
+			commands = append(commands, append([]string{"uv", "add", "--frozen"}, dependencies...))
+			if dev = slices.DeleteFunc(dev, func(r string) bool { return installed[typegen.PythonName(r)] }); len(dev) > 0 {
 				commands = append(commands, append([]string{"uv", "add", "--frozen", "--dev"}, dev...))
 			}
 			commands = append(commands, []string{"uv", "sync"})

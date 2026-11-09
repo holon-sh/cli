@@ -298,7 +298,8 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	}
 }
 
-// PythonRequirements are the Python requirements the app needs: dependencies, and development ones.
+// PythonRequirements are the Python requirements the app needs: dependencies, which a project
+// declares directly, and development ones, which it only needs installed.
 func (p Project) PythonRequirements() (dependencies, dev []string) {
 	return []string{typegen.PythonRuntime + "==" + p.Versions.HolonPy, "mcp>=2.3,<3"}, []string{"mypy>=2.4,<3"}
 }
