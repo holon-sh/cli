@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/protocol"
 )
 
@@ -173,6 +174,9 @@ func withProject(cmd *cobra.Command, config *commandConfig) *cobra.Command {
 	})
 	cmd.MarkFlagsMutuallyExclusive("public", "oauth")
 	cmd.PreRunE = func(_ *cobra.Command, args []string) error {
+		if !kiln.Linked {
+			return kiln.ErrNotLinked
+		}
 		manifest, err := resolveManifestFile(config.file)
 		if err != nil {
 			return err

@@ -1,3 +1,5 @@
+//go:build kiln
+
 package kiln
 
 import (
