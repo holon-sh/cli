@@ -34,7 +34,7 @@ holon init orders --lang py
 const { result } = await server.tools.greet({ name: name.value });
 ```
 
-`holon init` pins the Holon SDKs that read the clients it writes, installs the dependencies (`uv` for Python, `go get` for Go, the project's package manager for Node.js), generates the clients, and adds the app to `holon.yaml`. `holon types check` then type-checks the server and the view. A Go server's contract isn't read from its source, so its view calls `greet` untyped, and `go build` type-checks the server. Run the app with [`holon dev`](https://holon-labs.dev/docs/).
+`holon init` pins the newest Holon SDK releases (on npm, those that read the clients it writes), installs the dependencies (`uv` for Python, `go get` for Go, the project's package manager for Node.js), generates the clients, and adds the app to `holon.yaml`. `holon types check` then type-checks the server and the view. A Go server's contract isn't read from its source, so its view calls `greet` untyped, and `go build` type-checks the server. Run the app with [`holon dev`](https://holon-labs.dev/docs/).
 
 In an existing Go module, Python project or Node.js project, `holon init` adds the server and the view beside the project's files, and the dependencies to its `go.mod`, `pyproject.toml` or `package.json`:
 
@@ -240,9 +240,9 @@ project (pyproject.toml) or a Node.js project (package.json), it adds the server
 the project's own files: Go and Python dependencies through go get and uv, npm packages into
 package.json, and lines to .gitignore. It leaves the project's scripts and tsconfig.json as written.
 
-holon init pins the Holon SDKs that read the clients this holon writes, installs the dependencies,
-generates the clients, and adds the app to the working directory's holon.yaml when DIR is inside it,
-or else to DIR's.
+holon init pins the newest Holon SDK releases, on npm those that read the clients this holon writes,
+installs the dependencies, generates the clients, and adds the app to the working directory's
+holon.yaml when DIR is inside it, or else to DIR's.
 
 Usage:
   holon init [DIR] [flags]

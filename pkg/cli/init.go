@@ -33,9 +33,9 @@ project (pyproject.toml) or a Node.js project (package.json), it adds the server
 the project's own files: Go and Python dependencies through go get and uv, npm packages into
 package.json, and lines to .gitignore. It leaves the project's scripts and tsconfig.json as written.
 
-holon init pins the Holon SDKs that read the clients this holon writes, installs the dependencies,
-generates the clients, and adds the app to the working directory's holon.yaml when DIR is inside it,
-or else to DIR's.`,
+holon init pins the newest Holon SDK releases, on npm those that read the clients this holon writes,
+installs the dependencies, generates the clients, and adds the app to the working directory's
+holon.yaml when DIR is inside it, or else to DIR's.`,
 		Example: `  # A Go app in ./orders
   holon init orders --lang go
 
@@ -138,7 +138,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	var commands [][]string
 	switch language {
 	case "go":
-		commands = append(commands, []string{"go", "get", "github.com/holon-sh/sdk-go@latest", "github.com/modelcontextprotocol/go-sdk@latest"})
+		commands = append(commands, []string{"go", "get", "github.com/holon-sh/sdk-go@latest"})
 	case "py":
 		dependencies, dev, err := project.PythonRequirements()
 		if err != nil {
@@ -158,20 +158,24 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	}
 	commands = append(commands, []string{manager, "install"})
 	for _, command := range commands {
-		if err := install(cmd, dir, dirArg, command...); err != nil {
-			return err
+		if err = execute(cmd, dir, dirArg, command...); err != nil {
+			break
 		}
 	}
-	c, err := consumer(dir, nil)
 	if err == nil {
-		err = typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: io.Discard, Stderr: stderr})
+		var c typegen.Consumer
+		if c, err = consumer(dir, nil); err == nil {
+			err = typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: io.Discard, Stderr: stderr})
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("%w\nthe app is written; run holon types generate in %s once that is fixed", err, dirArg)
 	}
 	if language == "go" {
-		if err := install(cmd, dir, dirArg, "go", "mod", "tidy"); err != nil {
-			return err
+		for _, command := range [][]string{{manager, "run", "build"}, {"go", "mod", "tidy"}} {
+			if err := execute(cmd, dir, dirArg, command...); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -197,15 +201,15 @@ var tools = map[string]struct{ name, download string }{
 	"py": {"uv", "https://docs.astral.sh/uv/"},
 }
 
-// install runs a command in dir, the app's directory, which the user named dirArg.
-func install(cmd *cobra.Command, dir, dirArg string, args ...string) error {
+// execute runs a command in dir, the app's directory, which the user named dirArg.
+func execute(cmd *cobra.Command, dir, dirArg string, args ...string) error {
 	command := strings.Join(args, " ")
 	stderr := cmd.ErrOrStderr()
 	fmt.Fprintf(stderr, "%s: %s\n", scaffold.AppName(dir), command)
 	run := exec.CommandContext(cmd.Context(), args[0], args[1:]...)
 	run.Dir, run.Stdout, run.Stderr = dir, stderr, stderr
 	if err := run.Run(); err != nil {
-		return fmt.Errorf("%s in %s: %w; run it and holon types generate there once that is fixed", command, dirArg, err)
+		return fmt.Errorf("%s in %s: %w", command, dirArg, err)
 	}
 	return nil
 }
