@@ -133,7 +133,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	if err := manifest.Write(); err != nil {
 		return err
 	}
-	fmt.Fprintf(stderr, "%s: added to %s\n", app, relative(manifest.Path))
+	fmt.Fprintf(stderr, "%s: added to %s\n", app, scaffold.Relative(manifest.Path))
 
 	var commands [][]string
 	switch language {
@@ -230,16 +230,6 @@ func manifestFor(dir string) (manifest, path string, err error) {
 		return file, ".", nil
 	}
 	return filepath.Join(dir, "holon.yaml"), ".", nil
-}
-
-// relative is path relative to the working directory when that is shorter to read.
-func relative(path string) string {
-	if working, err := os.Getwd(); err == nil {
-		if rel, err := filepath.Rel(working, path); err == nil && filepath.IsLocal(rel) {
-			return rel
-		}
-	}
-	return path
 }
 
 // prompter asks for a value on the terminal, returning fallback for an empty answer. It is nil when

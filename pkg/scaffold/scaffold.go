@@ -90,21 +90,30 @@ func Empty(dir string) error {
 // Check reports why the app cannot be written: in an existing project, a file the app adds that is
 // already there, another server entry, or a project Holon would not run the server of.
 func (p Project) Check() error {
+	_, _, err := p.check()
+	return err
+}
+
+func (p Project) check() (files map[string][]byte, existing bool, err error) {
 	if _, ok := manifests[p.Language]; !ok {
-		return fmt.Errorf("unsupported language %q", p.Language)
+		return nil, false, fmt.Errorf("unsupported language %q", p.Language)
 	}
-	_, existing, err := Detect(p.Dir)
+	_, existing, err = Detect(p.Dir)
+	if err != nil {
+		return nil, existing, err
+	}
+	files, err = p.render()
 	if err != nil || !existing {
-		return err
+		return files, existing, err
 	}
 	base := filepath.Base(p.Dir)
 	manifest := manifests[p.Language]
 	if !isFile(filepath.Join(p.Dir, manifest)) {
-		return fmt.Errorf("%s has no %s: holon init adds a %s app beside one, or creates the app in an empty directory", base, manifest, p.Language)
+		return nil, existing, fmt.Errorf("%s has no %s: holon init adds a %s app beside one, or creates the app in an empty directory", base, manifest, p.Language)
 	}
 	for _, lock := range []string{"poetry.lock", "pdm.lock"} {
 		if p.Language == "py" && isFile(filepath.Join(p.Dir, lock)) {
-			return fmt.Errorf("%s has %s: holon init adds Python dependencies with uv, so create the app in its own directory instead, such as holon init %s", base, lock, p.beside())
+			return nil, existing, fmt.Errorf("%s has %s: holon init adds Python dependencies with uv, so create the app in its own directory instead, such as holon init %s", base, lock, p.beside())
 		}
 	}
 	if p.Language == "ts" {
@@ -113,52 +122,54 @@ func (p Project) Check() error {
 			Scripts map[string]string `json:"scripts"`
 		}
 		if err := readJSON(filepath.Join(p.Dir, "package.json"), &pkg); err != nil {
-			return err
+			return nil, existing, err
 		}
 		if pkg.Main != "" || pkg.Scripts["start"] != "" {
-			return fmt.Errorf("%s's package.json has main or a start script, which Holon would run instead of server.ts; create the app in its own directory instead, such as holon init %s", base, p.beside())
+			return nil, existing, fmt.Errorf("%s's package.json has main or a start script, which Holon would run instead of server.ts; create the app in its own directory instead, such as holon init %s", base, p.beside())
 		}
-	}
-	files, err := p.render()
-	if err != nil {
-		return err
 	}
 	var conflicts []string
 	if entry, err := typegen.SourceEntry(p.Dir); err != nil || entry != "" {
 		conflicts = append(conflicts, cmp.Or(entry, "server entries"))
 	}
 	if p.Language == "go" {
-		if sources, _ := filepath.Glob(filepath.Join(p.Dir, "*.go")); len(sources) > 0 && !slices.Contains(conflicts, filepath.Base(sources[0])) {
+		if sources, _ := filepath.Glob(filepath.Join(p.Dir, "*.go")); len(sources) > 0 {
 			conflicts = append(conflicts, filepath.Base(sources[0]))
 		}
 	}
 	for _, name := range []string{"vite.config.ts", "vite.config.js", "vite.config.mjs", "vite.config.mts", "vite.config.cjs", "vite.config.cts"} {
-		if exists(filepath.Join(p.Dir, name)) && !slices.Contains(conflicts, name) {
+		if exists(filepath.Join(p.Dir, name)) {
 			conflicts = append(conflicts, name)
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		top, _, _ := strings.Cut(name, "/")
-		if policies[name] == "" && exists(filepath.Join(p.Dir, top)) && !slices.Contains(conflicts, top) {
+		if policies[name] == "" && exists(filepath.Join(p.Dir, top)) {
 			conflicts = append(conflicts, top)
 		}
 	}
+	slices.Sort(conflicts)
+	conflicts = slices.Compact(conflicts)
 	if len(conflicts) > 0 {
-		return fmt.Errorf("%s already has %s; create the app in its own directory instead, such as holon init %s", base, strings.Join(conflicts, ", "), p.beside())
+		return nil, existing, fmt.Errorf("%s already has %s; create the app in its own directory instead, such as holon init %s", base, strings.Join(conflicts, ", "), p.beside())
 	}
-	return nil
+	return files, existing, nil
 }
 
 // beside is a directory of its own to suggest for the app, inside the project, as the working
 // directory sees it.
 func (p Project) beside() string {
-	suggestion := filepath.Join(p.Dir, "mcp")
+	return Relative(filepath.Join(p.Dir, "mcp"))
+}
+
+// Relative is path relative to the working directory when that is shorter to read.
+func Relative(path string) string {
 	if working, err := os.Getwd(); err == nil {
-		if relative, err := filepath.Rel(working, suggestion); err == nil {
-			return relative
+		if rel, err := filepath.Rel(working, path); err == nil && filepath.IsLocal(rel) {
+			return rel
 		}
 	}
-	return suggestion
+	return path
 }
 
 // policies say how Write treats a file the project may already have: merge into it, keep it, or
@@ -177,14 +188,7 @@ var policies = map[string]string{
 // packages the app needs in its package.json, and gains the app's lines in its .gitignore; notes say
 // what the project may still need.
 func (p Project) Write() (created, changed, notes []string, err error) {
-	if err := p.Check(); err != nil {
-		return nil, nil, nil, err
-	}
-	_, existing, err := Detect(p.Dir)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	files, err := p.render()
+	files, existing, err := p.check()
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -326,11 +330,11 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 			}
 		}
 	}
-	switch current := pkg.Scripts["build"]; current {
-	case "":
+	switch current, ok := pkg.Scripts["build"]; {
+	case !ok:
 		updated, err := typegen.AddPackageMember(data, "scripts", "build", build)
 		return updated, "", err
-	case build:
+	case current == build:
 		return data, "", nil
 	default:
 		return data, "kept package.json's build script: Holon builds the view with it, so it must also run " + build, nil

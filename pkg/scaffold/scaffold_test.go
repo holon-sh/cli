@@ -93,6 +93,23 @@ func TestWriteBesideAProject(t *testing.T) {
 	}
 }
 
+func TestWriteKeepsAnEmptyBuildScript(t *testing.T) {
+	dir := t.TempDir()
+	put(t, dir, "package.json", `{"name": "billing", "scripts": {"build": ""}}`)
+	project := Project{Dir: dir, Language: "ts", Name: "com.example/billing", Versions: versions}
+	_, _, notes, err := project.Write()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := read(t, dir, "package.json")
+	if !strings.Contains(pkg, `"name": "billing"`) || !strings.Contains(pkg, `"build": ""`) || !strings.Contains(pkg, `"holon-ui": "2.0.0"`) {
+		t.Errorf("package.json:\n%s", pkg)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "kept package.json's build script") {
+		t.Errorf("notes = %v", notes)
+	}
+}
+
 func TestCheckRefusesWhatHolonWouldNotRun(t *testing.T) {
 	for _, test := range []struct {
 		name, language string
