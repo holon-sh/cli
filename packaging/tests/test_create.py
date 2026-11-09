@@ -23,7 +23,6 @@ class CreateTests(unittest.TestCase):
         arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
         package_cli.write_npm_platform(binary, dist, "1.2.3", package_cli.Target(sys.platform, arch))
         package_cli.write_npm_launcher(dist, "1.2.3")
-        package_cli.write_npm_create(dist, "1.2.3")
         package_cli.write_wheel(binary, dist, "1.2.3", ["any"])
 
         def run(*command):
