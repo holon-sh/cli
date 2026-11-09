@@ -41,12 +41,9 @@ func GeneratedSource(root, path string) bool {
 	}) {
 		return true
 	}
-	for _, target := range []string{TargetGo, TargetTS, TargetUI} {
-		if directory := slotDirectory(root, target); pathInsideContext(path, directory) && generatedDirectory(directory) {
-			return true
-		}
-	}
-	return pathInsideContext(path, slotDirectory(root, TargetPy)) && generatedPython(filepath.Join(root, "holon"))
+	return slices.ContainsFunc(targets, func(target string) bool {
+		return pathInsideContext(path, SlotDirectory(root, target)) && generatedSlot(root, target)
+	})
 }
 
 // SnapshotSource copies dir into destination (or only fingerprints it when destination is empty),

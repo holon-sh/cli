@@ -19,23 +19,22 @@ func Check(ctx context.Context, dir string, options Options) error {
 	}
 	var languages []string
 	for _, target := range targets {
-		switch target {
-		case TargetGo:
+		if target == TargetGo {
 			return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
-		case TargetTS, TargetUI:
-			if err := installedRuntime(dir, nodePackages[target]); err != nil {
+		}
+		if pkg, ok := nodePackages[target]; ok {
+			if err := installedRuntime(dir, pkg); err != nil {
 				return err
 			}
-			if slot := slotDirectory(dir, target); !generatedDirectory(slot) {
-				return fmt.Errorf("%s has no generated clients; run holon types generate", slot)
-			}
-			languages = append(languages, "typescript")
-		case TargetPy:
-			if !generatedPython(filepath.Join(dir, "holon")) {
-				return fmt.Errorf("%s has no generated clients; run holon types generate", dir)
-			}
-			languages = append(languages, "python")
 		}
+		if !generatedSlot(dir, target) {
+			return fmt.Errorf("%s has no generated clients; run holon types generate", SlotDirectory(dir, target))
+		}
+		language := "typescript"
+		if target == TargetPy {
+			language = "python"
+		}
+		languages = append(languages, language)
 	}
 	root, err := os.MkdirTemp("", "holon-types-")
 	if err != nil {

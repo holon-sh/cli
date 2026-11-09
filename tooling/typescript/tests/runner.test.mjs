@@ -132,12 +132,14 @@ test("a server that imports its generated clients extracts before holon has writ
   const { root, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
+    "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./*"] } } }),
     "node_modules/holon-sh/package.json": '{"name":"holon-sh","type":"module","exports":{"./runtime":"./runtime.mjs"}}',
     "node_modules/holon-sh/runtime.mjs": `export class ToolCallError extends Error {}
 export const createApps = (identity, contracts) => Object.freeze(Object.fromEntries(Object.keys(contracts).map(name => [name, {}])));
 export const bindApps = (identity, contracts, bindings) => createApps(identity, contracts);`,
     "src/server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
-import { apps, createApps, ToolCallError } from "../generated/holon-sh/index.js";
+import { apps, ToolCallError } from "../generated/holon-sh/index.js";
+import { createApps } from "@/generated/holon-sh/index.js";
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "caller", version: "1" });
   if (ToolCallError && Object.keys({ ...apps, ...createApps({}) }).length === 0) server.registerTool("relay", {}, () => ({ content: [] }));

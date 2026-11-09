@@ -62,7 +62,7 @@ export function createSandbox(root, vendor) {
     }
     if (!referrer.split(sep).includes("node_modules")) {
       for (const target of paths(specifier)) {
-        const file = candidate(target);
+        const file = candidate(target) ?? emptyClients(target);
         if (file) return { file };
       }
     }
@@ -76,11 +76,12 @@ export function createSandbox(root, vendor) {
     throw new MissingPackage(`Cannot find package ${name} imported from ${referrer}; install the application's dependencies or commit holon-contract.json`, { cause: name });
   }
 
-  // A server that calls other servers imports the clients holon generates for it, which do not exist
-  // before the first generation. Like Python's holon.apps, they are then a module with no clients.
+  // A server that calls other servers imports the clients holon generates into its project, which a
+  // snapshot leaves out and a first generation has not written. Like Python's holon.apps, they are then
+  // a module with no clients.
   function emptyClients(target) {
     const match = target.match(/^(.*[\\/]generated[\\/]holon-sh)(?:[\\/]index(?:\.[mc]?[jt]s)?)?$/);
-    if (!match) return;
+    if (!match || match[1].split(sep).includes("node_modules")) return;
     const file = join(match[1], "index.mjs");
     generated.set(file, `import { createApps as create, bindApps } from "holon-sh/runtime";
 export { ToolCallError } from "holon-sh/runtime";

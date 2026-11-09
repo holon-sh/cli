@@ -18,6 +18,9 @@ const contractVersion = 2
 
 var errNotInstalled = errors.New("not installed")
 
+// banner opens every generated TypeScript and Go file.
+var banner = []byte("// " + mcpcontract.Marker + " app=")
+
 // installedRuntime verifies that pkg, resolved upward from root as Node.js resolves it, runs the
 // clients this CLI generates.
 func installedRuntime(root, pkg string) error {
@@ -49,8 +52,8 @@ func installedRuntime(root, pkg string) error {
 	}
 }
 
-// slotDirectory is the directory a target's generated clients occupy in the project at dir.
-func slotDirectory(dir, target string) string {
+// SlotDirectory is the directory a target's generated clients occupy in the project at dir.
+func SlotDirectory(dir, target string) string {
 	switch target {
 	case TargetPy:
 		return filepath.Join(dir, "holon", "apps")
@@ -72,7 +75,7 @@ func generatedDirectory(directory string) bool {
 			return false
 		}
 		data, err := os.ReadFile(filepath.Join(directory, entry.Name()))
-		if err != nil || !bytes.HasPrefix(data, []byte("// "+mcpcontract.Marker+" app=")) {
+		if err != nil || !bytes.HasPrefix(data, banner) {
 			return false
 		}
 	}
@@ -100,7 +103,7 @@ func writeGenerated(directory string, files map[string][]byte) error {
 		return err
 	}
 	for _, text := range files {
-		if !bytes.HasPrefix(text, []byte("// "+mcpcontract.Marker+" app=")) {
+		if !bytes.HasPrefix(text, banner) {
 			return fmt.Errorf("generated %s is missing its ownership banner", directory)
 		}
 	}
@@ -110,18 +113,26 @@ func writeGenerated(directory string, files map[string][]byte) error {
 	return replaceDirectory(filepath.Dir(directory), directory, files)
 }
 
+// generatedSlot reports whether the project at dir holds a target's generated clients.
+func generatedSlot(dir, target string) bool {
+	if target == TargetPy {
+		return generatedPython(filepath.Join(dir, "holon"))
+	}
+	return generatedDirectory(SlotDirectory(dir, target))
+}
+
 func validateSlot(target, dir string) error {
 	if target == TargetPy {
 		return validatePythonSlot(dir)
 	}
-	return validateGenerated(slotDirectory(dir, target))
+	return validateGenerated(SlotDirectory(dir, target))
 }
 
 func writeSlot(target, dir string, files map[string][]byte) error {
 	if target == TargetPy {
 		return writePythonSlot(dir, files)
 	}
-	return writeGenerated(slotDirectory(dir, target), files)
+	return writeGenerated(SlotDirectory(dir, target), files)
 }
 
 // replaceDirectory atomically replaces directory, inside parent, with exactly files.
@@ -146,6 +157,9 @@ func replaceDirectory(parent, directory string, files map[string][]byte) error {
 		return err
 	}
 	defer os.RemoveAll(temp)
+	if err := os.Chmod(temp, 0o755); err != nil {
+		return err
+	}
 	for name, content := range files {
 		if filepath.Base(name) != name || strings.HasPrefix(name, ".") {
 			return fmt.Errorf("invalid generated file %q", name)

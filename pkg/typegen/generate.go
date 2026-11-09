@@ -415,16 +415,12 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 	return prepared.Write()
 }
 
-// Write validates all consumer slots, and the Node runtimes their clients import, before writing
-// any of them. Callers hold AcquireLocks and install dependencies before Prepare.
+// Write validates all consumer slots before writing any of them. Callers hold AcquireLocks and
+// Install dependencies before Prepare.
 func (p *Prepared) Write() error {
 	for _, c := range p.consumers {
 		for _, target := range c.Targets {
-			err := validateSlot(target, c.Dir)
-			if pkg, ok := nodePackages[target]; ok && err == nil {
-				err = installedRuntime(c.Dir, pkg)
-			}
-			if err != nil {
+			if err := validateSlot(target, c.Dir); err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
 			}
 		}
