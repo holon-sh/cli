@@ -133,6 +133,17 @@ func (s Source) validate() error {
 	return err
 }
 
+func (s Source) prepare(options Options) (Options, error) {
+	o := options.defaults()
+	if err := s.validate(); err != nil {
+		return o, err
+	}
+	if s.from != "" {
+		fmt.Fprintf(o.Stderr, "%s: using %s from %s\n", s.Alias, s.Endpoint, s.from)
+	}
+	return o, nil
+}
+
 // Consumer is a project directory that receives typed clients.
 type Consumer struct {
 	// Name signs the generated files' banners and labels output.

@@ -22,12 +22,9 @@ import (
 // is extracted by running its server, a registry or endpoint source is fetched, and a supplied
 // document is validated and returned with its bytes.
 func ResolveDocument(ctx context.Context, source Source, options Options) (*Document, error) {
-	o := options.defaults()
-	if err := source.validate(); err != nil {
+	o, err := source.prepare(options)
+	if err != nil {
 		return nil, err
-	}
-	if source.from != "" {
-		fmt.Fprintf(o.Stderr, "%s: using %s from %s\n", source.Alias, source.Endpoint, source.from)
 	}
 	switch {
 	case source.Path != "":
