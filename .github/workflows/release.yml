@@ -79,11 +79,16 @@ jobs:
           merge-multiple: true
       - name: Collect the wheels
         run: |
-          mkdir wheels
-          cp artifacts/*.whl wheels/
+          mkdir wheels create
+          cp artifacts/holon_types-*.whl wheels/
+          cp artifacts/create_holon_app-*.whl create/
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: wheels/
+      - name: Publish create-holon-app after holon-types
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: create/
   publish-npm:
     needs: [version, release]
     runs-on: ubuntu-24.04

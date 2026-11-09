@@ -23,17 +23,19 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 
 ## Create an app
 
-Without installing `holon` first, start one with your language's tooling:
+Without installing `holon` first, create a Python app with uv:
 
 ```sh
-uvx holon-types init orders --lang py
+uvx create-holon-app orders
 ```
+
+Or a TypeScript app with npm, or with `pnpm`, `yarn` or `bun create`:
 
 ```sh
-npm create holon-app@next orders -- --lang ts
+npm create holon-app@next orders
 ```
 
-Both run `holon init` from `holon-types`, which ships the `holon` binary on PyPI and npm for macOS and Linux. `pnpm create`, `yarn create` and `bun create` work as `npm create` does, without the `--`.
+Both run `holon init` from `holon-types`, which ships the `holon` binary on PyPI and npm for macOS and Linux.
 
 ## Example
 
