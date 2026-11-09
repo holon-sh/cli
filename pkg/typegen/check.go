@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 
+	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/tooling"
 )
 
@@ -67,12 +67,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 		if err = os.WriteFile(path, checker, 0o600); err != nil {
 			return err
 		}
-		command := exec.CommandContext(ctx, program, path, "check", "")
-		command.Dir = dir
-		command.Env = append(append(command.Environ(), o.Env...), "PYTHONDONTWRITEBYTECODE=1")
-		command.Stdout = o.Stdout
-		command.Stderr = o.Stderr
-		if err = command.Run(); err != nil {
+		if err = commandenv.RunStreaming(ctx, dir, program, []string{path, "check", ""}, nil, append(append(os.Environ(), o.Env...), "PYTHONDONTWRITEBYTECODE=1"), o.Stdout, o.Stderr); err != nil {
 			return fmt.Errorf("%s does not type-check against its typed contracts: %w", filepath.Base(dir), err)
 		}
 	}

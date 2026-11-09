@@ -112,7 +112,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	if err != nil {
 		return err
 	}
-	manifest, err := addApp(manifestPath, app, appPath)
+	data, err := addApp(manifestPath, app, appPath)
 	if err != nil {
 		return err
 	}
@@ -131,10 +131,10 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	if len(changed) > 0 {
 		fmt.Fprintf(stderr, "%s: updated %s\n", app, strings.Join(changed, ", "))
 	}
-	if err := manifest.write(); err != nil {
+	if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(stderr, "%s: added to %s\n", app, scaffold.Relative(manifest.path))
+	fmt.Fprintf(stderr, "%s: added to %s\n", app, scaffold.Relative(manifestPath))
 
 	run := func(args ...string) error {
 		fmt.Fprintf(stderr, "%s: %s\n", app, strings.Join(args, " "))

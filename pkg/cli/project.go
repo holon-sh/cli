@@ -99,41 +99,31 @@ func projectFile(dir string) string {
 
 var listItem = regexp.MustCompile(`^(\s*)- `)
 
-// projectManifest is a holon.yaml with an app added, to write once the app is.
-type projectManifest struct {
-	path string
-	data []byte
-}
-
-func (m projectManifest) write() error {
-	return os.WriteFile(m.path, m.data, 0o644)
-}
-
 // addApp adds app, kept at path relative to the manifest's directory, to the holon.yaml at file,
 // which it creates when there is none. It appends to an existing file's apps list in place, keeping
 // the rest of the file as written, and fails when that list does not end the file.
-func addApp(file, app, path string) (projectManifest, error) {
+func addApp(file, app, path string) ([]byte, error) {
 	entry := fmt.Sprintf("- name: %s\n  path: %q\n  access:\n    server: {}\n", app, path)
 	data, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
-		return projectManifest{file, []byte("apps:\n" + indent(entry, "  "))}, nil
+		return []byte("apps:\n" + indent(entry, "  ")), nil
 	}
 	if err != nil {
-		return projectManifest{}, err
+		return nil, err
 	}
 	before, err := appNames(data)
 	if err != nil {
-		return projectManifest{}, fmt.Errorf("%s: %w", file, err)
+		return nil, fmt.Errorf("%s: %w", file, err)
 	}
 	if slices.Contains(before, app) {
-		return projectManifest{}, fmt.Errorf("%s already has an app named %s", file, app)
+		return nil, fmt.Errorf("%s already has an app named %s", file, app)
 	}
 	failed := fmt.Errorf("could not add %s to the apps list in %s; add it there:\n%s", app, file, indent(entry, "  "))
 	text := strings.TrimRight(string(data), "\n")
 	lines := strings.Split(text, "\n")
 	start := slices.IndexFunc(lines, func(line string) bool { return strings.TrimRight(line, " ") == "apps:" })
 	if start < 0 {
-		return projectManifest{}, failed
+		return nil, failed
 	}
 	prefix := "  "
 	for _, line := range lines[start+1:] {
@@ -144,9 +134,9 @@ func addApp(file, app, path string) (projectManifest, error) {
 	}
 	updated := []byte(text + "\n" + indent(entry, prefix))
 	if after, err := appNames(updated); err != nil || !slices.Equal(after, append(before, app)) {
-		return projectManifest{}, failed
+		return nil, failed
 	}
-	return projectManifest{file, updated}, nil
+	return updated, nil
 }
 
 func appNames(data []byte) ([]string, error) {

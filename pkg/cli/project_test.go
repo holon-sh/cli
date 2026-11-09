@@ -42,7 +42,7 @@ func TestAddApp(t *testing.T) {
 			}
 			added, err := addApp(manifest, "orders", test.path)
 			if err == nil {
-				err = added.write()
+				err = os.WriteFile(manifest, added, 0o644)
 			}
 			if test.err != "" {
 				if err == nil || !strings.Contains(err.Error(), test.err) {
