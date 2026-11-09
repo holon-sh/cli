@@ -27,14 +27,14 @@ go install github.com/holon-sh/cli/cmd/holon@latest
 holon init orders --lang py
 ```
 
-`--lang ts` writes the server in TypeScript instead. Either way the app has an MCP server with one tool, `greet`, and a view the server returns as an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) and Holon serves as a page. The view calls the tool through a typed client:
+`--lang ts` writes the server in TypeScript instead, and `--lang go` in Go. Each app has an MCP server with one tool, `greet`, and a view the server returns as an [MCP App](https://modelcontextprotocol.io/extensions/apps/overview) and Holon serves as a page. The view calls the tool through a typed client:
 
 ```ts
 // orders/ui/main.ts
 const { result } = await server.tools.greet({ name: name.value });
 ```
 
-`holon init` pins the Holon SDKs that read the clients it writes, installs the dependencies (`uv` for Python, the project's package manager for Node.js), generates the clients, and adds the app to `holon.yaml`. `holon types check` then type-checks the server and the view. Run the app with [`holon dev`](https://holon-labs.dev/docs/).
+`holon init` pins the Holon SDKs that read the clients it writes, installs the dependencies (`uv` for Python, `go get` for Go, the project's package manager for Node.js), generates the clients, and adds the app to `holon.yaml`. `holon types check` then type-checks the server and the view. A Go server's contract isn't read from its source, so its view calls `greet` untyped, and `go build` type-checks the server. Run the app with [`holon dev`](https://holon-labs.dev/docs/).
 
 ## Example
 
@@ -225,8 +225,8 @@ holon types check -s docs=https://mcp.example.com/mcp
 <summary><code>holon init</code></summary>
 
 ```text
-Create an app in DIR, or the working directory: an MCP server in Python or TypeScript, and a view it
-serves as an MCP App and as a page.
+Create an app in DIR, or the working directory: an MCP server in Go, Python or TypeScript, and a
+view it serves as an MCP App and as a page.
 
 DIR must be empty or absent; its name is the app's name. holon init pins the Holon SDKs that read the
 clients this holon writes, installs the dependencies, generates the clients, and adds the app to the
@@ -236,6 +236,9 @@ Usage:
   holon init [DIR] [flags]
 
 Examples:
+  # A Go app in ./orders
+  holon init orders --lang go
+
   # A Python app in ./orders
   holon init orders --lang py
 
@@ -244,7 +247,7 @@ Examples:
 
 Flags:
   -h, --help          help for init
-      --lang string   The server's language: py or ts
+      --lang string   The server's language: go, py or ts
       --name string   The MCP server name (default com.example/APP)
 ```
 

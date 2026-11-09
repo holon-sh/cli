@@ -1,0 +1,54 @@
+package main
+
+import (
+	"context"
+	_ "embed"
+	"errors"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+
+	holon "github.com/holon-sh/sdk-go"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+//go:embed dist/mcp/index.html
+var page string
+
+const (
+	view     = "ui://{{.App}}/view.html"
+	mimeType = "text/html;profile=mcp-app"
+)
+
+type greetInput struct {
+	Name string `json:"name"`
+}
+
+type greetOutput struct {
+	Result string `json:"result"`
+}
+
+func greet(_ context.Context, _ *mcp.CallToolRequest, input greetInput) (*mcp.CallToolResult, greetOutput, error) {
+	return nil, greetOutput{Result: "Hello, " + input.Name + "!"}, nil
+}
+
+func main() {
+	server := mcp.NewServer(&mcp.Implementation{Name: "{{.Name}}", Version: "0.1.0"}, nil)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "greet",
+		Description: "Greet someone by name.",
+		Meta:        mcp.Meta{"ui": map[string]any{"resourceUri": view}},
+	}, greet)
+	server.AddResource(&mcp.Resource{URI: view, Name: "View", MIMEType: mimeType},
+		func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			contents := &mcp.ResourceContents{URI: view, MIMEType: mimeType, Text: page}
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{contents}}, nil
+		})
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := holon.Serve(ctx, server, holon.WithFrontend("dist/web")); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatal(err)
+	}
+}

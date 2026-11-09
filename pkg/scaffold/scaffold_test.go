@@ -34,7 +34,12 @@ func TestWrite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(main), `createApps({ "order-desk": { endpoint: new URL("/mcp/orders", location.origin) } })["order-desk"]`) {
+			// A Go server has no generated client, so its view binds the runtime's untyped one.
+			binding := `createApps({ "order-desk": { endpoint: new URL("/mcp/orders", location.origin) } })["order-desk"]`
+			if language == "go" {
+				binding = `bindApps(identity, contracts, { "order-desk": { endpoint: new URL("/mcp/orders", location.origin) } })["order-desk"]`
+			}
+			if !strings.Contains(string(main), binding) {
 				t.Errorf("ui/main.ts:\n%s", main)
 			}
 			data, err := os.ReadFile(filepath.Join(dir, "package.json"))
@@ -46,9 +51,10 @@ func TestWrite(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := map[string]string{"holon-ui": project.Versions.HolonUI, "holon-sh": ""}
-			if language == "ts" {
+			switch language {
+			case "ts":
 				want["holon-sh"] = project.Versions.HolonSH
-			} else {
+			case "py":
 				data, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))
 				if err != nil || !strings.Contains(string(data), `"holon-sh==`+project.Versions.HolonPy+`"`) {
 					t.Fatalf("pyproject.toml = %s, %v", data, err)

@@ -180,8 +180,7 @@ func TestInitRefusals(t *testing.T) {
 		err  string
 	}{
 		{[]string{"orders"}, "--lang is required"},
-		{[]string{"orders", "--lang", "go"}, "--lang go is not available yet"},
-		{[]string{"orders", "--lang", "rb"}, "use py or ts"},
+		{[]string{"orders", "--lang", "rb"}, "use go, py or ts"},
 		{[]string{"Orders", "--lang", "py"}, "cannot name an app"},
 		{[]string{"orders", "--lang", "py", "--name", "Order Desk"}, "is not an MCP server name"},
 		{[]string{"orders", "--lang", "py", "--name", "io.github.acme/" + strings.Repeat("a", 200)}, "is not an MCP server name"},

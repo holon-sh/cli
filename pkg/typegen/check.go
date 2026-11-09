@@ -17,10 +17,14 @@ func Check(ctx context.Context, dir string, options Options) error {
 	if err != nil {
 		return err
 	}
+	// The Go compiler checks Go clients, so a Go project's view is all that is left to check here.
+	if slices.Equal(targets, []string{TargetGo}) {
+		return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
+	}
 	var languages []string
 	for _, target := range targets {
 		if target == TargetGo {
-			return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
+			continue
 		}
 		if pkg, ok := nodePackages[target]; ok {
 			if err := installedRuntime(dir, pkg); err != nil {

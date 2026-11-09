@@ -26,13 +26,16 @@ func NewInitCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [DIR]",
 		Short: "Create an app: an MCP server and the view it serves",
-		Long: `Create an app in DIR, or the working directory: an MCP server in Python or TypeScript, and a view it
-serves as an MCP App and as a page.
+		Long: `Create an app in DIR, or the working directory: an MCP server in Go, Python or TypeScript, and a
+view it serves as an MCP App and as a page.
 
 DIR must be empty or absent; its name is the app's name. holon init pins the Holon SDKs that read the
 clients this holon writes, installs the dependencies, generates the clients, and adds the app to the
 working directory's holon.yaml when DIR is inside it, or else writes one in DIR.`,
-		Example: `  # A Python app in ./orders
+		Example: `  # A Go app in ./orders
+  holon init orders --lang go
+
+  # A Python app in ./orders
   holon init orders --lang py
 
   # A TypeScript app in the working directory, with its MCP server name
@@ -42,7 +45,7 @@ working directory's holon.yaml when DIR is inside it, or else writes one in DIR.
 			return runInit(cmd, cmp.Or(cmd.Flags().Arg(0), "."), language, name)
 		},
 	}
-	cmd.Flags().StringVar(&language, "lang", "", "The server's language: py or ts")
+	cmd.Flags().StringVar(&language, "lang", "", "The server's language: go, py or ts")
 	cmd.Flags().StringVar(&name, "name", "", "The MCP server name (default com.example/APP)")
 	return cmd
 }
@@ -62,17 +65,14 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	ask := prompter(cmd)
 	if language == "" {
 		if ask == nil {
-			return errors.New("--lang is required: py or ts")
+			return errors.New("--lang is required: go, py or ts")
 		}
-		if language, err = ask("Language (py, ts)", ""); err != nil {
+		if language, err = ask("Language (go, py, ts)", ""); err != nil {
 			return err
 		}
 	}
-	switch {
-	case language == "go":
-		return errors.New("--lang go is not available yet: a Go server cannot serve its view until sdk-go and Kiln support a frontend")
-	case !slices.Contains(scaffold.Languages, language):
-		return fmt.Errorf("--lang %q: use py or ts", language)
+	if !slices.Contains(scaffold.Languages, language) {
+		return fmt.Errorf("--lang %q: use go, py or ts", language)
 	}
 	if name == "" {
 		name = "com.example/" + app
@@ -110,16 +110,16 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	}
 	fmt.Fprintf(stderr, "%s: added to %s\n", app, manifest)
 
-	if language == "py" {
-		if _, err := exec.LookPath("uv"); err != nil {
-			return fmt.Errorf("uv is not installed (https://docs.astral.sh/uv/); install it, then run uv sync and holon types generate in %s", dirArg)
-		}
-		fmt.Fprintf(stderr, "%s: uv sync\n", app)
-		sync := exec.CommandContext(cmd.Context(), "uv", "sync")
-		sync.Dir, sync.Stdout, sync.Stderr = dir, stderr, stderr
-		if err := sync.Run(); err != nil {
-			return fmt.Errorf("uv sync in %s: %w", dirArg, err)
-		}
+	// Python and Go dependencies first, so that generating finds the server's packages and the Go
+	// runtime; generating installs the Node.js ones itself.
+	switch language {
+	case "py":
+		err = install(cmd, dir, dirArg, "https://docs.astral.sh/uv/", "uv", "sync")
+	case "go":
+		err = install(cmd, dir, dirArg, "https://go.dev/dl/", "go", "get", "github.com/holon-sh/sdk-go@latest", "github.com/modelcontextprotocol/go-sdk@latest")
+	}
+	if err != nil {
+		return err
 	}
 	c, err := consumer(dir, nil)
 	if err == nil {
@@ -127,6 +127,12 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("%w\n%s is written; run holon types generate in it once that is fixed", err, dirArg)
+	}
+	// The generated clients' imports complete go.sum.
+	if language == "go" {
+		if err := install(cmd, dir, dirArg, "https://go.dev/dl/", "go", "mod", "tidy"); err != nil {
+			return err
+		}
 	}
 
 	out := cmd.OutOrStdout()
@@ -138,6 +144,22 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 		fmt.Fprintln(out, "  holon dev")
 	} else {
 		fmt.Fprintf(out, "  holon dev %s\n", app)
+	}
+	return nil
+}
+
+// install runs a package manager's command in dir, the app's directory, which the user named dirArg.
+func install(cmd *cobra.Command, dir, dirArg, download string, args ...string) error {
+	command := strings.Join(args, " ")
+	if _, err := exec.LookPath(args[0]); err != nil {
+		return fmt.Errorf("%s is not installed (%s); install it, then run %s and holon types generate in %s", args[0], download, command, dirArg)
+	}
+	stderr := cmd.ErrOrStderr()
+	fmt.Fprintf(stderr, "%s: %s\n", filepath.Base(dir), command)
+	run := exec.CommandContext(cmd.Context(), args[0], args[1:]...)
+	run.Dir, run.Stdout, run.Stderr = dir, stderr, stderr
+	if err := run.Run(); err != nil {
+		return fmt.Errorf("%s in %s: %w", command, dirArg, err)
 	}
 	return nil
 }

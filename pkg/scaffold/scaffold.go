@@ -1,4 +1,4 @@
-// Package scaffold writes new Holon apps: an MCP server and the view it serves, in Python or
+// Package scaffold writes new Holon apps: an MCP server and the view it serves, in Go, Python or
 // TypeScript.
 package scaffold
 
@@ -23,7 +23,7 @@ import (
 var templates embed.FS
 
 // Languages are the languages Write supports, by their --lang names.
-var Languages = []string{"py", "ts"}
+var Languages = []string{"go", "py", "ts"}
 
 // Versions are the Holon SDK versions a new app pins.
 type Versions struct {
@@ -89,9 +89,15 @@ func (p Project) Write() ([]string, error) {
 			if err := parsed.Execute(&rendered, data); err != nil {
 				return err
 			}
-			relative := strings.TrimPrefix(name, root+"/")
+			// Go files are kept as .tmpl: a go.mod would leave its directory out of the embed, and a .go
+			// file would build with the CLI.
+			relative := strings.TrimSuffix(strings.TrimPrefix(name, root+"/"), ".tmpl")
 			if base := path.Base(relative); strings.HasPrefix(base, "_") {
 				relative = path.Join(path.Dir(relative), "."+base[1:])
+			}
+			// A language's own file replaces the shared one.
+			if slices.Contains(written, relative) {
+				return nil
 			}
 			target := filepath.Join(p.Dir, filepath.FromSlash(relative))
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
