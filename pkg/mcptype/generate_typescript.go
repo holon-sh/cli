@@ -18,12 +18,11 @@ export { registerPageTools } from %[1]s;
 export declare function exposeTools(app: Apps[keyof Apps], options?: import(%[1]s).ExposeOptions): Promise<boolean>;
 `
 
-// resourceContracts compiles resources as tools named by URI, so a resource's output is its contents.
-
 // TypeScriptModule is the generated clients' module, beside its declarations in index.d.mts. Its .mjs
 // keeps it an ES module in a CommonJS project.
 const TypeScriptModule = "index.mjs"
 
+// resourceContracts compiles resources as tools named by URI, so a resource's output is its contents.
 func resourceContracts(contracts map[string]contract) map[string]contract {
 	result := make(map[string]contract, len(contracts))
 	for alias, source := range contracts {

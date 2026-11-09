@@ -426,7 +426,7 @@ func (p *Prepared) Write() error {
 		}
 	}
 	for _, c := range p.consumers {
-		if err := p.WriteClients(c.Name, c.Dir); err != nil {
+		if err := c.write(c.Dir); err != nil {
 			return err
 		}
 		for _, target := range c.Targets {
@@ -448,13 +448,16 @@ func (p *Prepared) Targets(consumer string) []string {
 // nothing for an unknown one. It refuses to overwrite files it did not generate, and leaves identical
 // clients untouched.
 func (p *Prepared) WriteClients(consumer, dir string) error {
-	c := p.consumer(consumer)
-	if c == nil {
-		return nil
+	if c := p.consumer(consumer); c != nil {
+		return c.write(dir)
 	}
+	return nil
+}
+
+func (c *preparedConsumer) write(dir string) error {
 	for _, target := range c.Targets {
 		if err := writeSlot(dir, target, c.packages[target]); err != nil {
-			return fmt.Errorf("%s: %w", consumer, err)
+			return fmt.Errorf("%s: %w", c.Name, err)
 		}
 	}
 	return nil
