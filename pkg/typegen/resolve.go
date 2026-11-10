@@ -200,7 +200,7 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 		}
 		identity = &mcpcontract.Identity{Name: info.Name, Version: cmp.Or(info.Version, unversioned)}
 	}
-	contract, err := listCatalog(ctx, session, nil)
+	contract, err := listCatalog(ctx, session)
 	if err != nil {
 		return nil, err
 	}

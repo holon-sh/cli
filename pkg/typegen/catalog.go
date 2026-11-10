@@ -24,74 +24,37 @@ func newClient() *mcp.Client {
 	return mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "0.0.1"}, &mcp.ClientOptions{Capabilities: capabilities})
 }
 
-func listCatalog(ctx context.Context, session *mcp.ClientSession, raw func() json.RawMessage) (*mcpcontract.Contract, error) {
+func listCatalog(ctx context.Context, session *mcp.ClientSession) (*mcpcontract.Contract, error) {
 	contract := &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}
 	capabilities := cmp.Or(session.InitializeResult().Capabilities, &mcp.ServerCapabilities{})
-	err := pages(capabilities.Tools != nil, "tools/list", raw, func(cursor string) (any, string, error) {
-		result, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
-		if err != nil {
-			return nil, "", err
-		}
-		return result, result.NextCursor, nil
-	}, func(data json.RawMessage) error {
-		var page struct{ Tools []mcpcontract.Tool }
-		err := json.Unmarshal(data, &page)
-		contract.Tools = append(contract.Tools, page.Tools...)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	err = pages(capabilities.Resources != nil, "resources/list", raw, func(cursor string) (any, string, error) {
-		result, err := session.ListResources(ctx, &mcp.ListResourcesParams{Cursor: cursor})
-		if err != nil {
-			return nil, "", err
-		}
-		return result, result.NextCursor, nil
-	}, func(data json.RawMessage) error {
-		var page struct {
-			Resources []struct {
-				URI  string
-				Meta map[string]json.RawMessage `json:"_meta"`
+	if capabilities.Tools != nil {
+		for tool, err := range session.Tools(ctx, nil) {
+			if err != nil {
+				return nil, fmt.Errorf("tools/list: %w", err)
 			}
+			input, _ := json.Marshal(tool.InputSchema)
+			var output json.RawMessage
+			if tool.OutputSchema != nil {
+				output, _ = json.Marshal(tool.OutputSchema)
+			}
+			contract.Tools = append(contract.Tools, mcpcontract.Tool{Name: tool.Name, Input: input, Output: output})
 		}
-		err := json.Unmarshal(data, &page)
-		for _, resource := range page.Resources {
-			output, ok := resource.Meta["sh.holon/outputSchema"]
-			if !ok {
-				output = json.RawMessage(`{}`)
+	}
+	if capabilities.Resources != nil {
+		for resource, err := range session.Resources(ctx, nil) {
+			if err != nil {
+				return nil, fmt.Errorf("resources/list: %w", err)
+			}
+			output := json.RawMessage(`{}`)
+			if schema, ok := resource.Meta["sh.holon/outputSchema"]; ok {
+				output, _ = json.Marshal(schema)
 			}
 			contract.Resources = append(contract.Resources, mcpcontract.Resource{URI: resource.URI, Output: output})
 		}
-		return err
-	})
-	if err != nil {
-		return nil, err
 	}
 	slices.SortFunc(contract.Tools, func(a, b mcpcontract.Tool) int { return cmp.Compare(a.Name, b.Name) })
 	slices.SortFunc(contract.Resources, func(a, b mcpcontract.Resource) int { return cmp.Compare(a.URI, b.URI) })
 	return contract, nil
-}
-
-func pages(listed bool, method string, raw func() json.RawMessage, list func(cursor string) (any, string, error), add func(json.RawMessage) error) error {
-	for cursor, more := "", listed; more; more = cursor != "" {
-		result, next, err := list(cursor)
-		if err != nil {
-			return fmt.Errorf("%s: %w", method, err)
-		}
-		data, err := json.Marshal(result)
-		if raw != nil {
-			data = raw()
-		}
-		if err == nil {
-			err = add(data)
-		}
-		if err != nil {
-			return fmt.Errorf("%s: %w", method, err)
-		}
-		cursor = next
-	}
-	return nil
 }
 
 func converse(ctx context.Context, run func(stdin []byte, stdout io.Writer) error) (*extraction, error) {
@@ -125,7 +88,6 @@ type transcript struct {
 	diverged int
 
 	mu     sync.Mutex
-	last   json.RawMessage
 	queue  chan jsonrpc.Message
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -137,11 +99,7 @@ func (t *transcript) list() (*extraction, error) {
 		return nil, err
 	}
 	defer session.Close()
-	contract, err := listCatalog(t.ctx, session, func() json.RawMessage {
-		t.mu.Lock()
-		defer t.mu.Unlock()
-		return t.last
-	})
+	contract, err := listCatalog(t.ctx, session)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +153,6 @@ func (t *transcript) Write(ctx context.Context, message jsonrpc.Message) error {
 	if response == nil {
 		response = &jsonrpc.Response{ID: request.ID, Result: guess(request)}
 	}
-	t.last = response.Result
 	select {
 	case t.queue <- response:
 		return nil
