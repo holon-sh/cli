@@ -82,6 +82,8 @@ func TestInstallationCommandErrorsBeforeNetwork(t *testing.T) {
 			saved: `{"origin":"https://saved.example"}`, want: "public origin is invalid",
 		},
 		{name: "malformed saved configuration", saved: `{`, want: "read Holon configuration"},
+		{name: "no selection", want: "no Holon installation selected"},
+		{name: "empty saved selection", saved: `{"origin":""}`, want: "no Holon installation selected"},
 		{name: "conflicting login targets", args: []string{"login", "https://one.example", "--origin", "https://two.example"}, want: "cannot be combined"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
