@@ -104,8 +104,10 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	byApp := map[string]typegen.Source{}
 	var consumers []typegen.Consumer
 	needed := map[string]bool{}
+	// What typegen prints while it installs and connects shows only with --verbose, or with its failure.
+	logs := options.output.logs(options.Stderr)
 	typeOptions := typegen.Options{
-		Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.Stderr, Run: options.extractTypes,
+		Env: options.Env, HTTPClient: options.HTTPClient, Stderr: logs, Run: options.extractTypes,
 	}
 	var pathApps []*manifestApp
 	for i := range manifest.Apps {
@@ -179,7 +181,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	}
 	if options.types != nil {
 		if err := typegen.Install(ctx, consumers, typeOptions); err != nil {
-			return manifestSpec{}, nil, err
+			return manifestSpec{}, nil, logs.explain(err)
 		}
 	}
 	for _, app := range pathApps {

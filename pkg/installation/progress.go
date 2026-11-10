@@ -305,16 +305,21 @@ func (l *buildLog) diagnosis() string {
 	return output[strings.LastIndexByte(output, '\n')+1:]
 }
 
+// explain adds the diagnosis of what failed to err.
+func (l *buildLog) explain(err error) error {
+	if diagnosis := l.diagnosis(); diagnosis != "" {
+		return fmt.Errorf("%w:\n%s", err, diagnosis)
+	}
+	return err
+}
+
 // finished reports app's build as phase, or as failed with err and the build's diagnosis.
 func (l *buildLog) finished(output *progressOutput, app, phase string, err error) error {
 	state := progressWorking
 	if errors.Is(err, context.Canceled) {
 		phase, state = "stopped", progressIdle
 	} else if err != nil {
-		if diagnosis := l.diagnosis(); diagnosis != "" {
-			err = fmt.Errorf("%w:\n%s", err, diagnosis)
-		}
-		phase, state = "failed", progressError
+		err, phase, state = l.explain(err), "failed", progressError
 	}
 	output.status(app, phase, state)
 	return err
