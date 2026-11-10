@@ -112,7 +112,7 @@ func newValueCommand(kind string, cmd *cobra.Command, value func(*cobra.Command,
 		if scope == protocol.ProductionName {
 			session = ""
 		}
-		request := protocol.VariableRequest{Session: session, App: app, Kind: kind, Variable: variable}
+		request := protocol.VariableRequest{Session: session, Apps: []string{app}, Kind: kind, Variable: variable}
 		var input any = request
 		tool, verb := protocol.ToolDeleteValue, "Deleted"
 		if value != nil {
@@ -123,7 +123,7 @@ func newValueCommand(kind string, cmd *cobra.Command, value func(*cobra.Command,
 			if !protocol.ValidInputValue(v) {
 				return errors.New("value must be single-line text without NUL characters")
 			}
-			input, tool, verb = protocol.SetValueRequest{VariableRequest: request, Value: v}, protocol.ToolSetValue, "Stored"
+			input, tool, verb = protocol.SetValueRequest{VariableRequest: request, Value: &v}, protocol.ToolSetValue, "Stored"
 		}
 		ctx := cmd.Context()
 		manager, err := NewClient(ctx, config.Auth)

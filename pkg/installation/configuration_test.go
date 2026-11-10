@@ -56,15 +56,15 @@ func TestConfigurationCommands(t *testing.T) {
 		t.Fatalf("invalid value diagnostics: %v", err)
 	}
 	want := []string{
-		`dev. set_value {"app":"alpha","kind":"config","variable":"API_URL","value":"https://example.test"}`,
-		`admin. delete_value {"app":"alpha","kind":"config","variable":"API_URL"}`,
+		`dev. set_value {"apps":["alpha"],"kind":"config","variable":"API_URL","value":"https://example.test"}`,
+		`admin. delete_value {"apps":["alpha"],"kind":"config","variable":"API_URL"}`,
 		`admin. get_egress {"app":"alpha"}`,
 		`admin. set_egress {"app":"alpha","expectedRevision":"1","policy":{"allow":[{"host":"api.example.com","ports":[443]}]}}`,
 		`admin. get_egress {"app":"alpha"}`,
 		`admin. set_egress {"app":"alpha","expectedRevision":"1","policy":{"allow":[]}}`,
 		`admin. get_egress {"app":"*"}`,
 		`admin. set_egress {"app":"*","expectedRevision":"1","policy":{}}`,
-		`dev. set_value {"session":"s-one","app":"alpha","kind":"secret","variable":"API_KEY","value":"piped-secret"}`,
+		`dev. set_value {"session":"s-one","apps":["alpha"],"kind":"secret","variable":"API_KEY","value":"piped-secret"}`,
 	}
 	if !slices.Equal(sent, want) {
 		t.Fatalf("sent = %q, want %q", sent, want)
