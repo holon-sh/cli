@@ -402,6 +402,17 @@ func TestDevAppliesProjectChanges(t *testing.T) {
 	}
 }
 
+// A rebuild the session failed to take is built again with the next save, rather than kept as if it ran.
+func TestDevRebuildsWhatTheSessionDidNotTake(t *testing.T) {
+	f := startReloadFixture(t, true)
+	f.update(func() { f.failSave = true })
+	f.save(map[string]string{"alpha/pyproject.toml": alphaProject + "dependencies = [\"idna\"]\n"}, "Preparing apps\nalpha building\nalpha uploaded\n"+
+		"Deploying apps\nalpha deploying\nalpha deployment failed\n"+
+		"app rebuild remote update failed: replacement outcome conflicts with current desired state; existing service remains available\n"+
+		watching+"\n")
+	f.save(map[string]string{"alpha/tools.py": "second"}, "Preparing apps\nalpha building\nalpha uploaded\nDeploying apps\nalpha deploying\nalpha ready\n"+watching+"\n")
+}
+
 func TestDevDetachedStartsItsOwnSession(t *testing.T) {
 	f := startReloadFixture(t, true)
 	if err := f.stop(); err != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -366,6 +367,9 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 	contexts := change.contexts.Union(d.stopPreparation())
 	if change.manifest || d.unapplied {
 		applied, err := d.apply(ctx)
+		if ctx.Err() != nil {
+			return false
+		}
 		d.unapplied = err != nil
 		d.options.output.problem("project", err)
 		if applied {
@@ -400,12 +404,15 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	}
 	options := d.options
 	options.kept = keptImages(d.session.Apps, d.options.types.inputs())
+	accepted := maps.Clone(d.options.types.accepted)
 	request, err := uploadManifest(ctx, d.manager, d.name, resolved, options)
 	if err != nil {
 		return false, err
 	}
 	d.options.output.deploying(request.Apps)
 	if err := d.update(ctx, request, removedApps(d.session.Apps, request.Apps)...); err != nil {
+		// The session still runs the images the earlier inputs built.
+		d.options.types.accepted = accepted
 		return false, err
 	}
 	d.manifest, d.announce = resolved, true
@@ -422,10 +429,11 @@ func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[pr
 		return err
 	}
 	for _, app := range desired.Apps {
-		d.pending.Insert(app.Name)
 		i := slices.IndexFunc(d.session.Apps, func(running protocol.App) bool { return running.Name == app.Name })
-		if i >= 0 && d.session.Apps[i].Image == app.Image && d.session.Apps[i].Overlay != app.Overlay {
-			d.restart(ctx, &d.session.Apps[i], app.Overlay)
+		// An app that failed to restart keeps showing why, rather than turning ready on its old source.
+		if i < 0 || d.session.Apps[i].Image != app.Image || d.session.Apps[i].Overlay == app.Overlay ||
+			d.restart(ctx, &d.session.Apps[i], app.Overlay) {
+			d.pending.Insert(app.Name)
 		}
 	}
 	for _, name := range remove {
@@ -470,7 +478,6 @@ func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) err
 	}
 	var desired []protocol.App
 	for _, app := range result.images {
-		d.changedImages.Delete(app.Name)
 		i := slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })
 		if i < 0 {
 			return errors.New("application removed during rebuild")
@@ -483,13 +490,16 @@ func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) err
 			d.options.output.status(app.Name, "unchanged", progressDone)
 		}
 	}
+	if len(desired) != 0 {
+		d.options.output.deploying(desired)
+		if err := d.update(ctx, protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(desired)}); err != nil {
+			return fmt.Errorf("remote update failed: %w", err)
+		}
+	}
+	// Only now does the session run what these inputs built.
+	for _, app := range result.images {
+		d.changedImages.Delete(app.Name)
+	}
 	d.options.types.accept(result.built)
-	if len(desired) == 0 {
-		return nil
-	}
-	d.options.output.deploying(desired)
-	if err := d.update(ctx, protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(desired)}); err != nil {
-		return fmt.Errorf("remote update failed: %w", err)
-	}
 	return nil
 }

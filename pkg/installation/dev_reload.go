@@ -130,8 +130,9 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	return nil
 }
 
-// restart restarts app in place on the source overlay, which the session records as the app's.
-func (d *devLoop) restart(ctx context.Context, running *protocol.App, overlay string) {
+// restart restarts app in place on the source overlay, which the session records as the app's. It reports whether the
+// app restarted.
+func (d *devLoop) restart(ctx context.Context, running *protocol.App, overlay string) bool {
 	app := running.Name
 	d.options.output.status(app, "reloading", progressWorking)
 	var result reloadAppResult
@@ -141,10 +142,11 @@ func (d *devLoop) restart(ctx context.Context, running *protocol.App, overlay st
 	}
 	if err := d.manager.Call(ctx, ControlPlane(d.name), toolReloadApp, request, &result); err != nil {
 		d.options.output.status(app, fmt.Sprintf("reload failed: %v", err), progressError)
-		return
+		return false
 	}
 	running.Overlay = overlay
 	d.options.output.status(app, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
+	return true
 }
 
 func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
