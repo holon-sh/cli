@@ -194,15 +194,15 @@ func (m *Client) token(ctx context.Context, audience string) (*oauth2.Token, err
 	if err := m.loadCredentials(); err != nil {
 		return nil, err
 	}
-	if m.state.Tokens[audience] == nil {
+	cached := m.state.Tokens[audience]
+	if cached == nil {
 		return nil, errNoAudienceToken
 	}
-	cached := *m.state.Tokens[audience]
 	// A response may omit expires_in per [RFC 6749 §5.1]. Its zero Expiry fails this check, so the token is renewed.
 	//
 	// [RFC 6749 §5.1]: https://www.rfc-editor.org/rfc/rfc6749.html#section-5.1
 	if time.Until(cached.Expiry) > accessSafety {
-		return &cached, nil
+		return cached, nil
 	}
 	config, err := m.oauthConfig(ctx)
 	if err != nil {
@@ -509,14 +509,12 @@ func (m *Client) resourceToken(ctx context.Context, audience string) (*oauth2.To
 		return m.machineToken(ctx, audience)
 	}
 	var result *oauth2.Token
-	var initial bool
 	err := m.withLock(ctx, func() (err error) {
-		initial = m.state.Version == ""
 		result, err = m.token(ctx, audience)
 		return err
 	})
 	switch {
-	case signedOut(err) && initial && m.interactive:
+	case signedOut(err) && m.interactive:
 		if err := m.loginInteractive(ctx); err != nil {
 			return nil, err
 		}
