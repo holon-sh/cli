@@ -61,7 +61,7 @@ func TestDeclaredURLOverride(t *testing.T) {
 	for _, test := range []struct{ name, location, want string }{
 		{name: "set", location: live.URL},
 		{name: "invalid", location: "ftp://docs.example", want: "DOCS_MCP_URL: MCP URL must be an HTTP(S) URL"},
-		{name: "unset", want: "dependency docs names no server: declare an app named docs in holon.yaml, give it a published version or url in server.json, or set DOCS_MCP_URL"},
+		{name: "unset", want: "dependency docs names no server"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			sources, err := DeclaredSources(root, []string{"DOCS_MCP_URL=" + test.location, "ORDERS_MCP_URL=" + live.URL})

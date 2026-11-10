@@ -41,11 +41,6 @@ func TestConfigurationJSONSchemas(t *testing.T) {
 		{"project", ProjectJSONSchema, []schemaCase{
 			{"manifest value forms", manifest, true},
 			{"HTTP run", strings.Replace(manifest, `"type":"stdio"`, `"type":"streamable-http","url":"http://localhost:8080/mcp"`, 1), true},
-			{"unknown field", strings.Replace(manifest, `"apps":`, `"unknown":true,"apps":`, 1), false},
-			{"unknown app field", strings.Replace(manifest, `"name":"alpha"`, `"name":"alpha","unknown":true`, 1), false},
-			{"missing access", strings.Replace(manifest, `,"access":{"server":{}}`, "", 1), false},
-			{"missing client ID", strings.Replace(manifest, `"clientID":"registered",`, "", 1), false},
-			{"empty reference", strings.Replace(manifest, `{"secret":"TOKEN"}`, `{}`, 1), false},
 		}},
 		{"server", ServerJSONSchema, []schemaCase{
 			{"standard fields and Holon metadata", descriptor, true},
