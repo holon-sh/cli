@@ -2,14 +2,12 @@ package installation
 
 import (
 	"bytes"
-	"context"
 	"errors"
-	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"golang.org/x/oauth2"
@@ -59,47 +57,21 @@ func TestPrivateCredentialFiles(t *testing.T) {
 	}
 }
 
-func TestDevelopmentAuthenticationBeforeBuild(t *testing.T) {
+func TestSignedOutCommandFailsWithoutSigningIn(t *testing.T) {
 	t.Parallel()
-	built := errors.New("build reached")
-	for _, test := range []struct {
-		name string
-		want error
-	}{
-		{"authorized", built}, {"denied", errDeviceDenied},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			var authorized atomic.Bool
-			server := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-				if test.name == "denied" {
-					w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
-					w.WriteHeader(http.StatusBadRequest)
-					installationtest.WriteJSON(w, map[string]string{"error": "access_denied"})
-					return
-				}
-				authorized.Store(true)
-				installationtest.WriteJSON(w, map[string]any{"access_token": "access-token", "refresh_token": "refresh-token", "token_type": "Bearer", "expires_in": 120})
-			})
-			root := t.TempDir()
-			sourceFiles(t, root, map[string]string{
-				"package.json": sourcePackage, "server.js": "export default {}",
-				manifestFileName: "apps:\n- name: alpha\n  path: .\n  access: {server: {}}\n",
-			})
-			config := commandConfig{
-				Auth: ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)},
-				builder: func(context.Context, buildRequest, io.Writer) (string, error) {
-					if !authorized.Load() {
-						t.Error("build started before development authorization")
-					}
-					return "", built
-				},
-			}
-			args := []string{"dev", "--project", filepath.Join(root, manifestFileName)}
-			if err := executeCommand(t.Context(), args, nil, nil, config); !errors.Is(err, test.want) {
-				t.Fatalf("dev returned %v, want %v", err, test.want)
-			}
-		})
+	mux := http.NewServeMux()
+	var server *httptest.Server
+	installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, func(r *http.Request) {
+		if r.URL.Path != protocol.APIPathInfo {
+			t.Errorf("signed-out command contacted %s", r.URL.Path)
+		}
+	}, 120, 1, nil)
+	server = httptest.NewTLSServer(mux)
+	t.Cleanup(server.Close)
+	config := commandConfig{Auth: ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)}}
+	err := executeCommand(t.Context(), []string{"app", "list"}, nil, nil, config)
+	if want := "not signed in; run holon login " + server.URL; err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
 	}
 }
 
@@ -111,7 +83,7 @@ func TestAppTokenSignsInOnlyToTheInstallationsApps(t *testing.T) {
 		})
 	})
 	var output bytes.Buffer
-	config := ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: server.Client(), Output: &output}
+	config := ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: server.Client(), Output: &output, Interactive: true}
 	if token, err := config.AppToken(t.Context(), "https://example.com"); token != "" || err != nil {
 		t.Fatalf("another origin: token=%q error=%v", token, err)
 	}
