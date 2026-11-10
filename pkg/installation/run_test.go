@@ -305,11 +305,19 @@ func TestRunDevLifecycle(t *testing.T) {
 			}
 			installationtest.WriteJSON(w, session())
 		})
+	const appOutput = "2026-11-09T10:00:00.1Z  alpha starting boom\n" +
+		"2026-11-09T10:00:00.2Z ERROR alpha " + traceback + "\n" +
+		"2026-11-09T10:00:00.3Z INFO alpha tools/call boom error tool_error 22ms trace_id=aaaa\n"
 	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
-		if query := r.URL.Query(); query.Get("event") != "holon.mcp.call" || query.Get("follow") != "true" {
-			t.Errorf("request stream query = %s", r.URL.RawQuery)
+		query := r.URL.Query()
+		if query.Has("event") || query.Get("follow") != "true" {
+			t.Errorf("log stream query = %s", r.URL.RawQuery)
 		}
-		w.WriteHeader(http.StatusPreconditionFailed)
+		if query.Has("since") { // The resumed stream fails, so the stream stops.
+			w.WriteHeader(http.StatusPreconditionFailed)
+			return
+		}
+		_, _ = io.WriteString(w, appOutput)
 	})
 	h.start(t, build)
 	t.Run("ambiguous creation is not retried or deleted", func(t *testing.T) {
@@ -339,7 +347,8 @@ func TestRunDevLifecycle(t *testing.T) {
 				return !slices.ContainsFunc(texts, func(text string) bool { return !strings.Contains(output.String(), text) })
 			})
 		}
-		await(stderr, "Configure API_KEY to start the session.", "request stream stopped")
+		await(stderr, "Configure API_KEY to start the session.", "log stream stopped")
+		await(stdout, appOutput)
 		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "broken"})
 		await(stderr, "remote image preparation failed")
 		mu.Lock()

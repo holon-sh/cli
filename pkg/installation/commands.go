@@ -75,6 +75,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 		},
 		newDevCommand(&config),
 		newDeployCommand(&config),
+		newLogsCommand(&config),
 		newConfigurationCommand("secret", &config),
 		newConfigurationCommand("config", &config),
 		newAppCommand(&config),
