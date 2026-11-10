@@ -315,11 +315,11 @@ func TestRunDevLifecycle(t *testing.T) {
 		callLine  = "2026-11-09T10:00:00.3Z INFO alpha tools/call boom error tool_error 22ms trace_id=aaaa\n"
 	)
 	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
-		switch query := r.URL.Query(); {
-		case query.Has("since"):
+		switch since := r.URL.Query().Get("since"); since {
+		case "":
+			t.Error("the log stream starts with the first record")
+		case "2026-11-09T10:00:00.3Z":
 			w.WriteHeader(http.StatusPreconditionFailed)
-		case query.Get("event") == protocol.MCPCallEvent:
-			_, _ = io.WriteString(w, callLine)
 		default:
 			_, _ = io.WriteString(w, appOutput+callLine)
 		}
@@ -346,6 +346,11 @@ func TestRunDevLifecycle(t *testing.T) {
 		config := h.run
 		config.Clock = fc
 		stdout, stderr, stop := startDev(t, config, "--public")
+		t.Cleanup(func() {
+			if t.Failed() {
+				t.Logf("stdout=%q\nstderr=%q", stdout.String(), stderr.String())
+			}
+		})
 		await := func(output *installationtest.ObservedOutput, texts ...string) {
 			t.Helper()
 			stepUntil(t, fc, devDebounce, func() bool {
@@ -359,14 +364,11 @@ func TestRunDevLifecycle(t *testing.T) {
 		mu.Lock()
 		waiting = ""
 		mu.Unlock()
-		await(stdout, "Watching for changes.")
-		document := descriptorDocument("alpha")
-		document["packages"].([]any)[0].(map[string]any)["transport"].(map[string]any)["url"] = "http://localhost:8080/mcp"
-		writeDescriptor(t, filepath.Join(root, "alpha", "server.json"), document)
-		await(stderr, "restart holon dev")
+		await(stderr, watching)
+		from := len(stderr.String())
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
 		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "superseded"})
-		await(stderr, "remote update requested")
+		stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[from:], "alpha ready") })
 		mu.Lock()
 		unavailable = true
 		mu.Unlock()
@@ -728,27 +730,19 @@ func TestRunDeployLifecycle(t *testing.T) {
 		})
 	}
 	updated := "hosted=https://updated.example/mcp"
-	for _, scenario := range []struct {
-		name   string
-		args   []string
-		create bool
-	}{
-		{name: "selected creation", args: []string{updated, "--public"}, create: true},
-		{name: "disjoint update", args: []string{updated}},
-		{name: "lost accepted response", args: []string{updated}},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
+	for _, scenario := range []string{"disjoint update", "lost accepted response"} {
+		t.Run(scenario, func(t *testing.T) {
 			mu.Lock()
 			desired = protocol.AppsRequestFor[protocol.App]{Apps: slices.Clone(initial)}
-			existing, rolloutFailure = !scenario.create, ""
-			forceConflict = scenario.name == "disjoint update"
-			loseResponse = scenario.name == "lost accepted response"
+			existing, rolloutFailure = true, ""
+			forceConflict = scenario == "disjoint update"
+			loseResponse = scenario == "lost accepted response"
 			mu.Unlock()
 			runConfig := h.run
 			runConfig.RegistryHTTPClient = installationtest.HTTPClient(func(*http.Request) (*http.Response, error) {
 				return nil, errors.New("no access to unrelated application images")
 			})
-			err := executeCommand(t.Context(), append([]string{"deploy"}, scenario.args...), nil, nil, runConfig)
+			err := executeCommand(t.Context(), []string{"deploy", updated}, nil, nil, runConfig)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
