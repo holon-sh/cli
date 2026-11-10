@@ -121,6 +121,40 @@ func TestLogin(t *testing.T) {
 	}
 }
 
+func TestTerminalSignInLeavesOtherCommandsFree(t *testing.T) {
+	t.Parallel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	server := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release
+		installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-secret", "expires_in": 120})
+	})
+	dir := t.TempDir()
+	signingIn := newManager(t, server, dir)
+	signingIn.interactive = true
+	done := make(chan error, 1)
+	go func() {
+		token, err := signingIn.controlToken(t.Context())
+		if err == nil && token != "access-secret" {
+			err = fmt.Errorf("token %q", token)
+		}
+		done <- err
+	}()
+	<-entered
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if _, err := newManager(t, server, dir).controlToken(ctx); !errors.Is(err, errNotAuthenticated) {
+		t.Fatalf("while another command signs in: %v, want %v", err, errNotAuthenticated)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if token, err := newManager(t, server, dir).controlToken(ctx); err != nil || token != "access-secret" {
+		t.Fatalf("after sign-in token=%q error=%v", token, err)
+	}
+}
+
 func TestCredentialChanges(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

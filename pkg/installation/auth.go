@@ -55,6 +55,7 @@ var (
 	errRefreshFailed            = errors.New("token refresh failed")
 	errReauthenticationRequired = errors.New("sign-in expired")
 	errNoRefreshToken           = errors.New("authorization did not return a refresh token")
+	errNoAudienceToken          = errors.New("this session needs its own sign-in, which only runs at a terminal")
 )
 
 // signedOut reports an error that only holon login clears.
@@ -68,10 +69,12 @@ func credentialsLost(err error) bool {
 }
 
 type ClientConfig struct {
-	Env            []string
-	Origin         string
-	ConfigDir      string
-	Output         io.Writer
+	Env       []string
+	Origin    string
+	ConfigDir string
+	Output    io.Writer
+	// Interactive reports that a person reads Output, so a command may wait for them to sign in.
+	Interactive    bool
 	HTTPClient     *http.Client
 	RequestTimeout time.Duration
 }
@@ -96,9 +99,10 @@ func targetForOAuth(info *protocol.OAuthInfo) *credentialTarget {
 }
 
 type Client struct {
-	hookSent map[string]time.Time
-	machine  *clientcredentials.Config
-	output   io.Writer
+	hookSent    map[string]time.Time
+	machine     *clientcredentials.Config
+	output      io.Writer
+	interactive bool
 
 	mu        sync.Mutex
 	state     authState
@@ -133,7 +137,7 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 	}
 	manager := &Client{
 		state:  authState{Tokens: map[string]*oauth2.Token{}},
-		output: cmp.Or(config.Output, io.Discard), hookSent: map[string]time.Time{},
+		output: cmp.Or(config.Output, io.Discard), interactive: config.Interactive, hookSent: map[string]time.Time{},
 	}
 	if slices.ContainsFunc(env, func(entry string) bool {
 		key, _, _ := strings.Cut(entry, "=")
@@ -163,23 +167,20 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 	return manager, nil
 }
 
+// loginInteractive waits for the device sign-in without the credentials lock, so other commands never wait on a person.
 func (m *Client) loginInteractive(ctx context.Context) error {
 	if m.machine != nil {
 		return errors.New("service-account credentials are supplied by the environment")
 	}
-	return m.withLock(ctx, func() error {
-		state := authState{OAuth: targetForOAuth(m.info.OAuth), Version: rand.Text(), Tokens: map[string]*oauth2.Token{}}
-		if m.info.OAuth != nil {
-			config, err := m.oauthConfig(ctx)
-			if err != nil {
-				return err
-			}
-			tokens, err := m.deviceToken(ctx, config, m.info.OAuth.AdminAudience)
-			if err != nil {
-				return err
-			}
-			state.Tokens[m.info.OAuth.AdminAudience] = tokens
+	state := authState{OAuth: targetForOAuth(m.info.OAuth), Version: rand.Text(), Tokens: map[string]*oauth2.Token{}}
+	if m.info.OAuth != nil {
+		tokens, err := m.deviceToken(ctx, m.info.OAuth.AdminAudience)
+		if err != nil {
+			return err
 		}
+		state.Tokens[m.info.OAuth.AdminAudience] = tokens
+	}
+	return m.withLock(ctx, func() error {
 		if err := m.writeState(state); err != nil {
 			return err
 		}
@@ -196,7 +197,10 @@ func (m *Client) token(ctx context.Context, audience string) (*oauth2.Token, err
 	if err := m.loadCredentials(); err != nil {
 		return nil, err
 	}
-	cached := ptr.Deref(m.state.Tokens[audience], oauth2.Token{})
+	if m.state.Tokens[audience] == nil {
+		return nil, errNoAudienceToken
+	}
+	cached := *m.state.Tokens[audience]
 	// A response may omit expires_in per [RFC 6749 §5.1]. Its zero Expiry fails this check, so the token is renewed.
 	//
 	// [RFC 6749 §5.1]: https://www.rfc-editor.org/rfc/rfc6749.html#section-5.1
@@ -207,12 +211,7 @@ func (m *Client) token(ctx context.Context, audience string) (*oauth2.Token, err
 	if err != nil {
 		return nil, err
 	}
-	var token *oauth2.Token
-	if cached.RefreshToken != "" {
-		token, err = m.renewToken(ctx, config, cached.RefreshToken, audience)
-	} else {
-		token, err = m.deviceToken(ctx, config, audience)
-	}
+	token, err := m.renewToken(ctx, config, cached.RefreshToken, audience)
 	if err != nil {
 		return nil, err
 	}
@@ -462,7 +461,11 @@ func writePrivateFile(path string, data []byte) error {
 	return writeAtomicFile(root, filepath.Base(path), data)
 }
 
-func (m *Client) deviceToken(ctx context.Context, config *oauth2.Config, audience string) (*oauth2.Token, error) {
+func (m *Client) deviceToken(ctx context.Context, audience string) (*oauth2.Token, error) {
+	config, err := m.oauthConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if config.Endpoint.DeviceAuthURL == "" {
 		return nil, fmt.Errorf("OIDC discovery: %w: issuer does not advertise a device authorization endpoint", errOAuthFailed)
 	}
@@ -509,12 +512,32 @@ func (m *Client) resourceToken(ctx context.Context, audience string) (*oauth2.To
 		return m.machineToken(ctx, audience)
 	}
 	var result *oauth2.Token
+	var initial bool
 	err := m.withLock(ctx, func() (err error) {
+		initial = m.state.Version == ""
 		result, err = m.token(ctx, audience)
 		return err
 	})
-	if signedOut(err) {
+	switch {
+	case signedOut(err) && initial && m.interactive:
+		if err := m.loginInteractive(ctx); err != nil {
+			return nil, err
+		}
+		return m.resourceToken(ctx, audience)
+	case signedOut(err):
 		return nil, fmt.Errorf("%w; run holon login %s", err, m.client.baseURL)
+	case errors.Is(err, errNoAudienceToken) && m.interactive:
+		token, err := m.deviceToken(ctx, audience)
+		if err != nil {
+			return nil, err
+		}
+		return token, m.withLock(ctx, func() error {
+			if err := m.loadCredentials(); err != nil {
+				return err
+			}
+			m.state.Tokens[audience] = token
+			return m.writeState(m.state)
+		})
 	}
 	return result, err
 }
