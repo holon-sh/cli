@@ -214,18 +214,14 @@ export const owner: InputTypes["files"]["stat"]["Owner"] = { lgn: "a" };
 	t.Run("python", func(t *testing.T) {
 		t.Parallel()
 		app := t.TempDir()
-		python := pythonEnvironment(app, needPython(t))
-		if exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
-			t.Skip("mypy is not installed")
+		// The tooling's environment, which has mypy, is the app's, as linkTypeScript lends the compiler.
+		venv, err := filepath.Abs("../../tooling/python/.venv")
+		if err == nil {
+			err = os.Symlink(venv, filepath.Join(app, ".venv"))
 		}
-		// That interpreter is the app's environment, so holon types generate installs none.
-		program, err := exec.LookPath(python)
-		if err != nil {
-			t.Fatal(err)
-		}
-		put(t, app, ".venv/bin/python", "#!/bin/sh\nexec '"+program+"' \"$@\"\n")
-		if err := os.Chmod(filepath.Join(app, ".venv/bin/python"), 0o755); err != nil {
-			t.Fatal(err)
+		python := pythonEnvironment(app, "")
+		if err != nil || exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
+			t.Skip("mypy is not installed in tooling/python/.venv")
 		}
 		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
 		generateFiles(t, app, TargetPy)
