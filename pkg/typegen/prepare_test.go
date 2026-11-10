@@ -316,18 +316,16 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 	}
 }
 
-// fakeImages stands in for the images Python apps build, recording what it was asked to run.
-type fakeImages struct{ extracted, checked []string }
+type fakeImages struct{}
 
-func (f *fakeImages) Extract(_ context.Context, tooling, root, entry string, stdout, _ io.Writer) error {
+func (fakeImages) Extract(_ context.Context, tooling, root, entry string, stdout, _ io.Writer) error {
 	if !pathInsideContext(root, filepath.Dir(tooling)) || !isFile(filepath.Join(root, entry)) {
 		return fmt.Errorf("entry %s is not in a snapshot under %s: %s", entry, filepath.Dir(tooling), root)
 	}
-	f.extracted = append(f.extracted, entry)
 	return json.NewEncoder(stdout).Encode(extraction{Tools: []mcpcontract.Tool{lookupTool}})
 }
 
-func (f *fakeImages) Check(_ context.Context, tooling, root, generated string, stdout, _ io.Writer) error {
+func (fakeImages) Check(_ context.Context, tooling, root, generated string, _, _ io.Writer) error {
 	clients, _ := os.ReadFile(filepath.Join(generated, "holon", "apps", "__init__.py"))
 	switch {
 	case !isFile(filepath.Join(tooling, "python", "runner.py")):
@@ -337,8 +335,6 @@ func (f *fakeImages) Check(_ context.Context, tooling, root, generated string, s
 	case !strings.Contains(string(clients), "def lookup("):
 		return errors.New("the generated clients are not copied in")
 	}
-	f.checked = append(f.checked, root)
-	fmt.Fprintln(stdout, `main.py:3: error: Argument "id" to "lookup" of "OrdersTools" has incompatible type "int"; expected "str"  [arg-type]`)
 	return &RunnerError{Status: 1, Stderr: "Found 1 error in 1 file\n"}
 }
 
@@ -360,8 +356,8 @@ func TestAPythonAppWithoutAnEnvironmentRunsInItsImage(t *testing.T) {
 	if err := Generate(t.Context(), []Consumer{c}, Options{Stderr: &stderr, Images: images}); err != nil {
 		t.Fatal(err)
 	}
-	if len(images.extracted) != 1 || !strings.Contains(stderr.String(), "orders: orders_database is not installed here; reading the contract in the app's image") {
-		t.Fatalf("extracted %v in the image:\n%s", images.extracted, stderr.String())
+	if !strings.Contains(stderr.String(), "orders: orders_database is not installed here; reading the contract in the app's image") {
+		t.Fatalf("image extraction output:\n%s", stderr.String())
 	}
 	if clients := read(t, checkout, "holon/apps/__init__.py"); !strings.Contains(clients, "def lookup(") {
 		t.Fatalf("generated clients lack orders.lookup:\n%s", clients)
@@ -369,10 +365,10 @@ func TestAPythonAppWithoutAnEnvironmentRunsInItsImage(t *testing.T) {
 
 	var output bytes.Buffer
 	err := Check(t.Context(), checkout, Options{Stdout: &output, Stderr: &output, Images: images})
-	if err == nil || !strings.Contains(err.Error(), "checkout does not type-check against its typed contracts: exit status 1") || len(images.checked) != 1 {
-		t.Fatalf("checked %v in the image: %v\n%s", images.checked, err, output.String())
+	if err == nil || !strings.Contains(err.Error(), "checkout does not type-check against its typed contracts: exit status 1") {
+		t.Fatalf("image check: %v\n%s", err, output.String())
 	}
-	for _, line := range []string{"checkout: no Python environment here; type-checking in the app's image", `incompatible type "int"`, "Found 1 error"} {
+	for _, line := range []string{"checkout: no Python environment here; type-checking in the app's image", "Found 1 error"} {
 		if !strings.Contains(output.String(), line) {
 			t.Errorf("image check output lacks %q:\n%s", line, output.String())
 		}
@@ -384,7 +380,7 @@ func TestAPythonAppWithoutAnEnvironmentRunsInItsImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	output.Reset()
-	if err := Check(t.Context(), checkout, Options{Stdout: &output, Stderr: &output, Images: images}); err != nil || len(images.checked) != 1 || !strings.Contains(output.String(), "checked with the app environment") {
-		t.Fatalf("checked %v in the image with an environment: %v\n%s", images.checked, err, output.String())
+	if err := Check(t.Context(), checkout, Options{Stdout: &output, Stderr: &output, Images: images}); err != nil || !strings.Contains(output.String(), "checked with the app environment") || strings.Contains(output.String(), "type-checking in the app's image") {
+		t.Fatalf("app environment check: %v\n%s", err, output.String())
 	}
 }

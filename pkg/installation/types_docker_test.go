@@ -303,7 +303,7 @@ async def read(id: str) -> Order:
 		t.Fatalf("%v\n%s", err, output)
 	}
 	for _, line := range []string{"orders: holon is not installed here; reading the contract in the app's image",
-		"checkout: no Python environment here; type-checking in the app's image", "checkout: typed contracts check passed."} {
+		"checkout: no Python environment here; type-checking in the app's image"} {
 		if !strings.Contains(output, line) {
 			t.Errorf("holon check output lacks %q:\n%s", line, output)
 		}

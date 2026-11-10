@@ -110,16 +110,14 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 	failures := make([]error, len(run))
 	var group sync.WaitGroup
 	for i, s := range run {
-		group.Go(func() { results[i], failures[i] = runServer(ctx, tooling, directories[s], s, o) })
-	}
-	group.Wait()
-	for i, s := range run {
-		var missing *missingPackage
-		if o.Images == nil || o.Run != nil || s.language != "python" || committed[s] != nil || !errors.As(failures[i], &missing) {
-			continue
-		}
-		fmt.Fprintf(o.Stderr, "%s: %s is not installed here; reading the contract in the app's image\n", filepath.Base(s.origin), missing.name)
-		group.Go(func() { results[i], failures[i] = s.extractInImage(ctx, root, tooling, o) })
+		group.Go(func() {
+			results[i], failures[i] = runServer(ctx, tooling, directories[s], s, o)
+			var missing *missingPackage
+			if o.Images != nil && s.language == "python" && committed[s] == nil && errors.As(failures[i], &missing) {
+				fmt.Fprintf(o.Stderr, "%s: %s is not installed here; reading the contract in the app's image\n", filepath.Base(s.origin), missing.name)
+				results[i], failures[i] = s.extractInImage(ctx, root, tooling, o)
+			}
+		})
 	}
 	group.Wait()
 	for i, s := range run {
@@ -211,9 +209,6 @@ func (s *preparedSource) extractInImage(ctx context.Context, root, tooling strin
 	}
 	var stdout bytes.Buffer
 	err = o.Images.Extract(ctx, tooling, directory, s.entry, &stdout, o.Stderr)
-	if failed := (*RunnerError)(nil); err != nil && !errors.As(err, &failed) {
-		return nil, fmt.Errorf("%s: read the contract in the app's image: %w", s.origin, err)
-	}
 	return s.contract(stdout.Bytes(), err)
 }
 
