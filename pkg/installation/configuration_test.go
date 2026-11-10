@@ -84,13 +84,14 @@ func TestConfigurationCommands(t *testing.T) {
 func TestSourceAppsReceiveSetValues(t *testing.T) {
 	h := newRunHarness(t)
 	var planes []string
+	values := []protocol.ConfigValue{
+		{Kind: "config", Variable: "REGION"}, {Kind: "secret", Variable: "API_KEY"}, {Kind: "config", Variable: "DECLARED"},
+		{Kind: "config", Variable: "PORT"}, {Kind: "config", Variable: "HOLON_OVERLAY_FILE"}, {Kind: "secret", Variable: "ORDERS_MCP_URL"},
+		{Kind: "secret", Variable: "CLIENT_SECRET"}, {Session: "resumed", Kind: "secret", Variable: "SESSION_KEY"},
+	}
 	h.control.Handle([]string{protocol.ToolListValues}, nil, func(w http.ResponseWriter, r *http.Request) {
 		planes = append(planes, strings.TrimSuffix(r.Host, h.baseHost))
-		installationtest.WriteJSON(w, protocol.ConfigValues{Values: []protocol.ConfigValue{
-			{Kind: "config", Variable: "REGION"}, {Kind: "secret", Variable: "API_KEY"}, {Kind: "config", Variable: "DECLARED"},
-			{Kind: "config", Variable: "PORT"}, {Kind: "config", Variable: "HOLON_OVERLAY_FILE"}, {Kind: "secret", Variable: "ORDERS_MCP_URL"},
-			{Kind: "config", Variable: "CLIENT_SECRET"}, {Session: "resumed", Kind: "secret", Variable: "SESSION_KEY"},
-		}})
+		installationtest.WriteJSON(w, protocol.ConfigValues{Values: values})
 	})
 	h.start(t, nil)
 	manager, err := NewClient(t.Context(), h.run.Auth)
@@ -98,16 +99,21 @@ func TestSourceAppsReceiveSetValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := manifestSpec{Apps: []manifestApp{{Name: "app", Path: "app"}, {Name: "remote"}}}
-	for _, name := range []string{"", protocol.ProductionName} {
+	declare := func(name string) ([]protocol.App, error) {
 		apps := []protocol.App{
 			{Name: "app", Requires: []string{"orders"}, Env: map[string]protocol.Input{"DECLARED": {Value: new("fixed")}}},
 			{Name: "remote", OAuth: &protocol.OAuthClient{ClientID: "id", ClientSecret: "CLIENT_SECRET"}},
 		}
-		if err := declareSetValues(t.Context(), manager, name, manifest, apps); err != nil {
+		return apps, declareSetValues(t.Context(), manager, name, manifest, apps)
+	}
+	for _, name := range []string{"", protocol.ProductionName} {
+		apps, err := declare(name)
+		if err != nil {
 			t.Fatal(err)
 		}
 		want := map[string]protocol.Input{
-			"REGION": {}, "API_KEY": {IsSecret: true}, "SESSION_KEY": {IsSecret: true}, "DECLARED": {Value: new("fixed")},
+			"REGION": {}, "API_KEY": {IsSecret: true}, "CLIENT_SECRET": {IsSecret: true}, "SESSION_KEY": {IsSecret: true},
+			"DECLARED": {Value: new("fixed")},
 		}
 		if diff := cmp.Diff(want, apps[0].Env); diff != "" || apps[1].Env != nil {
 			t.Fatalf("%q environment (-want +got):\n%s\nremote: %v", name, diff, apps[1].Env)
@@ -115,5 +121,9 @@ func TestSourceAppsReceiveSetValues(t *testing.T) {
 	}
 	if want := []string{"dev.", "admin."}; !slices.Equal(planes, want) {
 		t.Fatalf("planes = %v, want %v", planes, want)
+	}
+	values = append(values, protocol.ConfigValue{Session: "resumed", Kind: "secret", Variable: "REGION"})
+	if _, err := declare(""); err == nil || !strings.Contains(err.Error(), "REGION is both") {
+		t.Fatalf("conflicting kinds: %v", err)
 	}
 }

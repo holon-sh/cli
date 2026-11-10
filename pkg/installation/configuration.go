@@ -176,10 +176,13 @@ func scopedExample(title, command string) string {
 
 // declareSetValues declares every config value and secret set on the plane that serves session name as an input of
 // each app built from source, so the platform puts it in the app's environment under its own name. The platform picks
-// the value a session sees, and a name set only for another session stays unset; a name listed twice keeps its first
-// kind. Names the app already declares or templates, Holon's PORT, HOLON_ and dependency URL variables, and names
-// another app declares as the other kind are left alone.
+// the value a session sees, and a name set only for another session stays unset. Names the app already declares or
+// templates, and Holon's PORT, HOLON_ and dependency URL variables, are left alone. A name must have one kind across
+// the values set and the apps' declarations, because a declaration resolves only values of its own kind.
 func declareSetValues(ctx context.Context, manager *Client, name string, manifest manifestSpec, apps []protocol.App) error {
+	if !slices.ContainsFunc(manifest.Apps, func(app manifestApp) bool { return app.Path != "" }) {
+		return nil
+	}
 	var listed protocol.ConfigValues
 	if err := manager.Call(ctx, ControlPlane(name), protocol.ToolListValues, struct{}{}, &listed); err != nil {
 		return fmt.Errorf("list config values: %w", err)
@@ -187,6 +190,12 @@ func declareSetValues(ctx context.Context, manager *Client, name string, manifes
 	kinds, err := inputKinds(apps)
 	if err != nil {
 		return err
+	}
+	for _, value := range listed.Values {
+		if kind := kinds[value.Variable]; kind != "" && kind != value.Kind {
+			return fmt.Errorf("%s is both a config value and a secret; keep one of them", value.Variable)
+		}
+		kinds[value.Variable] = value.Kind
 	}
 	for i, source := range manifest.Apps {
 		app := &apps[i]
@@ -196,15 +205,14 @@ func declareSetValues(ctx context.Context, manager *Client, name string, manifes
 		env := map[string]protocol.Input{}
 		maps.Copy(env, app.Env)
 		for _, value := range listed.Values {
-			variable, input := value.Variable, protocol.Input{IsSecret: value.Kind == "secret"}
+			variable := value.Variable
 			_, declared := env[variable]
 			_, templated := app.EnvTemplates[variable]
-			kind, used := kinds[variable]
-			if declared || templated || used && kind != input.Kind() || variable == "PORT" || strings.HasPrefix(variable, "HOLON_") ||
+			if declared || templated || variable == "PORT" || strings.HasPrefix(variable, "HOLON_") ||
 				slices.ContainsFunc(app.Requires, func(target string) bool { return protocol.DependencyEnvName(target) == variable }) {
 				continue
 			}
-			env[variable] = input
+			env[variable] = protocol.Input{IsSecret: value.Kind == "secret"}
 		}
 		app.Env = env
 	}
