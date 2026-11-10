@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
@@ -149,6 +150,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if config.jsonOutput {
 		stdout = stderr
 	}
+	started := config.clock().Now()
 	config.output.status("", "Authenticating", progressWorking)
 	manager, err := NewClient(ctx, config.Auth)
 	if err != nil {
@@ -169,14 +171,19 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err := options.types.acquire(resolved); err != nil {
 		return err
 	}
-	recordPath := manager.sessionRecordPath(resolved)
-	var previous protocol.SessionResponse
+	recordPath := manager.sessionRecordPath(config.manifest, apps)
+	dev := &devLoop{
+		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), started: started, options: options,
+		changedImages: sets.New[string](), pending: sets.New[string](), announce: true,
+	}
 	first := options
 	if config.devTTLSeconds == nil {
-		previous, first.kept = previousSession(ctx, manager, recordPath)
+		var inputs map[string]string
+		dev.session, inputs = previousSession(ctx, manager, recordPath)
+		dev.name, first.kept = dev.session.Name, keptImages(dev.session.Apps, inputs)
 	}
-	if previous.Name != "" {
-		if err := printStartingEndpoints(stdout, config.output, manager, previous.Name, resolved.Apps); err != nil {
+	if dev.name != "" {
+		if err := printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps); err != nil {
 			return err
 		}
 	}
@@ -186,11 +193,11 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	}
 	request.TTLSeconds = config.devTTLSeconds
 	config.output.deploying(request.Apps)
-	var session protocol.SessionResponse
-	if previous.Name != "" {
-		session, err = replaceExecution(ctx, manager, previous.Name, previous, request)
-	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &session); err == nil {
-		err = printStartingEndpoints(stdout, config.output, manager, session.Name, resolved.Apps)
+	if dev.name != "" {
+		err = dev.update(ctx, request, removedApps(dev.session.Apps, request.Apps)...)
+	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &dev.session); err == nil {
+		dev.name = dev.session.Name
+		err = printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps)
 	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
 		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
 		err = fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
@@ -198,6 +205,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
+	session := dev.session
 	if request.TTLSeconds != nil {
 		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
 		if err != nil {
@@ -212,13 +220,8 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
 		return err
 	}
-	dev := &devLoop{manager: manager, name: session.Name, manifest: resolved, apps: apps, clock: config.clock(), options: options, session: session}
 	err = dev.run(ctx, stdout)
-	inputs := map[string]string{}
-	for name, types := range options.types.accepted {
-		inputs[name] = types.inputs
-	}
-	data, _ := json.Marshal(sessionRecord{Session: session.Name, Inputs: inputs})
+	data, _ := json.Marshal(sessionRecord{Session: dev.name, Inputs: options.types.inputs()})
 	_ = writePrivateFile(recordPath, data)
 	return err
 }
@@ -228,19 +231,34 @@ type sessionRecord struct {
 	Inputs  map[string]string `json:"inputs"`
 }
 
+// keptImage is an image a session runs, and the inputs it was built from.
 type keptImage struct {
-	inputs, image, overlay string
+	inputs, image string
 }
 
-func (m *Client) sessionRecordPath(manifest manifestSpec) string {
-	key := m.client.baseURL
-	for _, app := range manifest.Apps {
+// keptImages are the images apps run that were built from inputs, so that a build from the same inputs can keep them.
+func keptImages(apps []protocol.App, inputs map[string]string) map[string]keptImage {
+	kept := map[string]keptImage{}
+	for _, app := range apps {
+		if inputs[app.Name] != "" {
+			kept[app.Name] = keptImage{inputs: inputs[app.Name], image: app.Image}
+		}
+	}
+	return kept
+}
+
+// sessionRecordPath is where holon dev records the session it leaves for the next run of the same project and
+// selection, which picks it up whatever apps the project has by then.
+func (m *Client) sessionRecordPath(manifest manifestSpec, selection []string) string {
+	key := m.client.baseURL + "\x00" + manifest.file
+	for _, app := range manifest.sources {
 		key += "\x00" + app.Name + "\x00" + app.Path
 	}
+	key += "\x00" + strings.Join(selection, "\x00")
 	return filepath.Join(filepath.Dir(m.statePath), digest.FromString(key).Encoded()+".session")
 }
 
-func previousSession(ctx context.Context, manager *Client, recordPath string) (protocol.SessionResponse, map[string]keptImage) {
+func previousSession(ctx context.Context, manager *Client, recordPath string) (protocol.SessionResponse, map[string]string) {
 	var record sessionRecord
 	var session protocol.SessionResponse
 	data, err := readPrivateFile(recordPath)
@@ -248,13 +266,7 @@ func previousSession(ctx context.Context, manager *Client, recordPath string) (p
 		manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: record.Session}, &session) != nil {
 		return protocol.SessionResponse{}, nil
 	}
-	kept := map[string]keptImage{}
-	for _, app := range session.Apps {
-		if inputs := record.Inputs[app.Name]; inputs != "" {
-			kept[app.Name] = keptImage{inputs: inputs, image: app.Image, overlay: app.Overlay}
-		}
-	}
-	return session, kept
+	return session, record.Inputs
 }
 
 func sessionPath(name, suffix string) string {

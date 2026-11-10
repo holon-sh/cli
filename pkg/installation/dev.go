@@ -173,50 +173,17 @@ func (w *devWatcher) Close() error {
 	return err
 }
 
-func sameManifestTopology(left, right manifestSpec) bool {
-	return slices.EqualFunc(left.Apps, right.Apps, func(app, candidate manifestApp) bool {
-		left, right := app.resolved.App, candidate.resolved.App
-		if (left.Image == "") != (right.Image == "") {
-			return false
-		}
-		left.Image, right.Image = "", ""
-		return app.Path == candidate.Path &&
-			app.resolved.stdio == candidate.resolved.stdio && reflect.DeepEqual(left, right)
-	})
-}
-
-func patchSessionImages(
-	ctx context.Context,
-	manager *Client,
-	name string,
-	apps []protocol.App,
-) (protocol.SessionResponse, error) {
-	current, err := manager.Session(ctx, name)
-	if err != nil {
-		return protocol.SessionResponse{}, err
-	}
-	rebuilt := make([]protocol.App, 0, len(apps))
-	for _, app := range apps {
-		index := slices.IndexFunc(current.Apps, func(old protocol.App) bool { return old.Name == app.Name })
-		if index < 0 {
-			return protocol.SessionResponse{}, errors.New("application removed during rebuild")
-		}
-		updated := current.Apps[index]
-		updated.Image, updated.Overlay = app.Image, app.Overlay
-		rebuilt = append(rebuilt, updated)
-	}
-	return replaceExecution(ctx, manager, name, current, protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(rebuilt)})
-}
-
 type devLoop struct {
 	manager                *Client
 	name                   string
 	manifest               manifestSpec
 	apps                   []string
 	clock                  clock.WithTicker
+	started                time.Time
 	options                buildOptions
 	session                protocol.SessionResponse
 	changedImages, pending sets.Set[string]
+	announce, unapplied    bool
 	preparing              chan preparation
 	cancelPreparation      context.CancelFunc
 }
@@ -235,6 +202,9 @@ func (d *devLoop) renew(ctx context.Context) {
 	}
 }
 
+// watching is the status while every app runs the source last saved.
+const watching = "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev."
+
 func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	watcher, err := newDevWatcher(d.manifest, d.clock, d.options.output)
 	if err != nil {
@@ -245,7 +215,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	var background sync.WaitGroup
 	background.Go(func() { d.renew(ctx) })
 	background.Go(func() {
-		var input protocol.SessionLogsRequest
+		input := protocol.SessionLogsRequest{Since: d.started.Format(time.RFC3339Nano)}
 		input.Session = d.name
 		records := &resumingWriter{out: stdout, stdio: !d.options.output.verbose}
 		if err := d.manager.streamLogs(ctx, input, records); ctx.Err() == nil {
@@ -258,30 +228,22 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		d.stopPreparation()
 	}()
 	d.options.architectures = d.session.BuildArchitectures
-	d.changedImages, d.pending = sets.New[string](), sets.New[string]()
 	for _, app := range d.session.Apps {
 		d.pending.Insert(app.Name)
 	}
-	d.reload(ctx, watcher.contexts)
-	announce := sync.OnceValue(func() error {
-		if err := d.options.output.endpoints(stdout, "Ready", d.manager, d.session.Name, d.manifest.Apps, false); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev.")
-		return err
-	})
 	for ctx.Err() == nil {
 		if err := d.manager.authorizeOperation(ctx, d.session); err != nil {
 			return err
 		}
-		if err := d.settle(announce); err != nil {
+		if err := d.settle(stdout); err != nil {
 			return err
 		}
-		phase, state := "Watching for changes", progressIdle
+		// A preparation reports its own progress until it ends or deploys.
 		if d.pending.Len() > 0 {
-			phase, state = "Deploying apps", progressWorking
+			reportSessionProgress(d.session, d.options.output, "Deploying apps", progressWorking)
+		} else if d.preparing == nil {
+			reportSessionProgress(d.session, d.options.output, watching, progressIdle)
 		}
-		reportSessionProgress(d.session, d.options.output, phase, state)
 		changes := watcher.changes
 		if lifecyclePending(d.session) {
 			changes = nil
@@ -303,13 +265,19 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 			}
 		case change := <-changes:
 			stopRead()
-			d.rebuild(ctx, change)
+			if d.rebuild(ctx, change) {
+				// The project may name other source directories.
+				_ = watcher.Close()
+				if watcher, err = newDevWatcher(d.manifest, d.clock, d.options.output); err != nil {
+					return fmt.Errorf("watch build contexts: %w", err)
+				}
+			}
 		}
 	}
 	return nil
 }
 
-func (d *devLoop) settle(announce func() error) error {
+func (d *devLoop) settle(stdout io.Writer) error {
 	if d.pending.Len() == 0 {
 		return nil
 	}
@@ -318,7 +286,11 @@ func (d *devLoop) settle(announce func() error) error {
 		return err
 	}
 	d.finishPending("ready", progressDone)
-	return announce()
+	if !d.announce {
+		return nil
+	}
+	d.announce = false
+	return d.options.output.endpoints(stdout, "Ready", d.manager, d.session.Name, d.manifest.Apps, false)
 }
 
 type sessionRead struct {
@@ -381,47 +353,99 @@ func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
 }
 
 func (d *devLoop) finishPending(phase string, state progressState) {
-	for app := range d.pending {
+	for _, app := range sets.List(d.pending) {
 		d.options.output.status(app, phase, state)
 	}
 	d.pending.Clear()
 }
 
-func (d *devLoop) rebuild(ctx context.Context, change devChange) {
+// rebuild applies a save: a project change as holon dev applies the project when it starts, and a source change by
+// restarting the app in place, or by rebuilding its image when the save changed what the image is built from. It reports
+// whether it applied a project change. A project change that failed to apply is tried again with the next save.
+func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
+	contexts := change.contexts
+	if change.manifest || d.unapplied {
+		contexts = contexts.Union(d.stopPreparation())
+		applied, err := d.apply(ctx)
+		d.unapplied = err != nil
+		d.options.output.problem("project", err)
+		if applied {
+			return true
+		}
+	}
 	d.reload(ctx, change.contexts)
-	contexts := change.contexts.Union(d.stopPreparation())
-	if change.manifest {
-		reloaded, err := resolveManifestFile(d.manifest.file)
-		if err == nil {
-			reloaded.sources, reloaded.access = d.manifest.sources, d.manifest.access
-			reloaded, err = resolveManifestGraph(ctx, reloaded, d.apps...)
-		}
-		if err != nil {
-			if ctx.Err() == nil {
-				d.options.output.problem("app rebuild", fmt.Errorf("metadata resolution failed: %w; existing service remains available", err))
-			}
-			return
-		}
-		if !sameManifestTopology(d.manifest, reloaded) {
-			d.options.output.problem("app metadata",
-				errors.New("app topology, dependencies, configuration, egress or access rules changed; restart holon dev to apply it"))
-			return
-		}
-		d.options.output.problem("app metadata", nil)
-		for i, app := range reloaded.Apps {
-			previous := d.manifest.Apps[i]
-			if app.resolved.Image != previous.resolved.Image || !reflect.DeepEqual(app.Registry, previous.Registry) ||
-				app.Path != "" && !reflect.DeepEqual(app.resolved.descriptor, previous.resolved.descriptor) {
-				d.changedImages.Insert(app.Name)
-			}
-		}
-		d.manifest = reloaded
+	if contexts = contexts.Union(d.stopPreparation()); contexts.Len() != 0 || d.changedImages.Len() != 0 {
+		d.prepare(ctx, contexts)
 	}
-	if contexts.Len() == 0 && d.changedImages.Len() == 0 {
-		d.options.output.status("app rebuild", "no app changed; continuing to watch", progressDone)
-		return
+	return false
+}
+
+// apply brings the session to the project as it is now, as holon dev does when it starts: it builds the images whose
+// inputs changed, keeps the rest, and removes the apps the project no longer has. It reports whether the project changed.
+func (d *devLoop) apply(ctx context.Context) (bool, error) {
+	manifest, err := resolveManifestFile(d.manifest.file)
+	if err != nil {
+		return false, err
 	}
-	d.prepare(ctx, contexts)
+	manifest.sources, manifest.access = d.manifest.sources, d.manifest.access
+	resolved, err := resolveManifestGraph(ctx, manifest, d.apps...)
+	if err == nil {
+		err = protocol.AccessPolicy(resolved.declarations(), d.manager.info.OAuth != nil)
+	}
+	if err != nil || reflect.DeepEqual(resolved.Apps, d.manifest.Apps) {
+		return false, err
+	}
+	d.options.output.status("", "Preparing apps", progressWorking)
+	if err := d.options.types.acquire(resolved); err != nil {
+		return false, err
+	}
+	options := d.options
+	options.kept = keptImages(d.session.Apps, d.options.types.inputs())
+	request, err := uploadManifest(ctx, d.manager, d.name, resolved, options)
+	if err != nil {
+		return false, err
+	}
+	d.options.output.deploying(request.Apps)
+	if err := d.update(ctx, request, removedApps(d.session.Apps, request.Apps)...); err != nil {
+		return false, err
+	}
+	d.manifest, d.announce = resolved, true
+	d.changedImages.Clear()
+	return true, nil
+}
+
+// update moves the session to desired and removes the apps named in remove. An app whose image the update keeps keeps
+// running, so update restarts it in place when its source changed.
+func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[protocol.App], remove ...string) error {
+	updated, err := replaceExecution(ctx, d.manager, d.name, d.session, desired, remove...)
+	if err != nil {
+		d.options.output.apps(desired.Apps, "deployment failed", progressError)
+		return err
+	}
+	for _, app := range desired.Apps {
+		d.pending.Insert(app.Name)
+		i := slices.IndexFunc(d.session.Apps, func(running protocol.App) bool { return running.Name == app.Name })
+		if i >= 0 && d.session.Apps[i].Image == app.Image && d.session.Apps[i].Overlay != app.Overlay {
+			if err := d.restart(ctx, app.Name, app.Overlay); err != nil {
+				d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
+			}
+		}
+	}
+	for _, name := range remove {
+		d.options.output.status(name, "removed", progressDone)
+	}
+	d.session = updated
+	return nil
+}
+
+func removedApps(running, desired []protocol.App) []string {
+	var removed []string
+	for _, app := range running {
+		if !slices.ContainsFunc(desired, func(kept protocol.App) bool { return kept.Name == app.Name }) {
+			removed = append(removed, app.Name)
+		}
+	}
+	return removed
 }
 
 func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) error {
@@ -447,36 +471,28 @@ func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) err
 	if result.buildErr != nil {
 		return fmt.Errorf("remote image preparation failed: %w", result.buildErr)
 	}
-	apps := slices.DeleteFunc(result.images, func(app protocol.App) bool {
-		if !slices.ContainsFunc(d.session.Apps, func(current protocol.App) bool {
-			return current.Name == app.Name && current.Image == app.Image && current.Overlay == app.Overlay
-		}) {
-			return false
-		}
+	var desired []protocol.App
+	for _, app := range result.images {
 		d.changedImages.Delete(app.Name)
-		if d.pending.Has(app.Name) {
-			d.options.output.status(app.Name, "deploying", progressWorking)
-		} else {
+		i := slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })
+		if i < 0 {
+			return errors.New("application removed during rebuild")
+		}
+		current := d.session.Apps[i]
+		if current.Image != app.Image || current.Overlay != app.Overlay {
+			current.Image, current.Overlay = app.Image, app.Overlay
+			desired = append(desired, current)
+		} else if !d.pending.Has(app.Name) {
 			d.options.output.status(app.Name, "unchanged", progressDone)
 		}
-		return true
-	})
-	message := "remote image is unchanged; continuing to watch"
-	if len(apps) != 0 {
-		d.options.output.deploying(apps)
-		updated, err := patchSessionImages(ctx, d.manager, d.name, apps)
-		if err != nil {
-			d.options.output.apps(apps, "deployment failed", progressError)
-			return fmt.Errorf("remote update failed: %w", err)
-		}
-		for _, app := range apps {
-			d.pending.Insert(app.Name)
-			d.changedImages.Delete(app.Name)
-		}
-		d.session = updated
-		message = fmt.Sprintf("remote update requested (generation %d)", updated.Generation)
 	}
 	d.options.types.accept(result.built)
-	d.options.output.status("app rebuild", message, progressDone)
+	if len(desired) == 0 {
+		return nil
+	}
+	d.options.output.deploying(desired)
+	if err := d.update(ctx, protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(desired)}); err != nil {
+		return fmt.Errorf("remote update failed: %w", err)
+	}
 	return nil
 }

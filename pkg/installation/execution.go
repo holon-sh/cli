@@ -12,8 +12,9 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
+// replaceExecution upserts desired's apps into session name and removes the apps named in remove.
 func replaceExecution(ctx context.Context, manager *Client, name string,
-	baseline protocol.SessionResponse, desired protocol.AppsRequestFor[protocol.App],
+	baseline protocol.SessionResponse, desired protocol.AppsRequestFor[protocol.App], remove ...string,
 ) (protocol.SessionResponse, error) {
 	current := baseline
 	desired.RequestID = cmp.Or(desired.RequestID, strings.ToLower(rand.Text()))
@@ -25,6 +26,7 @@ func replaceExecution(ctx context.Context, manager *Client, name string,
 		input := protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]{
 			SessionRequest:    protocol.SessionRequest{Session: name},
 			WritePrecondition: protocol.WritePrecondition{ExpectedRevision: current.Revision, CreateOnly: current.Revision == ""}, Desired: desired,
+			Remove: remove,
 		}
 		var accepted protocol.SessionResponse
 		err = manager.client.Call(ctx, ControlPlane(name), token, protocol.ToolUpdateSession, input, &accepted)
@@ -43,7 +45,8 @@ func replaceExecution(ctx context.Context, manager *Client, name string,
 		if current.UID != "" && latest.UID != current.UID {
 			return protocol.SessionResponse{}, errors.New("execution identity changed")
 		}
-		if len(protocol.ChangedApps(namedApps(latest.Apps, desired.Apps), desired.Apps)) == 0 {
+		if len(protocol.ChangedApps(namedApps(latest.Apps, desired.Apps), desired.Apps)) == 0 &&
+			!slices.ContainsFunc(latest.Apps, func(app protocol.App) bool { return slices.Contains(remove, app.Name) }) {
 			return retryOperation(ctx, manager, latest)
 		}
 		if !precondition {

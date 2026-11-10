@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -36,20 +35,20 @@ func TestRunDevRebuildsWhatASaveChanged(t *testing.T) {
 		"- name: delta\n  access: {server: {}}\n  image: %s/source@%s\n", gammaSource, grant.Registry, first)
 	beta, _ := json.Marshal(descriptorDocument("beta"))
 	for _, test := range []struct {
-		name, done string
-		edit       map[string]string
-		rebuilt    []string
+		name     string
+		edit     map[string]string
+		replaced []string
 	}{
 		{
-			name: "ignored server.json edited", done: "remote image is unchanged", rebuilt: []string{"beta"},
+			name: "ignored server.json edited",
 			edit: map[string]string{"beta/server.json": strings.Replace(string(beta), "Example MCP server", "edited", 1)},
 		},
 		{
-			name: "registry selection edited", done: "remote image is unchanged", rebuilt: []string{"gamma"},
+			name: "registry selection edited",
 			edit: map[string]string{manifestFileName: strings.Replace(manifest, `"version":"1.4.2"`, `"version":"1.4.2","package":{"registryType":"oci"}`, 1)},
 		},
 		{
-			name: "image digest edited", done: "remote update requested", rebuilt: []string{"delta"},
+			name: "image digest edited", replaced: []string{"delta"},
 			edit: map[string]string{manifestFileName: strings.Replace(manifest, first, second, 1)},
 		},
 	} {
@@ -66,7 +65,7 @@ func TestRunDevRebuildsWhatASaveChanged(t *testing.T) {
 				installationtest.WriteJSON(w, grant)
 			})
 			var mu sync.Mutex
-			var served []protocol.App
+			var created, served []protocol.App
 			h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession},
 				nil, func(w http.ResponseWriter, r *http.Request) {
 					mu.Lock()
@@ -77,7 +76,13 @@ func TestRunDevRebuildsWhatASaveChanged(t *testing.T) {
 						if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 							t.Error(err)
 						}
-						served = input.Apps
+						created, served = input.Apps, input.Apps
+					case protocol.ToolUpdateSession:
+						var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
+						if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+							t.Error(err)
+						}
+						served = input.Desired.Apps
 					}
 					response := apiSession("alpha")
 					response["apps"] = served
@@ -86,20 +91,28 @@ func TestRunDevRebuildsWhatASaveChanged(t *testing.T) {
 			h.start(t, buildImage(t, "unchanged"))
 			fc := testingclock.NewFakeClock(time.Now())
 			h.run.Clock = fc
-			stdout, stderr, stop := startDev(t, h.run, "--project", filepath.Join(root, manifestFileName))
-			stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stdout.String(), "Watching for changes.") })
+			_, stderr, stop := startDev(t, h.run, "--project", filepath.Join(root, manifestFileName))
+			stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String(), watching) })
 			started := len(stderr.String())
 			sourceFiles(t, root, test.edit)
-			stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[started:], test.done) })
+			stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[started:], watching) })
 			if err := stop(); err != nil {
 				t.Fatalf("dev run: %v, stderr=%q", err, stderr.String())
 			}
-			var rebuilt []string
-			for _, match := range regexp.MustCompile(`(?m)^(\S+) (?:building|importing)$`).FindAllStringSubmatch(stderr.String()[started:], -1) {
-				rebuilt = append(rebuilt, match[1])
+			// A project change builds no source app whose image inputs it left alone.
+			if strings.Contains(stderr.String()[started:], "building") {
+				t.Fatalf("stderr=%q", stderr.String()[started:])
 			}
-			if !slices.Equal(rebuilt, test.rebuilt) {
-				t.Fatalf("rebuilt = %v, want %v, stderr=%q", rebuilt, test.rebuilt, stderr.String()[started:])
+			mu.Lock()
+			defer mu.Unlock()
+			var replaced []string
+			for i, app := range served {
+				if app.Image != created[i].Image {
+					replaced = append(replaced, app.Name)
+				}
+			}
+			if !slices.Equal(replaced, test.replaced) {
+				t.Fatalf("replaced images = %v, want %v, stderr=%q", replaced, test.replaced, stderr.String()[started:])
 			}
 		})
 	}

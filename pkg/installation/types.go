@@ -37,7 +37,17 @@ type typeWorkspace struct {
 func (w *typeWorkspace) close() {
 	if w.release != nil {
 		w.release()
+		w.release = nil
 	}
+}
+
+// inputs are what each accepted app's image was built from.
+func (w *typeWorkspace) inputs() map[string]string {
+	inputs := map[string]string{}
+	for name, types := range w.accepted {
+		inputs[name] = types.inputs
+	}
+	return inputs
 }
 
 func (w *typeWorkspace) accept(manifest manifestSpec) {
@@ -64,8 +74,12 @@ func (w *typeWorkspace) affected(ctx context.Context, app manifestApp, manifest 
 	})
 }
 
+// acquire locks the generated clients of manifest's path apps, in place of the ones it locked before.
 func (w *typeWorkspace) acquire(manifest manifestSpec) error {
-	w.accepted = map[string]*preparedTypes{}
+	w.close()
+	if w.accepted == nil {
+		w.accepted = map[string]*preparedTypes{}
+	}
 	var consumers []typegen.Consumer
 	for _, app := range manifest.Apps {
 		if app.Path != "" {

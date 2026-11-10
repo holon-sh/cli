@@ -49,6 +49,7 @@ func (d *devLoop) prepare(ctx context.Context, contexts sets.Set[string]) {
 	result := make(chan preparation, 1)
 	d.preparing, d.cancelPreparation = result, cancel
 	manifest, options, changed := d.manifest, d.options, d.changedImages.Clone()
+	options.kept = keptImages(d.session.Apps, d.options.types.inputs())
 	go func() {
 		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, options)
 		if err != nil {
@@ -76,12 +77,8 @@ func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) {
 		if !contexts.Has(app.Path) {
 			continue
 		}
-		outdated, err := d.reloadApp(ctx, app)
-		if err != nil {
+		if err := d.reloadApp(ctx, app); err != nil {
 			d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
-		}
-		if outdated {
-			d.changedImages.Insert(app.Name)
 		}
 	}
 }
@@ -96,49 +93,60 @@ func (d *devLoop) stopPreparation() sets.Set[string] {
 	return stopped.contexts
 }
 
-func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) (outdated bool, err error) {
+// reloadApp restarts app in place on the source just saved. When the save changed what the app's image is built from,
+// it leaves the app to the rebuild that follows instead.
+func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	defer d.options.output.measure(app.Name, "reload")()
 	directory, err := os.MkdirTemp("", "holon-overlay-")
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
 	accepted := d.options.types.accepted[app.Name]
 	types := *accepted
 	types.root = filepath.Join(directory, "source")
 	if _, err := snapshotSource(app, types.root); err != nil {
-		return false, err
+		return err
 	}
 	plan, err := d.options.planSource(ctx, app, &types)
 	if err != nil {
-		return false, err
+		return err
 	}
-	if !plan.Development || accepted.inputs == "" {
-		return true, nil
+	if !plan.Development || types.inputs != accepted.inputs {
+		d.changedImages.Insert(app.Name)
+		return nil
 	}
-	outdated = types.inputs != accepted.inputs
-	d.options.output.status(app.Name, "reloading", progressWorking)
-	running := &d.session.Apps[slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })]
+	running := d.session.Apps[slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })]
 	plan.upload = newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
 	overlay, err := plan.pushOverlay(ctx, running.Overlay)
 	if err != nil {
-		return outdated, err
+		return err
 	}
 	if overlay == running.Overlay {
 		d.options.output.status(app.Name, "unchanged", progressDone)
-		return outdated, nil
+		return nil
 	}
+	return d.restart(ctx, app.Name, overlay)
+}
+
+// restart restarts app in place on the source overlay, which the session records as the app's.
+func (d *devLoop) restart(ctx context.Context, app, overlay string) error {
+	d.options.output.status(app, "reloading", progressWorking)
 	var result reloadAppResult
 	request := reloadAppRequest{
-		AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name},
+		AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app},
 		Digest:     overlay,
 	}
 	if err := d.manager.Call(ctx, ControlPlane(d.name), toolReloadApp, request, &result); err != nil {
-		return outdated, err
+		return err
 	}
-	running.Overlay = overlay
-	d.options.output.status(app.Name, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
-	return outdated, nil
+	for i := range d.session.Apps {
+		if d.session.Apps[i].Name == app {
+			d.session.Apps[i].Overlay = overlay
+		}
+	}
+	d.options.output.status(app, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
+	return nil
 }
 
 func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
