@@ -25,7 +25,7 @@ func TestManifestRejectsInvalidDeclarations(t *testing.T) {
 		{name: "insecure remote", fields: "remote: {url: http://mcp.example/mcp}"},
 		{name: "insecure registry", fields: "registry: {name: io.github.acme/app, version: '1.0.0', registry: 'http://registry.example'}"},
 		{name: "run with npm", fields: `registry: {name: io.github.acme/app, version: '1.0.0', package: {registryType: npm}}
-run: {transport: {type: stdio}}`, wantError: "run requires a registry OCI package"},
+run: {transport: {type: stdio}}`, wantError: "run requires a path, an image or a registry OCI package"},
 		{name: "empty secret reference", fields: "arguments: {--project: {secret: ''}}"},
 		{name: "literal OAuth secret", fields: "oauth: {clientID: registered, clientSecret: unsafe}"},
 		{name: "missing OAuth client ID", fields: "oauth: {clientSecret: {secret: CLIENT_SECRET}}"},

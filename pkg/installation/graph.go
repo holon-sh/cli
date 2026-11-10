@@ -131,24 +131,26 @@ func resolveApp(app *manifestApp) error {
 	d := app.resolved.descriptor
 	var pkg mcpregistry.Package
 	var remote *mcpregistry.Transport
+	index := -1
 	if d != nil && (len(d.Packages) != 0 || app.Registry != nil) {
 		selection := ptr.Deref(app.Registry, protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}})
-		index, selected, err := mcpregistry.SelectServerSource(d, selection)
-		if err != nil {
+		var err error
+		if index, remote, err = mcpregistry.SelectServerSource(d, selection); err != nil {
 			return err
 		}
-		remote = selected
 		if index >= 0 {
 			pkg = d.Packages[index]
-			if app.Run != nil {
-				pkg = mcpregistry.Package{
-					RegistryType: pkg.RegistryType, Identifier: pkg.Identifier,
-					Transport: mcpregistry.Transport{Type: app.Run.Transport.Type, URL: app.Run.Transport.URL},
-				}
-			}
-			if err := pkg.ValidateTransport(); err != nil {
-				return err
-			}
+		}
+	}
+	if app.Run != nil {
+		pkg = mcpregistry.Package{RegistryType: pkg.RegistryType, Identifier: pkg.Identifier, Transport: pkg.Transport}
+		if app.Run.Transport.Type != "" {
+			pkg.Transport = mcpregistry.Transport{Type: app.Run.Transport.Type, URL: app.Run.Transport.URL}
+		}
+	}
+	if index >= 0 || pkg.Transport.Type != "" {
+		if err := pkg.ValidateTransport(); err != nil {
+			return err
 		}
 	}
 	if app.Remote != nil {

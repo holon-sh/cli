@@ -59,22 +59,12 @@ func SelectServerSource(d *Descriptor, source protocol.RegistrySource) (int, *Tr
 
 func (p Package) environmentInputs() (map[string]protocol.Input, map[string]string, error) {
 	inputs, templates := map[string]protocol.Input{}, map[string]string{}
-	set := func(name string, input protocol.Input, variables map[string]protocol.Input) error {
-		if err := mergeInputs(inputs, variables); err != nil {
-			return err
-		}
-		if variables == nil {
-			return mergeInput(inputs, name, input)
-		}
-		templates[name] = *input.Value
-		return validEnvironmentName(name)
-	}
 	for _, raw := range p.Environment {
 		spec, input, variables, err := ParseInput(raw)
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := set(spec.Name, input, variables); err != nil {
+		if err := setEnvironment(inputs, templates, spec.Name, input, variables); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -93,7 +83,7 @@ func (p Package) environmentInputs() (map[string]protocol.Input, map[string]stri
 		}
 		input, variables, err := assigned.Parse()
 		if err == nil {
-			err = set(name, input, variables)
+			err = setEnvironment(inputs, templates, name, input, variables)
 		}
 		if err != nil {
 			return nil, nil, err
@@ -207,8 +197,15 @@ func (p Package) App(values map[string]Value, run RunConfig) (protocol.App, erro
 		if value.Secret != "" && value.Secret != name {
 			return protocol.App{}, fmt.Errorf("run.env.%s secret key must match the environment name", name)
 		}
+		var variables map[string]protocol.Input
+		if placeholders := protocol.TemplateInputs(ptr.Deref(value.Value, "")); len(placeholders) != 0 {
+			variables = map[string]protocol.Input{}
+			for _, placeholder := range placeholders {
+				variables[placeholder] = protocol.Input{IsRequired: true}
+			}
+		}
 		input := protocol.Input{Value: value.Value, IsSecret: value.Secret != "", IsRequired: value.Secret != ""}
-		if err := mergeInput(env, name, input); err != nil {
+		if err := setEnvironment(env, templates, name, input, variables); err != nil {
 			return protocol.App{}, fmt.Errorf("run.env.%s: %w", name, err)
 		}
 	}
@@ -222,6 +219,23 @@ func (p Package) App(values map[string]Value, run RunConfig) (protocol.App, erro
 		return protocol.App{}, errors.New("package args and environment templates must be single-line text naming declared inputs")
 	}
 	return protocol.App{Env: env, EnvTemplates: templates, Args: args}, nil
+}
+
+// setEnvironment declares name as an input, or as a template over the inputs in variables. A template that is only
+// {name} needs no template, because each input reaches the environment under its own name.
+func setEnvironment(
+	inputs map[string]protocol.Input, templates map[string]string, name string, input protocol.Input, variables map[string]protocol.Input,
+) error {
+	if err := mergeInputs(inputs, variables); err != nil {
+		return err
+	}
+	if variables == nil {
+		return mergeInput(inputs, name, input)
+	}
+	if *input.Value != "{"+name+"}" {
+		templates[name] = *input.Value
+	}
+	return validEnvironmentName(name)
 }
 
 func argumentInput(id string) string {

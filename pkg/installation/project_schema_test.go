@@ -10,7 +10,7 @@ import (
 
 func TestConfigurationJSONSchemas(t *testing.T) {
 	const apps = `[
-   {"name":"alpha","path":"./local","mount":"/","access":{"server":{}},
+   {"name":"alpha","path":"./local","mount":"/","access":{"server":{}},"run":{"env":{"REGION":"{REGION}"}},
     "oauth":{"clientID":"registered","clientSecret":{"secret":"TOKEN"}}},
    {"name":"beta","registry":{"name":"io.github.acme/app","version":"1.0.0","package":{"registryType":"oci"}},
     "access":{"server":{}},"run":{"transport":{"type":"stdio"},"env":{"TEXT":"hello","TOKEN":{"secret":"TOKEN"}}}},

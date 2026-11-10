@@ -96,6 +96,43 @@ func TestDescriptorInputs(t *testing.T) {
 	}
 }
 
+func TestPathAppRunEnvironment(t *testing.T) {
+	root := t.TempDir()
+	sourceFiles(t, root, map[string]string{
+		"chat/main.go": "package main",
+		manifestFileName: `apps:
+  - name: chat
+    path: chat
+    access: {server: {}}
+    run:
+      env:
+        REGION: "{REGION}"
+        API_URL: "https://{API_HOST}/v1"
+        API_KEY: {secret: API_KEY}
+        MODE: fixed
+`,
+	})
+	manifest, err := resolveManifestFile(filepath.Join(root, manifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err = resolveManifestGraph(t.Context(), manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := manifest.Apps[0].resolved.App
+	want := protocol.App{
+		Env: map[string]protocol.Input{
+			"REGION": {IsRequired: true}, "API_HOST": {IsRequired: true},
+			"API_KEY": {IsSecret: true, IsRequired: true}, "MODE": {Value: new("fixed")},
+		},
+		EnvTemplates: map[string]protocol.Template{"API_URL": "https://{API_HOST}/v1"},
+	}
+	if diff := cmp.Diff(want, protocol.App{Env: app.Env, EnvTemplates: app.EnvTemplates}); diff != "" {
+		t.Fatalf("inputs (-want +got):\n%s", diff)
+	}
+}
+
 func TestDescriptorInputRejections(t *testing.T) {
 	for _, test := range []struct {
 		name, environment, arguments, runtime, want string

@@ -32,7 +32,7 @@ type manifestSpec struct {
 }
 
 type packageRun struct {
-	Transport manifestTransport            `json:"transport"      required:"true"`
+	Transport manifestTransport            `description:"Defaults to the package's transport, or HTTP." json:"transport,omitzero"`
 	Args      []string                     `json:"args,omitempty"`
 	Env       map[string]mcpregistry.Value `json:"env,omitempty"`
 }
@@ -72,7 +72,7 @@ type manifestApp struct {
 
 	Path      string                       `description:"Relative source directory."                                              json:"path,omitempty"`
 	Registry  *protocol.RegistrySource     `description:"Registry server reference; package or remote selection may be inferred." json:"registry,omitempty"`
-	Run       *packageRun                  `description:"Registry runtime arguments; cannot combine with arguments or headers."   json:"run,omitempty"`
+	Run       *packageRun                  `description:"Runtime arguments and environment; cannot combine with arguments or headers." json:"run,omitempty"`
 	Arguments map[string]mcpregistry.Value `description:"Argument literals, or secrets named for the input (--api-key: API_KEY)." json:"arguments,omitempty"`
 	resolved  resolvedApp
 }
@@ -152,8 +152,8 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 			}
 		}
 		if a.Run != nil {
-			if a.Registry == nil || a.Registry.Package == nil || a.Registry.Package.RegistryType != "oci" {
-				errs = append(errs, label+".run requires a registry OCI package")
+			if a.Remote != nil || a.Registry != nil && (a.Registry.Package == nil || a.Registry.Package.RegistryType != "oci") {
+				errs = append(errs, label+".run requires a path, an image or a registry OCI package")
 			}
 			if len(a.Arguments) != 0 || len(a.Headers) != 0 {
 				errs = append(errs, label+".run cannot be combined with arguments or headers")
