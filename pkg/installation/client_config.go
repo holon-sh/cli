@@ -12,7 +12,7 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-const managedOrigin = "https://holon.localhost"
+var errNoInstallation = errors.New("no Holon installation selected; run holon login https://<team>.cloud.holon-labs.dev")
 
 type clientConfig struct {
 	Origin string `json:"origin"`
@@ -36,7 +36,7 @@ func resolveOrigin(origin, dir string, env []string) (string, error) {
 	path := filepath.Join(dir, "config.json")
 	data, err := readPrivateFile(path)
 	if errors.Is(err, errNotAuthenticated) {
-		return managedOrigin, nil
+		return "", errNoInstallation
 	}
 	if err != nil {
 		return "", fmt.Errorf("read Holon configuration %s: %w", path, err)
@@ -45,7 +45,10 @@ func resolveOrigin(origin, dir string, env []string) (string, error) {
 	if err := protocol.DecodeJSONNonNull(data, &config); err != nil {
 		return "", fmt.Errorf("read Holon configuration %s: %w", path, err)
 	}
-	return cmp.Or(config.Origin, managedOrigin), nil
+	if config.Origin == "" {
+		return "", errNoInstallation
+	}
+	return config.Origin, nil
 }
 
 func saveOrigin(config ClientConfig, origin string) error {
