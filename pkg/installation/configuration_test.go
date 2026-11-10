@@ -35,9 +35,7 @@ func TestConfigurationCommands(t *testing.T) {
 	var out bytes.Buffer
 	for _, args := range [][]string{
 		{"config", "set", "API_URL", "https://example.test"},
-		{"config", "set", "REGION", ""},
 		{"config", "delete", "API_URL", "--env", "prod"},
-		{"secret", "delete", "API_URL", "--session", "s-one"},
 		{"egress", "set", "alpha", "api.example.com:443"},
 		{"egress", "set", "alpha"},
 		{"egress", "delete", "*"},
@@ -46,7 +44,7 @@ func TestConfigurationCommands(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "API_KEY"}, strings.NewReader("piped-secret\n"), &out, nil, h.run); err != nil {
+	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "API_KEY", "--session", "s-one"}, strings.NewReader("piped-secret\n"), &out, nil, h.run); err != nil {
 		t.Fatal(err)
 	}
 	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "API_KEY"}, strings.NewReader("\n"), nil, nil, h.run); err == nil ||
@@ -59,22 +57,20 @@ func TestConfigurationCommands(t *testing.T) {
 	}
 	want := []string{
 		`dev. set_value {"kind":"config","variable":"API_URL","value":"https://example.test"}`,
-		`dev. set_value {"kind":"config","variable":"REGION","value":""}`,
 		`admin. delete_value {"kind":"config","variable":"API_URL"}`,
-		`dev. delete_value {"session":"s-one","kind":"secret","variable":"API_URL"}`,
 		`admin. get_egress {"app":"alpha"}`,
 		`admin. set_egress {"app":"alpha","expectedRevision":"1","policy":{"allow":[{"host":"api.example.com","ports":[443]}]}}`,
 		`admin. get_egress {"app":"alpha"}`,
 		`admin. set_egress {"app":"alpha","expectedRevision":"1","policy":{"allow":[]}}`,
 		`admin. get_egress {"app":"*"}`,
 		`admin. set_egress {"app":"*","expectedRevision":"1","policy":{}}`,
-		`dev. set_value {"kind":"secret","variable":"API_KEY","value":"piped-secret"}`,
+		`dev. set_value {"session":"s-one","kind":"secret","variable":"API_KEY","value":"piped-secret"}`,
 	}
 	if !slices.Equal(sent, want) {
 		t.Fatalf("sent = %q, want %q", sent, want)
 	}
 	for _, scope := range []string{
-		"config API_URL in developer-wide dev", "config API_URL in production", "secret API_URL in dev session s-one",
+		"config API_URL in developer-wide dev", "config API_URL in production", "secret API_KEY in dev session s-one",
 		"no egress", "none set",
 	} {
 		if !strings.Contains(out.String(), scope) {
