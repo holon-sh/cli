@@ -241,6 +241,7 @@ def find_server(module: object) -> MCPServer | Server[Any]:
 async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
     from mcp import types
     from mcp.client import Client
+    from mcp.client.extension import advertise
     from mcp.server import MCPServer
     from mcp.server.lowlevel.server import lifespan
 
@@ -256,7 +257,10 @@ async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
     tools: list[dict[str, Any]] = []
     resources: list[dict[str, Any]] = []
     events: list[dict[str, Any]] = []
-    async with Client(server) as client:
+    # Generated clients send files, so the contract lists the tools a server shows only to clients that do
+    # (https://github.com/modelcontextprotocol/experimental-ext-file-uploads/blob/main/specification/draft/file-uploads.md#backward-compatibility).
+    files = advertise("io.modelcontextprotocol/files", {"upload": {}, "download": {}})
+    async with Client(server, extensions=[files]) as client:
         info = client.server_info
         capabilities = client.server_capabilities
         cursor = None

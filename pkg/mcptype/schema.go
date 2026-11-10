@@ -82,6 +82,7 @@ const (
 	kindUnion
 	kindIntersection
 	kindDeclared
+	kindFile
 )
 
 // typ is the type a schema describes.
@@ -130,8 +131,8 @@ func objectType(fields map[string]field, extra extra) typ {
 	return typ{kind: kindObject, fields: fields, extra: extra}
 }
 
-func parseShape(ctx context.Context, schema Value) (shape, error) {
-	parser := &parser{ctx: ctx, root: schema, references: map[string]*declaration{}}
+func parseShape(ctx context.Context, schema Value, files bool) (shape, error) {
+	parser := &parser{ctx: ctx, root: schema, files: files, references: map[string]*declaration{}}
 	value, err := parser.reference("#", schema, 0)
 	if err != nil {
 		return shape{}, err
@@ -156,6 +157,7 @@ func parseShape(ctx context.Context, schema Value) (shape, error) {
 type parser struct {
 	ctx        context.Context
 	root       Value
+	files      bool
 	references map[string]*declaration // Being parsed, or found to be recursive.
 	mentions   int                     // Times a recursive type has been named.
 }
@@ -301,6 +303,9 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 			return typ{kind: kindUnknown}, nil
 		}
 		return typ{}, errors.New("schema must be an object or boolean")
+	}
+	if _, marked := object["x-mcp-file"]; marked && p.files {
+		return typ{kind: kindFile}, nil
 	}
 	if reference, ok := object["$ref"].(string); ok {
 		target, err := p.resolve(reference)

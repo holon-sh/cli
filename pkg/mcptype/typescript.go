@@ -19,6 +19,8 @@ func renderTypeScript(value typ) string {
 		return "number"
 	case kindBoolean:
 		return "boolean"
+	case kindFile:
+		return "Blob" // A browser's File is one, and so is what Node's fs.openAsBlob returns.
 	case kindNull:
 		return "null"
 	case kindLiteral:
