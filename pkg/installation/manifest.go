@@ -62,7 +62,8 @@ type manifestApp struct {
 	Remote  *manifestRemote              `json:"remote,omitempty"`
 	OAuth   *manifestOAuth               `description:"OAuth client registration and secret configuration."        json:"oauth,omitempty"`
 	Headers map[string]mcpregistry.Value `description:"Remote header values may be literals or secret references." json:"headers,omitempty"`
-	Access  *protocol.AppAccess          `description:"Server and tool authorization; server: {} is public."       json:"access"            required:"true"`
+
+	Access *protocol.AppAccess `description:"Server and tool authorization: server: {} is public, oauth: {} requires sign-in. Development sessions admit only signed-in developers." json:"access" required:"true"`
 
 	Name string `description:"Unique app DNS label." json:"name,omitempty" required:"true"`
 

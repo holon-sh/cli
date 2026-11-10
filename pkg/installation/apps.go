@@ -121,8 +121,8 @@ func newAccessCommand(config *commandConfig) *cobra.Command {
   holon access set chat oauth
   holon access set chat oauth app:chat:read
 
-  # Let anyone call an app
-  holon access set chat public
+  # Let anyone call an app in production; a development session admits only signed-in developers whatever the rule
+  holon access set chat public --env prod
 
   # Replace the rule of one tool
   holon access set chat/send_message oauth app:chat:write

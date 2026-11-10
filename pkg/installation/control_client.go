@@ -21,8 +21,11 @@ import (
 func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool string, input, output any) error {
 	origin, _ := protocol.PlaneOrigin(c.baseURL, plane, "")
 	data, err := json.Marshal(input)
-	if err != nil || len(data) > maxRequestBody {
-		return errMalformedResponse
+	if err != nil {
+		return err
+	}
+	if len(data) > maxRequestBody {
+		return clientutil.ErrContentTooLarge
 	}
 	timeout := c.timeout
 	switch tool {

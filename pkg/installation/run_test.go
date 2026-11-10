@@ -35,10 +35,15 @@ import (
 )
 
 func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer, config commandConfig) error {
+	return executeCommandWithInput(ctx, args, nil, stdout, stderr, config)
+}
+
+func executeCommandWithInput(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, config commandConfig) error {
 	config.Auth.Env = append([]string{"HOLON_ORIGIN="}, config.Auth.Env...)
 	command := sharedcli.NewCommand("dev")
 	command.AddCommand(newCommands(config)...)
 	command.SetArgs(args)
+	command.SetIn(stdin)
 	command.SetOut(cmp.Or(stdout, io.Discard))
 	command.SetErr(cmp.Or(stderr, io.Discard))
 	return command.ExecuteContext(ctx)
@@ -244,7 +249,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		})
 	})
 	session := func() map[string]any {
-		response := apiSession(h, "alpha", "beta")
+		response := apiSession("alpha", "beta")
 		response["apps"], response["buildArchitectures"] = served, []string{"arm64"}
 		if waiting != "" {
 			response["conditions"] = []protocol.Condition{{
@@ -435,15 +440,13 @@ func TestDevStopsWhenReauthenticationIsRequired(t *testing.T) {
 	}
 }
 
-func apiSession(h *runHarness, names ...string) map[string]any {
+func apiSession(names ...string) map[string]any {
 	response := installationtest.SessionResponse("gentle-otter-482", "")
-	endpoints := make([]protocol.SessionEndpoint, 0, len(names))
 	apps := make([]protocol.App, 0, len(names))
 	for _, name := range names {
 		apps = append(apps, protocol.App{Name: name})
-		endpoints = append(endpoints, protocol.SessionEndpoint{Name: name, URL: "https://gentle-otter-482." + h.baseHost + protocol.AppPath(name)})
 	}
-	response["endpoints"], response["apps"] = endpoints, apps
+	response["apps"] = apps
 	return response
 }
 
@@ -511,7 +514,7 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 						}
 					}
 				}
-				installationtest.WriteJSON(w, apiSession(h, tc.want...))
+				installationtest.WriteJSON(w, apiSession(tc.want...))
 			})
 			h.start(t, nil)
 			fc := testingclock.NewFakeClock(time.Now())
@@ -609,7 +612,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 				}
 				installationtest.WriteJSON(w, protocol.SessionResponse{
 					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: generation, Revision: strconv.Itoa(revision),
-					Endpoints: []protocol.SessionEndpoint{{Name: "prod", URL: "https://apps.example/mcp/prod"}}, Conditions: conditions,
+					Conditions: conditions,
 				})
 			case protocol.ToolUpdateSession:
 				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
@@ -668,8 +671,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 		!strings.Contains(diagnostics.String(), "prod ready") || strings.ContainsAny(diagnostics.String(), "\x1b\r") {
 		t.Fatalf("compact deployment output: %q", diagnostics.String())
 	}
-	wantOutput := "Ready MCP tools (all apps) https://apps.example/mcp " +
-		"prod Browser https://apps.example/ MCP https://apps.example/mcp/prod"
+	// The summary names the remote app without a page, and nothing else production runs.
+	wantOutput := "Ready MCP tools (all apps) https://" + h.baseHost + "/mcp hosted MCP https://" + h.baseHost + "/mcp/hosted " +
+		"prod Browser https://" + h.baseHost + "/ MCP https://" + h.baseHost + "/mcp/prod"
 	if strings.Join(strings.Fields(output.String()), " ") != wantOutput {
 		t.Fatalf("endpoint = %q", output.String())
 	}
