@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
@@ -36,7 +37,8 @@ func TestLogs(t *testing.T) {
 	if err := executeCommand(t.Context(), []string{"logs", "alpha", "--env", "prod"}, &out, nil, h.run); err != nil {
 		t.Fatal(err)
 	}
-	if want := "2026-11-09T10:00:00.2Z  alpha " + traceback + " trace_id=aaaa\n"; out.String() != want {
+	local := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC).Local().Format("15:04:05")
+	if want := local + "  alpha " + traceback + " trace_id=aaaa\n"; out.String() != want {
 		t.Fatalf("production = %q, want %q", out.String(), want)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -44,7 +46,7 @@ func TestLogs(t *testing.T) {
 	if err := executeCommand(ctx, []string{"logs", "alpha", "-f"}, followed, nil, h.run); !errors.Is(err, context.Canceled) {
 		t.Fatalf("follow = %v", err)
 	}
-	if want := "2026-11-09T10:00:00.1Z  alpha gentle-otter-482\n"; followed.String() != want {
+	if want := local + "  alpha gentle-otter-482\n"; followed.String() != want {
 		t.Fatalf("followed = %q, want %q", followed.String(), want)
 	}
 	if err := executeCommand(t.Context(), []string{"logs"}, nil, nil, h.run); err == nil ||

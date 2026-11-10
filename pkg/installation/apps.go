@@ -51,7 +51,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 					}
 					for _, app := range session.Apps {
 						_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", session.Name, expires, app.Name, appURL(session, app.Name),
-							appSource(app), accessSummary(app.Access), egressSummary(app.Egress), egressCut(session, app.Name))
+							appSource(app), accessSummary(app.Access), egressSummary(app), egressCut(session, app.Name))
 					}
 				}
 				return table.Flush()
@@ -283,8 +283,7 @@ func appURL(session protocol.SessionResponse, app string) string {
 func appSource(app protocol.App) string {
 	switch {
 	case app.Remote != nil:
-		host, _, _ := strings.Cut(strings.TrimPrefix(app.Remote.URL, "https://"), "/")
-		return "remote " + host
+		return "remote " + remoteHost(*app.Remote)
 	case app.Release != nil && app.Release.Name != "":
 		return "registry " + app.Release.Name + "@" + app.Release.Version
 	}
@@ -307,7 +306,20 @@ func accessRule(rule protocol.AccessRule) string {
 	return strings.Join(append([]string{"oauth"}, rule.OAuth.Scopes...), " ")
 }
 
-func egressSummary(egress protocol.Egress) string {
+func remoteHost(remote protocol.Remote) string {
+	host, _, _ := strings.Cut(strings.TrimPrefix(remote.URL, "https://"), "/")
+	return host
+}
+
+func egressSummary(app protocol.App) string {
+	if app.Remote != nil {
+		host := remoteHost(*app.Remote)
+		if !strings.Contains(host, ":") {
+			host += ":443"
+		}
+		return host
+	}
+	egress := app.Egress
 	if egress == nil {
 		return "any"
 	}
