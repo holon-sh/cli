@@ -117,15 +117,17 @@ export default createMcpHandler(() => {
 		t.Fatalf("%v\n%s", err, &diagnostics)
 	}
 	for _, app := range apps {
-		imageOptions := options
-		imageOptions.metadataGrant = grant
-		_, metadata, err := resolveTypeMetadata(t.Context(), app.Image, imageOptions)
-		if err != nil || metadata == nil || metadata.Schema == nil {
-			t.Fatalf("published metadata %s: %v, %v", app.Name, metadata, err)
-		}
-		repository, err := contractRepository(app.Image, imageOptions)
+		repository, err := imageRepository(grant.Registry+"/"+grant.Repositories[app.Name], grant.Grant, options.HTTPClient)
 		if err != nil {
 			t.Fatal(err)
+		}
+		descriptor, err := repository.Resolve(t.Context(), app.Image)
+		if err != nil {
+			t.Fatal(err)
+		}
+		metadata, err := typegen.ReadDocument(t.Context(), repository, descriptor)
+		if err != nil || metadata == nil || metadata.Schema == nil {
+			t.Fatalf("published metadata %s: %v, %v", app.Name, metadata, err)
 		}
 		if app.Name == "orders" {
 			tagged, err := repository.Resolve(t.Context(), appartifact.DevelopmentTag)
