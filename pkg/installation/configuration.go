@@ -84,7 +84,6 @@ func newConfigCommand(config *commandConfig) *cobra.Command {
 	})
 }
 
-// newValuesCommand groups set, which stores what value returns, with delete for one kind of value.
 func newValuesCommand(config *commandConfig, kind, sample string, set *cobra.Command, value func(*cobra.Command, []string) (string, error)) *cobra.Command {
 	set.Short = "set a " + kind + " value for an app"
 	return commandGroup(kind, "Manage the "+kind+" values each app receives",
@@ -98,8 +97,8 @@ func newValuesCommand(config *commandConfig, kind, sample string, set *cobra.Com
 	)
 }
 
-// newValueCommand stores the value that value returns for the app and variable its arguments name, or deletes the
-// variable when value is nil.
+// newValueCommand stores the value that value returns, or deletes the variable
+// when value is nil.
 func newValueCommand(kind string, cmd *cobra.Command, value func(*cobra.Command, []string) (string, error), config *commandConfig) *cobra.Command {
 	return withScope(cmd, func(cmd *cobra.Command, args []string, scope configurationScope) error {
 		app, variable := args[0], args[1]
