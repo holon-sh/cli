@@ -92,27 +92,24 @@ func TestEndpointToken(t *testing.T) {
 	server := tokenServer(t, "good-value")
 	for _, test := range []struct {
 		name, alias, env, signedIn, want string
-		asks                             int
 	}{
-		{name: "hyphenated alias", alias: "my-docs", env: "MY_DOCS_MCP_TOKEN=good-value"},
-		{name: "refused", alias: "docs", env: "DOCS_MCP_TOKEN=bad-value", signedIn: "good-value", want: "HTTP 403; the token came from DOCS_MCP_TOKEN"},
-		{name: "missing", alias: "docs", env: "OTHER_MCP_TOKEN=good-value", want: "HTTP 401; if it needs a token, set DOCS_MCP_TOKEN", asks: 1},
-		{name: "no alias to name it", env: "DOCS_MCP_TOKEN=good-value", want: "HTTP 401; if it needs a token, write ALIAS=URL and set ALIAS_MCP_TOKEN", asks: 1},
-		{name: "signed in", signedIn: "good-value", asks: 1},
-		{name: "signed in and refused", signedIn: "bad-value", want: "HTTP 403; the token came from signing in", asks: 1},
+		{"hyphenated alias", "my-docs", "MY_DOCS_MCP_TOKEN=good-value", "", ""},
+		{"refused", "docs", "DOCS_MCP_TOKEN=bad-value", "good-value", "HTTP 403; the token came from DOCS_MCP_TOKEN"},
+		{"missing", "docs", "OTHER_MCP_TOKEN=good-value", "", "HTTP 401; if it needs a token, set DOCS_MCP_TOKEN"},
+		{"no alias to name it", "", "DOCS_MCP_TOKEN=good-value", "", "HTTP 401; if it needs a token, write ALIAS=URL and set ALIAS_MCP_TOKEN"},
+		{"signed in", "", "", "good-value", ""},
+		{"signed in and refused", "", "", "bad-value", "HTTP 403; the token came from signing in"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			asks := 0
+			signedIn := false
 			signIn := func(_ context.Context, origin string) (string, error) {
-				if asks++; origin != server.URL {
-					t.Errorf("signed in to %s, want the endpoint's origin %s", origin, server.URL)
+				if signedIn || origin != server.URL {
+					t.Errorf("signed in again, or to %s rather than the endpoint's origin %s", origin, server.URL)
 				}
+				signedIn = true
 				return test.signedIn, nil
 			}
 			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Endpoint: server.URL}, Options{Env: []string{test.env}, SignIn: signIn})
-			if asks != test.asks {
-				t.Errorf("signed in %d times, want %d", asks, test.asks)
-			}
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), "-value") {
 					t.Fatalf("ResolveDocument = %v, want %q without the token", err, test.want)

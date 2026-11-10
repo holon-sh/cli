@@ -58,15 +58,15 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	}
 }
 
-// endpointClient sends an endpoint source's token from <ALIAS>_MCP_TOKEN, or else the one o.SignIn
-// supplies once the endpoint refuses a request without one, and explains a refusal. A registry
+// endpointClient sends an endpoint source's token from <ALIAS>_MCP_TOKEN, or else o.SignIn's once the
+// endpoint refuses a request without one, and explains a refusal. A registry
 // record's remote never reaches here, so a token only goes to a URL its owner named.
 func endpointClient(source Source, o Options) *http.Client {
-	origin, err := url.Parse(source.Endpoint)
+	endpoint, err := url.Parse(source.Endpoint)
 	if err != nil {
 		return o.HTTPClient // liveContract reports the invalid URL.
 	}
-	transport := &endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: origin, signIn: o.SignIn}
+	transport := &endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: origin(endpoint), signIn: o.SignIn}
 	if source.Alias != "" {
 		transport.variable = strings.TrimSuffix(protocol.DependencyEnvName(source.Alias), "_URL") + "_TOKEN"
 		transport.token = cmp.Or(commandenv.Value(o.Env, transport.variable), os.Getenv(transport.variable))
@@ -78,7 +78,7 @@ func endpointClient(source Source, o Options) *http.Client {
 
 type endpointTransport struct {
 	http.RoundTripper
-	origin   *url.URL
+	origin   string
 	variable string
 	signIn   SignIn
 
@@ -103,7 +103,7 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	from := t.variable
 	if token == "" && t.signIn != nil {
 		// Signing in waits for a refusal, so an endpoint that needs no token never asks for one.
-		if token, err = t.signIn(request.Context(), t.origin.Scheme+"://"+t.origin.Host); err != nil {
+		if token, err = t.signIn(request.Context(), t.origin); err != nil {
 			return nil, err
 		}
 		if token != "" {
@@ -139,7 +139,7 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 // send sends request, with the token when it goes to origin: redirects come through here too, and must
 // not carry the token to another origin. A refused response's body is closed.
 func (t *endpointTransport) send(request *http.Request, token string) (*http.Response, error) {
-	if token != "" && request.URL.Scheme == t.origin.Scheme && request.URL.Host == t.origin.Host {
+	if token != "" && origin(request.URL) == t.origin {
 		request = request.Clone(request.Context())
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -148,6 +148,10 @@ func (t *endpointTransport) send(request *http.Request, token string) (*http.Res
 		_ = response.Body.Close()
 	}
 	return response, err
+}
+
+func origin(u *url.URL) string {
+	return u.Scheme + "://" + u.Host
 }
 
 func refused(response *http.Response) bool {
