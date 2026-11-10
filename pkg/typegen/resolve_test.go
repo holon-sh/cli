@@ -41,7 +41,7 @@ func versionedServer(t *testing.T, name, version string, events bool) *httptest.
 	if options != nil {
 		pages := map[string]*listEventsResult{
 			"":  {Events: []listedEvent{{Name: "order.shipped", Input: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}}}`), Payload: json.RawMessage(`{"type":"string"}`)}}, NextCursor: "2"},
-			"2": {Events: []listedEvent{{Name: "order.opened"}}},
+			"2": {Events: []listedEvent{{Name: "order.opened", Input: json.RawMessage(`{"type":"object"}`), Payload: json.RawMessage(`{}`)}}},
 		}
 		if err := mcp.AddReceivingCustomMethod(server, "events/list", func(_ context.Context, _ *mcp.ServerSession, params *listEventsParams) (*listEventsResult, error) {
 			return pages[params.Cursor], nil

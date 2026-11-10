@@ -50,8 +50,7 @@ async function catalog(handler) {
       tools: tools.map(({ name, inputSchema, outputSchema }) => ({ name, inputSchema, ...(outputSchema && { outputSchema }) })).sort((a, b) => a.name.localeCompare(b.name)),
       // Like a live server's contract, a resource is typed only by its sh.holon/outputSchema.
       resources: resources.map(({ uri, _meta }) => ({ uri, outputSchema: _meta?.[resourceSchemaKey] ?? {} })).sort((a, b) => a.uri.localeCompare(b.uri)),
-      // A type may leave either schema out: any arguments, and data of any shape.
-      events: events.map(({ name, inputSchema, payloadSchema }) => ({ name, inputSchema: inputSchema ?? { type: "object" }, payloadSchema: payloadSchema ?? {} })).sort((a, b) => a.name.localeCompare(b.name)),
+      events: events.map(({ name, inputSchema, payloadSchema }) => ({ name, inputSchema, payloadSchema })).sort((a, b) => a.name.localeCompare(b.name)),
     };
   } finally {
     await client.close();

@@ -273,19 +273,15 @@ func listEvents(ctx context.Context, session *mcp.ClientSession) ([]mcpcontract.
 			return nil, fmt.Errorf("listing its events: %w", err)
 		}
 		for _, listed := range page.Events {
-			event := mcpcontract.Event{Name: listed.Name, Input: json.RawMessage(`{"type":"object"}`), Payload: json.RawMessage(`{}`)}
-			for _, schema := range []struct {
-				value  any
-				target *json.RawMessage
-			}{{listed.Input, &event.Input}, {listed.Payload, &event.Payload}} {
-				if schema.value == nil {
-					continue
-				}
-				if *schema.target, err = json.Marshal(schema.value); err != nil {
-					return nil, err
-				}
+			input, err := json.Marshal(listed.Input)
+			if err != nil {
+				return nil, err
 			}
-			events = append(events, event)
+			payload, err := json.Marshal(listed.Payload)
+			if err != nil {
+				return nil, err
+			}
+			events = append(events, mcpcontract.Event{Name: listed.Name, Input: input, Payload: payload})
 		}
 		if page.NextCursor == "" {
 			return events, nil

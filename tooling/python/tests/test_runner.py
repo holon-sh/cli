@@ -45,15 +45,14 @@ SERVER = """
     from src.lifespan import lifespan
     from src.models import Order
 
-    # MCP Events served without an SDK of its own: events/list in two pages, the second type
-    # with a null schema and none at all.
+    # MCP Events served without an SDK of its own: events/list in two pages.
     class Events(Extension):
         identifier = "io.modelcontextprotocol/events"
 
         def methods(self):
             async def listed(context, params):
                 if params.cursor:
-                    opened = {"name": "order.opened", "delivery": ["poll"], "inputSchema": None}
+                    opened = {"name": "order.opened", "delivery": ["poll"], "inputSchema": {"type": "object"}, "payloadSchema": {}}
                     return {"events": [opened]}
                 shipped = {"name": "order.shipped", "delivery": ["poll"], "inputSchema": {"type": "object"}, "payloadSchema": Order.model_json_schema()}
                 return {"events": [shipped], "nextCursor": "2"}
