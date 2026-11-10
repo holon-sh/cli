@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -288,21 +289,35 @@ func (l *buildLog) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (l *buildLog) failed(app string) {
-	if len(l.tail) > 0 {
-		_, _ = fmt.Fprintf(l.writer, "\nBuild diagnostics (%s):\n%s\n", app, strings.TrimSpace(string(l.tail)))
+var stepTime = regexp.MustCompile(`(?m)^\d+\.\d+ ?`)
+
+// diagnosis is what a failed build printed about its failure: the output that buildkit repeats for the step that failed,
+// without its timestamps, which holds the failing tool's own error, or else the build's last line.
+func (l *buildLog) diagnosis() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	output := strings.TrimSpace(string(l.tail))
+	if _, step, ok := strings.Cut(output, "\n------\n > "); ok {
+		_, step, _ = strings.Cut(step, ":\n")
+		step, _, _ = strings.Cut(step, "\n------")
+		return strings.TrimSpace(stepTime.ReplaceAllString(step, ""))
 	}
+	return output[strings.LastIndexByte(output, '\n')+1:]
 }
 
-func (l *buildLog) finished(output *progressOutput, app, phase string, err error) {
+// finished reports app's build as phase, or as failed with err and the build's diagnosis.
+func (l *buildLog) finished(output *progressOutput, app, phase string, err error) error {
 	state := progressWorking
 	if errors.Is(err, context.Canceled) {
 		phase, state = "stopped", progressIdle
 	} else if err != nil {
-		l.failed(app)
+		if diagnosis := l.diagnosis(); diagnosis != "" {
+			err = fmt.Errorf("%w:\n%s", err, diagnosis)
+		}
 		phase, state = "failed", progressError
 	}
 	output.status(app, phase, state)
+	return err
 }
 
 type progressFunc func([]byte) (int, error)

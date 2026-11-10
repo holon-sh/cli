@@ -42,10 +42,7 @@ const checkerInstall = "python -m pip install --disable-pip-version-check --no-c
 func (o buildOptions) extractTypes(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error {
 	runner := contractRunners[language]
 	command := slices.Concat([]string{runner.program, "/holon-tooling/" + language + "/" + runner.runner, args[0], "/app"}, args[2:])
-	if err := o.runInImage(ctx, args[1], toolingDir, "", false, command, stdout); err != nil {
-		return fmt.Errorf("prepare MCP types: %w", err)
-	}
-	return nil
+	return o.runInImage(ctx, args[1], toolingDir, "", false, command, stdout)
 }
 
 // checkTypes type-checks each path app that serves a contract against its generated clients, in the image
@@ -148,8 +145,9 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 		"--output", "type=local,dest=" + exported}, args, []string{source})
 	logs := o.output.logs(o.Stderr)
 	if err := commandenv.RunStreaming(ctx, "", "docker", args, nil, env, logs, logs); err != nil {
-		if ctx.Err() == nil {
-			logs.failed("MCP types")
+		// Docker's own error is only its exit status.
+		if diagnosis := logs.diagnosis(); diagnosis != "" && ctx.Err() == nil {
+			return errors.New(diagnosis)
 		}
 		return err
 	}
