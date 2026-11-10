@@ -277,8 +277,10 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, pla
 		if check != nil {
 			check(r)
 		}
-		target, _ := protocol.PlaneOrigin(strings.TrimSuffix(issuer(), "/"), plane, "")
-		if r.FormValue("client_id") != "cli-test" || r.FormValue("resource") != target || r.FormValue("audience") != "" {
+		origin, resource := strings.TrimSuffix(issuer(), "/"), r.FormValue("resource")
+		target, _ := protocol.PlaneOrigin(origin, plane, "")
+		_, _, session := protocol.ParseSessionAudience(origin, resource)
+		if r.FormValue("client_id") != "cli-test" || resource != target && !session || r.FormValue("audience") != "" {
 			t.Errorf("unexpected device request form: %s", r.Form.Encode())
 		}
 		WriteJSON(

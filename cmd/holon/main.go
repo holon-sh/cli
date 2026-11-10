@@ -7,6 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"golang.org/x/term"
+
 	"github.com/holon-sh/cli/pkg/cli"
 	"github.com/holon-sh/cli/pkg/installation"
 )
@@ -20,7 +22,7 @@ func main() {
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	command := cli.NewCommand(version)
+	command := cli.NewCommand(version, installation.ClientConfig{Output: os.Stderr, Interactive: term.IsTerminal(int(os.Stderr.Fd()))}.AppToken)
 	command.AddCommand(installation.Commands()...)
 	command.SetIn(os.Stdin)
 	command.SetOut(os.Stdout)

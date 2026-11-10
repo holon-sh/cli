@@ -502,7 +502,11 @@ func (m *Client) controlToken(ctx context.Context) (string, error) {
 	if m.info.OAuth == nil {
 		return "", nil
 	}
-	token, err := m.resourceToken(ctx, m.info.OAuth.AdminAudience)
+	return m.accessToken(ctx, m.info.OAuth.AdminAudience)
+}
+
+func (m *Client) accessToken(ctx context.Context, audience string) (string, error) {
+	token, err := m.resourceToken(ctx, audience)
 	if err != nil {
 		return "", err
 	}
@@ -575,4 +579,19 @@ func (m *Client) Call(ctx context.Context, plane protocol.Plane, tool string, in
 		return err
 	}
 	return m.client.Call(ctx, plane, token, tool, input, output)
+}
+
+func (config ClientConfig) AppToken(ctx context.Context, origin string) (string, error) {
+	local, err := newLocalAuthManager(config)
+	if err != nil {
+		return "", err
+	}
+	if _, _, ok := protocol.ParseSessionAudience(local.client.baseURL, origin); !ok {
+		return "", nil
+	}
+	manager, err := NewClient(ctx, config)
+	if err != nil || manager.info.OAuth == nil {
+		return "", err
+	}
+	return manager.accessToken(ctx, origin)
 }

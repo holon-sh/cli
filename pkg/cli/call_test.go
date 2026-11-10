@@ -26,7 +26,14 @@ func ordersServer(t *testing.T) *httptest.Server {
 	server.AddPrompt(&mcp.Prompt{Name: "summarize", Arguments: []*mcp.PromptArgument{{Name: "id", Required: true}, {Name: "tone"}}}, func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 		return &mcp.GetPromptResult{}, nil
 	})
-	live := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer signed-in" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(live.Close)
 	return live
 }
@@ -50,13 +57,8 @@ func TestCallReadsEachValueAsJSONOrAString(t *testing.T) {
 	dir := t.TempDir()
 	writeCLIFile(t, dir, "server.json", `{"name":"example.com/shop","version":"0.1.0","description":"Shop","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"orders":{"url":"`+live.URL+`"}}}}}}`)
 	t.Chdir(dir)
-	got := run(t, "", "call", "orders", "read", "id=A-1", "count=2")
-	var arguments map[string]any
-	if err := json.Unmarshal([]byte(got), &arguments); err != nil {
-		t.Fatalf("call printed %q, not the structured content: %v", got, err)
-	}
-	if arguments["id"] != "A-1" || arguments["count"] != 2.0 {
-		t.Errorf("the tool received %v, want id as the string \"A-1\" and count as the number 2", arguments)
+	if got := run(t, "", "call", "orders", "read", "id=A-1", "count=2"); got != "{\n  \"count\": 2,\n  \"id\": \"A-1\"\n}\n" {
+		t.Errorf("call printed %s, want the structured content with id as a string and count as a number", got)
 	}
 	if got := run(t, "", "call", live.URL, "read", `--args={"id":"9","count":1}`, "count=3"); got != "{\n  \"count\": 3,\n  \"id\": \"9\"\n}\n" {
 		t.Errorf("--args with an overriding pair sent %s", got)
