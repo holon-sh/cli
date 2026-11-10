@@ -11,6 +11,7 @@ import (
 
 	"github.com/holon-sh/cli/pkg/typegen"
 
+	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/internal/commandenv"
 )
 
@@ -19,7 +20,7 @@ func snapshotSource(app manifestApp, destination string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if pathInsideContext(tlsDir, app.Path) {
+	if clientutil.PathInside(tlsDir, app.Path) {
 		return "", fmt.Errorf("build context for %s must not contain Holon's certificate authority directory", app.Name)
 	}
 	return typegen.SnapshotSource(app.Name, app.Path, destination)

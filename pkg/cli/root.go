@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/spf13/cobra"
 )
@@ -100,7 +101,7 @@ func consumer(dir string, servers []string) (typegen.Consumer, error) {
 		switch {
 		case err != nil:
 			return typegen.Consumer{}, fmt.Errorf("%s: %w", arg, err)
-		case source.Path == "" || !insideDir(source.Path, dir):
+		case source.Path == "" || !clientutil.PathInside(source.Path, dir):
 			c.Sources = append(c.Sources, source)
 		case named:
 			return typegen.Consumer{}, fmt.Errorf("%s: a project has one own server", arg)
@@ -130,14 +131,6 @@ func appConsumer(name, dir string) (*typegen.Consumer, error) {
 		c.Sources = append(c.Sources, sources...)
 	}
 	return c, nil
-}
-
-func insideDir(path, dir string) bool {
-	if real, err := filepath.EvalSymlinks(path); err == nil {
-		path = real
-	}
-	relative, err := filepath.Rel(dir, path)
-	return err == nil && filepath.IsLocal(relative)
 }
 
 // printContract prints one server's contract document, or writes it to output when given.
