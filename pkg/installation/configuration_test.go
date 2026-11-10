@@ -34,8 +34,8 @@ func TestConfigurationCommands(t *testing.T) {
 	h.start(t, nil)
 	var out bytes.Buffer
 	for _, args := range [][]string{
-		{"config", "set", "API_URL", "https://example.test"},
-		{"config", "delete", "API_URL", "--env", "prod"},
+		{"config", "set", "alpha", "API_URL", "https://example.test"},
+		{"config", "delete", "alpha", "API_URL", "--env", "prod"},
 		{"egress", "set", "alpha", "api.example.com:443"},
 		{"egress", "set", "alpha"},
 		{"egress", "delete", "*"},
@@ -44,33 +44,33 @@ func TestConfigurationCommands(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "API_KEY", "--session", "s-one"}, strings.NewReader("piped-secret\n"), &out, nil, h.run); err != nil {
+	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "alpha", "API_KEY", "--session", "s-one"}, strings.NewReader("piped-secret\n"), &out, nil, h.run); err != nil {
 		t.Fatal(err)
 	}
-	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "API_KEY"}, strings.NewReader("\n"), nil, nil, h.run); err == nil ||
+	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "alpha", "API_KEY"}, strings.NewReader("\n"), nil, nil, h.run); err == nil ||
 		!strings.Contains(err.Error(), "secret value is empty") {
 		t.Fatalf("empty secret: %v", err)
 	}
-	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "API_KEY"}, strings.NewReader("sensitive\n\n"), nil, nil, h.run); err == nil ||
+	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "alpha", "API_KEY"}, strings.NewReader("sensitive\n\n"), nil, nil, h.run); err == nil ||
 		strings.Contains(err.Error(), "sensitive") {
 		t.Fatalf("invalid value diagnostics: %v", err)
 	}
 	want := []string{
-		`dev. set_value {"kind":"config","variable":"API_URL","value":"https://example.test"}`,
-		`admin. delete_value {"kind":"config","variable":"API_URL"}`,
+		`dev. set_value {"apps":["alpha"],"kind":"config","variable":"API_URL","value":"https://example.test"}`,
+		`admin. delete_value {"apps":["alpha"],"kind":"config","variable":"API_URL"}`,
 		`admin. get_egress {"app":"alpha"}`,
 		`admin. set_egress {"app":"alpha","expectedRevision":"1","policy":{"allow":[{"host":"api.example.com","ports":[443]}]}}`,
 		`admin. get_egress {"app":"alpha"}`,
 		`admin. set_egress {"app":"alpha","expectedRevision":"1","policy":{"allow":[]}}`,
 		`admin. get_egress {"app":"*"}`,
 		`admin. set_egress {"app":"*","expectedRevision":"1","policy":{}}`,
-		`dev. set_value {"session":"s-one","kind":"secret","variable":"API_KEY","value":"piped-secret"}`,
+		`dev. set_value {"session":"s-one","apps":["alpha"],"kind":"secret","variable":"API_KEY","value":"piped-secret"}`,
 	}
 	if !slices.Equal(sent, want) {
 		t.Fatalf("sent = %q, want %q", sent, want)
 	}
 	for _, scope := range []string{
-		"config API_URL in developer-wide dev", "config API_URL in production", "secret API_KEY in dev session s-one",
+		"config API_URL for alpha in developer-wide dev", "config API_URL for alpha in production", "secret API_KEY for alpha in dev session s-one",
 		"no egress", "none set",
 	} {
 		if !strings.Contains(out.String(), scope) {

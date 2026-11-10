@@ -62,7 +62,7 @@ jobs:
           prerelease=""
           case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
           gh release create "$TAG" --repo "$REPO" --title "holon $VERSION" --target "$GITHUB_SHA" $prerelease \
-            --notes "Install with \`curl -fsSL https://holon-labs.dev/install.sh | HOLON_VERSION=$VERSION sh\`, or download the archive for your platform below." \
+            --notes "Install with \`curl -fsSL https://holonlabs.ai/install.sh | HOLON_VERSION=$VERSION sh\`, or download the archive for your platform below." \
             release/holon_*.tar.gz release/SHA256SUMS
   publish-pypi:
     needs: [version, release]

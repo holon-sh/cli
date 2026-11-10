@@ -1,17 +1,17 @@
 # holon
 
 [![CI](https://github.com/holon-sh/cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/holon-sh/cli/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-holon--labs.dev-blue)](https://holon-labs.dev/docs/)
+[![Docs](https://img.shields.io/badge/docs-holonlabs.ai-blue)](https://holonlabs.ai/docs/)
 [![Go](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go)](https://go.dev/doc/install)
 [![Apache 2.0 License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/jXExyBdy)
 
-`holon` is a framework for [type-safe](https://holon-labs.dev/docs/#types) [MCP servers](https://modelcontextprotocol.io/docs/learn/server-concepts).
+`holon` is a framework for [type-safe](https://holonlabs.ai/docs/#types) [MCP servers](https://modelcontextprotocol.io/docs/learn/server-concepts).
 
 ## Install
 
 ```sh
-curl -fsSL https://holon-labs.dev/install.sh | sh
+curl -fsSL https://holonlabs.ai/install.sh | sh
 ```
 
 ## Example
@@ -172,4 +172,4 @@ Ask questions and share what you're building on the [Holon Discord](https://disc
 
 ## Reference
 
-See the [CLI reference](https://holon-labs.dev/docs/#cli-reference).
+See the [CLI reference](https://holonlabs.ai/docs/#cli-reference).

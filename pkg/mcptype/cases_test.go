@@ -67,6 +67,8 @@ const kitchenSink = `{
         "trueSchema": true,
         "plainArray": {"type": "array"},
         "nested": {"type": "array", "items": {"type": "array", "items": {"type": "object", "properties": {"deep": {"type": "null"}}, "additionalProperties": false}}},
+        "files": {"type": "array", "items": {"type": "object", "x-mcp-file": {"accept": ["image/png"], "maxSize": 1048576}, "required": ["id", "mimeType", "size"],
+          "properties": {"id": {"type": "string"}, "name": {"type": "string"}, "mimeType": {"type": "string"}, "size": {"type": "integer"}, "data": {"type": "string"}}}},
         "odd key with spaces": {"type": "string"},
         "dash-key": {"type": "string"},
         "1starts": {"type": "string"},

@@ -101,7 +101,6 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	}
 	resolved := manifest
 	resolved.Apps = nil
-	envTypes := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(nodes)) {
 		app := nodes[name]
 		if err := resolveApp(app); err != nil {
@@ -110,13 +109,6 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 		declaration := app.resolved.App
 		if err := cmp.Or(declaration.OAuth.Validate(declaration.Env), declaration.Egress.Validate(declaration.Env)); err != nil {
 			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
-		}
-		for variable, input := range declaration.Inputs() {
-			kind := input.Kind()
-			if cmp.Or(envTypes[variable], kind) != kind {
-				return manifestSpec{}, fmt.Errorf("conflicting environment declarations for %s", variable)
-			}
-			envTypes[variable] = kind
 		}
 		resolved.Apps = append(resolved.Apps, *app)
 	}
