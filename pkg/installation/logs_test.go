@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -36,18 +37,17 @@ func TestLogs(t *testing.T) {
 	if err := executeCommand(t.Context(), []string{"logs", "production", "--app", "alpha", "--since", "1h"}, &out, nil, h.run); err != nil {
 		t.Fatal(err)
 	}
+	if want := "2026-11-09T10:00:00.1Z  alpha starting boom\n2026-11-09T10:00:00.2Z ERROR alpha " + traceback + " trace_id=aaaa\n"; out.String() != want {
+		t.Fatalf("snapshot = %q, want %q", out.String(), want)
+	}
 	followed := &installationtest.ObservedOutput{OnWrite: func(string) { cancel() }}
 	if err := executeCommand(ctx, []string{"logs", "gentle-otter-482", "-f", "--attempt", "2"}, followed, nil, h.run); !errors.Is(err, context.Canceled) {
 		t.Fatalf("follow = %v", err)
 	}
-	out.WriteString(followed.String())
-	want := "2026-11-09T10:00:00.1Z  alpha starting boom\n" +
-		"2026-11-09T10:00:00.2Z ERROR alpha " + traceback + " trace_id=aaaa\n" +
-		"2026-11-09T10:00:00.1Z  alpha streamed\n"
-	if out.String() != want {
-		t.Fatalf("stdout = %q, want %q", out.String(), want)
+	if got := followed.String(); got != "2026-11-09T10:00:00.1Z  alpha streamed\n" {
+		t.Fatalf("followed = %q", got)
 	}
-	if got := strings.Join(requests, "\n"); got != `admin. {"session":"production","app":"alpha","since":"1h"}`+"\ndev. attempt=2&follow=true" {
-		t.Fatalf("requests = %s", got)
+	if want := []string{`admin. {"session":"production","app":"alpha","since":"1h"}`, "dev. attempt=2&follow=true"}; !slices.Equal(requests, want) {
+		t.Fatalf("requests = %q, want %q", requests, want)
 	}
 }

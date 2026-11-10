@@ -245,7 +245,8 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	var background sync.WaitGroup
 	background.Go(func() { d.renew(ctx) })
 	background.Go(func() {
-		input := protocol.SessionLogsRequest{AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}}}
+		var input protocol.SessionLogsRequest
+		input.Session = d.name
 		if err := d.manager.StreamLogs(ctx, input, stdout); ctx.Err() == nil {
 			d.options.output.problem("log stream", fmt.Errorf("stopped: %w", err))
 		}

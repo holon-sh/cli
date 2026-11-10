@@ -525,6 +525,7 @@ type resumingWriter struct {
 func (w *resumingWriter) Write(p []byte) (int, error) {
 	w.partial = append(w.partial, p...)
 	end := bytes.LastIndexByte(w.partial, '\n') + 1
+	var kept []byte
 	for line := range bytes.Lines(w.partial[:end]) {
 		token, _, _ := bytes.Cut(bytes.TrimSpace(line), []byte(" "))
 		if at, err := time.Parse(time.RFC3339Nano, string(token)); err == nil {
@@ -533,11 +534,15 @@ func (w *resumingWriter) Write(p []byte) (int, error) {
 			}
 		}
 		if !w.replay {
-			if _, w.err = w.out.Write(line); w.err != nil {
-				return 0, w.err
-			}
+			kept = append(kept, line...)
 		}
 	}
 	w.partial = append(w.partial[:0], w.partial[end:]...)
+	// One write per chunk: a terminal redraws its progress display on each.
+	if len(kept) > 0 {
+		if _, w.err = w.out.Write(kept); w.err != nil {
+			return 0, w.err
+		}
+	}
 	return len(p), nil
 }
