@@ -63,7 +63,9 @@ func AppConsumer(name, dir string) (*Consumer, error) {
 	return &Consumer{Name: name, Dir: dir, Targets: targets, Server: own}, nil
 }
 
-// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias.
+// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias: its registry
+// version or URL, with <ALIAS>_MCP_URL in place of a URL. An empty entry, without that variable, has
+// its alias alone, which a project replaces with its app of that name.
 func DeclaredSources(dir string, env []string) ([]Source, error) {
 	d, err := readDescriptor(dir)
 	if err != nil || d == nil {
@@ -73,7 +75,7 @@ func DeclaredSources(dir string, env []string) ([]Source, error) {
 	for _, alias := range slices.Sorted(maps.Keys(d.Requires)) {
 		requirement := d.Requires[alias]
 		source := Source{Alias: alias, Endpoint: requirement.URL}
-		if requirement.URL == "" {
+		if requirement.Name != "" {
 			source.Registry = &requirement.RegistryRef
 		} else {
 			variable := protocol.DependencyEnvName(alias)

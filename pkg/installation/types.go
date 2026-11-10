@@ -151,17 +151,9 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		if app.resolved.Remote == nil || !needed[app.Name] {
 			continue
 		}
-
 		document, err := typegen.ResolveDocument(ctx, typegen.Source{Endpoint: app.resolved.Remote.URL}, typeOptions)
 		if err != nil {
 			return manifestSpec{}, nil, err
-		}
-		if d := app.resolved.descriptor; d != nil {
-			document.Identity = d.Identity()
-			document, err = typegen.NewDocument(ctx, document.Metadata)
-			if err != nil {
-				return manifestSpec{}, nil, err
-			}
 		}
 		byApp[app.Name] = typegen.Source{Document: document}
 	}

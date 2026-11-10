@@ -21,40 +21,36 @@ type RunConfig struct {
 	Env  map[string]Value
 }
 
-func SelectServerSource(d *Descriptor, source protocol.RegistrySource) (int, *Transport, error) {
-	if source.Package != nil && source.Remote != nil {
-		return -1, nil, errors.New("registry.package and registry.remote are mutually exclusive")
-	}
-	selected := ptr.Deref(source.Package, protocol.PackageSelection{})
-	if source.Package != nil && !supportedRegistryType(selected.RegistryType) {
-		return -1, nil, errors.New("registryType must be oci, npm or pypi")
+// SelectPackage returns the index of the one OCI, npm or PyPI package in d that matches selection,
+// whose empty fields match any package.
+func SelectPackage(d *Descriptor, selection protocol.PackageSelection) (int, error) {
+	if selection.RegistryType != "" && !supportedRegistryType(selection.RegistryType) {
+		return -1, errors.New("registryType must be oci, npm or pypi")
 	}
 	index, count := -1, 0
-	var remote *Transport
-	if source.Remote == nil {
-		for i, pkg := range d.Packages {
-			if supportedRegistryType(pkg.RegistryType) && (selected.RegistryType == "" || selected.RegistryType == pkg.RegistryType) &&
-				(selected.Identifier == "" || selected.Identifier == pkg.Identifier) {
-				index = i
-				count++
-			}
+	for i, pkg := range d.Packages {
+		if supportedRegistryType(pkg.RegistryType) && (selection.RegistryType == "" || selection.RegistryType == pkg.RegistryType) &&
+			(selection.Identifier == "" || selection.Identifier == pkg.Identifier) {
+			index = i
+			count++
 		}
 	}
-	if source.Package == nil {
-		for i, r := range d.Remotes {
-			if r.Type == "streamable-http" {
-				remote = &d.Remotes[i]
-				count++
-			}
+	var remotes []string
+	for _, remote := range d.Remotes {
+		if _, err := protocol.RemoteURL(remote.URL); err == nil && remote.Type == "streamable-http" {
+			remotes = append(remotes, remote.URL)
 		}
 	}
-	if count > 1 {
-		return -1, nil, errors.New("ambiguous server deployment; select registry.remote or registry.package with its published identifier")
+	slices.Sort(remotes)
+	switch remotes = slices.Compact(remotes); {
+	case count > 1:
+		return -1, errors.New("ambiguous package; select one with registry.package and its published identifier")
+	case count == 0 && len(remotes) != 0:
+		return -1, fmt.Errorf("server publishes no matching OCI, npm or PyPI package; for its remote endpoint, declare the app with remote.url %s", strings.Join(remotes, " or "))
+	case count == 0:
+		return -1, errors.New("server publishes no matching OCI, npm or PyPI package")
 	}
-	if count == 0 {
-		return -1, nil, errors.New("server requires an OCI, npm or PyPI package, or a Streamable HTTP remote")
-	}
-	return index, remote, nil
+	return index, nil
 }
 
 func (p Package) environmentInputs() (map[string]protocol.Input, map[string]string, error) {

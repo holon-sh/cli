@@ -98,7 +98,7 @@ func TestLiveDependencySnapshotIsPinnedByConsumer(t *testing.T) {
 	})
 	manifest := typedManifest(t,
 		manifestApp{Name: "orders", resolved: resolvedApp{
-			App: protocol.App{Name: "orders", Remote: &protocol.Remote{URL: live.URL}}, descriptor: &mcpregistry.Descriptor{Name: "example/orders", Version: "1"},
+			App: protocol.App{Name: "orders", Remote: &protocol.Remote{URL: live.URL}},
 		}},
 		manifestApp{Name: "checkout", Path: root, resolved: resolvedApp{
 			App: protocol.App{Name: "checkout", Requires: []string{"orders"}}, descriptor: &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"},
@@ -111,7 +111,7 @@ func TestLiveDependencySnapshotIsPinnedByConsumer(t *testing.T) {
 	defer cleanup()
 	caller := prepared.Apps[1].resolved.types
 	stored := caller.documents[caller.metadata.Requires["orders"]]
-	if stored == nil || stored.Identity != (mcpcontract.Identity{Name: "example/orders", Version: "1"}) || len(stored.Schema.Tools) != 1 {
+	if stored == nil || stored.Identity != (mcpcontract.Identity{Name: "live-orders", Version: "1"}) || len(stored.Schema.Tools) != 1 {
 		t.Fatalf("consumer did not pin the live snapshot: %+v", stored)
 	}
 }

@@ -14,7 +14,7 @@ func ServerJSONSchema() ([]byte, error) {
 		URL string `description:"URL of a running MCP server." format:"uri" json:"url" required:"true"`
 	}
 	reflector := configurationReflector()
-	reflector.AddTypeMapping(mcpregistry.Requirement{}, jsonschema.OneOf(protocol.RegistryRef{}, endpointRequirement{}))
+	reflector.AddTypeMapping(mcpregistry.Requirement{}, jsonschema.OneOf(struct{}{}, protocol.RegistryRef{}, endpointRequirement{}))
 	reflected, err := reflector.Reflect(struct {
 		Meta struct {
 			Publisher struct {

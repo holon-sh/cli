@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -50,5 +51,21 @@ run: {transport: {type: stdio}}`, wantError: "run requires a registry OCI packag
 	}
 	if _, err := parseManifest([]byte(strings.Replace(manifestFixture, "name: alpha", "name: api", 1)), "fixture"); err == nil {
 		t.Fatal("accepted a reserved app name")
+	}
+}
+
+func TestManifestErrorsNameTheField(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	const app = "apps:\n- name: hf\n  access: {server: {}}\n  "
+	for _, test := range []struct{ manifest, want string }{
+		{app + "remote: {url: https://huggingface.co/mcp, headers: {}}", "holon.yaml: apps[0].remote: unknown field headers; allowed: url"},
+		{"apps:\n- name: hf\n  remote: {url: https://huggingface.co/mcp}", "holon.yaml: apps[0]: missing property 'access'"},
+		{app + "remote: {url: https://huggingface.co/mcp}\n  headers: {Authorization: 3}", "holon.yaml: apps[0].headers.Authorization: got number, want string, or got number, want object"},
+		{app + "registry: {name: co.huggingface/hf-mcp-server, version: '0.2.33', remote: {}}", "holon.yaml: apps[0].registry.remote is no longer supported"},
+	} {
+		if _, err := parseManifest([]byte(test.manifest), filepath.Join(root, manifestFileName)); err == nil || !strings.HasPrefix(err.Error(), test.want) {
+			t.Errorf("%s: error %v, want %q", test.manifest, err, test.want)
+		}
 	}
 }

@@ -21,9 +21,10 @@ func TestDeclaredSources(t *testing.T) {
 	}{
 		{name: "no descriptor"},
 		{
-			name: "sorted aliases, registry references and urls",
-			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"},"chat":{"url":"https://mcp.example/mcp"}}}}}}`,
+			name: "sorted aliases, registry references, urls and project apps",
+			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"},"chat":{"url":"https://mcp.example/mcp"},"agent":{}}}}}}`,
 			want: []Source{
+				{Alias: "agent"},
 				{Alias: "chat", Endpoint: "https://mcp.example/mcp"},
 				{Alias: "docs", Registry: &protocol.RegistryRef{Name: "example.com/documentation", Version: "4.4.4", Registry: "https://registry.example"}},
 				{Alias: "orders", Registry: &protocol.RegistryRef{Name: "example.com/orders", Version: "1.0.0"}},
@@ -56,10 +57,11 @@ func TestDeclaredSources(t *testing.T) {
 func TestDeclaredURLOverride(t *testing.T) {
 	live := tokenServer(t, "secret")
 	root := t.TempDir()
-	put(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"docs":{"url":"https://mcp.invalid/mcp"},"orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`)
+	put(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"docs":{},"orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`)
 	for _, test := range []struct{ name, location, want string }{
-		{name: "override", location: live.URL},
+		{name: "set", location: live.URL},
 		{name: "invalid", location: "ftp://docs.example", want: "DOCS_MCP_URL: MCP URL must be an HTTP(S) URL"},
+		{name: "unset", want: "dependency docs names no server: declare an app named docs in holon.yaml, give it a published version or url in server.json, or set DOCS_MCP_URL"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			sources, err := DeclaredSources(root, []string{"DOCS_MCP_URL=" + test.location, "ORDERS_MCP_URL=" + live.URL})

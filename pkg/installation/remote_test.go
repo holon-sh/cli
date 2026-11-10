@@ -24,7 +24,7 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 		image, remote string
 		port          int32
 	}
-	stdio, hosted := &deployment{image: "ghcr.io/acme/example:1.0.0", port: 3000}, &deployment{remote: remote.URL}
+	stdio := &deployment{image: "ghcr.io/acme/example:1.0.0", port: 3000}
 	for _, test := range []struct {
 		name     string
 		packages []json.RawMessage
@@ -34,18 +34,8 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 		want     *deployment
 		rejected string
 	}{
-		{name: "ambiguous", packages: []json.RawMessage{oci}, remotes: []mcpregistry.Transport{remote}, rejected: "ambiguous"},
-		{
-			name: "OCI", packages: []json.RawMessage{oci}, remotes: []mcpregistry.Transport{remote},
-			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}}, want: stdio,
-		},
-		{name: "remote", packages: []json.RawMessage{oci}, remotes: []mcpregistry.Transport{remote}, selector: protocol.RegistrySource{Remote: &struct{}{}}, want: hosted},
-		{
-			name: "both selectors", packages: []json.RawMessage{oci}, remotes: []mcpregistry.Transport{remote},
-			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}, Remote: &struct{}{}},
-			rejected: "mutually exclusive",
-		},
-		{name: "npm", packages: []json.RawMessage{oci}, selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "npm"}}, rejected: "server requires"},
+		{name: "package beside a remote", packages: []json.RawMessage{oci}, remotes: []mcpregistry.Transport{remote}, want: stdio},
+		{name: "npm", packages: []json.RawMessage{oci}, selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "npm"}}, rejected: "no matching OCI, npm or PyPI package"},
 		{
 			name: "no package fallback", packages: []json.RawMessage{invalidOCI}, remotes: []mcpregistry.Transport{remote},
 			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}}, rejected: "transport.type must be",
@@ -54,7 +44,10 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 		{name: "infer HTTP OCI", packages: []json.RawMessage{httpOCI}, want: &deployment{image: "ghcr.io/acme/example:1.0.0", port: 8082}},
 		{name: "HTTP endpoint Holon cannot reach", packages: []json.RawMessage{invalidHTTP}, rejected: "transport.url must be"},
 		{name: "invalid HTTP package is still a candidate", packages: []json.RawMessage{invalidHTTP, oci}, rejected: "ambiguous"},
-		{name: "infer remote", remotes: []mcpregistry.Transport{remote}, want: hosted},
+		{
+			name: "remotes only", rejected: "declare the app with remote.url https://mcp.example/mcp",
+			remotes: []mcpregistry.Transport{{Type: "streamable-http", URL: remote.URL + "?login"}, remote, remote},
+		},
 		{
 			name: "published identifier with replacement run", packages: []json.RawMessage{oci, secondOCI},
 			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci", Identifier: "ghcr.io/acme/second:1.0.0"}},
@@ -86,8 +79,7 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 			selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}},
 			run:      &packageRun{Transport: manifestTransport{Type: "sse", URL: "http://localhost:3000/mcp"}}, rejected: "transport.type must be",
 		},
-		{name: "ambiguous remotes", remotes: []mcpregistry.Transport{remote, remote}, selector: protocol.RegistrySource{Remote: &struct{}{}}, rejected: "ambiguous"},
-		{name: "remote stdio", remotes: []mcpregistry.Transport{{Type: "stdio", URL: remote.URL}}, rejected: "server requires"},
+		{name: "stdio remote", remotes: []mcpregistry.Transport{{Type: "stdio", URL: remote.URL}}, rejected: "no matching OCI, npm or PyPI package"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			document := descriptorDocument("example")
@@ -132,42 +124,22 @@ func TestRemoteRejectsContainerSettings(t *testing.T) {
 }
 
 func TestRemoteHeaderInputs(t *testing.T) {
-	document := descriptorDocument("example")
-	delete(document, "packages")
-	document["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://mcp.example:8443/api/mcp", "headers": []any{
-		map[string]any{"name": "X-Workspace", "default": "default"},
-		map[string]any{"name": "Authorization", "isSecret": true, "isRequired": true},
-		map[string]any{"name": "X-Key", "isSecret": true},
-		map[string]any{"name": "X-Optional"},
-		map[string]any{"name": "X-Fixed", "value": "publisher"},
-	}}}
-	registry := descriptorRegistry(t, document)
 	for _, test := range []struct {
-		name   string
-		values map[string]mcpregistry.Value
-		inline bool
-		want   map[string]string
+		name    string
+		headers map[string]mcpregistry.Value
+		want    map[string]string
 	}{
-		{name: "inline secret literal", inline: true, values: map[string]mcpregistry.Value{"Authorization": {Value: new("secret")}}},
 		{
-			name: "defaults", values: map[string]mcpregistry.Value{"Authorization": {Secret: "TOKEN"}},
-			want: map[string]string{"Authorization": "{TOKEN}", "X-Workspace": "default", "X-Fixed": "publisher"},
+			name:    "literals and a shared secret",
+			headers: map[string]mcpregistry.Value{"authorization": {Secret: "TOKEN"}, "X-Key": {Secret: "TOKEN"}, "X-Workspace": {Value: new("")}},
+			want:    map[string]string{"Authorization": "{TOKEN}", "X-Key": "{TOKEN}", "X-Workspace": ""},
 		},
-		{
-			name:   "explicit empty and shared secret",
-			values: map[string]mcpregistry.Value{"Authorization": {Secret: "TOKEN"}, "X-Key": {Secret: "TOKEN"}, "X-Workspace": {Value: new("")}},
-			want:   map[string]string{"Authorization": "{TOKEN}", "X-Key": "{TOKEN}", "X-Workspace": "", "X-Fixed": "publisher"},
-		},
-		{name: "required missing"},
-		{name: "unknown", values: map[string]mcpregistry.Value{"Authorization": {Secret: "TOKEN"}, "Unknown": {Value: new("x")}}},
-		{name: "fixed override", values: map[string]mcpregistry.Value{"Authorization": {Secret: "TOKEN"}, "X-Fixed": {Value: new("override")}}},
-		{name: "duplicate binding", values: map[string]mcpregistry.Value{"Authorization": {Secret: "TOKEN"}, "authorization": {Secret: "TOKEN"}}},
+		{name: "authorization literal", headers: map[string]mcpregistry.Value{"Authorization": {Value: new("secret")}}},
+		{name: "multi-line literal", headers: map[string]mcpregistry.Value{"X-Workspace": {Value: new("a\nb")}}},
+		{name: "duplicate header", headers: map[string]mcpregistry.Value{"Authorization": {Secret: "TOKEN"}, "authorization": {Secret: "TOKEN"}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			app := manifestApp{Name: "example", Registry: registry, Headers: test.values}
-			if test.inline {
-				app.Registry, app.Remote = nil, &manifestRemote{URL: "https://mcp.example/mcp"}
-			}
+			app := manifestApp{Name: "example", Remote: &manifestRemote{URL: "https://mcp.example/mcp"}, Headers: test.headers}
 			manifest, err := resolveManifestGraph(t.Context(), manifestSpec{access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, Apps: []manifestApp{app}})
 			if test.want == nil {
 				if err == nil {

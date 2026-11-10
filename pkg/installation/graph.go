@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,7 +14,6 @@ import (
 
 	"k8s.io/utils/ptr"
 
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/protocol"
 )
@@ -78,23 +78,11 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	}
 	resolved := manifest
 	resolved.Apps = nil
-	selections := map[string]mcpregistry.Requirement{}
 	envTypes := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(nodes)) {
 		app := nodes[name]
 		if err := resolveApp(app); err != nil {
 			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
-		}
-		for _, dependency := range app.resolved.Requires {
-			ref := app.resolved.descriptor.Requires[dependency]
-			ref.Registry = ref.RegistryURL()
-			if prior, exists := selections[dependency]; exists && prior != ref {
-				return manifestSpec{}, fmt.Errorf("conflicting references for dependency %s", dependency)
-			}
-			selections[dependency] = ref
-			if !satisfies(nodes[dependency], ref) {
-				return manifestSpec{}, fmt.Errorf("%s requires %s to be %s; declared app does not match", name, dependency, cmp.Or(ref.URL, ref.Name+"@"+ref.Version))
-			}
 		}
 		declaration := app.resolved.App
 		if err := cmp.Or(declaration.OAuth.Validate(declaration.Env), declaration.Egress.Validate(declaration.Env)); err != nil {
@@ -118,55 +106,39 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	return resolved, nil
 }
 
-func satisfies(app *manifestApp, requirement mcpregistry.Requirement) bool {
-	if requirement.URL != "" {
-		return app.Remote != nil && app.Remote.URL == requirement.URL
-	}
-	d := app.resolved.descriptor
-	return d != nil && d.Identity() == mcpcontract.Identity{Name: requirement.Name, Version: requirement.Version} &&
-		(app.Registry == nil || app.Registry.RegistryURL() == requirement.Registry)
-}
-
 func resolveApp(app *manifestApp) error {
-	d := app.resolved.descriptor
-	var pkg mcpregistry.Package
-	var remote *mcpregistry.Transport
-	if d != nil && (len(d.Packages) != 0 || app.Registry != nil) {
-		selection := ptr.Deref(app.Registry, protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}})
-		index, selected, err := mcpregistry.SelectServerSource(d, selection)
-		if err != nil {
-			return err
-		}
-		remote = selected
-		if index >= 0 {
-			pkg = d.Packages[index]
-			if app.Run != nil {
-				pkg = mcpregistry.Package{
-					RegistryType: pkg.RegistryType, Identifier: pkg.Identifier,
-					Transport: mcpregistry.Transport{Type: app.Run.Transport.Type, URL: app.Run.Transport.URL},
-				}
-			}
-			if err := pkg.ValidateTransport(); err != nil {
-				return err
-			}
-		}
-	}
 	if app.Remote != nil {
-		remote = &mcpregistry.Transport{URL: app.Remote.URL}
-		for name, value := range app.Headers {
-			remote.Headers = append(remote.Headers, mcpregistry.DescriptorInput{Name: name, InputFields: mcpregistry.InputFields{IsSecret: value.Secret != "", IsRequired: true}})
-		}
-	}
-	if remote != nil {
 		if app.Arguments != nil {
 			return errors.New("remote apps cannot declare arguments")
 		}
 		var err error
-		app.resolved.Remote, app.resolved.Env, err = remote.Remote(app.Headers)
+		app.resolved.Remote, app.resolved.Env, err = remoteApp(app.Remote.URL, app.Headers)
 		return err
 	}
 	if len(app.Headers) != 0 {
 		return errors.New("headers require a remote server")
+	}
+	d := app.resolved.descriptor
+	var pkg mcpregistry.Package
+	if d != nil && (len(d.Packages) != 0 || app.Registry != nil) {
+		selection := protocol.PackageSelection{RegistryType: "oci"}
+		if app.Registry != nil {
+			selection = ptr.Deref(app.Registry.Package, protocol.PackageSelection{})
+		}
+		index, err := mcpregistry.SelectPackage(d, selection)
+		if err != nil {
+			return err
+		}
+		pkg = d.Packages[index]
+		if app.Run != nil {
+			pkg = mcpregistry.Package{
+				RegistryType: pkg.RegistryType, Identifier: pkg.Identifier,
+				Transport: mcpregistry.Transport{Type: app.Run.Transport.Type, URL: app.Run.Transport.URL},
+			}
+		}
+		if err := pkg.ValidateTransport(); err != nil {
+			return err
+		}
 	}
 	if app.Registry != nil {
 		if pkg.RegistryType == "oci" {
@@ -179,6 +151,29 @@ func resolveApp(app *manifestApp) error {
 		app.resolved.Egress = d.Egress
 	}
 	return resolveAppMetadata(app, pkg)
+}
+
+// remoteApp is a remote endpoint with headers that are literals or secret references, each secret a
+// required input of the same name.
+func remoteApp(url string, headers map[string]mcpregistry.Value) (*protocol.Remote, map[string]protocol.Input, error) {
+	remote := &protocol.Remote{URL: url, Headers: map[string]string{}}
+	env := map[string]protocol.Input{}
+	for name, value := range headers {
+		canonical := http.CanonicalHeaderKey(name)
+		if _, exists := remote.Headers[canonical]; exists {
+			return nil, nil, fmt.Errorf("duplicate header %s", canonical)
+		}
+		switch {
+		case value.Secret != "":
+			env[value.Secret] = protocol.Input{IsSecret: true, IsRequired: true}
+			remote.Headers[canonical] = "{" + value.Secret + "}"
+		case value.Value != nil && protocol.ValidInputValue(*value.Value):
+			remote.Headers[canonical] = *value.Value
+		default:
+			return nil, nil, fmt.Errorf("header %s must be a secret reference or single-line text without NUL characters", canonical)
+		}
+	}
+	return remote, env, remote.Validate(env)
 }
 
 func (p manifestSpec) declarations() []protocol.App {

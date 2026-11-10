@@ -117,7 +117,10 @@ func (s Source) validate() error {
 			set++
 		}
 	}
-	if set != 1 {
+	switch {
+	case set == 0 && s.Alias != "":
+		return fmt.Errorf("dependency %s names no server: declare an app named %s in holon.yaml, give it a published version or url in server.json, or set %s", s.Alias, s.Alias, protocol.DependencyEnvName(s.Alias))
+	case set != 1:
 		return errors.New("a source is exactly one of a path, a registry version, an endpoint or a document")
 	}
 	if s.Alias != "" && (len(s.Alias) > 49 || !appName.MatchString(s.Alias)) {
