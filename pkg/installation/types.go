@@ -104,7 +104,6 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	byApp := map[string]typegen.Source{}
 	var consumers []typegen.Consumer
 	needed := map[string]bool{}
-	// What typegen prints while it installs and connects shows only with --verbose, or with its failure.
 	logs := options.output.logs(options.Stderr)
 	typeOptions := typegen.Options{
 		Env: options.Env, HTTPClient: options.HTTPClient, Stderr: logs, Run: options.extractTypes,

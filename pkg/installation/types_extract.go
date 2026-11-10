@@ -145,7 +145,6 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 		"--output", "type=local,dest=" + exported}, args, []string{source})
 	logs := o.output.logs(o.Stderr)
 	if err := commandenv.RunStreaming(ctx, "", "docker", args, nil, env, logs, logs); err != nil {
-		// Docker's own error is only its exit status.
 		if diagnosis := logs.diagnosis(); diagnosis != "" && ctx.Err() == nil {
 			return errors.New(diagnosis)
 		}

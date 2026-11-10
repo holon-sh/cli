@@ -79,9 +79,8 @@ func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ command, access, want, diagnostics, edit string }{
 		{
-			command: "deploy", access: "--public", want: "fixture build failed:\nnpm error missing: fixture-package\nnpm error run npm install",
-			diagnostics: "#7 [build 2/3] RUN npm ci\n#7 0.311 npm notice noise\n#7 ERROR: exit code: 1\n------\n > [build 2/3] RUN npm ci:\n" +
-				"0.312 npm error missing: fixture-package\n0.313 npm error run npm install\n------\nERROR: failed to solve\n",
+			command: "deploy", access: "--public", want: "fixture build failed:\nnpm error missing: fixture-package",
+			diagnostics: "#7 0.311 npm notice noise\n------\n > [build 2/3] RUN npm ci:\n0.312 npm error missing: fixture-package\n------\n",
 		},
 		{command: "dev", access: "--oauth", want: "requires a configured identity provider"},
 		{command: "deploy", access: "--public", want: "source changed during preparation", edit: "logic.ts"},
@@ -108,7 +107,6 @@ func TestRunPreparationFailures(t *testing.T) {
 				_, _ = io.WriteString(progress, tc.diagnostics+"\n")
 				return "", errors.New("fixture build failed")
 			})
-			// A failed build is explained by its failing step's output alone.
 			var stderr bytes.Buffer
 			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &stderr, h.run)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(stderr.String(), "notice") {

@@ -291,8 +291,6 @@ func (l *buildLog) Write(data []byte) (int, error) {
 
 var stepTime = regexp.MustCompile(`(?m)^\d+\.\d+ ?`)
 
-// diagnosis is what a failed build printed about its failure: the output that buildkit repeats for the step that failed,
-// without its timestamps, which holds the failing tool's own error, or else the build's last line.
 func (l *buildLog) diagnosis() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -305,7 +303,6 @@ func (l *buildLog) diagnosis() string {
 	return output[strings.LastIndexByte(output, '\n')+1:]
 }
 
-// explain adds the diagnosis of what failed to err.
 func (l *buildLog) explain(err error) error {
 	if diagnosis := l.diagnosis(); diagnosis != "" {
 		return fmt.Errorf("%w:\n%s", err, diagnosis)
@@ -313,7 +310,6 @@ func (l *buildLog) explain(err error) error {
 	return err
 }
 
-// finished reports app's build as phase, or as failed with err and the build's diagnosis.
 func (l *buildLog) finished(output *progressOutput, app, phase string, err error) error {
 	state := progressWorking
 	if errors.Is(err, context.Canceled) {
