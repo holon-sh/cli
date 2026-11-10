@@ -58,7 +58,6 @@ type Source struct {
 	Endpoint string
 	// Document is an already resolved contract document, with the exact bytes its digest names.
 	Document *Document
-	from     string
 }
 
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
@@ -117,7 +116,10 @@ func (s Source) validate() error {
 			set++
 		}
 	}
-	if set != 1 {
+	switch {
+	case set == 0 && s.Alias != "":
+		return fmt.Errorf("dependency %s has no server to read: make it a path, remote or registry app in holon.yaml, or give it a published version or url in server.json", s.Alias)
+	case set != 1:
 		return errors.New("a source is exactly one of a path, a registry version, an endpoint or a document")
 	}
 	if s.Alias != "" && (len(s.Alias) > 49 || !appName.MatchString(s.Alias)) {
@@ -129,20 +131,13 @@ func (s Source) validate() error {
 	if s.Endpoint == "" {
 		return nil
 	}
-	err := mcpregistry.ValidateEndpoint(s.Endpoint)
-	if err != nil && s.from != "" {
-		err = fmt.Errorf("%s: %w", s.from, err)
-	}
-	return err
+	return mcpregistry.ValidateEndpoint(s.Endpoint)
 }
 
 func (s Source) prepare(options Options) (Options, error) {
 	o := options.defaults()
 	if err := s.validate(); err != nil {
 		return o, err
-	}
-	if s.from != "" {
-		fmt.Fprintf(o.Stderr, "%s: using %s from %s\n", s.Alias, s.Endpoint, s.from)
 	}
 	return o, nil
 }

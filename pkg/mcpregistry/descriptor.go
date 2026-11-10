@@ -35,11 +35,13 @@ type Descriptor struct {
 }
 
 type HolonMetadata struct {
-	Requires map[string]Requirement `description:"Dependencies keyed by app name." json:"requires"`
+	Requires map[string]Requirement `description:"Dependencies keyed by app name. In a project each is the project's app of that name, so {} is enough; outside one, a published name and version or a url names the server." json:"requires"`
 
 	Egress wire.Egress `description:"Outbound TCP destinations: DNS names or IP addresses; {NAME} is a non-secret input." json:"egress,omitzero" nullable:"false"`
 }
 
+// Requirement is one sh.holon.requires entry: empty, a published name and version, or a URL. In a
+// project the dependency is the project's app of that name whatever the entry says.
 type Requirement struct {
 	wire.RegistryRef
 
@@ -48,13 +50,14 @@ type Requirement struct {
 
 func (r Requirement) Validate() error {
 	switch {
-	case r.URL == "":
-		return r.RegistryRef.Validate()
-	case r.RegistryRef != (wire.RegistryRef{}):
+	case r.URL != "" && r.RegistryRef != (wire.RegistryRef{}):
 		return errors.New("a url names the server; leave out name, version and registry")
-	default:
+	case r.URL != "":
 		return ValidateEndpoint(r.URL)
+	case r.RegistryRef != (wire.RegistryRef{}):
+		return r.RegistryRef.Validate()
 	}
+	return nil
 }
 
 func ValidateEndpoint(location string) error {

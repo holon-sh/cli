@@ -117,7 +117,7 @@ func appConsumer(name, dir string) (*typegen.Consumer, error) {
 		roots = append(roots, c.Server.Path)
 	}
 	for _, root := range roots {
-		sources, err := typegen.DeclaredSources(root, nil)
+		sources, err := typegen.DeclaredSources(root)
 		if err != nil {
 			return nil, err
 		}

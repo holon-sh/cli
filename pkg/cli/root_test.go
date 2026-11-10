@@ -112,21 +112,19 @@ func TestProjectRunsForEachApp(t *testing.T) {
   - {name: orders, path: orders, access: {server: {}}}
   - {name: docs, remote: {url: "https://docs.example/mcp"}, access: {server: {}}}
   - {name: site, path: site, access: {server: {}}}
+  - {name: search, registry: {name: example.com/search, version: "2.0.0"}, access: {server: {}}}
 `)
 	view := filepath.Join(root, "view")
 	writeCLIFile(t, view, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
 	installCLIRuntime(t, view)
-	var requires []string
-	for _, alias := range []string{"docs", "orders", "search"} {
-		requires = append(requires, `"`+alias+`":{"name":"example.com/`+alias+`","version":"1.0.0"}`)
-	}
-	writeCLIFile(t, view, "server.json", `{"name":"example.com/view","version":"1.0.0","description":"View","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{`+strings.Join(requires, ",")+`}}}}}`)
+	requires := `"docs":{},"orders":{},"search":{"name":"example.com/search","version":"1.0.0"}`
+	writeCLIFile(t, view, "server.json", `{"name":"example.com/view","version":"1.0.0","description":"View","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{`+requires+`}}}}}`)
 	writeCLIFile(t, root, "orders/server.py", pythonServer)
 	writeCLIFile(t, root, "orders/server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
 	writeCLIFile(t, root, "site/index.html", "<p>no runtime and no MCP server</p>")
 
 	// The apps holon dev builds and checks: a client, and a server that makes no calls; not the site.
-	// Dependencies on apps in the file use them; any other keeps its registry reference.
+	// A dependency is the file's app of that name, even where server.json pins another version.
 	consumers, err := projectConsumers(root)
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +137,7 @@ func TestProjectRunsForEachApp(t *testing.T) {
 		t.Fatalf("consumers = %+v", consumers)
 	}
 	sources := consumers[0].Sources
-	if len(sources) != 3 || sources[0].Endpoint != "https://docs.example/mcp" || sources[1].Path != filepath.Join(root, "orders") || sources[2].Registry == nil {
+	if len(sources) != 3 || sources[0].Endpoint != "https://docs.example/mcp" || sources[1].Path != filepath.Join(root, "orders") || sources[2].Registry.Version != "2.0.0" {
 		t.Fatalf("view sources = %+v", sources)
 	}
 

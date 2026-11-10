@@ -87,6 +87,11 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	if local.Apps[1].resolved.Image != "" || local.Apps[1].resolved.Port != 8080 {
 		t.Fatalf("local replacement failed: %#v", local.Apps[1])
 	}
+	manifest.Apps[1] = manifestApp{Name: "beta", Remote: &manifestRemote{URL: "https://beta.example/mcp"}, Access: policy}
+	if remote, err := resolveManifestGraph(t.Context(), manifest); err != nil || remote.Apps[1].resolved.Remote == nil {
+		t.Fatalf("a pinned dependency is not the project's remote app: %v", err)
+	}
+	manifest.Apps[1] = manifestApp{Name: "beta", Path: filepath.Join(root, "beta"), Access: policy}
 	cycleBeta := descriptorDocument("beta")
 	cycleBeta["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
 		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{
@@ -94,24 +99,17 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 		}},
 	}}
 	writeDescriptor(t, filepath.Join(root, "beta-cycle/server.json"), cycleBeta)
-	conflictGamma := descriptorDocument("gamma")
-	conflictGamma["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
-		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{
-			"beta": {Name: "io.github.acme/beta", Version: "9.0.0"},
-		}},
-	}}
-	writeDescriptor(t, filepath.Join(root, "gamma/server.json"), conflictGamma)
 	secretAlpha := descriptorDocument("alpha")
 	secretAlpha["_meta"] = alpha["_meta"]
 	secretAlpha["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{
 		map[string]any{"name": "BETA_MCP_URL", "isSecret": true},
 	}
 	writeDescriptor(t, filepath.Join(root, "alpha-secret/server.json"), secretAlpha)
-	urlAlpha := descriptorDocument("alpha")
-	urlAlpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
-		"sh.holon": map[string]any{"requires": map[string]any{"beta": map[string]string{"url": "https://beta.example/mcp"}}},
+	orphanAlpha := descriptorDocument("alpha")
+	orphanAlpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
+		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{"zeta": {Name: "io.github.acme/zeta", Version: "1.0.0"}}},
 	}}
-	writeDescriptor(t, filepath.Join(root, "alpha-url/server.json"), urlAlpha)
+	writeDescriptor(t, filepath.Join(root, "alpha-orphan/server.json"), orphanAlpha)
 	writeDescriptor(t, filepath.Join(root, "invalid/server.json"), map[string]any{})
 	invalidMetadata := descriptorDocument("invalid")
 	invalidMetadata["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
@@ -135,18 +133,11 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata"), Access: policy}}
 		}},
 		{name: "dependency directory without access", want: "app beta needs an access rule", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
-		{name: "different dependency descriptor", want: "does not match", change: func(p *manifestSpec) {
-			p.Apps[1] = manifestApp{Name: "beta", Path: filepath.Join(root, "alpha"), Access: policy}
-		}},
-		{name: "remote at another URL", want: "requires beta to be https://beta.example/mcp; declared app does not match", change: func(p *manifestSpec) {
-			p.Apps[0].Path = filepath.Join(root, "alpha-url")
-			p.Apps[1] = manifestApp{Name: "beta", Remote: &manifestRemote{URL: "https://elsewhere.example/mcp"}, Access: policy}
+		{name: "undeclared dependency", want: `registry: {"name":"io.github.acme/zeta","version":"1.0.0"}`, change: func(p *manifestSpec) {
+			p.Apps[0].Path = filepath.Join(root, "alpha-orphan")
 		}},
 		{name: "dependency cycle", want: "cycle", change: func(p *manifestSpec) {
 			p.Apps[1].Path = filepath.Join(root, "beta-cycle")
-		}},
-		{name: "conflicting dependency references", want: "conflicting references", change: func(p *manifestSpec) {
-			p.Apps = append(p.Apps, manifestApp{Name: "gamma", Path: filepath.Join(root, "gamma"), Access: policy})
 		}},
 		{name: "secret dependency endpoint", want: "dependency endpoint", change: func(p *manifestSpec) {
 			p.Apps[0].Path = filepath.Join(root, "alpha-secret")
@@ -168,13 +159,11 @@ func TestDescriptorEgress(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		metadata any
-		remote   bool
 		want     protocol.Egress
 	}{
 		{name: "app declaration", metadata: appEgress, want: protocol.Egress{{Host: "api.example.com", Ports: []int32{443, 8443}}}},
 		{name: "app deny all", metadata: []any{}, want: protocol.Egress{}},
 		{name: "no declaration"},
-		{name: "remote ignores container egress", metadata: appEgress, remote: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			document := descriptorDocument("alpha")
@@ -189,12 +178,6 @@ func TestDescriptorEgress(t *testing.T) {
 			parsed, err := resolveManifestFile(filepath.Join(filepath.Dir(path), manifestFileName))
 			if err != nil {
 				t.Fatal(err)
-			}
-			app := &parsed.Apps[0]
-			if test.remote {
-				delete(document, "packages")
-				document["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://mcp.example/mcp"}}
-				app.Path, app.Registry = "", descriptorRegistry(t, document)
 			}
 			resolved, err := resolveManifestGraph(t.Context(), parsed)
 			if err != nil {
