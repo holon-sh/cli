@@ -315,15 +315,14 @@ func TestRunDevLifecycle(t *testing.T) {
 		callLine  = "2026-11-09T10:00:00.3Z INFO alpha tools/call boom error tool_error 22ms trace_id=aaaa\n"
 	)
 	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query()
-		if query.Has("event") {
-			t.Errorf("log stream query = %s", r.URL.RawQuery)
-		}
-		if query.Has("since") {
+		switch query := r.URL.Query(); {
+		case query.Has("since"):
 			w.WriteHeader(http.StatusPreconditionFailed)
-			return
+		case query.Get("event") == protocol.MCPCallEvent:
+			_, _ = io.WriteString(w, callLine)
+		default:
+			_, _ = io.WriteString(w, appOutput+callLine)
 		}
-		_, _ = io.WriteString(w, appOutput+callLine)
 	})
 	h.start(t, build)
 	t.Run("ambiguous creation is not retried or deleted", func(t *testing.T) {
