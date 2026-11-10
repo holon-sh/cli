@@ -556,9 +556,8 @@ func TestRunDeployLifecycle(t *testing.T) {
 		return buildImage(t, "first")(ctx, request, progress)
 	}
 	var mu sync.Mutex
-	// Production already runs an app that this deploy doesn't name.
-	existing := true
-	desired := protocol.AppsRequestFor[protocol.App]{Apps: []protocol.App{{Name: "other", Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}}}}
+	var existing bool
+	var desired protocol.AppsRequestFor[protocol.App]
 	var written []protocol.App
 	var forceConflict, loseResponse bool
 	var rolloutFailure string
@@ -608,16 +607,12 @@ func TestRunDeployLifecycle(t *testing.T) {
 					}
 					if rolloutFailure == "superseded" {
 						generation++
-						desired.Apps[2].Port = 4001
+						desired.Apps[1].Port = 4001
 					}
-				}
-				var endpoints []protocol.SessionEndpoint
-				for _, app := range desired.Apps {
-					endpoints = append(endpoints, protocol.SessionEndpoint{Name: app.Name, URL: "https://apps.example" + protocol.AppPath(app.Name)})
 				}
 				installationtest.WriteJSON(w, protocol.SessionResponse{
 					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: generation, Revision: strconv.Itoa(revision),
-					Endpoints: endpoints, Conditions: conditions,
+					Endpoints: []protocol.SessionEndpoint{{Name: "prod", URL: "https://apps.example/mcp/prod"}}, Conditions: conditions,
 				})
 			case protocol.ToolUpdateSession:
 				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
@@ -676,16 +671,16 @@ func TestRunDeployLifecycle(t *testing.T) {
 		!strings.Contains(diagnostics.String(), "prod ready") || strings.ContainsAny(diagnostics.String(), "\x1b\r") {
 		t.Fatalf("compact deployment output: %q", diagnostics.String())
 	}
-	// The summary lists the apps this deploy named, not the rest of production, and a page only for the source app.
-	wantOutput := "Ready MCP tools (all apps) https://apps.example/mcp hosted MCP https://apps.example/mcp/hosted " +
-		"prod Browser https://apps.example/ MCP https://apps.example/mcp/prod"
+	// The summary names the remote app without a page, and nothing else production runs.
+	wantOutput := "Ready MCP tools (all apps) https://" + h.baseHost + "/mcp hosted MCP https://" + h.baseHost + "/mcp/hosted " +
+		"prod Browser https://" + h.baseHost + "/ MCP https://" + h.baseHost + "/mcp/prod"
 	if strings.Join(strings.Fields(output.String()), " ") != wantOutput {
 		t.Fatalf("endpoint = %q", output.String())
 	}
 	output.Reset()
 	diagnostics.Reset()
 	mu.Lock()
-	desired.Apps[2].Image = strings.Replace(initial[2].Image, "registry.example/holon/upload/prod", "old-registry.example/prod", 1)
+	desired.Apps[1].Image = strings.Replace(initial[1].Image, "registry.example/holon/upload/prod", "old-registry.example/prod", 1)
 	mu.Unlock()
 	if err := executeCommand(t.Context(), []string{"deploy", "--project", manifestPath, "--verbose"}, &output, &diagnostics, runConfig); err != nil {
 		t.Fatal(err)
@@ -696,8 +691,8 @@ func TestRunDeployLifecycle(t *testing.T) {
 		t.Fatalf("verbose deployment hid build output or timings: %q", diagnostics.String())
 	}
 	mu.Lock()
-	if desired.Apps[2].Image != initial[2].Image {
-		t.Errorf("deployment retained an obsolete repository: %s", desired.Apps[2].Image)
+	if desired.Apps[1].Image != initial[1].Image {
+		t.Errorf("deployment retained an obsolete repository: %s", desired.Apps[1].Image)
 	}
 	forceConflict = true
 	mu.Unlock()

@@ -264,7 +264,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	}
 	d.reload(ctx, watcher.contexts)
 	announce := sync.OnceValue(func() error {
-		if err := d.options.output.endpoints(stdout, "Ready", d.session, d.manifest.Apps, false); err != nil {
+		if err := d.options.output.endpoints(stdout, "Ready", d.manager, d.session.Name, d.manifest.Apps, false); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(stdout, "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev.")

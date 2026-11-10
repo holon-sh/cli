@@ -96,7 +96,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 					t.Fatalf("detached JSON = %+v", result)
 				}
 			default:
-				if err != nil || !strings.Contains(output.String(), "https://preview.example/mcp/echo") ||
+				if err != nil || !strings.Contains(output.String(), "https://gentle-otter-482."+h.baseHost+"/mcp/echo") ||
 					!strings.Contains(output.String(), "Expires  2030-01-02T00:00:00Z") {
 					t.Fatalf("detached session = %v, output=%s", err, output.String())
 				}
