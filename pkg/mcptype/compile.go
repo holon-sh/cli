@@ -15,8 +15,6 @@ type compiledTool struct {
 	structured    bool
 }
 
-// parseCatalog parses a contract's tools. With files, their inputs take file arguments; outputs
-// never do.
 func parseCatalog(ctx context.Context, contract contract, files bool) (catalog, error) {
 	names := sortedKeys(contract.Tools)
 	tools := make([]compiledTool, len(names))
@@ -312,8 +310,7 @@ func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
 	}
 }
 
-// compileCatalogs validates the binding names and compiles every contract's schemas, with file
-// arguments if files.
+// compileCatalogs validates the binding names and compiles every contract's schemas.
 func compileCatalogs(ctx context.Context, contracts map[string]contract, files bool) (map[string]catalog, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

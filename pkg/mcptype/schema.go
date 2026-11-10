@@ -82,7 +82,7 @@ const (
 	kindUnion
 	kindIntersection
 	kindDeclared
-	kindFile // A file argument, which the runtime sends as the FileInput its schema spells.
+	kindFile
 )
 
 // typ is the type a schema describes.
@@ -131,7 +131,6 @@ func objectType(fields map[string]field, extra extra) typ {
 	return typ{kind: kindObject, fields: fields, extra: extra}
 }
 
-// parseShape parses a schema. With files, an object schema marked x-mcp-file is a file argument.
 func parseShape(ctx context.Context, schema Value, files bool) (shape, error) {
 	parser := &parser{ctx: ctx, root: schema, files: files, references: map[string]*declaration{}}
 	value, err := parser.reference("#", schema, 0)
@@ -305,7 +304,6 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 		}
 		return typ{}, errors.New("schema must be an object or boolean")
 	}
-	// The marker makes the schema a file however it spells the FileInput shape, by reference too.
 	if _, marked := object["x-mcp-file"]; marked && p.files {
 		return typ{kind: kindFile}, nil
 	}
