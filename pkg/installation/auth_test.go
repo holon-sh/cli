@@ -121,37 +121,44 @@ func TestLogin(t *testing.T) {
 	}
 }
 
-func TestTerminalSignInLeavesOtherCommandsFree(t *testing.T) {
+func TestTerminalSignIn(t *testing.T) {
 	t.Parallel()
+	var once sync.Once
 	entered, release := make(chan struct{}), make(chan struct{})
-	server := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		close(entered)
+	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("grant_type") == "refresh_token" {
+			w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
+			w.WriteHeader(http.StatusBadRequest)
+			installationtest.WriteJSON(w, map[string]string{"error": "invalid_grant"})
+			return
+		}
+		once.Do(func() { close(entered) })
 		<-release
 		installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-secret", "expires_in": 120})
 	})
 	dir := t.TempDir()
-	signingIn := newManager(t, server, dir)
-	signingIn.interactive = true
+	atTerminal := func() *Client {
+		manager := newManager(t, server, dir)
+		manager.interactive = true
+		return manager
+	}
+	expired := atTerminal()
+	seedAdminCredentials(t, expired, oauth2.Token{AccessToken: "expired", RefreshToken: "revoked", TokenType: "Bearer", Expiry: time.Unix(1, 0)})
 	done := make(chan error, 1)
-	go func() {
-		token, err := signingIn.controlToken(t.Context())
-		if err == nil && token != "access-secret" {
-			err = fmt.Errorf("token %q", token)
-		}
-		done <- err
-	}()
+	go func() { _, err := expired.controlToken(t.Context()); done <- err }()
 	<-entered
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, err := newManager(t, server, dir).controlToken(ctx); !errors.Is(err, errNotAuthenticated) {
-		t.Fatalf("while another command signs in: %v, want %v", err, errNotAuthenticated)
+	logout := commandConfig{Auth: ClientConfig{Origin: server.URL, ConfigDir: dir, HTTPClient: installationtest.OriginClient(server)}}
+	if err := executeCommand(ctx, []string{"logout"}, nil, nil, logout); err != nil {
+		t.Fatalf("logout while another command signs in: %v", err)
 	}
 	close(release)
-	if err := <-done; err != nil {
-		t.Fatal(err)
+	if err := <-done; !errors.Is(err, errCredentialChanged) {
+		t.Fatalf("sign-in after logout: %v, want %v", err, errCredentialChanged)
 	}
-	if token, err := newManager(t, server, dir).controlToken(ctx); err != nil || token != "access-secret" {
-		t.Fatalf("after sign-in token=%q error=%v", token, err)
+	if token, err := atTerminal().controlToken(t.Context()); err != nil || token != "access-secret" {
+		t.Fatalf("signed-out terminal command token=%q error=%v", token, err)
 	}
 }
 

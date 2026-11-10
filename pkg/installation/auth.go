@@ -165,10 +165,12 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 }
 
 // loginInteractive waits for the device sign-in without the credentials lock, so other commands never wait on a person.
+// It saves nothing if another command signed in or out meanwhile.
 func (m *Client) loginInteractive(ctx context.Context) error {
 	if m.machine != nil {
 		return errors.New("service-account credentials are supplied by the environment")
 	}
+	before, _ := m.readState()
 	state := authState{OAuth: targetForOAuth(m.info.OAuth), Version: rand.Text(), Tokens: map[string]*oauth2.Token{}}
 	if m.info.OAuth != nil {
 		tokens, err := m.deviceToken(ctx, m.info.OAuth.AdminAudience)
@@ -178,6 +180,9 @@ func (m *Client) loginInteractive(ctx context.Context) error {
 		state.Tokens[m.info.OAuth.AdminAudience] = tokens
 	}
 	return m.withLock(ctx, func() error {
+		if saved, _ := m.readState(); saved.Version != before.Version {
+			return errCredentialChanged
+		}
 		if err := m.writeState(state); err != nil {
 			return err
 		}
