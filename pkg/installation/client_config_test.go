@@ -72,7 +72,7 @@ func TestClientOriginPrecedence(t *testing.T) {
 				Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)},
 			}
 			sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": "invalid"})
-			args := []string{"config", "delete", "REGION", "--env", "prod"}
+			args := []string{"config", "delete", "chat", "REGION", "--env", "prod"}
 			if tc.flag {
 				args = append(args, "--origin", strings.TrimPrefix(server.URL, "https://"))
 			}
@@ -93,7 +93,7 @@ func TestInstallationCommandErrorsBeforeNetwork(t *testing.T) {
 		args              []string
 	}{
 		{
-			name: "empty flag", args: []string{"config", "delete", "REGION", "--env", "prod", "--origin="},
+			name: "empty flag", args: []string{"config", "delete", "chat", "REGION", "--env", "prod", "--origin="},
 			saved: `{"origin":"https://saved.example"}`, want: `origin "" is invalid`,
 		},
 		{name: "invalid login target", args: []string{"login", "acme.example/console"}, want: `origin "acme.example/console" is invalid`},
@@ -119,7 +119,7 @@ func TestInstallationCommandErrorsBeforeNetwork(t *testing.T) {
 			}
 			args := tc.args
 			if args == nil {
-				args = []string{"config", "delete", "REGION", "--env", "prod"}
+				args = []string{"config", "delete", "chat", "REGION", "--env", "prod"}
 			}
 			if err := executeCommand(t.Context(), args, nil, nil, config); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("invalid selection: %v; want %s", err, tc.want)
