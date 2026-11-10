@@ -46,6 +46,7 @@ type httpError struct {
 	StatusCode int
 	Code       string
 	Message    string
+	MovedTo    string
 }
 
 func (e *httpError) Error() string {
@@ -120,7 +121,12 @@ func (c *apiClient) Do(ctx context.Context, method, path string, request apiRequ
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		code, message := responseError(data, request.Token, response.StatusCode)
-		return &httpError{StatusCode: response.StatusCode, Code: code, Message: message}
+		failure := &httpError{StatusCode: response.StatusCode, Code: code, Message: message}
+		if location, err := response.Location(); err == nil && location.Host != req.URL.Host &&
+			(response.StatusCode == http.StatusMovedPermanently || response.StatusCode == http.StatusPermanentRedirect) {
+			failure.MovedTo, _ = protocol.CanonicalOrigin("https://" + location.Host)
+		}
+		return failure
 	}
 	if result != nil {
 		if err := json.Unmarshal(data, result); err != nil {
@@ -183,6 +189,9 @@ func responseError(data []byte, token string, status int) (string, string) {
 func (c *apiClient) Info(ctx context.Context) (protocol.Info, error) {
 	var info protocol.Info
 	if err := c.Do(ctx, http.MethodGet, protocol.APIPathInfo, apiRequest{Plane: protocol.BasePlane}, &info); err != nil {
+		if failure, ok := errors.AsType[*httpError](err); ok && failure.MovedTo != "" {
+			return protocol.Info{}, fmt.Errorf("this installation moved to %s; run holon login %s", failure.MovedTo, failure.MovedTo)
+		}
 		return protocol.Info{}, err
 	}
 	if err := validateInfo(info); err != nil {

@@ -75,6 +75,19 @@ func TestSignedOutCommandFailsWithoutSigningIn(t *testing.T) {
 	}
 }
 
+func TestMovedInstallationNamesItsNewOrigin(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://moved.example"+r.URL.RequestURI(), http.StatusPermanentRedirect)
+	}))
+	t.Cleanup(server.Close)
+	config := commandConfig{Auth: ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)}}
+	err := executeCommand(t.Context(), []string{"app", "list"}, nil, nil, config)
+	if want := "this installation moved to https://moved.example; run holon login https://moved.example"; err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
+	}
+}
+
 func TestAppTokenIsTheInstallationSignIn(t *testing.T) {
 	t.Parallel()
 	server := newAuthTestServer(t, func(http.ResponseWriter, *http.Request) { t.Error("an app token signed in") })
