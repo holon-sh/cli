@@ -65,8 +65,21 @@ type apiClient struct {
 	timeout         time.Duration
 }
 
+// canonicalOrigin reads an installation origin given by the user, where the
+// scheme defaults to https and one trailing slash is ignored.
+func canonicalOrigin(raw string) (string, error) {
+	origin := strings.TrimSuffix(raw, "/")
+	if !strings.Contains(origin, "://") {
+		origin = "https://" + origin
+	}
+	if canonical, err := protocol.CanonicalOrigin(origin); err == nil {
+		return canonical, nil
+	}
+	return "", fmt.Errorf("origin %q is invalid: expected HOST or https://HOST[:PORT]", raw)
+}
+
 func newAPIClient(origin string, transport *http.Client, timeout time.Duration) (*apiClient, error) {
-	base, err := protocol.CanonicalOrigin(origin)
+	base, err := canonicalOrigin(origin)
 	if err != nil {
 		return nil, err
 	}

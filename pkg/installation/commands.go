@@ -85,10 +85,12 @@ func newCommands(config commandConfig) []*cobra.Command {
 		cmd.PersistentFlags().StringVar(&config.Auth.Origin, "origin", config.Auth.Origin, "Holon installation origin (default HOLON_ORIGIN or saved selection)")
 		cmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 			config.Auth.Output = cmd.ErrOrStderr()
-			if cmd.Flags().Changed("origin") && config.Auth.Origin == "" {
-				return errors.New("public origin is invalid")
+			if !cmd.Flags().Changed("origin") {
+				return nil
 			}
-			return nil
+			var err error
+			config.Auth.Origin, err = canonicalOrigin(config.Auth.Origin)
+			return err
 		}
 	}
 	return installationCommands

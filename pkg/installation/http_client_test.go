@@ -149,7 +149,7 @@ func TestAPIClientCancellation(t *testing.T) {
 func TestAPIClientCanonicalURL(t *testing.T) {
 	t.Parallel()
 	for _, value := range []string{
-		" https://example.com", "http://example.com", "https://user@example.com", "https://example.com/",
+		" https://example.com", "http://example.com", "https://user@example.com", "https://example.com//",
 		"https://example.com?x=1", "https://example.com#x", "https://192.0.2.1",
 		"https://localhost:99999", "https://cluster-local", "https://EXAMPLE.com",
 	} {

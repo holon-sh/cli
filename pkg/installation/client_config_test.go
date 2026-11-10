@@ -31,11 +31,14 @@ func assertSavedOrigin(t *testing.T, dir, want string) {
 func TestClientOriginPrecedence(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, environment string
-		flag              bool
+		name, environment, flag string
 	}{
-		{name: "flag", flag: true, environment: "invalid"},
+		{name: "flag", flag: "SELECTED", environment: "invalid"},
+		{name: "flag bare host", flag: "HOST", environment: "invalid"},
+		{name: "flag trailing slash", flag: "SELECTED/", environment: "invalid"},
 		{name: "environment", environment: "SELECTED"},
+		{name: "environment bare host", environment: "HOST"},
+		{name: "environment trailing slash", environment: "SELECTED/"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -48,14 +51,15 @@ func TestClientOriginPrecedence(t *testing.T) {
 			installationtest.NewControlFixtures(t, mux).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, struct{}{})
 			})
+			selected := strings.NewReplacer("SELECTED", server.URL, "HOST", strings.TrimPrefix(server.URL, "https://"))
 			config := commandConfig{
-				Env:  []string{"HOLON_ORIGIN=" + strings.ReplaceAll(tc.environment, "SELECTED", server.URL)},
+				Env:  []string{"HOLON_ORIGIN=" + selected.Replace(tc.environment)},
 				Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)},
 			}
 			sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": "invalid"})
 			args := []string{"config", "delete", "REGION", "--env", "prod"}
-			if tc.flag {
-				args = append(args, "--origin", server.URL)
+			if tc.flag != "" {
+				args = append(args, "--origin", selected.Replace(tc.flag))
 			}
 			if err := executeCommand(t.Context(), args, nil, nil, config); err != nil {
 				t.Fatal(err)
@@ -74,13 +78,15 @@ func TestInstallationCommandErrorsBeforeNetwork(t *testing.T) {
 		args              []string
 	}{
 		{
-			name: "invalid flag", args: []string{"config", "delete", "REGION", "--env", "prod", "--origin", "http://insecure.example"},
-			saved: `{"origin":"https://saved.example"}`, want: "public origin is invalid",
+			name: "insecure flag", args: []string{"config", "delete", "REGION", "--env", "prod", "--origin", "http://insecure.example"},
+			saved: `{"origin":"https://saved.example"}`, want: `origin "http://insecure.example" is invalid: expected HOST or https://HOST[:PORT]`,
 		},
 		{
 			name: "empty flag", args: []string{"config", "delete", "REGION", "--env", "prod", "--origin="},
-			saved: `{"origin":"https://saved.example"}`, want: "public origin is invalid",
+			saved: `{"origin":"https://saved.example"}`, want: `origin "" is invalid`,
 		},
+		{name: "login path", args: []string{"login", "acme.example/console"}, want: `origin "acme.example/console" is invalid`},
+		{name: "saved path", saved: `{"origin":"https://saved.example/console"}`, want: `origin "https://saved.example/console" is invalid`},
 		{name: "malformed saved configuration", saved: `{`, want: "read Holon configuration"},
 		{name: "conflicting login targets", args: []string{"login", "https://one.example", "--origin", "https://two.example"}, want: "cannot be combined"},
 	} {
