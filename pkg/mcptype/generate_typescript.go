@@ -36,11 +36,8 @@ func resourceContracts(contracts map[string]contract) map[string]contract {
 }
 
 func eventContracts(contracts map[string]contract) map[string]contract {
-	result := map[string]contract{}
+	result := make(map[string]contract, len(contracts))
 	for alias, source := range contracts {
-		if len(source.Events) == 0 {
-			continue
-		}
 		tools := make(map[string]contractTool, len(source.Events))
 		for name, event := range source.Events {
 			tools[name] = contractTool{Input: event.Input, Output: event.Payload}
@@ -64,17 +61,13 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		return nil, err
 	}
 	resources := generateTypeScript(catalogs, names, [4]string{1: "Resources"})
-	events, client := "", "ToolClient<Inputs[A], Outputs[A], Resources[A]>"
-	if contracts := eventContracts(request.contracts); request.TypedEvents && len(contracts) > 0 {
-		catalogs, err := compileCatalogs(ctx, contracts, false)
-		if err != nil {
-			return nil, err
-		}
-		events = generateTypeScript(catalogs, names, [4]string{"EventArguments", "EventData"}) + eventTypes
-		client = "A extends keyof Events ? ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> : " + client
+	catalogs, err = compileCatalogs(ctx, eventContracts(request.contracts), false)
+	if err != nil {
+		return nil, err
 	}
+	events := generateTypeScript(catalogs, names, [4]string{"EventArguments", "EventData"}) + eventTypes
 	runtime := runtimes[request.Target]
-	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: %s };\n", runtime, runtime, tools, resources, events, client)
+	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> };\n", runtime, runtime, tools, resources, events)
 	identity, contracts := encode(request.caller()), encode(request.contracts)
 	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
 	if request.Target == "browser" {

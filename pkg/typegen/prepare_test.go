@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -154,7 +155,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		manager, install, installed string
 		consumer                    Consumer
 	}{
-		{"npm", "mkdir -p node_modules/holon-sh\nprintf '%s' '{\"holon\":{\"contractVersion\":2}}' > node_modules/holon-sh/package.json", "node_modules/holon-sh/package.json", c},
+		{"npm", fmt.Sprintf("mkdir -p node_modules/holon-sh\nprintf '%%s' '{\"holon\":{\"contractVersion\":%d}}' > node_modules/holon-sh/package.json", ContractVersion), "node_modules/holon-sh/package.json", c},
 		{"uv", "mkdir -p .venv/bin\n: > .venv/bin/python", ".venv/bin/python", Consumer{Name: "app", Dir: python, Targets: []string{TargetPy}}},
 	} {
 		put(t, bin, test.manager, "#!/bin/sh\nset -e\n"+test.install+"\n")

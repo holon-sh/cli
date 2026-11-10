@@ -78,7 +78,7 @@ func writeProvider(t *testing.T, root, name, source string) {
 func runtimePackage(t *testing.T, app, pkg string) string {
 	t.Helper()
 	dir := filepath.Join(app, "node_modules", pkg)
-	put(t, dir, "package.json", `{"name":"`+pkg+`","version":"0.0.1","exports":{"./runtime":{"types":"./runtime.d.ts"}},"holon":{"contractVersion":2}}`)
+	put(t, dir, "package.json", fmt.Sprintf(`{"name":%q,"version":"0.0.1","exports":{"./runtime":{"types":"./runtime.d.ts"}},"holon":{"contractVersion":%d}}`, pkg, ContractVersion))
 	return dir
 }
 
@@ -112,7 +112,7 @@ func typeScriptApp(t *testing.T) string {
 	app := t.TempDir()
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
 	put(t, app, "tsconfig.json", `{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true,"allowJs":true,"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext","allowImportingTsExtensions":true}}`)
-	put(t, runtimePackage(t, app, "holon-sh"), "runtime.d.ts", "export type ToolClient<I, O, R> = unknown;\nexport declare class ToolCallError {}\nexport type EndpointBinding = unknown;\nexport type CreateOptions = unknown;\n")
+	put(t, runtimePackage(t, app, "holon-sh"), "runtime.d.ts", "export type ToolClient<I, O, R, E> = unknown;\nexport declare class ToolCallError {}\nexport type EndpointBinding = unknown;\nexport type CreateOptions = unknown;\n")
 	linkTypeScript(t, app)
 	return app
 }

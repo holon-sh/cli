@@ -74,6 +74,10 @@ export interface Resources {
   };
 }
 export interface EventArguments {
+  "empty": {
+  };
+  "mysql": {
+  };
   "orders": {
     "order.shipped": { "orderId"?: string; };
   };
@@ -82,6 +86,10 @@ export interface EventArguments {
   };
 }
 export interface EventData {
+  "empty": {
+  };
+  "mysql": {
+  };
   "orders": {
     "order.shipped": { "carrier"?: string; "orderId": string; };
   };
@@ -91,7 +99,7 @@ export interface EventData {
 }
 export type Events = { readonly [A in keyof EventArguments]: { [K in keyof EventArguments[A]]: { arguments: EventArguments[A][K]; data: K extends keyof EventData[A] ? EventData[A][K] : unknown } } };
 
-export type Apps = { readonly [A in keyof Inputs]: A extends keyof Events ? ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> : ToolClient<Inputs[A], Outputs[A], Resources[A]> };
+export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> };
 export declare const apps: Apps;
 export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;

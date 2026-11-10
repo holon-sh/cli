@@ -2,13 +2,11 @@ package typegen
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -17,8 +15,9 @@ import (
 
 // ContractVersion is the generated-client contract the holon-sh and holon-ui packages declare as
 // holon.contractVersion: clients live in the project, in generated/holon-sh or generated/holon-ui,
-// and import the runtime as holon-sh/runtime or holon-ui/runtime.
-const ContractVersion = 2
+// and import the runtime as holon-sh/runtime or holon-ui/runtime. From contract 3, ToolClient takes
+// each app's events as its fourth type parameter.
+const ContractVersion = 3
 
 // slots are the project directories each target's generated clients occupy.
 var slots = map[string]string{TargetTS: "generated/holon-sh", TargetUI: "generated/holon-ui", TargetPy: "holon/apps", TargetGo: "holon"}
@@ -49,100 +48,16 @@ func installedRuntime(root, pkg string) error {
 		}
 		name := strings.TrimSpace(pkg + " " + installed.Version)
 		switch {
-		case installed.Holon.ContractVersion < ContractVersion:
+		case installed.Holon.ContractVersion < 2:
 			return fmt.Errorf("%s keeps generated clients inside node_modules; upgrade it to a release that reads them from the project (holon.contractVersion %d)", name, ContractVersion)
+		case installed.Holon.ContractVersion < ContractVersion:
+			return fmt.Errorf("%s reads generated client contract %d; this holon writes contract %d, so upgrade it", name, installed.Holon.ContractVersion, ContractVersion)
 		case installed.Holon.ContractVersion > ContractVersion:
 			return fmt.Errorf("%s expects generated client contract %d; this holon writes contract %d, so upgrade holon", name, installed.Holon.ContractVersion, ContractVersion)
 		}
 		return nil
 	}
 	return fmt.Errorf("%s is not installed for %s; install it before generating types", pkg, root)
-}
-
-func nodePackage(root, pkg string) string {
-	for dir := range ancestors(root) {
-		candidate := filepath.Join(dir, "node_modules", pkg)
-		if isFile(filepath.Join(candidate, "package.json")) {
-			if real, err := filepath.EvalSymlinks(candidate); err == nil {
-				return real
-			}
-			return candidate
-		}
-	}
-	return ""
-}
-
-var (
-	toolClientDeclaration = regexp.MustCompile(`(?:interface|type)\s+ToolClient\s*<`)
-	toolClientUse         = regexp.MustCompile(`ToolClient\s*<`)
-)
-
-func runtimeTypesEvents(root, pkg string) bool {
-	return toolClientParameters(root, pkg) >= 4
-}
-
-func toolClientParameters(root, pkg string) int {
-	dir := nodePackage(root, pkg)
-	if dir != "" && pkg != "holon-sh" {
-		dir = nodePackage(dir, "holon-sh")
-	}
-	if dir == "" {
-		return 0
-	}
-	declarations := dir
-	var manifest struct {
-		Exports map[string]json.RawMessage `json:"exports"`
-	}
-	if readTypeJSON(filepath.Join(dir, "package.json"), &manifest) == nil {
-		var types string
-		var conditions struct{ Types string }
-		if json.Unmarshal(manifest.Exports["./runtime"], &types) != nil && json.Unmarshal(manifest.Exports["./runtime"], &conditions) == nil {
-			types = conditions.Types
-		}
-		if found := filepath.Dir(filepath.Join(dir, filepath.FromSlash(types))); types != "" && lexicallyInside(found, dir) {
-			declarations = found
-		}
-	}
-	for _, name := range []string{"protocol.d.ts", "runtime.d.ts"} {
-		data, err := os.ReadFile(filepath.Join(declarations, name))
-		if err != nil {
-			continue
-		}
-		if at := toolClientDeclaration.FindIndex(data); at != nil {
-			return typeParameters(data[at[1]:])
-		}
-	}
-	return 0
-}
-
-func slotToolClientArguments(dir, target string) int {
-	data, err := os.ReadFile(filepath.Join(SlotDirectory(dir, target), "index.d.mts"))
-	if err != nil {
-		return 0
-	}
-	most := 0
-	for _, at := range toolClientUse.FindAllIndex(data, -1) {
-		most = max(most, typeParameters(data[at[1]:]))
-	}
-	return most
-}
-
-func typeParameters(declaration []byte) int {
-	count, depth := 1, 0
-	for i, c := range declaration {
-		switch {
-		case c == '<' || c == '{' || c == '(' || c == '[':
-			depth++
-		case c == '>' && i > 0 && declaration[i-1] == '=':
-		case c == '>' && depth == 0:
-			return count
-		case c == '>' || c == '}' || c == ')' || c == ']':
-			depth--
-		case c == ',' && depth == 0:
-			count++
-		}
-	}
-	return 0
 }
 
 // SlotDirectory is the directory a target's generated clients occupy in the project at dir.

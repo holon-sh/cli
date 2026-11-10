@@ -34,11 +34,6 @@ func Check(ctx context.Context, dir string, options Options) error {
 		if !generatedSlot(dir, target) {
 			return fmt.Errorf("%s has no generated clients; run holon types generate", SlotDirectory(dir, target))
 		}
-		if pkg, ok := NodePackages[target]; ok {
-			if declared := toolClientParameters(dir, pkg); declared > 0 && slotToolClientArguments(dir, target) > declared {
-				return fmt.Errorf("%s holds clients generated for a newer %s than the one installed; regenerate them with holon types generate", SlotDirectory(dir, target), pkg)
-			}
-		}
 		languages = append(languages, language)
 	}
 	if len(languages) == 0 {
