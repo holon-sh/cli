@@ -454,6 +454,10 @@ func (m *Client) summary(name string, apps []manifestApp) (string, error) {
 // StreamLogs follows session logs until ctx ends or the server rejects the request. A dropped stream resumes from
 // the last record received, skipping the records the server replays.
 func (m *Client) StreamLogs(ctx context.Context, input protocol.SessionLogsRequest, stdout io.Writer) error {
+	return m.streamLogs(ctx, input, &resumingWriter{out: stdout})
+}
+
+func (m *Client) streamLogs(ctx context.Context, input protocol.SessionLogsRequest, records *resumingWriter) error {
 	query := url.Values{"follow": {"true"}}
 	for key, value := range map[string]string{
 		"app": input.App, "since": input.Since, "traceId": input.TraceID, "text": input.Text,
@@ -466,7 +470,6 @@ func (m *Client) StreamLogs(ctx context.Context, input protocol.SessionLogsReque
 	if input.Attempt != nil {
 		query.Set("attempt", strconv.FormatInt(*input.Attempt, 10))
 	}
-	records := &resumingWriter{out: stdout}
 	for delay := time.Second; ; delay = min(2*delay, 30*time.Second) {
 		received := records.last
 		// A token refresh that failed in transit is retried like a dropped stream; lost credentials stay final.
@@ -494,11 +497,13 @@ func (m *Client) StreamLogs(ctx context.Context, input protocol.SessionLogsReque
 }
 
 // resumingWriter writes whole log lines, tracking the timestamp that leads each record. Records not after the last
-// one written, with their continuation lines, are replays and are dropped.
+// one written, with their continuation lines, are replays and are dropped. With stdio set, so are records with a
+// severity: in the server's "time severity app body" lines, what apps write to stdout and stderr has none.
 type resumingWriter struct {
 	out     io.Writer
+	stdio   bool
 	last    time.Time
-	replay  bool
+	drop    bool
 	partial []byte
 	err     error
 }
@@ -508,13 +513,14 @@ func (w *resumingWriter) Write(p []byte) (int, error) {
 	end := bytes.LastIndexByte(w.partial, '\n') + 1
 	var kept []byte
 	for line := range bytes.Lines(w.partial[:end]) {
-		token, _, _ := bytes.Cut(bytes.TrimSpace(line), []byte(" "))
+		token, rest, _ := bytes.Cut(bytes.TrimSpace(line), []byte(" "))
 		if at, err := time.Parse(time.RFC3339Nano, string(token)); err == nil {
-			if w.replay = !at.After(w.last); !w.replay {
+			w.drop = !at.After(w.last) || w.stdio && !bytes.HasPrefix(rest, []byte(" "))
+			if at.After(w.last) {
 				w.last = at
 			}
 		}
-		if !w.replay {
+		if !w.drop {
 			kept = append(kept, line...)
 		}
 	}

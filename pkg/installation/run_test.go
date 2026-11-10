@@ -310,7 +310,10 @@ func TestRunDevLifecycle(t *testing.T) {
 			}
 			installationtest.WriteJSON(w, session())
 		})
-	const appOutput = "2026-11-09T10:00:00.1Z  alpha starting boom\n2026-11-09T10:00:00.2Z ERROR alpha " + traceback + "\n"
+	const (
+		appOutput = "2026-11-09T10:00:00.1Z  alpha starting boom\n2026-11-09T10:00:00.2Z  alpha " + traceback + "\n"
+		callLine  = "2026-11-09T10:00:00.3Z INFO alpha tools/call boom error tool_error 22ms trace_id=aaaa\n"
+	)
 	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		if query.Has("event") { // Every record, not only MCP calls.
@@ -320,7 +323,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return
 		}
-		_, _ = io.WriteString(w, appOutput)
+		_, _ = io.WriteString(w, appOutput+callLine)
 	})
 	h.start(t, build)
 	t.Run("ambiguous creation is not retried or deleted", func(t *testing.T) {
@@ -384,7 +387,8 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
-		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
+		// Holon's record of each call shows only with --verbose.
+		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") || strings.Contains(stdout.String(), callLine) {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}
 	})
