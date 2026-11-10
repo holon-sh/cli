@@ -3,7 +3,6 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -201,40 +200,9 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 		}
 		identity = &mcpcontract.Identity{Name: info.Name, Version: cmp.Or(info.Version, unversioned)}
 	}
-	contract := &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}
-	if initialized.Capabilities.Tools != nil {
-		for tool, err := range session.Tools(ctx, nil) {
-			if err != nil {
-				return nil, err
-			}
-			input, err := json.Marshal(tool.InputSchema)
-			if err != nil {
-				return nil, err
-			}
-			var output json.RawMessage
-			if tool.OutputSchema != nil {
-				output, err = json.Marshal(tool.OutputSchema)
-				if err != nil {
-					return nil, err
-				}
-			}
-			contract.Tools = append(contract.Tools, mcpcontract.Tool{Name: tool.Name, Input: input, Output: output})
-		}
-	}
-	if initialized.Capabilities.Resources != nil {
-		for resource, err := range session.Resources(ctx, nil) {
-			if err != nil {
-				return nil, err
-			}
-			output := json.RawMessage(`{}`)
-			if schema, ok := resource.Meta["sh.holon/outputSchema"]; ok {
-				output, err = json.Marshal(schema)
-				if err != nil {
-					return nil, err
-				}
-			}
-			contract.Resources = append(contract.Resources, mcpcontract.Resource{URI: resource.URI, Output: output})
-		}
+	contract, err := listCatalog(ctx, session, nil)
+	if err != nil {
+		return nil, err
 	}
 	return NewDocument(ctx, &mcpcontract.Metadata{Identity: *identity, Schema: contract})
 }

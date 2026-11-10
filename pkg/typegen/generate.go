@@ -34,10 +34,11 @@ type Options struct {
 	Stdout, Stderr io.Writer
 	SignIn         SignIn
 	// Run runs one server through its language's contract runner, toolingDir/<language>/runner.mjs or
-	// extract.py, with args (contract ROOT ENTRY), copying the runner's stdout to stdout. A failure the
-	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
-	// runs the server in its own directory and stops it after 30 seconds.
-	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
+	// extract.py, with args (serve ROOT ENTRY). The runner's server answers the MCP messages on stdin,
+	// writing its answers to stdout, and exits when stdin ends. A failure the runner reports is a
+	// *RunnerError. It defaults to the host's Node.js or Python interpreter, which runs the server in its
+	// own directory and stops it after 30 seconds.
+	Run func(ctx context.Context, language, toolingDir string, args []string, stdin io.Reader, stdout io.Writer) error
 }
 
 func validateEnv(env []string) error {
@@ -63,7 +64,7 @@ type preparedSource struct {
 }
 
 func (s *preparedSource) extract(result *extraction) error {
-	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
+	s.metadata.Schema = result.Contract
 	if s.metadata.Identity == (mcpcontract.Identity{}) {
 		descriptor, err := ParseDescriptor(result.ServerInfo)
 		if err != nil {

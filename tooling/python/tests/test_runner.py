@@ -59,10 +59,6 @@ SERVER = """
     def latest() -> Order:
         raise RuntimeError("must not be called")
 
-    @server.resource("ui://orders/app.html", mime_type="text/html")
-    def page() -> str:
-        raise RuntimeError("must not be called")
-
     if __name__ == "__main__":
         raise RuntimeError("must not run as a script")
 """
@@ -87,17 +83,40 @@ def write(directory: Path, files: dict[str, str]) -> Path:
     return directory
 
 
+META = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1"},
+    "io.modelcontextprotocol/clientCapabilities": {},
+}
+REQUESTS = "".join(
+    json.dumps(
+        {"jsonrpc": "2.0", "id": id, "method": method, "params": {"_meta": META}}
+    )
+    + "\n"
+    for id, method in enumerate(["server/discover", "tools/list", "resources/list"])
+)
+
+
 def extract(apps: dict[str, tuple[Path, str]]) -> dict[str, dict]:
-    """Each app's contract, or its diagnostic and the package it missed."""
-    extractor = [sys.executable, str(ROOT / "extract.py"), "contract"]
+    """What each app's server lists, or its diagnostic and the package it missed."""
+    extractor = [sys.executable, str(ROOT / "extract.py"), "serve"]
     results = {}
     for name, (root, entry) in apps.items():
         run = subprocess.run(
-            [*extractor, str(root), entry], capture_output=True, text=True, check=False
+            [*extractor, str(root), entry],
+            input=REQUESTS,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         assert run.returncode in (0, 2, 3), run.stderr
         if run.returncode == 0:
-            results[name] = json.loads(run.stdout)
+            answers = [json.loads(line) for line in run.stdout.splitlines()]
+            lists = {answer["id"]: answer.get("result", {}) for answer in answers}
+            results[name] = {
+                "tools": lists[1].get("tools", []),
+                "resources": lists[2].get("resources", []),
+            }
         else:
             missing = run.stderr.splitlines()[-1] if run.returncode == 3 else None
             results[name] = {"diagnostic": run.stderr, "missing": missing}
@@ -120,16 +139,12 @@ def test_the_bundle_extracts_each_servers_catalog(tmp_path):
 
     contract = result["orders"]
     assert [tool["name"] for tool in contract["tools"]] == ["read"]
-    assert contract["resources"] == [
-        {
-            "uri": "orders://latest",
-            "outputSchema": {
-                "type": "object",
-                "properties": {"id": {"type": "string"}},
-            },
+    assert contract["resources"][0]["_meta"] == {
+        "sh.holon/outputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
         },
-        {"uri": "ui://orders/app.html", "outputSchema": {}},
-    ]
+    }
     assert [tool["name"] for tool in result["low"]["tools"]] == ["lookup"]
 
 

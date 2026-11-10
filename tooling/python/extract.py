@@ -1,7 +1,7 @@
-"""Obtain an application's MCP contract by running its server and asking it.
+"""Serve an application's MCP server over stdio, so the CLI can ask it for its contract.
 
-Usage: extract.py contract ROOT ENTRY. The contract (the server's tools, resources and its own
-description) is printed on stdout; a failure is a diagnostic on stderr with status 2, or status 3
+Usage: extract.py serve ROOT ENTRY. The server speaks MCP on stdin and stdout, answering every
+request it reads before it exits; a failure is a diagnostic on stderr with status 2, or status 3
 with the uninstalled package's name as the last line. The runner re-runs itself without site
 packages or the caller's environment, where an import finder serves the application's files, the
 standard library and its environment's installed packages (mcp and pydantic among them), and names
@@ -21,7 +21,6 @@ import importlib.abc
 import importlib.machinery
 import importlib.util
 import io
-import json
 import os
 import random
 import socket
@@ -38,7 +37,6 @@ from typing import TYPE_CHECKING, Any, NoReturn, Self, TextIO
 if TYPE_CHECKING:
     from mcp.server import MCPServer, Server
 
-RESOURCE_SCHEMA = "sh.holon/outputSchema"
 STDLIB = Path(sysconfig.get_paths()["stdlib"]).resolve()
 EPOCH = 315532800  # 1980-01-01T00:00:00Z, the instant the frozen clock shows
 MONOTONIC = time.monotonic
@@ -211,7 +209,7 @@ def forbid(owner: ModuleType, names: str, capability: str) -> None:
 
 
 class Loop(asyncio.SelectorEventLoop):
-    """The client's event loop keeps a running clock under the frozen one."""
+    """The event loop keeps a running clock under the frozen one."""
 
     def time(self) -> float:
         return MONOTONIC()
@@ -235,57 +233,68 @@ def find_server(module: object) -> MCPServer | Server[Any]:
     )
 
 
-async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
-    from mcp.client import Client
-    from mcp.client.extension import advertise
+async def serve(server: MCPServer | Server[Any], stdin: TextIO, stdout: TextIO) -> None:
+    """Answer each JSON-RPC message on stdin, a line each on stdout, until stdin closes and every
+    request has its answer."""
+    import anyio
+    import mcp_types as types
     from mcp.server import MCPServer
     from mcp.server.lowlevel.server import lifespan
+    from mcp.shared.memory import create_client_server_memory_streams
+    from mcp.shared.message import SessionMessage
 
-    # A lifespan is the server's startup, which an in-process Client enters before listing
-    # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/client/client.py#L118).
+    # A lifespan is the server's startup, which serving a connection enters
+    # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/lowlevel/server.py#L722).
     # Listing the catalog does not start the server, so the SDK's no-op lifespan stands in
     # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/lowlevel/server.py#L115-L117).
     lowlevel = server._lowlevel_server if isinstance(server, MCPServer) else server
     lowlevel.lifespan = lifespan
-    tools: list[dict[str, Any]] = []
-    resources: list[dict[str, Any]] = []
-    # Generated clients send files, so the contract lists the tools a server shows only to clients that do
-    # (https://github.com/modelcontextprotocol/experimental-ext-file-uploads/blob/main/specification/draft/file-uploads.md#backward-compatibility).
-    files = advertise("io.modelcontextprotocol/files", {"upload": {}, "download": {}})
-    async with Client(server, extensions=[files]) as client:
-        info = client.server_info
-        capabilities = client.server_capabilities
-        cursor = None
-        while capabilities and capabilities.tools:
-            page = await client.list_tools(cursor=cursor)
-            for tool in page.tools:
-                schemas = {"inputSchema": tool.input_schema}
-                if tool.output_schema is not None:
-                    schemas["outputSchema"] = tool.output_schema
-                tools.append({"name": tool.name, **schemas})
-            if not (cursor := page.next_cursor):
-                break
-        while capabilities and capabilities.resources:
-            listed = await client.list_resources(cursor=cursor)
-            # Like a live server's contract, a resource is typed only by its sh.holon/outputSchema.
-            resources += [
-                {
-                    "uri": str(r.uri),
-                    "outputSchema": (r.meta or {}).get(RESOURCE_SCHEMA, {}),
-                }
-                for r in listed.resources
-            ]
-            if not (cursor := listed.next_cursor):
-                break
-    return {
-        "serverInfo": info.model_dump(by_alias=True, exclude_none=True) if info else {},
-        "tools": sorted(tools, key=lambda tool: tool["name"]),
-        "resources": sorted(resources, key=lambda resource: resource["uri"]),
-    }
+    # The server cancels requests in flight when its input ends, so it ends once all are answered.
+    pending: set[str | int] = set()
+    read_all = False
+    streams = create_client_server_memory_streams()
+    async with streams as ((answers, requests), (server_read, server_write)):
+
+        async def read() -> None:
+            nonlocal read_all
+            async for line in anyio.wrap_file(stdin):
+                if not line.strip():
+                    continue
+                message = types.jsonrpc_message_adapter.validate_json(
+                    line, by_name=False
+                )
+                if isinstance(message, types.JSONRPCRequest):
+                    pending.add(message.id)
+                await requests.send(SessionMessage(message))
+            read_all = True
+            if not pending:
+                await requests.aclose()
+
+        async def write() -> None:
+            async for answer in answers:
+                if isinstance(answer, Exception):
+                    raise answer
+                message = answer.message
+                stdout.write(
+                    message.model_dump_json(by_alias=True, exclude_unset=True) + "\n"
+                )
+                stdout.flush()
+                if isinstance(message, (types.JSONRPCResponse, types.JSONRPCError)):
+                    pending.discard(message.id)
+                    if read_all and not pending:
+                        await requests.aclose()
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(read)
+            group.start_soon(write)
+            await lowlevel.run(
+                server_read, server_write, lowlevel.create_initialization_options()
+            )
+            group.cancel_scope.cancel()
 
 
-def contract(root: Path, entry: str, stdout: TextIO) -> int:
-    """Run one entry, ask its server for the catalog and print it; return the exit status."""
+def contract(root: Path, entry: str, stdin: TextIO, stdout: TextIO) -> int:
+    """Run one entry and serve its server on stdin and stdout; return the exit status."""
     os.chdir(root)  # relative paths name application files, wherever the runner started
     path = root / entry
     finder = Finder(root, path)
@@ -299,7 +308,7 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
             raise ImportError(f"cannot import {path}")
         module = sys.modules[path.stem] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        result = loop.run_until_complete(catalog(find_server(module)))
+        loop.run_until_complete(serve(find_server(module), stdin, stdout))
     except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
         frames = [
             frame
@@ -318,21 +327,21 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
             sys.stderr.write(error.name.partition(".")[0] + "\n")
             return 3
         return 2
-    json.dump(result, stdout)
-    stdout.flush()  # Python 3.11 loses it at exit once the server's world is frozen
     return 0
 
 
 if __name__ == "__main__":
     mode, root, entry = sys.argv[1:]
-    if mode != "contract":
+    if mode != "serve":
         sys.exit(f"unknown operation {mode}")
     if not sys.flags.no_site:
         # Without site packages, the caller's environment or bytecode beside the sources, and with
         # the same string hashes, so set order does not vary between runs.
         argv = [sys.executable, "-s", "-S", "-P", "-B", *sys.argv]
         os.execve(sys.executable, argv, {"PYTHONHASHSEED": "0"})
-    # The contract is all that stdout carries; whatever the application prints goes to stderr.
-    stdout = os.fdopen(os.dup(1), "w")
+    # MCP is all that stdin and stdout carry; the application reads nothing, and what it prints goes to
+    # stderr.
+    stdin, stdout = os.fdopen(os.dup(0), "r"), os.fdopen(os.dup(1), "w")
+    os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
     os.dup2(2, 1)
-    sys.exit(contract(Path(root).resolve(), entry, stdout))
+    sys.exit(contract(Path(root).resolve(), entry, stdin, stdout))
