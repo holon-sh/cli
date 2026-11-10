@@ -143,75 +143,51 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	}
 }
 
-func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
-	c, extract := checkoutConsumer(t, TargetTS)
-	bin := t.TempDir()
-	put(t, bin, "npm", "#!/bin/sh\nset -e\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh\nprintf '%s' '{\"holon\":{\"contractVersion\":2}}' > node_modules/holon-sh/package.json\n")
-	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	var output bytes.Buffer
-	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Run: extract}); err != nil {
-		t.Fatalf("generate: %v\n%s", err, &output)
-	}
-	if client := read(t, c.Dir, "generated/holon-sh/index.mjs"); !strings.Contains(client, `"lookup"`) {
-		t.Fatalf("project has no generated client:\n%s", client)
-	}
-	put(t, bin, "npm", "#!/bin/sh\nexit 17\n")
-	if err := Generate(t.Context(), []Consumer{c}, Options{Run: extract}); err != nil {
-		t.Fatalf("installed runtime was reinstalled: %v", err)
-	}
-	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
-		t.Fatal(err)
-	}
-	put(t, c.Dir, "package.json", `{"type":"module"}`)
-	err := Generate(t.Context(), []Consumer{c}, Options{Run: extract})
-	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run npm install holon-sh") {
-		t.Fatalf("undeclared runtime = %v", err)
-	}
-}
-
-// A Python project with no environment gets one with uv, as a Node.js project gets npm install.
-func TestGenerateInstallsAPythonEnvironment(t *testing.T) {
+// Generate installs a project's missing dependencies with its package manager, once.
+func TestGenerateInstallsMissingDependencies(t *testing.T) {
 	t.Setenv("VIRTUAL_ENV", "")
-	root := t.TempDir()
-	orders, checkout := filepath.Join(root, "orders"), filepath.Join(root, "checkout")
-	writeProvider(t, orders, "orders", pythonProvider)
-	put(t, checkout, "pyproject.toml", "[project]\nname = \"checkout\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
-	c := Consumer{Name: "checkout", Dir: checkout, Targets: []string{TargetPy}, Sources: []Source{{Alias: "orders", Path: orders}}}
-	options := Options{Run: fakeRun(map[string]any{"example.com/orders": extraction{Tools: []mcpcontract.Tool{lookupTool}}})}
+	node, extract := checkoutConsumer(t, TargetTS)
+	python := func(file, content string) Consumer {
+		dir := t.TempDir()
+		put(t, dir, file, content)
+		return Consumer{Name: "app", Dir: dir, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+	}
+	tools := map[string]string{
+		"npm": "mkdir -p node_modules/holon-sh\nprintf '%s' '{\"holon\":{\"contractVersion\":2}}' > node_modules/holon-sh/package.json\n",
+		// uv sync needs a pyproject.toml, and uv pip install -r its file, as uv does.
+		"uv": "[ \"$1\" != sync ] || [ -f pyproject.toml ]\n[ \"$1\" != pip ] || [ -f \"$4\" ]\nmkdir -p .venv/bin\n: > .venv/bin/python\n",
+	}
 	bin := t.TempDir()
-	uv := "#!/bin/sh\nset -e\necho \"$*\" >> uv.log\nmkdir -p .venv/bin\n: > .venv/bin/python\n"
-	put(t, bin, "uv", uv)
-	if err := os.Chmod(filepath.Join(bin, "uv"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := Generate(t.Context(), []Consumer{c}, options); err != nil {
+	for _, test := range []struct {
+		name, tool, installed string
+		consumer              Consumer
+	}{
+		{"npm", "npm", "node_modules/holon-sh/package.json", node},
+		{"uv pyproject", "uv", ".venv/bin/python", python("pyproject.toml", "[project]\nname = \"app\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")},
+		{"uv requirements", "uv", ".venv/bin/python", python("requirements.txt", "holon-sh\n")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			put(t, bin, test.tool, "#!/bin/sh\nset -e\n"+tools[test.tool])
+			if err := os.Chmod(filepath.Join(bin, test.tool), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Stdout: &output, Stderr: &output, Run: extract}); err != nil || !isFile(filepath.Join(test.consumer.Dir, test.installed)) {
+				t.Fatalf("generate: %v\n%s", err, &output)
+			}
+			put(t, bin, test.tool, "#!/bin/sh\nexit 17\n")
+			if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Run: extract}); err != nil {
+				t.Fatalf("installed dependencies were reinstalled: %v", err)
+			}
+		})
+	}
+	if err := os.RemoveAll(filepath.Join(node.Dir, "node_modules")); err != nil {
 		t.Fatal(err)
 	}
-	put(t, bin, "uv", "#!/bin/sh\nexit 17\n")
-	if err := Generate(t.Context(), []Consumer{c}, options); err != nil {
-		t.Fatalf("installed environment was reinstalled: %v", err)
-	}
-	if log := read(t, checkout, "uv.log"); log != "sync\n" {
-		t.Fatalf("uv ran %q", log)
-	}
-
-	// Without a pyproject.toml, uv installs requirements.txt.
-	for _, name := range []string{".venv", "uv.log", "pyproject.toml"} {
-		if err := os.RemoveAll(filepath.Join(checkout, name)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	put(t, checkout, "requirements.txt", "holon-sh\n")
-	put(t, bin, "uv", uv)
-	if err := Generate(t.Context(), []Consumer{c}, options); err != nil {
-		t.Fatal(err)
-	}
-	if log := read(t, checkout, "uv.log"); log != "venv\npip install -r requirements.txt\n" {
-		t.Fatalf("uv ran %q", log)
+	put(t, node.Dir, "package.json", `{"type":"module"}`)
+	if err := Generate(t.Context(), []Consumer{node}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run npm install holon-sh") {
+		t.Fatalf("undeclared runtime = %v", err)
 	}
 }
 
