@@ -38,7 +38,7 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	client := *c.client
-	client.Transport = &controlTransport{base: cmp.Or(client.Transport, http.DefaultTransport), token: token, installation: c.installationUID}
+	client.Transport = &controlTransport{base: cmp.Or(client.Transport, http.DefaultTransport), origin: origin, token: token, installation: c.installationUID}
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "cli"}, nil).Connect(ctx,
 		&mcp.StreamableClientTransport{Endpoint: origin + protocol.MCPPath, HTTPClient: &client, DisableStandaloneSSE: true},
 		&mcp.ClientSessionOptions{ProtocolVersion: bridgeproxy.CurrentVersion})
@@ -72,15 +72,13 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 
 type controlTransport struct {
 	base         http.RoundTripper
+	origin       string
 	token        string
 	installation string
 }
 
 func (t *controlTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	request = request.Clone(request.Context())
-	if t.token != "" {
-		request.Header.Set(protocol.HeaderAuthorization, protocol.BearerPrefix+t.token)
-	}
+	request = clientutil.Bearer(request, t.origin, t.token)
 	request.Header.Set(protocol.HeaderInstallationUID, t.installation)
 	response, err := t.base.RoundTrip(request)
 	if err != nil {

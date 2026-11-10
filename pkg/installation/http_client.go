@@ -98,10 +98,7 @@ func (c *apiClient) Do(ctx context.Context, method, path string, request apiRequ
 	if c.installationUID != "" {
 		req.Header.Set(protocol.HeaderInstallationUID, c.installationUID)
 	}
-	if request.Token != "" {
-		req.Header.Set(protocol.HeaderAuthorization, protocol.BearerPrefix+request.Token)
-	}
-	response, err := client.Do(req)
+	response, err := client.Do(clientutil.Bearer(req, origin, request.Token))
 	if err != nil {
 		return cmp.Or(reqCtx.Err(), err)
 	}
