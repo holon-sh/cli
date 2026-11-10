@@ -151,6 +151,7 @@ func TestProjectRunsForEachApp(t *testing.T) {
 	}
 	defer release()
 	run(t, filepath.Join(view, "generated/holon-sh")+" has no generated clients; run holon types generate", "check")
+	run(t, "-s names one app's dependencies; pass that app's DIR", "types", "generate", "-s", "x")
 }
 
 func TestUsageErrors(t *testing.T) {

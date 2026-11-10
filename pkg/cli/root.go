@@ -40,13 +40,6 @@ const generateExamples = `  # Generate for the current project
   holon types generate --contract ../orders
   holon types generate --contract ../orders -o ../orders/holon-contract.json`
 
-func oneDir(_ *cobra.Command, args []string) error {
-	if len(args) > 1 {
-		return errors.New("one DIR at most; dependencies are -s values")
-	}
-	return nil
-}
-
 // clientDir resolves the optional client directory, defaulting to the working directory.
 func clientDir(path string) (string, error) {
 	path = cmp.Or(path, ".")
@@ -193,8 +186,6 @@ func newCheck(short string) *cobra.Command {
 		}}
 }
 
-const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory"
-
 // NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string, signIn typegen.SignIn) *cobra.Command {
 	root := &cobra.Command{Use: "holon", Short: "MCP developer client", Version: version, SilenceUsage: true, SilenceErrors: true}
@@ -212,7 +203,7 @@ func NewTypesCommand() *cobra.Command {
 	var verbose bool
 	var contract, output string
 	var servers []string
-	generate := &cobra.Command{Use: "generate [DIR]", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for MCP servers.\n\n" + dependencyHelp, Example: generateExamples, Args: oneDir, RunE: func(cmd *cobra.Command, args []string) error {
+	generate := &cobra.Command{Use: "generate [DIR]", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for MCP servers.\n\n" + dependencyHelp, Example: generateExamples, Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("contract") {
 			if len(args) > 0 || len(servers) > 0 {
 				return errors.New("--contract takes one SERVER and nothing else")
@@ -234,7 +225,7 @@ func NewTypesCommand() *cobra.Command {
 	}}
 	generate.Flags().StringVar(&contract, "contract", "", "Print one server's MCP contract instead of generating")
 	generate.Flags().StringVarP(&output, "output", "o", "", "Write the --contract document to FILE, such as holon-contract.json")
-	generate.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
+	generate.Flags().StringArrayVarP(&servers, "server", "s", nil, "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory")
 	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")
 	types.AddCommand(generate, newCheck("Type-check the project's calls to MCP servers"))
 
