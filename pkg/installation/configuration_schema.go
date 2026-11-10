@@ -14,6 +14,8 @@ var configurationSchemaNames = map[reflect.Type]string{
 	reflect.TypeFor[protocol.AppAccess]():         "CrdAppAccess",
 	reflect.TypeFor[protocol.AccessRule]():        "CrdAccessRule",
 	reflect.TypeFor[protocol.OAuthRequirement]():  "CrdOAuthRequirement",
+	reflect.TypeFor[protocol.Limits]():            "CrdLimits",
+	reflect.TypeFor[protocol.Limit]():             "CrdLimit",
 	reflect.TypeFor[protocol.Egress]():            "CrdEgress",
 	reflect.TypeFor[protocol.EgressDestination](): "CrdEgressDestination",
 	reflect.TypeFor[protocol.RegistrySource]():    "ContractRegistrySource",
