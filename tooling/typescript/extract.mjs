@@ -23,9 +23,13 @@ export async function serve(root, entry) {
     handler = exported;
     if (typeof exported?.fetch !== "function") {
       if (typeof exported?.registerTool !== "function") throw new Error("the default export is neither a createMcpHandler handler nor an McpServer");
-      // Serve it with the SDK copy the entry imports, so its McpServer and handler match.
+      // Serve it with the SDK copy the entry imports, so its McpServer and handler match. The handler
+      // wants an instance per request; the one instance serves each in turn, as requests come one at a time.
       const { createMcpHandler } = await sandbox.import(sandbox.resolve("@modelcontextprotocol/server", file));
-      handler = createMcpHandler(() => exported);
+      handler = createMcpHandler(async () => {
+        await exported.close();
+        return exported;
+      });
     }
     await relay(handler);
   } catch (error) {

@@ -71,14 +71,14 @@ export default createMcpHandler(() => {
   server.registerTool("list", list, () => ({ content: [] }));
   return server;
 }, { legacy: "reject" });`,
-    // A plain McpServer default export is served through the same SDK copy's createMcpHandler.
-    "plain.mjs": 'import { McpServer } from "@modelcontextprotocol/server"; export default new McpServer({ name: "plain", version: "1" });',
+    // A plain McpServer default export is served through the same SDK copy's createMcpHandler, one request at a time.
+    "plain.mjs": 'import { McpServer } from "@modelcontextprotocol/server"; const server = new McpServer({ name: "plain", version: "1" }); server.registerTool("echo", {}, () => ({ content: [] })); export default server;',
   });
   const extracted = extract([{ name: "orders", path: app, entry: "server.ts" }, { name: "plain", path: app, entry: "plain.mjs" }]);
   const [read, list] = extracted.orders.tools;
   assert.deepEqual([read.name, read.description, list.name], ["read", "Read an order", "list"]);
   assert.deepEqual(Object.keys(read.outputSchema.properties), ["id", "status"]);
-  assert.deepEqual(extracted.plain.tools, []);
+  assert.deepEqual(extracted.plain.tools.map(tool => tool.name), ["echo"], extracted.plain.diagnostic);
 });
 
 test("extraction uses the paths of a tsconfig in a parent directory, relative to that config", t => {
