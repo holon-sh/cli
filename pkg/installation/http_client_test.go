@@ -62,10 +62,7 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 				_, _ = io.WriteString(response, tc.body)
 				return response.Result(), nil
 			})
-			client, err := newAPIClient("https://apps.example.test", transport, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
+			client := newAPIClient("https://apps.example.test", transport, 0)
 			var body struct {
 				Content string `json:"content"`
 			}
@@ -74,7 +71,7 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 			if tc.stream {
 				request.Stream = &output
 			}
-			err = client.Do(t.Context(), http.MethodGet, "/request", request, &body)
+			err := client.Do(t.Context(), http.MethodGet, "/request", request, &body)
 			if tc.httpError != nil {
 				got, ok := errors.AsType[*httpError](err)
 				if !ok || *got != *tc.httpError || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), tc.httpError.Message) {
@@ -112,10 +109,7 @@ func TestAPIClientCancellation(t *testing.T) {
 					return nil, r.Context().Err()
 				})
 				transport.Timeout = time.Second
-				client, err := newAPIClient("https://api.example", transport, time.Second)
-				if err != nil {
-					t.Fatal(err)
-				}
+				client := newAPIClient("https://api.example", transport, time.Second)
 				request := apiRequest{Plane: protocol.DevPlane}
 				switch stage {
 				case "during request":
@@ -129,7 +123,7 @@ func TestAPIClientCancellation(t *testing.T) {
 					defer timer.Stop()
 				}
 				start := time.Now()
-				err = client.Do(ctx, http.MethodGet, "/me", request, nil)
+				err := client.Do(ctx, http.MethodGet, "/me", request, nil)
 				wantDuration := map[string]time.Duration{"deadline": time.Second, "stream": 2 * defaultHTTPTimeout}[stage]
 				if elapsed := time.Since(start); elapsed != wantDuration {
 					t.Fatalf("request duration = %v, want %v", elapsed, wantDuration)
@@ -143,23 +137,5 @@ func TestAPIClientCancellation(t *testing.T) {
 				}
 			})
 		})
-	}
-}
-
-func TestAPIClientCanonicalURL(t *testing.T) {
-	t.Parallel()
-	for _, value := range []string{
-		" https://example.com", "http://example.com", "https://user@example.com", "https://example.com//",
-		"https://example.com?x=1", "https://example.com#x", "https://192.0.2.1",
-		"https://localhost:99999", "https://cluster-local", "https://EXAMPLE.com",
-	} {
-		if _, err := newAPIClient(value, nil, 0); err == nil {
-			t.Fatalf("URL %q error %v", value, err)
-		}
-	}
-	for _, value := range []string{"https://example.com:443", "https://localhost:30443", "https://127.0.0.1:8080"} {
-		if client, err := newAPIClient(value, nil, 0); err != nil || client.baseURL != value {
-			t.Fatalf("URL %q client=%#v error=%v", value, client, err)
-		}
 	}
 }
