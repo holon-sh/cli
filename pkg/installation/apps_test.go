@@ -7,6 +7,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
@@ -21,9 +24,13 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		}
 	}
 	sessions := []protocol.SessionResponse{
-		{Name: "s-one", Revision: "1", Apps: []protocol.App{app("chat"), app("other")}},
+		{
+			Name: "s-one", Revision: "1", Apps: []protocol.App{app("chat"), app("other")}, ExpiresAt: "2026-11-10T12:08:20Z",
+			Endpoints: []protocol.SessionEndpoint{{Name: "chat", URL: "https://s-one.example/chat/mcp"}},
+		},
 		{Name: "s-two", Revision: "1", Apps: []protocol.App{app("chat")}},
 		{Name: "s-three", Revision: "1", Apps: []protocol.App{app("other")}},
+		{Name: "s-empty", Revision: "1", Apps: []protocol.App{}, ExpiresAt: "2026-11-11T11:59:00Z"},
 	}
 	h := newRunHarness(t)
 	var updates []string
@@ -56,12 +63,23 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		installationtest.WriteJSON(w, protocol.SessionResponse{Name: input.Session, Revision: "2"})
 	})
 	h.start(t, nil)
+	h.run.Clock = testingclock.NewFakeClock(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
 	for _, test := range []struct {
 		args    []string
 		updates []string
 		output  []string
 		err     string
 	}{
+		{
+			// Every session lists, with its expiry, including one whose apps were all removed.
+			args: []string{"app", "list"},
+			output: []string{
+				"s-one    8m       chat   https://s-one.example/chat/mcp  image registry.example/chat@",
+				"s-one    8m       other  -  ",
+				"s-two    -        chat",
+				"s-empty  23h59m   -\n",
+			},
+		},
 		{
 			args:    []string{"access", "set", "chat", "oauth", "app:chat:read"},
 			updates: []string{"s-one remove= chat:oauth app:chat:read", "s-two remove= chat:oauth app:chat:read"},
