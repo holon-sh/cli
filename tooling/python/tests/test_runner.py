@@ -83,39 +83,28 @@ def write(directory: Path, files: dict[str, str]) -> Path:
     return directory
 
 
-META = {
-    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-    "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1"},
-    "io.modelcontextprotocol/clientCapabilities": {},
-}
-REQUESTS = "".join(
-    json.dumps(
-        {"jsonrpc": "2.0", "id": id, "method": method, "params": {"_meta": META}}
-    )
-    + "\n"
-    for id, method in enumerate(["server/discover", "tools/list", "resources/list"])
-)
-
-
 def extract(apps: dict[str, tuple[Path, str]]) -> dict[str, dict]:
     """What each app's server lists, or its diagnostic and the package it missed."""
-    extractor = [sys.executable, str(ROOT / "extract.py"), "serve"]
+    methods = ["tools/list", "resources/list"]
+    extractor = [sys.executable, str(ROOT / "extract.py"), "contract"]
     results = {}
     for name, (root, entry) in apps.items():
         run = subprocess.run(
-            [*extractor, str(root), entry],
-            input=REQUESTS,
+            [*extractor, str(root), entry, "{}", *methods],
             capture_output=True,
             text=True,
             check=False,
         )
         assert run.returncode in (0, 2, 3), run.stderr
         if run.returncode == 0:
-            answers = [json.loads(line) for line in run.stdout.splitlines()]
-            lists = {answer["id"]: answer.get("result", {}) for answer in answers}
+            lists = json.loads(run.stdout)["lists"]
             results[name] = {
-                "tools": lists[1].get("tools", []),
-                "resources": lists[2].get("resources", []),
+                method.partition("/")[0]: [
+                    item
+                    for page in lists[method].get("pages", [])
+                    for item in page[method.partition("/")[0]]
+                ]
+                for method in methods
             }
         else:
             missing = run.stderr.splitlines()[-1] if run.returncode == 3 else None

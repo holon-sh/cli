@@ -2,7 +2,6 @@ package typegen
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/protocol"
-	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -135,10 +133,16 @@ func needNode(t *testing.T) {
 	}
 }
 
+// listing is what a runner prints for a server that lists tools.
+func listing(tools ...mcpcontract.Tool) extraction {
+	page, _ := json.Marshal(map[string]any{"tools": tools})
+	return extraction{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}, Lists: map[string]listed{"tools/list": {Pages: []json.RawMessage{page}}}}
+}
+
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
-// snapshot's server.json name, serving an extraction or returning an error as the runner's failure.
-func fakeRun(results map[string]any) func(context.Context, string, string, []string, []byte, io.Writer) error {
-	return func(ctx context.Context, _, tooling string, args []string, stdin []byte, stdout io.Writer) error {
+// snapshot's server.json name, printing an extraction or returning an error as the runner's failure.
+func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
+	return func(_ context.Context, _, tooling string, args []string, stdout io.Writer) error {
 		root, entry := args[1], args[2]
 		if !lexicallyInside(root, filepath.Dir(tooling)) || !isFile(filepath.Join(root, entry)) {
 			return fmt.Errorf("entry %s is not in a snapshot under %s: %s", entry, filepath.Dir(tooling), root)
@@ -149,67 +153,13 @@ func fakeRun(results map[string]any) func(context.Context, string, string, []str
 		}
 		switch result := results[descriptor.Name].(type) {
 		case extraction:
-			return serveCatalog(ctx, stdin, stdout, result)
+			return json.NewEncoder(stdout).Encode(result)
 		case error:
 			return result
 		default:
 			return fmt.Errorf("no fake result for %s", descriptor.Name)
 		}
 	}
-}
-
-func serveCatalog(ctx context.Context, stdin []byte, stdout io.Writer, result extraction) error {
-	info := &mcp.Implementation{Name: "example.com/fake", Version: "1.0.0"}
-	if result.ServerInfo != nil {
-		info = &mcp.Implementation{}
-		if err := json.Unmarshal(result.ServerInfo, info); err != nil {
-			return err
-		}
-	}
-	server := mcp.NewServer(info, &mcp.ServerOptions{PageSize: 1})
-	contract := cmp.Or(result.Contract, &mcpcontract.Contract{})
-	for _, tool := range contract.Tools {
-		server.AddTool(&mcp.Tool{Name: tool.Name, InputSchema: tool.Input, OutputSchema: tool.Output}, nil)
-	}
-	for _, resource := range contract.Resources {
-		server.AddResource(&mcp.Resource{URI: resource.URI, Name: resource.URI, Meta: mcp.Meta{"sh.holon/outputSchema": resource.Output}}, nil)
-	}
-	client, transport := mcp.NewInMemoryTransports()
-	if _, err := server.Connect(ctx, transport, nil); err != nil {
-		return err
-	}
-	connection, err := client.Connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer connection.Close()
-	var messages []jsonrpc.Message
-	for line := range bytes.Lines(stdin) {
-		message, err := jsonrpc.DecodeMessage(line)
-		if err != nil {
-			return err
-		}
-		messages = append(messages, message)
-	}
-	go func() {
-		for _, message := range messages {
-			_ = connection.Write(ctx, message)
-		}
-	}()
-	for _, message := range messages {
-		if request, ok := message.(*jsonrpc.Request); !ok || !request.IsCall() {
-			continue
-		}
-		answer, err := connection.Read(ctx)
-		if err != nil {
-			return err
-		}
-		data, _ := jsonrpc.EncodeMessage(answer)
-		if _, err := stdout.Write(append(data, '\n')); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 type registryResponse func(*http.Request) (*http.Response, error)

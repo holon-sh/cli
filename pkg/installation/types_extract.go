@@ -39,10 +39,10 @@ const checkerInstall = "python -m pip install --disable-pip-version-check --no-c
 
 // extractTypes is typegen's contract-runner hook. It runs the runner in the app's extraction image without
 // network access, so the server's imports resolve against the dependencies its image installs.
-func (o buildOptions) extractTypes(ctx context.Context, language, toolingDir string, args []string, stdin []byte, stdout io.Writer) error {
+func (o buildOptions) extractTypes(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error {
 	runner := contractRunners[language]
 	command := slices.Concat([]string{runner.program, "/holon-tooling/" + language + "/" + runner.runner, args[0], "/app"}, args[2:])
-	return o.runInImage(ctx, args[1], toolingDir, "", false, command, stdin, stdout)
+	return o.runInImage(ctx, args[1], toolingDir, "", false, command, stdout)
 }
 
 // checkTypes type-checks each path app that serves a contract against its generated clients, in the image
@@ -71,7 +71,7 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 	runner := contractRunners[language]
 	command := []string{runner.program, "/holon-tooling/" + language + "/" + runner.checker, "check", entry}
 	var output bytes.Buffer
-	err = o.runInImage(ctx, p.root, p.prepared.Tooling(), generated, language == "python", command, nil, &output)
+	err = o.runInImage(ctx, p.root, p.prepared.Tooling(), generated, language == "python", command, &output)
 	if failed := (*typegen.RunnerError)(nil); errors.As(err, &failed) {
 		return fmt.Errorf("%s does not type-check against its typed contracts:\n%s", p.name, strings.TrimSpace(output.String()+failed.Stderr))
 	}
@@ -80,10 +80,10 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 
 // runInImage builds source's image for this machine with Kiln, without the app's build step, which may need
 // the clients being prepared, and runs command there without network access, with the tooling at
-// /holon-tooling. It gives the command stdin, when there is one, and copies what the command printed to
-// stdout. With generated, it first copies those clients into the app, in a layer of their own so the
-// source's layers stay cached; with checker, the command can import the Python type checker.
-func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdin []byte, stdout io.Writer) error {
+// /holon-tooling. It copies what the command printed to stdout. With generated, it first copies those
+// clients into the app, in a layer of their own so the source's layers stay cached; with checker, the
+// command can import the Python type checker.
+func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdout io.Writer) error {
 	env, err := commandenv.Environ(o.Env)
 	if err != nil {
 		return err
@@ -121,27 +121,18 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 		args = append(args, "--build-context", "generated="+generated)
 		recipe += "COPY --from=generated . /app/\n"
 	}
-	work, err := os.MkdirTemp("", "holon-types-run-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(work)
-	input := "/dev/null"
-	if stdin != nil {
-		if err := os.WriteFile(filepath.Join(work, "stdin"), stdin, 0o600); err != nil {
-			return err
-		}
-		args = append(args, "--build-context", "input="+work)
-		mounts += " --mount=type=bind,from=input,source=stdin,target=/holon-stdin,readonly"
-		input = "/holon-stdin"
-	}
 	words := make([]string, len(command))
 	for i, word := range command {
 		words[i] = "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
 	}
 	recipe += fmt.Sprintf("RUN --network=none %s mkdir /tmp/contract && "+
-		"{ %s <%s >/tmp/contract/stdout 2>/tmp/contract/stderr; echo $? >/tmp/contract/status; }\n"+
-		"FROM scratch\nCOPY --from=contract /tmp/contract/ /\n", mounts, strings.Join(words, " "), input)
+		"{ %s >/tmp/contract/stdout 2>/tmp/contract/stderr; echo $? >/tmp/contract/status; }\n"+
+		"FROM scratch\nCOPY --from=contract /tmp/contract/ /\n", mounts, strings.Join(words, " "))
+	work, err := os.MkdirTemp("", "holon-types-run-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(work)
 	dockerfile, exported := filepath.Join(work, "Dockerfile"), filepath.Join(work, "output")
 	if err := os.WriteFile(dockerfile, []byte(recipe), 0o600); err != nil {
 		return err

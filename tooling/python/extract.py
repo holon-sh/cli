@@ -1,11 +1,11 @@
-"""Serve an application's MCP server over stdio, so the CLI can ask it for its contract.
+"""Run an application's MCP server and record what it answers to the list requests the CLI names.
 
-Usage: extract.py serve ROOT ENTRY. The server answers the MCP messages on stdin, writing its
-answers to stdout, and exits once it has answered every request; a failure is a diagnostic on
-stderr with status 2, or status 3 with the uninstalled package's name as the last line. The runner
-re-runs itself without site packages or the caller's environment, where an import finder serves the
-application's files, the standard library and its environment's installed packages (mcp and pydantic
-among them), and names
+Usage: extract.py contract ROOT ENTRY EXTENSIONS METHOD... The server's description and
+capabilities, and its pages or error for each list METHOD, asked by a client that advertises the
+EXTENSIONS JSON object, are printed on stdout; a failure is a diagnostic on stderr with status 2,
+or status 3 with the uninstalled package's name as the last line. The runner re-runs itself without
+site packages or the caller's environment, where an import finder serves the application's files, the
+standard library and its environment's installed packages (mcp and pydantic among them), and names
 any module it cannot serve. The server sees the same world on every machine: an empty
 environment, a fixed clock and seeded randomness, so its contract is the same everywhere. Reading
 files outside the application, its packages and the standard library, writing files, sockets and
@@ -22,6 +22,7 @@ import importlib.abc
 import importlib.machinery
 import importlib.util
 import io
+import json
 import os
 import random
 import socket
@@ -210,7 +211,7 @@ def forbid(owner: ModuleType, names: str, capability: str) -> None:
 
 
 class Loop(asyncio.SelectorEventLoop):
-    """The event loop keeps a running clock under the frozen one."""
+    """The client's event loop keeps a running clock under the frozen one."""
 
     def time(self) -> float:
         return MONOTONIC()
@@ -234,63 +235,78 @@ def find_server(module: object) -> MCPServer | Server[Any]:
     )
 
 
-async def serve(server: MCPServer | Server[Any], batch: str, stdout: TextIO) -> None:
-    """Answer each JSON-RPC message in batch, a line each on stdout, and return once every
-    request has its answer."""
-    import anyio
-    import mcp_types as types
+async def catalog(
+    server: MCPServer | Server[Any], extensions: dict[str, Any], methods: list[str]
+) -> dict[str, Any]:
+    from mcp import types
+    from mcp.client import Client
+    from mcp.client.extension import advertise
     from mcp.server import MCPServer
     from mcp.server.lowlevel.server import lifespan
-    from mcp.shared.memory import create_client_server_memory_streams
-    from mcp.shared.message import SessionMessage
+    from pydantic import BaseModel, ConfigDict
 
-    # A lifespan is the server's startup, which serving a connection enters
-    # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/lowlevel/server.py#L722).
+    # A lifespan is the server's startup, which an in-process Client enters before listing
+    # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/client/client.py#L118).
     # Listing the catalog does not start the server, so the SDK's no-op lifespan stands in
     # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/lowlevel/server.py#L115-L117).
     lowlevel = server._lowlevel_server if isinstance(server, MCPServer) else server
     lowlevel.lifespan = lifespan
-    messages = [
-        types.jsonrpc_message_adapter.validate_json(line, by_name=False)
-        for line in batch.splitlines()
-        if line.strip()
+
+    class Page(BaseModel):
+        """A result recorded as the server wrote it."""
+
+        model_config = ConfigDict(extra="allow")
+
+    advertised = [advertise(name, settings) for name, settings in extensions.items()]
+    lists: dict[str, Any] = {}
+    async with Client(server, extensions=advertised) as client:
+        for method in methods:
+            pages: list[dict[str, Any]] = []
+            try:
+                while not pages or pages[-1].get("nextCursor"):
+                    cursor = pages[-1]["nextCursor"] if pages else None
+                    request = types.Request[types.PaginatedRequestParams, str](
+                        method=method,
+                        params=types.PaginatedRequestParams(cursor=cursor),
+                    )
+                    answered = await client.session.send_request(request, Page)
+                    pages.append(answered.model_dump())
+                lists[method] = {"pages": pages}
+            except Exception as error:  # noqa: BLE001 - the CLI judges each method's failure
+                lists[method] = {"error": diagnostic(error)}
+        info, capabilities = client.server_info, client.server_capabilities
+    return {
+        "serverInfo": info.model_dump(by_alias=True, exclude_none=True) if info else {},
+        "capabilities": capabilities.model_dump(by_alias=True, exclude_none=True)
+        if capabilities
+        else {},
+        "lists": lists,
+    }
+
+
+def diagnostic(error: BaseException) -> str:
+    """A traceback of the application's frames, ending with error."""
+    frames = [
+        frame
+        for frame in traceback.extract_tb(error.__traceback__)
+        if frame.filename != __file__ and not frame.filename.startswith("<frozen")
     ]
-    # The server cancels requests in flight when its input ends, so it ends once all are answered.
-    pending = {m.id for m in messages if isinstance(m, types.JSONRPCRequest)}
-    streams = create_client_server_memory_streams()
-    async with streams as ((answers, requests), (server_read, server_write)):
-
-        async def send() -> None:
-            for message in messages:
-                await requests.send(SessionMessage(message))
-            if not pending:
-                await requests.aclose()
-
-        async def write() -> None:
-            async for answer in answers:
-                if isinstance(answer, Exception):
-                    raise answer
-                message = answer.message
-                stdout.write(
-                    message.model_dump_json(by_alias=True, exclude_unset=True) + "\n"
-                )
-                stdout.flush()
-                if isinstance(message, (types.JSONRPCResponse, types.JSONRPCError)):
-                    pending.discard(message.id)
-                    if not pending:
-                        await requests.aclose()
-
-        async with anyio.create_task_group() as group:
-            group.start_soon(send)
-            group.start_soon(write)
-            await lowlevel.run(
-                server_read, server_write, lowlevel.create_initialization_options()
-            )
-            group.cancel_scope.cancel()
+    trace = traceback.format_list(frames)
+    if isinstance(error, MissingModule):
+        trace.append(f"{type(error).__name__}: {error}\n")
+    else:
+        trace += traceback.format_exception_only(error)
+    return f"Traceback (most recent call last):\n{''.join(trace)}"
 
 
-def serve_entry(root: Path, entry: str, batch: str, stdout: TextIO) -> int:
-    """Run one entry and answer batch with its server on stdout; return the exit status."""
+def contract(
+    root: Path,
+    entry: str,
+    extensions: dict[str, Any],
+    methods: list[str],
+    stdout: TextIO,
+) -> int:
+    """Run one entry, ask its server for each method's pages and print them; return the exit status."""
     os.chdir(root)  # relative paths name application files, wherever the runner started
     path = root / entry
     finder = Finder(root, path)
@@ -304,40 +320,32 @@ def serve_entry(root: Path, entry: str, batch: str, stdout: TextIO) -> int:
             raise ImportError(f"cannot import {path}")
         module = sys.modules[path.stem] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        loop.run_until_complete(serve(find_server(module), batch, stdout))
-    except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
-        frames = [
-            frame
-            for frame in traceback.extract_tb(error.__traceback__)
-            if frame.filename != __file__ and not frame.filename.startswith("<frozen")
-        ]
-        trace = traceback.format_list(frames)
-        if isinstance(error, MissingModule):
-            trace.append(f"{type(error).__name__}: {error}\n")
-        else:
-            trace += traceback.format_exception_only(error)
-        sys.stderr.write(
-            f"{entry}: Traceback (most recent call last):\n{''.join(trace)}"
+        result = loop.run_until_complete(
+            catalog(find_server(module), extensions, methods)
         )
+    except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
+        sys.stderr.write(f"{entry}: {diagnostic(error)}")
         if isinstance(error, MissingModule) and error.name:
             sys.stderr.write(error.name.partition(".")[0] + "\n")
             return 3
         return 2
+    json.dump(result, stdout)
+    stdout.flush()  # Python 3.11 loses it at exit once the server's world is frozen
     return 0
 
 
 if __name__ == "__main__":
-    mode, root, entry = sys.argv[1:]
-    if mode != "serve":
+    mode, root, entry, extensions, *methods = sys.argv[1:]
+    if mode != "contract":
         sys.exit(f"unknown operation {mode}")
     if not sys.flags.no_site:
         # Without site packages, the caller's environment or bytecode beside the sources, and with
         # the same string hashes, so set order does not vary between runs.
         argv = [sys.executable, "-s", "-S", "-P", "-B", *sys.argv]
         os.execve(sys.executable, argv, {"PYTHONHASHSEED": "0"})
-    # MCP is all that stdin and stdout carry; the application reads nothing, and what it prints goes to
-    # stderr.
-    batch, stdout = sys.stdin.read(), os.fdopen(os.dup(1), "w")
-    os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+    # The contract is all that stdout carries; whatever the application prints goes to stderr.
+    stdout = os.fdopen(os.dup(1), "w")
     os.dup2(2, 1)
-    sys.exit(serve_entry(Path(root).resolve(), entry, batch, stdout))
+    sys.exit(
+        contract(Path(root).resolve(), entry, json.loads(extensions), methods, stdout)
+    )

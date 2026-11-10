@@ -18,11 +18,27 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// extraction is what a runner prints: the server's description and capabilities, and each list's
+// pages or the error listing it.
 type extraction struct {
-	Contract   *mcpcontract.Contract
-	ServerInfo json.RawMessage
+	ServerInfo   json.RawMessage         `json:"serverInfo"`
+	Capabilities *mcp.ServerCapabilities `json:"capabilities"`
+	Lists        map[string]listed       `json:"lists"`
+}
+
+type listed struct {
+	Pages []json.RawMessage `json:"pages"`
+	Error string            `json:"error"`
+}
+
+func (e *extraction) pages(method string) ([]json.RawMessage, error) {
+	if list := e.Lists[method]; list.Error != "" {
+		return nil, errors.New(list.Error)
+	}
+	return e.Lists[method].Pages, nil
 }
 
 // RunnerError is a contract runner's failure: the status it exited with and what it wrote to
@@ -167,14 +183,19 @@ func (s *preparedSource) committedContract(ctx context.Context) (*Document, erro
 	return document, nil
 }
 
+// runServer runs the source's server, in dir, through its language's contract runner and parses
+// what it prints.
 func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Options) (*extraction, error) {
-	args := []string{"serve", dir, s.entry}
-	result, err := converse(ctx, func(stdin []byte, stdout io.Writer) error {
-		if o.Run != nil {
-			return o.Run(ctx, s.language, tooling, args, stdin, stdout)
-		}
-		return runLocal(ctx, tooling, s.language, args, stdin, stdout, o.Env)
-	})
+	extensions, _ := json.Marshal(clientExtensions)
+	args := []string{"contract", dir, s.entry, string(extensions)}
+	args = append(args, catalogMethods...)
+	var stdout bytes.Buffer
+	var err error
+	if o.Run != nil {
+		err = o.Run(ctx, s.language, tooling, args, &stdout)
+	} else {
+		err = runLocal(ctx, tooling, s.language, args, &stdout, o.Env)
+	}
 	var failed *RunnerError
 	switch {
 	case errors.As(err, &failed) && failed.Status == 3:
@@ -185,13 +206,17 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	case err != nil:
 		return nil, fmt.Errorf("%s: %w", s.origin, err)
 	}
+	result := &extraction{}
+	if err := json.Unmarshal(stdout.Bytes(), result); err != nil {
+		return nil, fmt.Errorf("%s: the contract runner printed no answers: %w", s.origin, err)
+	}
 	return result, nil
 }
 
 // runLocal runs a contract runner on the host. A Python server (args[1]) runs in its own environment; the
 // host's interpreter, whose mcp and pydantic serve a server that needs nothing else, runs one with no
 // environment or one whose environment is too old or lacks them.
-func runLocal(ctx context.Context, tooling, language string, args []string, stdin []byte, stdout io.Writer, env []string) error {
+func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
 	if err := validateEnv(env); err != nil {
 		return err
 	}
@@ -202,10 +227,10 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdi
 		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
 		command.Env = append(command.Environ(), env...)
 		var stderr bytes.Buffer
-		command.Stdin, command.Stdout, command.Stderr = bytes.NewReader(stdin), stdout, &stderr
+		command.Stdout, command.Stderr = stdout, &stderr
 		err := command.Run()
 		if errors.Is(limited.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			return fmt.Errorf("%s: did not answer within %s", args[2], serverTimeout)
+			return fmt.Errorf("%s: no catalog within %s", args[2], serverTimeout)
 		}
 		if exit := (*exec.ExitError)(nil); errors.As(err, &exit) {
 			return &RunnerError{Status: exit.ExitCode(), Stderr: stderr.String()}

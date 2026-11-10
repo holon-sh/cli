@@ -8,8 +8,6 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { unzipSync } from "fflate";
 
 const archive = new URL("../../../pkg/tooling/cli-tooling-ts.zip", import.meta.url);
-const meta = { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientInfo": { name: "test", version: "1" }, "io.modelcontextprotocol/clientCapabilities": {} };
-const requests = ["server/discover", "tools/list"].map((method, id) => `${JSON.stringify({ jsonrpc: "2.0", id, method, params: { _meta: meta } })}\n`).join("");
 
 // Exercise the archive embedded by the CLI, outside the development dependency tree.
 function unpackTooling(t) {
@@ -23,11 +21,11 @@ function unpackTooling(t) {
   const check = (cwd, entry) => execFileSync(process.execPath, [join(tooling, "check.mjs"), "check", entry], { cwd, encoding: "utf8", stdio: "pipe" });
   // extract returns the tools each app's server lists, or its diagnostic and the package it missed.
   const extract = (apps, env = process.env) => Object.fromEntries(apps.map(({ name, path, entry }) => {
-    const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "serve", path, entry], { input: requests, encoding: "utf8", env });
+    const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "contract", path, entry, "{}", "tools/list"], { encoding: "utf8", env });
     assert.ok([0, 2, 3].includes(status), stderr);
     if (status !== 0) return [name, { diagnostic: stderr, missing: status === 3 ? stderr.trimEnd().split("\n").at(-1) : undefined }];
-    const answers = Object.fromEntries(stdout.trim().split("\n").map(line => JSON.parse(line)).map(({ id, result }) => [id, result]));
-    return [name, { tools: answers[1]?.tools ?? [] }];
+    const { pages, error } = JSON.parse(stdout).lists["tools/list"];
+    return [name, { tools: pages?.flatMap(page => page.tools) ?? [], diagnostic: error }];
   }));
   return { root, check, extract };
 }

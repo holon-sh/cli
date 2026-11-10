@@ -31,7 +31,7 @@ export function createApps(bindings, options) { return bindApps(identity, {}, bi
 
 export function createSandbox(root, vendor) {
   root = realpathSync(root);
-  // Whatever the application logs goes to stderr: stdout carries only MCP messages.
+  // Whatever the application logs goes to stderr: stdout carries only the contract.
   const context = vm.createContext({ console: new console.Console(process.stderr) });
   for (const name of ["URL", "URLSearchParams", "Headers", "Request", "Response", "ReadableStream", "TextEncoder", "TextDecoder", "AbortController", "AbortSignal", "Event", "EventTarget", "TransformStream"]) context[name] = globalThis[name];
   // A stub fails when called, constructed or read, so the application's stack trace names the line.
