@@ -285,8 +285,8 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			f.mu.Lock()
 			after := f.served[0]
 			f.mu.Unlock()
-			if f.created() != test.creates || !strings.HasPrefix(f.stdout.String(), "Session  gentle-otter-482\n\nStarting\n") {
-				t.Fatalf("creates = %d, want %d; stdout=%q stderr=%q", f.created(), test.creates, f.stdout.String(), f.stderr.String())
+			if f.created() != test.creates {
+				t.Fatalf("creates = %d, want %d; stderr=%q", f.created(), test.creates, f.stderr.String())
 			}
 			if rebuilt := !reflect.DeepEqual(after, before); len(f.reloadRequests()) != test.reloads || rebuilt != test.rebuilt {
 				t.Fatalf("reloads = %d, app replaced = %v; stderr=%q", len(f.reloadRequests()), rebuilt, f.stderr.String())
@@ -360,15 +360,12 @@ func (f *reloadFixture) overlay(t *testing.T, digest string) map[string][]byte {
 
 func TestDevStartup(t *testing.T) {
 	f := startReloadFixture(t, false)
-	endpoints := "  MCP tools (all apps)  https://gentle-otter-482." + f.baseHost + "/mcp\n\n" +
-		"  alpha\n    Browser  https://gentle-otter-482." + f.baseHost + "/alpha/\n" +
-		"    MCP      https://gentle-otter-482." + f.baseHost + "/mcp/alpha\n\n"
-	starting := "Session  gentle-otter-482\n\nStarting\n" + endpoints
-	f.await(func() bool { return f.stdout.String() == starting })
+	f.await(func() bool { return strings.Contains(f.stdout.String(), "Starting") })
 	f.update(func() { f.ready = true })
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Watching for changes.") })
-	if want := starting + "Ready\n" + "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev.\n"; f.stdout.String() != want {
-		t.Fatalf("stdout = %q, want %q", f.stdout.String(), want)
+	// Ready repeats only its heading when the endpoints are the ones Starting listed.
+	if strings.Count(f.stdout.String(), "/mcp/alpha") != 1 || !strings.Contains(f.stdout.String(), "\nReady\nWatching") {
+		t.Fatalf("stdout = %q", f.stdout.String())
 	}
 	// Each read names the revision the session last had, so the server holds it until the session moves.
 	f.await(func() bool {

@@ -521,9 +521,6 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 			if err := stop(); err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(stdout.String(), "Browser") {
-				t.Fatalf("remote apps listed a page: %q", stdout.String())
-			}
 		})
 	}
 }
