@@ -249,6 +249,18 @@ async def use() -> None:
             event.data["edits"][0]["code"]
 `)
 		mustReject(t, app, `Literal['cells.edit']`, `Extra key "notbook"`, `has no key "code"`)
+		if err := os.Remove(filepath.Join(app, "holon/ext/events.pyi")); err != nil {
+			t.Fatal(err)
+		}
+		put(t, app, "main.py", "from holon.apps import apps\n")
+		if output, err := check(t, app); err != nil {
+			t.Fatalf("check without holon.ext.events: %v\n%s", err, output)
+		}
+		imports := exec.CommandContext(t.Context(), pythonEnvironment(app, ""), "-c", "import holon.apps")
+		imports.Dir = app
+		if output, err := imports.CombinedOutput(); err != nil {
+			t.Fatalf("import without holon.ext.events: %v\n%s", err, output)
+		}
 	})
 }
 

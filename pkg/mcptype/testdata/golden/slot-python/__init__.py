@@ -15,7 +15,9 @@ import builtins as _builtins
 import typing as _typing
 
 from holon.ext.files import File as _File
-from holon.ext.events import Subscription as _Subscription
+
+if _typing.TYPE_CHECKING:
+    from holon.ext.events import Subscription as _Subscription  # type: ignore[import-not-found, unused-ignore]
 
 MysqlInputLabeledColumn = _typing.TypedDict("MysqlInputLabeledColumn", {"column": _builtins.str, "label": _builtins.str})
 

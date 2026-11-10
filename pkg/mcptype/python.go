@@ -345,11 +345,8 @@ func generatePython(contracts, events map[string]catalog) string {
 	if emitter.files {
 		imports += "\n\nfrom holon.ext.files import File as _File"
 	}
-	if emitter.events && !emitter.files {
-		imports += "\n"
-	}
 	if emitter.events {
-		imports += "\nfrom holon.ext.events import Subscription as _Subscription"
+		imports += "\n\nif _typing.TYPE_CHECKING:\n    from holon.ext.events import Subscription as _Subscription  # type: ignore[import-not-found, unused-ignore]"
 	}
 	sections := []string{imports}
 	sections = append(sections, emitter.shapes...)
