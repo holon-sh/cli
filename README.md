@@ -46,16 +46,17 @@ Declare dependencies under `sh.holon.requires` in a [`server.json`](https://mode
 
 ### Types
 
-Generate the typed clients and type-check the calls to them.
+Generate the typed clients, then type-check the calls to them. `holon types check` only reads, so it also runs beside `holon dev`, which keeps the clients current.
 
 ```sh
+holon types generate
 holon types check
 ```
 
 Or name the servers yourself. Any `-s` replaces the whole `requires` list, so `server.json` is not needed.
 
 ```sh
-holon types check -s huggingface=https://huggingface.co/mcp
+holon types generate -s huggingface=https://huggingface.co/mcp
 ```
 
 Call the server. A wrong tool name or argument is a type error.
@@ -119,7 +120,8 @@ def greet(name: str) -> str:
 Pass its entry file with `-s`.
 
 ```sh
-holon types check foo -s bar/server.py
+holon types generate foo -s bar/server.py
+holon types check foo
 ```
 
 <details open>
