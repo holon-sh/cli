@@ -25,9 +25,8 @@ const (
 
 func newAppCommand(config *commandConfig) *cobra.Command {
 	return commandGroup("app", "Inspect and remove deployed apps",
-		withScope(&cobra.Command{Use: "list", Short: "List sessions and their apps with expiry, URL, source, access and egress", Args: cobra.NoArgs,
-			Long: "List every development session and its apps. A session whose apps were all removed stays listed until it expires.",
-			Example: `  # List every development session and its apps
+		withScope(&cobra.Command{Use: "list", Short: "List apps with their source, access and egress", Args: cobra.NoArgs,
+			Example: `  # List the apps of every development session
   holon app list
 
   # Production, or one development session
