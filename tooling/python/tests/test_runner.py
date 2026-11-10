@@ -36,47 +36,15 @@ LIFESPAN = """
 
 # A src entry imports from the application root, and reads files there.
 SERVER = """
-    import json
-
-    from mcp import types
     from mcp.server import MCPServer
-    from mcp.server.extension import Extension, MethodBinding
     from catalog.region import Region
     from src.lifespan import lifespan
     from src.models import Order
 
-    # MCP Events served without an SDK of its own: events/list in two pages.
-    class Events(Extension):
-        identifier = "io.modelcontextprotocol/events"
+    server = MCPServer("orders", lifespan=lifespan)
 
-        def methods(self):
-            async def listed(context, params):
-                if params.cursor:
-                    opened = {"name": "order.opened", "delivery": ["poll"], "inputSchema": {"type": "object"}, "payloadSchema": {}}
-                    return {"events": [opened]}
-                shipped = {"name": "order.shipped", "delivery": ["poll"], "inputSchema": {"type": "object"}, "payloadSchema": Order.model_json_schema()}
-                return {"events": [shipped], "nextCursor": "2"}
-
-            return [MethodBinding("events/list", types.PaginatedRequestParams, listed)]
-
-    server = MCPServer("orders", lifespan=lifespan, extensions=[Events()])
-
-    @server.tool()
+    @server.tool(description=open("read.txt").read())
     def read(id: str, region: Region = Region.EU) -> Order:
-        raise RuntimeError("must not be called")
-
-    ORDER = json.load(open("order.json"))
-
-    @server.resource(
-        "orders://latest",
-        mime_type="application/json",
-        meta={"sh.holon/outputSchema": ORDER},
-    )
-    def latest() -> Order:
-        raise RuntimeError("must not be called")
-
-    @server.resource("ui://orders/app.html", mime_type="text/html")
-    def page() -> str:
         raise RuntimeError("must not be called")
 
     if __name__ == "__main__":
@@ -104,16 +72,22 @@ def write(directory: Path, files: dict[str, str]) -> Path:
 
 
 def extract(apps: dict[str, tuple[Path, str]]) -> dict[str, dict]:
-    """Each app's contract, or its diagnostic and the package it missed."""
+    """The tools each app's server lists, or its diagnostic and the package it missed."""
     extractor = [sys.executable, str(ROOT / "extract.py"), "contract"]
     results = {}
     for name, (root, entry) in apps.items():
         run = subprocess.run(
-            [*extractor, str(root), entry], capture_output=True, text=True, check=False
+            [*extractor, str(root), entry, "{}", "tools/list"],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         assert run.returncode in (0, 2, 3), run.stderr
         if run.returncode == 0:
-            results[name] = json.loads(run.stdout)
+            pages = json.loads(run.stdout)["lists"]["tools/list"]["pages"]
+            results[name] = {
+                "tools": [tool for page in pages for tool in page["tools"]]
+            }
         else:
             missing = run.stderr.splitlines()[-1] if run.returncode == 3 else None
             results[name] = {"diagnostic": run.stderr, "missing": missing}
@@ -127,35 +101,16 @@ def test_the_bundle_extracts_each_servers_catalog(tmp_path):
         "src/lifespan.py": LIFESPAN,
     }
     files |= {"catalog/__init__.py": "", "catalog/region.py": REGION}
-    files["order.json"] = '{"type": "object", "properties": {"id": {"type": "string"}}}'
+    files["read.txt"] = "Read an order"
     orders = write(tmp_path / "orders", files)
     low = write(tmp_path / "low", {"server.py": LOW_LEVEL, "lifespan.py": LIFESPAN})
     result = extract(
         {"orders": (orders, "src/server.py"), "low": (low, "server.py")},
     )
 
-    contract = result["orders"]
-    assert [tool["name"] for tool in contract["tools"]] == ["read"]
-    assert contract["resources"] == [
-        {
-            "uri": "orders://latest",
-            "outputSchema": {
-                "type": "object",
-                "properties": {"id": {"type": "string"}},
-            },
-        },
-        {"uri": "ui://orders/app.html", "outputSchema": {}},
-    ]
-    opened, shipped = contract["events"]
-    assert opened == {
-        "name": "order.opened",
-        "inputSchema": {"type": "object"},
-        "payloadSchema": {},
-    }
-    assert shipped["name"] == "order.shipped"
-    assert list(shipped["payloadSchema"]["properties"]) == ["id"]
+    [read] = result["orders"]["tools"]
+    assert [read["name"], read["description"]] == ["read", "Read an order"]
     assert [tool["name"] for tool in result["low"]["tools"]] == ["lookup"]
-    assert result["low"]["events"] == []
 
 
 FROZEN = """

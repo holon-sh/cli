@@ -18,14 +18,26 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// extraction is the contract a runner prints: the server's catalog and its own description.
 type extraction struct {
-	Tools      []mcpcontract.Tool     `json:"tools"`
-	Resources  []mcpcontract.Resource `json:"resources"`
-	Events     []mcpcontract.Event    `json:"events"`
-	ServerInfo json.RawMessage        `json:"serverInfo"`
+	ServerInfo   json.RawMessage         `json:"serverInfo"`
+	Capabilities *mcp.ServerCapabilities `json:"capabilities"`
+	Lists        map[string]listed       `json:"lists"`
+}
+
+type listed struct {
+	Pages []json.RawMessage `json:"pages"`
+	Error string            `json:"error"`
+}
+
+func (e *extraction) pages(method string) ([]json.RawMessage, error) {
+	list := e.Lists[method]
+	if list.Error != "" {
+		return nil, errors.New(list.Error)
+	}
+	return list.Pages, nil
 }
 
 // RunnerError is a contract runner's failure: the status it exited with and what it wrote to
@@ -170,10 +182,9 @@ func (s *preparedSource) committedContract(ctx context.Context) (*Document, erro
 	return document, nil
 }
 
-// runServer runs the source's server, in dir, through its language's contract runner and parses
-// the contract it prints.
 func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Options) (*extraction, error) {
-	args := []string{"contract", dir, s.entry}
+	extensions, _ := json.Marshal(clientExtensions)
+	args := append([]string{"contract", dir, s.entry, string(extensions)}, catalogMethods...)
 	var stdout bytes.Buffer
 	var err error
 	if o.Run != nil {
@@ -193,7 +204,7 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	}
 	result := &extraction{}
 	if err := json.Unmarshal(stdout.Bytes(), result); err != nil {
-		return nil, fmt.Errorf("%s: the contract runner printed no contract: %w", s.origin, err)
+		return nil, fmt.Errorf("%s: the contract runner printed no answers: %w", s.origin, err)
 	}
 	return result, nil
 }

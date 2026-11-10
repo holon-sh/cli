@@ -1,9 +1,10 @@
-"""Obtain an application's MCP contract by running its server and asking it.
+"""Run an application's MCP server and record what it answers to the list requests the CLI names.
 
-Usage: extract.py contract ROOT ENTRY. The contract (the server's tools, resources, events and its
-own description) is printed on stdout; a failure is a diagnostic on stderr with status 2, or status 3
-with the uninstalled package's name as the last line. The runner re-runs itself without site
-packages or the caller's environment, where an import finder serves the application's files, the
+Usage: extract.py contract ROOT ENTRY EXTENSIONS METHOD... The server's description and
+capabilities, and its pages or error for each list METHOD, asked by a client that advertises the
+EXTENSIONS JSON object, are printed on stdout; a failure is a diagnostic on stderr with status 2,
+or status 3 with the uninstalled package's name as the last line. The runner re-runs itself without
+site packages or the caller's environment, where an import finder serves the application's files, the
 standard library and its environment's installed packages (mcp and pydantic among them), and names
 any module it cannot serve. The server sees the same world on every machine: an empty
 environment, a fixed clock and seeded randomness, so its contract is the same everywhere. Reading
@@ -38,10 +39,6 @@ from typing import TYPE_CHECKING, Any, NoReturn, Self, TextIO
 if TYPE_CHECKING:
     from mcp.server import MCPServer, Server
 
-RESOURCE_SCHEMA = "sh.holon/outputSchema"
-# MCP Events, the draft extension of the Triggers & Events Working Group: a server that declares it
-# answers events/list, however it serves it.
-EVENTS_EXTENSION = "io.modelcontextprotocol/events"
 STDLIB = Path(sysconfig.get_paths()["stdlib"]).resolve()
 EPOCH = 315532800  # 1980-01-01T00:00:00Z, the instant the frozen clock shows
 MONOTONIC = time.monotonic
@@ -238,15 +235,15 @@ def find_server(module: object) -> MCPServer | Server[Any]:
     )
 
 
-async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
+async def catalog(
+    server: MCPServer | Server[Any], extensions: dict[str, Any], methods: list[str]
+) -> dict[str, Any]:
     from mcp import types
     from mcp.client import Client
     from mcp.client.extension import advertise
     from mcp.server import MCPServer
     from mcp.server.lowlevel.server import lifespan
-
-    class ListEventsResult(types.PaginatedResult):
-        events: list[dict[str, Any]]
+    from pydantic import BaseModel, ConfigDict
 
     # A lifespan is the server's startup, which an in-process Client enters before listing
     # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/client/client.py#L118).
@@ -254,67 +251,62 @@ async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
     # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/lowlevel/server.py#L115-L117).
     lowlevel = server._lowlevel_server if isinstance(server, MCPServer) else server
     lowlevel.lifespan = lifespan
-    tools: list[dict[str, Any]] = []
-    resources: list[dict[str, Any]] = []
-    events: list[dict[str, Any]] = []
-    # Generated clients send files, so the contract lists the tools a server shows only to clients that do
-    # (https://github.com/modelcontextprotocol/experimental-ext-file-uploads/blob/main/specification/draft/file-uploads.md#backward-compatibility).
-    files = advertise("io.modelcontextprotocol/files", {"upload": {}, "download": {}})
-    async with Client(server, extensions=[files]) as client:
-        info = client.server_info
-        capabilities = client.server_capabilities
-        cursor = None
-        while capabilities and capabilities.tools:
-            page = await client.list_tools(cursor=cursor)
-            for tool in page.tools:
-                schemas = {"inputSchema": tool.input_schema}
-                if tool.output_schema is not None:
-                    schemas["outputSchema"] = tool.output_schema
-                tools.append({"name": tool.name, **schemas})
-            if not (cursor := page.next_cursor):
-                break
-        while capabilities and capabilities.resources:
-            listed = await client.list_resources(cursor=cursor)
-            # Like a live server's contract, a resource is typed only by its sh.holon/outputSchema.
-            resources += [
-                {
-                    "uri": str(r.uri),
-                    "outputSchema": (r.meta or {}).get(RESOURCE_SCHEMA, {}),
-                }
-                for r in listed.resources
-            ]
-            if not (cursor := listed.next_cursor):
-                break
-        # An mcp that predates extensions has no such field.
-        extensions = getattr(capabilities, "extensions", None) or {}
-        while EVENTS_EXTENSION in extensions:
-            # The SDK sends a method outside the specification as a generic request.
+
+    class Page(BaseModel):
+        """A result recorded as the server wrote it."""
+
+        model_config = ConfigDict(extra="allow")
+
+    advertised = [advertise(name, settings) for name, settings in extensions.items()]
+    lists: dict[str, Any] = {}
+    async with Client(server, extensions=advertised) as client:
+        for method in methods:
+            pages: list[dict[str, Any]] = []
             try:
-                answered = await client.session.send_request(
-                    types.Request[types.PaginatedRequestParams, str](
-                        method="events/list",
+                while not pages or pages[-1].get("nextCursor"):
+                    cursor = pages[-1]["nextCursor"] if pages else None
+                    request = types.Request[types.PaginatedRequestParams, str](
+                        method=method,
                         params=types.PaginatedRequestParams(cursor=cursor),
-                    ),
-                    ListEventsResult,
-                )
-            except Exception as error:
-                raise RuntimeError(f"listing its events failed: {error}") from error
-            events += [
-                {key: event[key] for key in ("name", "inputSchema", "payloadSchema")}
-                for event in answered.events
-            ]
-            if not (cursor := answered.next_cursor):
-                break
+                    )
+                    answered = await client.session.send_request(request, Page)
+                    pages.append(answered.model_dump())
+                lists[method] = {"pages": pages}
+            except Exception as error:  # noqa: BLE001
+                lists[method] = {"error": diagnostic(error)}
+        info, capabilities = client.server_info, client.server_capabilities
     return {
         "serverInfo": info.model_dump(by_alias=True, exclude_none=True) if info else {},
-        "tools": sorted(tools, key=lambda tool: tool["name"]),
-        "resources": sorted(resources, key=lambda resource: resource["uri"]),
-        "events": sorted(events, key=lambda event: event["name"]),
+        "capabilities": capabilities.model_dump(by_alias=True, exclude_none=True)
+        if capabilities
+        else {},
+        "lists": lists,
     }
 
 
-def contract(root: Path, entry: str, stdout: TextIO) -> int:
-    """Run one entry, ask its server for the catalog and print it; return the exit status."""
+def diagnostic(error: BaseException) -> str:
+    """A traceback of the application's frames, ending with error."""
+    frames = [
+        frame
+        for frame in traceback.extract_tb(error.__traceback__)
+        if frame.filename != __file__ and not frame.filename.startswith("<frozen")
+    ]
+    trace = traceback.format_list(frames)
+    if isinstance(error, MissingModule):
+        trace.append(f"{type(error).__name__}: {error}\n")
+    else:
+        trace += traceback.format_exception_only(error)
+    return f"Traceback (most recent call last):\n{''.join(trace)}"
+
+
+def contract(
+    root: Path,
+    entry: str,
+    extensions: dict[str, Any],
+    methods: list[str],
+    stdout: TextIO,
+) -> int:
+    """Run one entry, ask its server for each method's pages and print them; return the exit status."""
     os.chdir(root)  # relative paths name application files, wherever the runner started
     path = root / entry
     finder = Finder(root, path)
@@ -328,21 +320,11 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
             raise ImportError(f"cannot import {path}")
         module = sys.modules[path.stem] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        result = loop.run_until_complete(catalog(find_server(module)))
-    except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
-        frames = [
-            frame
-            for frame in traceback.extract_tb(error.__traceback__)
-            if frame.filename != __file__ and not frame.filename.startswith("<frozen")
-        ]
-        trace = traceback.format_list(frames)
-        if isinstance(error, MissingModule):
-            trace.append(f"{type(error).__name__}: {error}\n")
-        else:
-            trace += traceback.format_exception_only(error)
-        sys.stderr.write(
-            f"{entry}: Traceback (most recent call last):\n{''.join(trace)}"
+        result = loop.run_until_complete(
+            catalog(find_server(module), extensions, methods)
         )
+    except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
+        sys.stderr.write(f"{entry}: {diagnostic(error)}")
         if isinstance(error, MissingModule) and error.name:
             sys.stderr.write(error.name.partition(".")[0] + "\n")
             return 3
@@ -353,7 +335,7 @@ def contract(root: Path, entry: str, stdout: TextIO) -> int:
 
 
 if __name__ == "__main__":
-    mode, root, entry = sys.argv[1:]
+    mode, root, entry, extensions, *methods = sys.argv[1:]
     if mode != "contract":
         sys.exit(f"unknown operation {mode}")
     if not sys.flags.no_site:
@@ -364,4 +346,6 @@ if __name__ == "__main__":
     # The contract is all that stdout carries; whatever the application prints goes to stderr.
     stdout = os.fdopen(os.dup(1), "w")
     os.dup2(2, 1)
-    sys.exit(contract(Path(root).resolve(), entry, stdout))
+    sys.exit(
+        contract(Path(root).resolve(), entry, json.loads(extensions), methods, stdout)
+    )

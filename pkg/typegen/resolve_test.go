@@ -40,8 +40,8 @@ func versionedServer(t *testing.T, name, version string, events bool) *httptest.
 	server := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, options)
 	if options != nil {
 		pages := map[string]*listEventsResult{
-			"":  {Events: []listedEvent{{Name: "order.shipped", Input: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}}}`), Payload: json.RawMessage(`{"type":"string"}`)}}, NextCursor: "2"},
-			"2": {Events: []listedEvent{{Name: "order.opened", Input: json.RawMessage(`{"type":"object"}`), Payload: json.RawMessage(`{}`)}}},
+			"":  {Events: []mcpcontract.Event{{Name: "order.shipped", Input: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}}}`), Payload: json.RawMessage(`{"type":"string"}`)}}, NextCursor: "2"},
+			"2": {Events: []mcpcontract.Event{{Name: "order.opened", Input: json.RawMessage(`{"type":"object"}`), Payload: json.RawMessage(`{}`)}}},
 		}
 		if err := mcp.AddReceivingCustomMethod(server, "events/list", func(_ context.Context, _ *mcp.ServerSession, params *listEventsParams) (*listEventsResult, error) {
 			return pages[params.Cursor], nil
@@ -236,7 +236,7 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 		t.Fatalf("resource schemas: %v", outputs)
 	}
 	events := mustJSON(t, metadata.Schema.Events)
-	if want := `[{"name":"order.shipped","inputSchema":{"properties":{"id":{"type":"string"}},"type":"object"},"payloadSchema":{"type":"string"}},{"name":"order.opened","inputSchema":{"type":"object"},"payloadSchema":{}}]`; string(events) != want || bare.Schema.Events != nil {
+	if want := `[{"name":"order.opened","inputSchema":{"type":"object"},"payloadSchema":{}},{"name":"order.shipped","inputSchema":{"type":"object","properties":{"id":{"type":"string"}}},"payloadSchema":{"type":"string"}}]`; string(events) != want || bare.Schema.Events != nil {
 		t.Fatalf("events = %s, a server without them %v", events, bare.Schema.Events)
 	}
 	// As a consumer source the alias derives from that name.

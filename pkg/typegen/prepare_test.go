@@ -25,8 +25,8 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 	put(t, checkout, "server.json", string(mustJSON(t, map[string]any{"name": "example.com/checkout", "version": "1.0.0", "description": "Checkout"})))
 	own := mcpcontract.Tool{Name: "status", Input: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
 	results := map[string]any{
-		"example.com/checkout": extraction{Tools: []mcpcontract.Tool{own}},
-		"example.com/orders":   extraction{Tools: []mcpcontract.Tool{lookupTool}},
+		"example.com/checkout": listing(own),
+		"example.com/orders":   listing(lookupTool),
 	}
 	c := Consumer{Name: "checkout", Dir: checkout, Targets: targets, Server: &Source{Path: filepath.Join(checkout, "server.ts")}, Sources: []Source{{Path: orders}}}
 	return c, fakeRun(results)
@@ -114,9 +114,9 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 	put(t, filepath.Join(root, "nameless"), "server.py", pythonProvider)
 	put(t, filepath.Join(root, "go"), "server.go", "package main\n")
 	results := map[string]any{
-		"example.com/orders": extraction{Tools: []mcpcontract.Tool{lookupTool}},
+		"example.com/orders": listing(lookupTool),
 		"example.com/broken": &RunnerError{Status: 2, Stderr: "tools are registered dynamically"},
-		"example.com/---":    extraction{Tools: []mcpcontract.Tool{lookupTool}},
+		"example.com/---":    listing(lookupTool),
 		"":                   extraction{ServerInfo: json.RawMessage(`{"name":"provider"}`)},
 	}
 	source := func(name string) Source { return Source{Path: filepath.Join(root, name)} }
@@ -274,7 +274,7 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 	writeProvider(t, orders, "orders", pythonProvider)
 	put(t, app, "package.json", "{}")
 	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Path: orders}}}
-	options := Options{Run: fakeRun(map[string]any{"example.com/orders": extraction{Tools: ordersMetadata().Schema.Tools}})}
+	options := Options{Run: fakeRun(map[string]any{"example.com/orders": listing(ordersMetadata().Schema.Tools...)})}
 	committedContract(t, orders, ordersMetadata())
 	prepared, err := Prepare(t.Context(), []Consumer{c}, options)
 	if err != nil {
@@ -290,6 +290,26 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 	// Printing the contract regenerates the file, so it answers what the server does.
 	if contract, err := ResolveDocument(t.Context(), Source{Path: orders}, options); err != nil || contract.Schema.Tools[0].Name != "lookup" {
 		t.Fatalf("printed contract = %+v, %v", contract, err)
+	}
+}
+
+// A runner prints each list's pages or the error listing it. The contract takes the lists the server
+// declares, page by page and sorted, and a declared list that failed fails it.
+func TestARunnersAnswersMakeTheContract(t *testing.T) {
+	orders := t.TempDir()
+	writeProvider(t, orders, "orders", pythonProvider)
+	answers := listing(mcpcontract.Tool{Name: "read", Input: json.RawMessage(`{"type":"object"}`)}, lookupTool)
+	answers.Lists["resources/list"] = listed{Error: "Method not found"}
+	answers.Lists["events/list"] = listed{Error: "events are broken"}
+	answers.Capabilities.AddExtension(eventsExtension, nil)
+	options := Options{Run: fakeRun(map[string]any{"example.com/orders": answers})}
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, options); err == nil || !strings.Contains(err.Error(), "events/list: events are broken") {
+		t.Fatalf("a declared list that failed: %v", err)
+	}
+	delete(answers.Capabilities.Extensions, eventsExtension)
+	document, err := ResolveDocument(t.Context(), Source{Path: orders}, options)
+	if err != nil || len(document.Schema.Tools) != 2 || document.Schema.Tools[0].Name != "lookup" || document.Schema.Resources != nil {
+		t.Fatalf("contract = %+v, %v", document, err)
 	}
 }
 

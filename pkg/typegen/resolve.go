@@ -3,7 +3,6 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -18,7 +17,6 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/protocol"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // ResolveDocument returns one source's contract document without writing anything: a path source
@@ -202,90 +200,9 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 		}
 		identity = &mcpcontract.Identity{Name: info.Name, Version: cmp.Or(info.Version, unversioned)}
 	}
-	contract := &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}
-	if initialized.Capabilities.Tools != nil {
-		for tool, err := range session.Tools(ctx, nil) {
-			if err != nil {
-				return nil, err
-			}
-			input, err := json.Marshal(tool.InputSchema)
-			if err != nil {
-				return nil, err
-			}
-			var output json.RawMessage
-			if tool.OutputSchema != nil {
-				output, err = json.Marshal(tool.OutputSchema)
-				if err != nil {
-					return nil, err
-				}
-			}
-			contract.Tools = append(contract.Tools, mcpcontract.Tool{Name: tool.Name, Input: input, Output: output})
-		}
-	}
-	if initialized.Capabilities.Resources != nil {
-		for resource, err := range session.Resources(ctx, nil) {
-			if err != nil {
-				return nil, err
-			}
-			output := json.RawMessage(`{}`)
-			if schema, ok := resource.Meta["sh.holon/outputSchema"]; ok {
-				output, err = json.Marshal(schema)
-				if err != nil {
-					return nil, err
-				}
-			}
-			contract.Resources = append(contract.Resources, mcpcontract.Resource{URI: resource.URI, Output: output})
-		}
-	}
-	if _, ok := initialized.Capabilities.Extensions[eventsExtension]; ok {
-		if contract.Events, err = listEvents(ctx, session); err != nil {
-			return nil, err
-		}
+	contract, err := listCatalog(initialized.Capabilities, sessionPages(ctx, session))
+	if err != nil {
+		return nil, err
 	}
 	return NewDocument(ctx, &mcpcontract.Metadata{Identity: *identity, Schema: contract})
-}
-
-const eventsExtension = "io.modelcontextprotocol/events"
-
-type listEventsParams struct {
-	mcp.ParamsBase
-	Cursor string `json:"cursor,omitempty"`
-}
-
-type listEventsResult struct {
-	mcp.ResultBase
-	Events     []listedEvent `json:"events"`
-	NextCursor string        `json:"nextCursor,omitempty"`
-}
-
-type listedEvent struct {
-	Name    string `json:"name"`
-	Input   any    `json:"inputSchema"`
-	Payload any    `json:"payloadSchema"`
-}
-
-func listEvents(ctx context.Context, session *mcp.ClientSession) ([]mcpcontract.Event, error) {
-	var events []mcpcontract.Event
-	params := &listEventsParams{}
-	for {
-		page, err := mcp.CallCustomMethod[*listEventsParams, *listEventsResult](ctx, session, "events/list", params)
-		if err != nil {
-			return nil, fmt.Errorf("listing its events: %w", err)
-		}
-		for _, listed := range page.Events {
-			input, err := json.Marshal(listed.Input)
-			if err != nil {
-				return nil, err
-			}
-			payload, err := json.Marshal(listed.Payload)
-			if err != nil {
-				return nil, err
-			}
-			events = append(events, mcpcontract.Event{Name: listed.Name, Input: input, Payload: payload})
-		}
-		if page.NextCursor == "" {
-			return events, nil
-		}
-		params.Cursor = page.NextCursor
-	}
 }

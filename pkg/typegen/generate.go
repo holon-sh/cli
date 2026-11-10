@@ -63,7 +63,11 @@ type preparedSource struct {
 }
 
 func (s *preparedSource) extract(result *extraction) error {
-	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources, Events: result.Events}
+	contract, err := listCatalog(result.Capabilities, result.pages)
+	if err != nil {
+		return fmt.Errorf("%s: %w", s.origin, err)
+	}
+	s.metadata.Schema = contract
 	if s.metadata.Identity == (mcpcontract.Identity{}) {
 		descriptor, err := ParseDescriptor(result.ServerInfo)
 		if err != nil {
