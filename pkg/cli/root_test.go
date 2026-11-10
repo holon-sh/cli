@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -16,8 +17,13 @@ import (
 // run returns stdout on success or the expected error's text on failure.
 func run(t *testing.T, wantErr string, args ...string) string {
 	t.Helper()
+	return runSignedIn(t, nil, wantErr, args...)
+}
+
+func runSignedIn(t *testing.T, signIn func(context.Context, string) (string, error), wantErr string, args ...string) string {
+	t.Helper()
 	var output bytes.Buffer
-	command := NewCommand("test")
+	command := NewCommand("test", signIn)
 	command.SetArgs(args)
 	command.SetOut(&output)
 	command.SetErr(new(bytes.Buffer))

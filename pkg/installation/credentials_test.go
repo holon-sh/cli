@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -144,5 +146,34 @@ func TestDevelopmentAuthenticationBeforeBuild(t *testing.T) {
 				t.Fatalf("dev returned %v, want %v", err, test.want)
 			}
 		})
+	}
+}
+
+func TestAppTokenSignsInOnlyToTheInstallationsApps(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var resources []string
+	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		resources = append(resources, r.FormValue("resource"))
+		mu.Unlock()
+		installationtest.WriteJSON(w, map[string]any{
+			"access_token": "access-" + r.FormValue("resource"), "refresh_token": "refresh", "token_type": "Bearer", "expires_in": 3600,
+		})
+	})
+	config := ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: server.Client()}
+	if token, err := config.AppToken(t.Context(), "https://example.com"); token != "" || err != nil {
+		t.Fatalf("another origin: token=%q error=%v", token, err)
+	}
+	session, err := protocol.SessionAudience(server.URL, protocol.ModeDevelopment, "calm-fox-42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Signed out, it signs in to the installation and then to the session.
+	if token, err := config.AppToken(t.Context(), session); token != "access-"+session || err != nil {
+		t.Fatalf("session origin: token=%q error=%v", token, err)
+	}
+	if want := []string{installationtest.AdminAudience(server.URL), session}; !slices.Equal(resources, want) {
+		t.Fatalf("signed in for %q, want %q", resources, want)
 	}
 }

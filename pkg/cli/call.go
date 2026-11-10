@@ -20,7 +20,7 @@ import (
 
 const targetHelp = "TARGET is an MCP server's URL, [ALIAS=]URL to send <ALIAS>_MCP_TOKEN as its bearer token, an MCP registry version URL (its streamable-http remote is used), or a dependency the server.json in the working directory declares under sh.holon.requires."
 
-func newList() *cobra.Command {
+func newList(signIn func(context.Context, string) (string, error)) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{Use: "list TARGET", Short: "List an MCP server's tools, prompts and resources", Long: "List an MCP server's tools, prompts, resources and resource templates, after its name, version, negotiated protocol version and instructions.\n\n" + targetHelp, Example: `  # A remote server
   holon list https://huggingface.co/mcp
@@ -33,7 +33,7 @@ func newList() *cobra.Command {
 
   # Everything the server reported, schemas included
   holon list huggingface --json`, Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		session, err := connect(cmd, args[0])
+		session, err := connect(cmd, args[0], signIn)
 		if err != nil {
 			return err
 		}
@@ -52,7 +52,7 @@ func newList() *cobra.Command {
 	return cmd
 }
 
-func newCall() *cobra.Command {
+func newCall(signIn func(context.Context, string) (string, error)) *cobra.Command {
 	var asJSON bool
 	var raw string
 	cmd := &cobra.Command{Use: "call TARGET TOOL [KEY=VALUE...]", Short: "Call a tool on an MCP server", Long: "Call a tool on an MCP server and print its result: the structured content when the tool returns some, otherwise its text. A result the tool marks as an error exits 1.\n\n" +
@@ -67,7 +67,7 @@ func newCall() *cobra.Command {
 
   # The complete MCP result
   holon call huggingface hub_repo_search query=llama limit=3 --json`, Args: cobra.MinimumNArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-		session, err := connect(cmd, args[0])
+		session, err := connect(cmd, args[0], signIn)
 		if err != nil {
 			return err
 		}
@@ -108,12 +108,12 @@ func newCall() *cobra.Command {
 	return cmd
 }
 
-func connect(cmd *cobra.Command, arg string) (*mcp.ClientSession, error) {
+func connect(cmd *cobra.Command, arg string, signIn func(context.Context, string) (string, error)) (*mcp.ClientSession, error) {
 	source, err := target(arg)
 	if err != nil {
 		return nil, err
 	}
-	return typegen.Connect(cmd.Context(), source, typegen.Options{Stderr: cmd.ErrOrStderr()})
+	return typegen.Connect(cmd.Context(), source, typegen.Options{Stderr: cmd.ErrOrStderr(), SignIn: signIn})
 }
 
 // target reads TARGET as a -s value. Only a running server can be listed or called, so a path is

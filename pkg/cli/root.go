@@ -4,6 +4,7 @@ package cli
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -204,12 +205,13 @@ func newCheck(short string) *cobra.Command {
 
 const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory"
 
-// NewCommand builds the standalone CLI, including the check shortcut.
-func NewCommand(version string) *cobra.Command {
+// NewCommand builds the standalone CLI, including the check shortcut. list and call get a token for an
+// endpoint that refuses them from signIn (see typegen.Options.SignIn), which may be nil.
+func NewCommand(version string, signIn func(ctx context.Context, origin string) (string, error)) *cobra.Command {
 	root := &cobra.Command{Use: "holon", Short: "MCP developer client", Version: version, SilenceUsage: true, SilenceErrors: true}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetVersionTemplate("holon {{.Version}}\n")
-	root.AddCommand(NewInitCommand(), NewTypesCommand(), newCheck("Shortcut for holon types check"), newList(), newCall())
+	root.AddCommand(NewInitCommand(), NewTypesCommand(), newCheck("Shortcut for holon types check"), newList(signIn), newCall(signIn))
 	return root
 }
 

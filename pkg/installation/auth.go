@@ -513,8 +513,9 @@ func (m *Client) resourceToken(ctx context.Context, audience string) (*oauth2.To
 		result, err = m.token(ctx, audience)
 		if initial &&
 			(errors.Is(err, errNotAuthenticated) || errors.Is(err, errEndpointChanged) || errors.Is(err, errReauthenticationRequired)) {
-			err = m.login(ctx)
-			result = m.state.Tokens[audience]
+			if err = m.login(ctx); err == nil {
+				result, err = m.token(ctx, audience)
+			}
 		}
 		return err
 	})
@@ -554,4 +555,26 @@ func (m *Client) Call(ctx context.Context, plane protocol.Plane, tool string, in
 		return err
 	}
 	return m.client.Call(ctx, plane, token, tool, input, output)
+}
+
+// AppToken returns a bearer token for origin when it serves the selected installation's apps, in production or in a
+// session, signing in to it as the other commands do. Any other origin, and an installation without authentication,
+// gets "".
+func (config ClientConfig) AppToken(ctx context.Context, origin string) (string, error) {
+	local, err := newLocalAuthManager(config)
+	if err != nil {
+		return "", err
+	}
+	if _, _, ok := protocol.ParseSessionAudience(local.client.baseURL, origin); !ok {
+		return "", nil
+	}
+	manager, err := NewClient(ctx, config)
+	if err != nil || manager.info.OAuth == nil {
+		return "", err
+	}
+	token, err := manager.resourceToken(ctx, origin)
+	if err != nil {
+		return "", err
+	}
+	return token.AccessToken, nil
 }
