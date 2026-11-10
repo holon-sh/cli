@@ -143,9 +143,15 @@ func TestProjectRunsForEachApp(t *testing.T) {
 		t.Fatalf("view sources = %+v", sources)
 	}
 
-	// check reaches the app's clients, not the project root, which declares no runtime of its own.
-	run(t, filepath.Join(view, "generated/holon-sh")+" has no generated clients", "check", "--no-generate")
-	run(t, "-s names one app's dependencies; pass that app's DIR", "check", "-s", "x")
+	// check reaches the app's clients, not the project root, which declares no runtime of its own. It only
+	// reads, so it runs while holon dev holds the clients' lock.
+	release, err := typegen.AcquireLocks(consumers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	run(t, filepath.Join(view, "generated/holon-sh")+" has no generated clients; run holon types generate", "check")
+	run(t, "-s names one app's dependencies; pass that app's DIR", "types", "generate", "-s", "x")
 }
 
 func TestUsageErrors(t *testing.T) {
@@ -155,8 +161,8 @@ func TestUsageErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"check", "a", "b"}, "one DIR at most; dependencies are -s values"},
-		{[]string{"check", "--no-generate", "-s", "x"}, "-s has no effect"},
+		{[]string{"check", "a", "b"}, "accepts at most 1 arg(s)"},
+		{[]string{"check", "-s", "x"}, "unknown shorthand flag: 's'"},
 		{[]string{"check", "missing-dir"}, "is not a directory"},
 		{[]string{"types", "generate", "--contract", "a", "-s", "b"}, "takes one SERVER and nothing else"},
 		{[]string{"types", "generate", "-o", "contract.json"}, "--output writes a --contract document"},
@@ -164,7 +170,7 @@ func TestUsageErrors(t *testing.T) {
 		run(t, test.want, test.args...)
 	}
 	writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
-	run(t, "holon-sh is not installed", "check", "--no-generate")
+	run(t, "holon-sh is not installed", "check")
 	installCLIRuntime(t, root)
 	writeCLIFile(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout"`+requiresOrders)
 	run(t, "example.com/orders@1.0.0", "types", "generate")

@@ -41,13 +41,6 @@ const generateExamples = `  # Generate for the current project
   holon types generate --contract ../orders
   holon types generate --contract ../orders -o ../orders/holon-contract.json`
 
-func oneDir(_ *cobra.Command, args []string) error {
-	if len(args) > 1 {
-		return errors.New("one DIR at most; dependencies are -s values")
-	}
-	return nil
-}
-
 // clientDir resolves the optional client directory, defaulting to the working directory.
 func clientDir(path string) (string, error) {
 	path = cmp.Or(path, ".")
@@ -158,44 +151,33 @@ func printContract(cmd *cobra.Command, arg, output string) error {
 
 // newCheck builds the check command; it is registered as "holon types check" and as the
 // "holon check" shortcut (a cobra command has one parent, so each gets its own instance).
+// It only reads, so it runs beside holon dev, which holds the clients' lock.
 func newCheck(short string) *cobra.Command {
-	var servers []string
-	var noGenerate bool
-	cmd := &cobra.Command{Use: "check [DIR]", Short: short, Long: "Generate typed clients for MCP servers, then type-check the project's calls to them.\n\n" + dependencyHelp, Example: `  # Generate, then type-check
+	return &cobra.Command{Use: "check [DIR]", Short: short,
+		Long: "Type-check the project's calls to the MCP servers it requires, using the clients that holon types generate or holon dev wrote. " +
+			"It reads only: no network, no installs, no writes.\n\n" +
+			"In a directory with a holon.yaml, checks each of its path apps.",
+		Example: `  # Type-check the current project
   holon types check
 
-  # Type-check the existing clients only (no network, no writes)
-  holon types check --no-generate
-
-  # Explicit dependencies, as for generate
-  holon types check -s orders=../orders`, Args: oneDir, RunE: func(cmd *cobra.Command, _ []string) error {
-		if noGenerate && len(servers) > 0 {
-			return errors.New("--no-generate type-checks the existing clients; -s has no effect")
-		}
-		consumers, err := selectConsumers(cmd, servers)
-		if err == nil && !noGenerate {
-			err = typegen.Generate(cmd.Context(), consumers, typegen.Options{Stdout: io.Discard, Stderr: cmd.ErrOrStderr()})
-		}
-		if err != nil {
-			return err
-		}
-		for _, c := range consumers {
-			// An app with only its own server makes no calls to check.
-			if len(c.Targets) == 0 {
-				continue
-			}
-			if err := typegen.Check(cmd.Context(), c.Dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}); err != nil {
+  # After changing its dependencies, generate the clients first
+  holon types generate && holon types check`, Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, _ []string) error {
+			consumers, err := selectConsumers(cmd, nil)
+			if err != nil {
 				return err
 			}
-		}
-		return nil
-	}}
-	cmd.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
-	cmd.Flags().BoolVar(&noGenerate, "no-generate", false, "Type-check the existing clients only: no network, no install, no writes")
-	return cmd
+			for _, c := range consumers {
+				// An app with only its own server makes no calls to check.
+				if len(c.Targets) == 0 {
+					continue
+				}
+				if err := typegen.Check(cmd.Context(), c.Dir, typegen.Options{Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}}
 }
-
-const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory"
 
 // NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string, signIn typegen.SignIn) *cobra.Command {
@@ -214,7 +196,7 @@ func NewTypesCommand() *cobra.Command {
 	var verbose bool
 	var contract, output string
 	var servers []string
-	generate := &cobra.Command{Use: "generate [DIR]", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for MCP servers.\n\n" + dependencyHelp, Example: generateExamples, Args: oneDir, RunE: func(cmd *cobra.Command, args []string) error {
+	generate := &cobra.Command{Use: "generate [DIR]", Short: "Generate typed clients for MCP servers", Long: "Generate typed clients for MCP servers.\n\n" + dependencyHelp, Example: generateExamples, Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("contract") {
 			if len(args) > 0 || len(servers) > 0 {
 				return errors.New("--contract takes one SERVER and nothing else")
@@ -236,7 +218,7 @@ func NewTypesCommand() *cobra.Command {
 	}}
 	generate.Flags().StringVar(&contract, "contract", "", "Print one server's MCP contract instead of generating")
 	generate.Flags().StringVarP(&output, "output", "o", "", "Write the --contract document to FILE, such as holon-contract.json")
-	generate.Flags().StringArrayVarP(&servers, "server", "s", nil, serverHelp)
+	generate.Flags().StringArrayVarP(&servers, "server", "s", nil, "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory")
 	generate.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show generation details")
 	types.AddCommand(generate, newCheck("Type-check the project's calls to MCP servers"))
 
