@@ -125,8 +125,8 @@ func needNode(t *testing.T) {
 
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
 // snapshot's server.json name, serving an extraction or returning an error as the runner's failure.
-func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Reader, io.Writer) error {
-	return func(_ context.Context, _, tooling string, args []string, stdin io.Reader, stdout io.Writer) error {
+func fakeRun(results map[string]any) func(context.Context, string, string, []string, []byte, io.Writer) error {
+	return func(_ context.Context, _, tooling string, args []string, stdin []byte, stdout io.Writer) error {
 		root, entry := args[1], args[2]
 		if !lexicallyInside(root, filepath.Dir(tooling)) || !isFile(filepath.Join(root, entry)) {
 			return fmt.Errorf("entry %s is not in a snapshot under %s: %s", entry, filepath.Dir(tooling), root)
@@ -146,14 +146,14 @@ func fakeRun(results map[string]any) func(context.Context, string, string, []str
 	}
 }
 
-func serveCatalog(stdin io.Reader, stdout io.Writer, result extraction) error {
+func serveCatalog(stdin []byte, stdout io.Writer, result extraction) error {
 	contract := cmp.Or(result.Contract, &mcpcontract.Contract{})
 	info := result.ServerInfo
 	if info == nil {
 		info = json.RawMessage(`{"name":"example.com/fake","version":"1.0.0"}`)
 	}
 	encoder := json.NewEncoder(stdout)
-	scanner := bufio.NewScanner(stdin)
+	scanner := bufio.NewScanner(bytes.NewReader(stdin))
 	for scanner.Scan() {
 		var request struct {
 			ID     json.RawMessage
@@ -166,29 +166,26 @@ func serveCatalog(stdin io.Reader, stdout io.Writer, result extraction) error {
 		if request.ID == nil {
 			continue
 		}
-		page, _ := strconv.Atoi(request.Params.Cursor)
 		answer := map[string]any{}
+		items := []any{}
 		switch request.Method {
 		case "server/discover":
 			answer["supportedVersions"] = []string{"2026-07-28"}
 			answer["capabilities"] = map[string]any{"tools": map[string]any{}, "resources": map[string]any{}}
 			answer["_meta"] = map[string]any{"io.modelcontextprotocol/serverInfo": info}
 		case "tools/list":
-			answer["tools"] = []mcpcontract.Tool{}
-			if page < len(contract.Tools) {
-				answer["tools"] = contract.Tools[page : page+1]
-			}
-			if page+1 < len(contract.Tools) {
-				answer["nextCursor"] = strconv.Itoa(page + 1)
+			for _, tool := range contract.Tools {
+				items = append(items, tool)
 			}
 		case "resources/list":
-			listed := []any{}
-			if page < len(contract.Resources) {
-				resource := contract.Resources[page]
-				listed = append(listed, map[string]any{"uri": resource.URI, "_meta": map[string]any{"sh.holon/outputSchema": resource.Output}})
+			for _, resource := range contract.Resources {
+				items = append(items, map[string]any{"uri": resource.URI, "_meta": map[string]any{"sh.holon/outputSchema": resource.Output}})
 			}
-			answer["resources"] = listed
-			if page+1 < len(contract.Resources) {
+		}
+		if key, list := strings.TrimSuffix(request.Method, "/list"), strings.HasSuffix(request.Method, "/list"); list {
+			page, _ := strconv.Atoi(request.Params.Cursor)
+			answer[key] = items[min(page, len(items)):min(page+1, len(items))]
+			if page+1 < len(items) {
 				answer["nextCursor"] = strconv.Itoa(page + 1)
 			}
 		}

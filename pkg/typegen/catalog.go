@@ -24,72 +24,88 @@ func newClient() *mcp.Client {
 	return mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "0.0.1"}, &mcp.ClientOptions{Capabilities: capabilities})
 }
 
-func listCatalog(ctx context.Context, session *mcp.ClientSession, wire *transcript) (*mcpcontract.Contract, error) {
+func listCatalog(ctx context.Context, session *mcp.ClientSession, raw func() json.RawMessage) (*mcpcontract.Contract, error) {
 	contract := &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}
 	capabilities := cmp.Or(session.InitializeResult().Capabilities, &mcp.ServerCapabilities{})
-	page := func(method string, result any) (json.RawMessage, error) {
-		if wire != nil {
-			return wire.result(method), nil
-		}
-		return json.Marshal(result)
-	}
-	for cursor, more := "", capabilities.Tools != nil; more; more = cursor != "" {
+	err := pages(capabilities.Tools != nil, "tools/list", raw, func(cursor string) (any, string, error) {
 		result, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
 		if err != nil {
-			return nil, fmt.Errorf("tools/list: %w", err)
+			return nil, "", err
 		}
-		data, err := page("tools/list", result)
-		if err != nil {
-			return nil, err
-		}
-		var tools struct{ Tools []mcpcontract.Tool }
-		if err := json.Unmarshal(data, &tools); err != nil {
-			return nil, fmt.Errorf("tools/list: %w", err)
-		}
-		contract.Tools, cursor = append(contract.Tools, tools.Tools...), result.NextCursor
+		return result, result.NextCursor, nil
+	}, func(data json.RawMessage) error {
+		var page struct{ Tools []mcpcontract.Tool }
+		err := json.Unmarshal(data, &page)
+		contract.Tools = append(contract.Tools, page.Tools...)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
-	for cursor, more := "", capabilities.Resources != nil; more; more = cursor != "" {
+	err = pages(capabilities.Resources != nil, "resources/list", raw, func(cursor string) (any, string, error) {
 		result, err := session.ListResources(ctx, &mcp.ListResourcesParams{Cursor: cursor})
 		if err != nil {
-			return nil, fmt.Errorf("resources/list: %w", err)
+			return nil, "", err
 		}
-		data, err := page("resources/list", result)
-		if err != nil {
-			return nil, err
-		}
-		var resources struct {
+		return result, result.NextCursor, nil
+	}, func(data json.RawMessage) error {
+		var page struct {
 			Resources []struct {
 				URI  string
 				Meta map[string]json.RawMessage `json:"_meta"`
 			}
 		}
-		if err := json.Unmarshal(data, &resources); err != nil {
-			return nil, fmt.Errorf("resources/list: %w", err)
-		}
-		for _, resource := range resources.Resources {
+		err := json.Unmarshal(data, &page)
+		for _, resource := range page.Resources {
 			output, ok := resource.Meta["sh.holon/outputSchema"]
 			if !ok {
 				output = json.RawMessage(`{}`)
 			}
 			contract.Resources = append(contract.Resources, mcpcontract.Resource{URI: resource.URI, Output: output})
 		}
-		cursor = result.NextCursor
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
 	slices.SortFunc(contract.Tools, func(a, b mcpcontract.Tool) int { return cmp.Compare(a.Name, b.Name) })
 	slices.SortFunc(contract.Resources, func(a, b mcpcontract.Resource) int { return cmp.Compare(a.URI, b.URI) })
 	return contract, nil
 }
 
+func pages(listed bool, method string, raw func() json.RawMessage, list func(cursor string) (any, string, error), add func(json.RawMessage) error) error {
+	for cursor, more := "", listed; more; more = cursor != "" {
+		result, next, err := list(cursor)
+		if err != nil {
+			return fmt.Errorf("%s: %w", method, err)
+		}
+		data, err := json.Marshal(result)
+		if raw != nil {
+			data = raw()
+		}
+		if err == nil {
+			err = add(data)
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %w", method, err)
+		}
+		cursor = next
+	}
+	return nil
+}
+
 func converse(ctx context.Context, run func(stdin []byte, stdout io.Writer) error) (*extraction, error) {
 	var previous *transcript
 	for {
-		t := &transcript{previous: previous, diverged: -1, queue: make(chan jsonrpc.Message, 16), done: make(chan struct{}), results: map[string]json.RawMessage{}}
-		result, err := t.list(ctx)
+		t := &transcript{previous: previous, diverged: -1, queue: make(chan jsonrpc.Message, 16)}
+		t.ctx, t.cancel = context.WithCancel(ctx)
+		result, err := t.list()
 		if t.diverged < 0 {
 			return result, err
 		}
 		if previous != nil && t.diverged <= previous.diverged {
-			return nil, fmt.Errorf("the server did not answer %s", t.methods[t.diverged])
+			message, _ := jsonrpc.DecodeMessage(t.messages[t.diverged])
+			return nil, fmt.Errorf("the server did not answer %s", message.(*jsonrpc.Request).Method)
 		}
 		var stdout bytes.Buffer
 		if err := run(bytes.Join(t.messages, []byte("\n")), &stdout); err != nil {
@@ -98,31 +114,34 @@ func converse(ctx context.Context, run func(stdin []byte, stdout io.Writer) erro
 		if err := t.answer(stdout.Bytes()); err != nil {
 			return nil, err
 		}
-		previous = t
+		t.previous, previous = nil, t
 	}
 }
 
 type transcript struct {
 	previous *transcript
 	messages [][]byte
-	methods  []string
-	answers  map[string]*jsonrpc.Response
+	answers  map[jsonrpc.ID]*jsonrpc.Response
 	diverged int
 
-	mu      sync.Mutex
-	results map[string]json.RawMessage
-	queue   chan jsonrpc.Message
-	done    chan struct{}
-	once    sync.Once
+	mu     sync.Mutex
+	last   json.RawMessage
+	queue  chan jsonrpc.Message
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-func (t *transcript) list(ctx context.Context) (*extraction, error) {
-	session, err := newClient().Connect(ctx, t, nil)
+func (t *transcript) list() (*extraction, error) {
+	session, err := newClient().Connect(t.ctx, t, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer session.Close()
-	contract, err := listCatalog(ctx, session, t)
+	contract, err := listCatalog(t.ctx, session, func() json.RawMessage {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		return t.last
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -130,14 +149,8 @@ func (t *transcript) list(ctx context.Context) (*extraction, error) {
 	return &extraction{Contract: contract, ServerInfo: info}, err
 }
 
-func (t *transcript) result(method string) json.RawMessage {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.results[method]
-}
-
 func (t *transcript) answer(output []byte) error {
-	t.answers = map[string]*jsonrpc.Response{}
+	t.answers = map[jsonrpc.ID]*jsonrpc.Response{}
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	scanner.Buffer(nil, maxContractBytes)
 	for scanner.Scan() {
@@ -149,7 +162,7 @@ func (t *transcript) answer(output []byte) error {
 			return fmt.Errorf("the server wrote something other than MCP: %w", err)
 		}
 		if response, ok := message.(*jsonrpc.Response); ok {
-			t.answers[fmt.Sprint(response.ID.Raw())] = response
+			t.answers[response.ID] = response
 		}
 	}
 	return scanner.Err()
@@ -166,35 +179,27 @@ func (t *transcript) Write(ctx context.Context, message jsonrpc.Message) error {
 	defer t.mu.Unlock()
 	index, previous := len(t.messages), t.previous
 	t.messages = append(t.messages, data)
-	request, _ := message.(*jsonrpc.Request)
-	method := ""
-	if request != nil {
-		method = request.Method
-	}
-	t.methods = append(t.methods, method)
 	if t.diverged < 0 && (previous == nil || index >= len(previous.messages) || !bytes.Equal(previous.messages[index], data)) {
 		t.diverged = index
 	}
+	request, _ := message.(*jsonrpc.Request)
 	if request == nil || !request.IsCall() {
 		return nil
 	}
 	var response *jsonrpc.Response
 	if t.diverged < 0 {
-		response = previous.answers[fmt.Sprint(request.ID.Raw())]
-		if response == nil {
+		if response = previous.answers[request.ID]; response == nil {
 			t.diverged = index
 		}
 	}
 	if response == nil {
 		response = &jsonrpc.Response{ID: request.ID, Result: guess(request)}
 	}
-	if response.Error == nil {
-		t.results[request.Method] = response.Result
-	}
+	t.last = response.Result
 	select {
 	case t.queue <- response:
 		return nil
-	case <-t.done:
+	case <-t.ctx.Done():
 		return io.EOF
 	case <-ctx.Done():
 		return ctx.Err()
@@ -205,7 +210,7 @@ func (t *transcript) Read(ctx context.Context) (jsonrpc.Message, error) {
 	select {
 	case message := <-t.queue:
 		return message, nil
-	case <-t.done:
+	case <-t.ctx.Done():
 		return nil, io.EOF
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -213,28 +218,23 @@ func (t *transcript) Read(ctx context.Context) (jsonrpc.Message, error) {
 }
 
 func (t *transcript) Close() error {
-	t.once.Do(func() { close(t.done) })
+	t.cancel()
 	return nil
 }
 
 func (t *transcript) SessionID() string { return "" }
 
 func guess(request *jsonrpc.Request) json.RawMessage {
-	var params struct {
-		ProtocolVersion string         `json:"protocolVersion"`
-		Meta            map[string]any `json:"_meta"`
-	}
+	var params mcp.InitializeParams
 	_ = json.Unmarshal(request.Params, &params)
-	version, _ := params.Meta[mcp.MetaKeyProtocolVersion].(string)
-	capabilities := map[string]any{"tools": struct{}{}, "resources": struct{}{}}
-	var result any
+	capabilities := &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}, Resources: &mcp.ResourceCapabilities{}}
+	var result any = struct{}{}
 	switch request.Method {
 	case "server/discover":
-		result = map[string]any{"supportedVersions": []string{version}, "capabilities": capabilities}
+		version, _ := params.Meta[mcp.MetaKeyProtocolVersion].(string)
+		result = &mcp.DiscoverResult{SupportedVersions: []string{version}, Capabilities: capabilities}
 	case "initialize":
-		result = map[string]any{"protocolVersion": params.ProtocolVersion, "capabilities": capabilities, "serverInfo": mcp.Implementation{Name: "holon-contract"}}
-	default:
-		result = struct{}{}
+		result = &mcp.InitializeResult{ProtocolVersion: params.ProtocolVersion, Capabilities: capabilities, ServerInfo: &mcp.Implementation{Name: "holon-contract"}}
 	}
 	data, _ := json.Marshal(result)
 	return data

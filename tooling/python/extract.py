@@ -1,10 +1,11 @@
 """Serve an application's MCP server over stdio, so the CLI can ask it for its contract.
 
-Usage: extract.py serve ROOT ENTRY. The server speaks MCP on stdin and stdout, answering every
-request it reads before it exits; a failure is a diagnostic on stderr with status 2, or status 3
-with the uninstalled package's name as the last line. The runner re-runs itself without site
-packages or the caller's environment, where an import finder serves the application's files, the
-standard library and its environment's installed packages (mcp and pydantic among them), and names
+Usage: extract.py serve ROOT ENTRY. The server answers the MCP messages on stdin, writing its
+answers to stdout, and exits once it has answered every request; a failure is a diagnostic on
+stderr with status 2, or status 3 with the uninstalled package's name as the last line. The runner
+re-runs itself without site packages or the caller's environment, where an import finder serves the
+application's files, the standard library and its environment's installed packages (mcp and pydantic
+among them), and names
 any module it cannot serve. The server sees the same world on every machine: an empty
 environment, a fixed clock and seeded randomness, so its contract is the same everywhere. Reading
 files outside the application, its packages and the standard library, writing files, sockets and
@@ -233,8 +234,8 @@ def find_server(module: object) -> MCPServer | Server[Any]:
     )
 
 
-async def serve(server: MCPServer | Server[Any], stdin: TextIO, stdout: TextIO) -> None:
-    """Answer each JSON-RPC message on stdin, a line each on stdout, until stdin closes and every
+async def serve(server: MCPServer | Server[Any], batch: str, stdout: TextIO) -> None:
+    """Answer each JSON-RPC message in batch, a line each on stdout, and return once every
     request has its answer."""
     import anyio
     import mcp_types as types
@@ -249,24 +250,19 @@ async def serve(server: MCPServer | Server[Any], stdin: TextIO, stdout: TextIO) 
     # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/lowlevel/server.py#L115-L117).
     lowlevel = server._lowlevel_server if isinstance(server, MCPServer) else server
     lowlevel.lifespan = lifespan
+    messages = [
+        types.jsonrpc_message_adapter.validate_json(line, by_name=False)
+        for line in batch.splitlines()
+        if line.strip()
+    ]
     # The server cancels requests in flight when its input ends, so it ends once all are answered.
-    pending: set[str | int] = set()
-    read_all = False
+    pending = {m.id for m in messages if isinstance(m, types.JSONRPCRequest)}
     streams = create_client_server_memory_streams()
     async with streams as ((answers, requests), (server_read, server_write)):
 
-        async def read() -> None:
-            nonlocal read_all
-            async for line in anyio.wrap_file(stdin):
-                if not line.strip():
-                    continue
-                message = types.jsonrpc_message_adapter.validate_json(
-                    line, by_name=False
-                )
-                if isinstance(message, types.JSONRPCRequest):
-                    pending.add(message.id)
+        async def send() -> None:
+            for message in messages:
                 await requests.send(SessionMessage(message))
-            read_all = True
             if not pending:
                 await requests.aclose()
 
@@ -281,11 +277,11 @@ async def serve(server: MCPServer | Server[Any], stdin: TextIO, stdout: TextIO) 
                 stdout.flush()
                 if isinstance(message, (types.JSONRPCResponse, types.JSONRPCError)):
                     pending.discard(message.id)
-                    if read_all and not pending:
+                    if not pending:
                         await requests.aclose()
 
         async with anyio.create_task_group() as group:
-            group.start_soon(read)
+            group.start_soon(send)
             group.start_soon(write)
             await lowlevel.run(
                 server_read, server_write, lowlevel.create_initialization_options()
@@ -293,8 +289,8 @@ async def serve(server: MCPServer | Server[Any], stdin: TextIO, stdout: TextIO) 
             group.cancel_scope.cancel()
 
 
-def contract(root: Path, entry: str, stdin: TextIO, stdout: TextIO) -> int:
-    """Run one entry and serve its server on stdin and stdout; return the exit status."""
+def serve_entry(root: Path, entry: str, batch: str, stdout: TextIO) -> int:
+    """Run one entry and answer batch with its server on stdout; return the exit status."""
     os.chdir(root)  # relative paths name application files, wherever the runner started
     path = root / entry
     finder = Finder(root, path)
@@ -308,7 +304,7 @@ def contract(root: Path, entry: str, stdin: TextIO, stdout: TextIO) -> int:
             raise ImportError(f"cannot import {path}")
         module = sys.modules[path.stem] = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        loop.run_until_complete(serve(find_server(module), stdin, stdout))
+        loop.run_until_complete(serve(find_server(module), batch, stdout))
     except (Exception, SystemExit) as error:  # noqa: BLE001 - application code can raise anything
         frames = [
             frame
@@ -341,7 +337,7 @@ if __name__ == "__main__":
         os.execve(sys.executable, argv, {"PYTHONHASHSEED": "0"})
     # MCP is all that stdin and stdout carry; the application reads nothing, and what it prints goes to
     # stderr.
-    stdin, stdout = os.fdopen(os.dup(0), "r"), os.fdopen(os.dup(1), "w")
+    batch, stdout = sys.stdin.read(), os.fdopen(os.dup(1), "w")
     os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
     os.dup2(2, 1)
-    sys.exit(contract(Path(root).resolve(), entry, stdin, stdout))
+    sys.exit(serve_entry(Path(root).resolve(), entry, batch, stdout))

@@ -171,9 +171,9 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	args := []string{"serve", dir, s.entry}
 	result, err := converse(ctx, func(stdin []byte, stdout io.Writer) error {
 		if o.Run != nil {
-			return o.Run(ctx, s.language, tooling, args, bytes.NewReader(stdin), stdout)
+			return o.Run(ctx, s.language, tooling, args, stdin, stdout)
 		}
-		return runLocal(ctx, tooling, s.language, args, bytes.NewReader(stdin), stdout, o.Env)
+		return runLocal(ctx, tooling, s.language, args, stdin, stdout, o.Env)
 	})
 	var failed *RunnerError
 	switch {
@@ -191,7 +191,7 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 // runLocal runs a contract runner on the host. A Python server (args[1]) runs in its own environment; the
 // host's interpreter, whose mcp and pydantic serve a server that needs nothing else, runs one with no
 // environment or one whose environment is too old or lacks them.
-func runLocal(ctx context.Context, tooling, language string, args []string, stdin io.Reader, stdout io.Writer, env []string) error {
+func runLocal(ctx context.Context, tooling, language string, args []string, stdin []byte, stdout io.Writer, env []string) error {
 	if err := validateEnv(env); err != nil {
 		return err
 	}
@@ -202,10 +202,10 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdi
 		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
 		command.Env = append(command.Environ(), env...)
 		var stderr bytes.Buffer
-		command.Stdin, command.Stdout, command.Stderr = stdin, stdout, &stderr
+		command.Stdin, command.Stdout, command.Stderr = bytes.NewReader(stdin), stdout, &stderr
 		err := command.Run()
 		if errors.Is(limited.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			return fmt.Errorf("%s: no catalog within %s", args[2], serverTimeout)
+			return fmt.Errorf("%s: did not answer within %s", args[2], serverTimeout)
 		}
 		if exit := (*exec.ExitError)(nil); errors.As(err, &exit) {
 			return &RunnerError{Status: exit.ExitCode(), Stderr: stderr.String()}

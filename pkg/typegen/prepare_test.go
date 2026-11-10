@@ -15,7 +15,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, []string, io.Reader, io.Writer) error) {
+func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.Context, string, string, []string, []byte, io.Writer) error) {
 	t.Helper()
 	root := t.TempDir()
 	checkout, orders := filepath.Join(root, "checkout"), filepath.Join(root, "orders")
@@ -319,12 +319,11 @@ func TestARunnersCatalogIsListedPageByPage(t *testing.T) {
 	read := mcpcontract.Tool{Name: "read", Input: json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer","maximum":12345678901234567890}}}`)}
 	resources := []mcpcontract.Resource{{URI: "orders://typed", Output: json.RawMessage(`{"type":"string"}`)}, {URI: "orders://all", Output: json.RawMessage(`{"type":"array"}`)}}
 	serve := fakeRun(map[string]any{"example.com/orders": extraction{Contract: &mcpcontract.Contract{Tools: []mcpcontract.Tool{read, lookupTool}, Resources: resources}}})
-	run := func(ctx context.Context, language, tooling string, args []string, stdin io.Reader, stdout io.Writer) error {
-		data, err := io.ReadAll(stdin)
-		if err != nil || !bytes.Contains(data, []byte(`"io.modelcontextprotocol/files"`)) {
-			t.Errorf("the client does not send files: %s", data)
+	run := func(ctx context.Context, language, tooling string, args []string, stdin []byte, stdout io.Writer) error {
+		if !bytes.Contains(stdin, []byte(`"io.modelcontextprotocol/files"`)) {
+			t.Errorf("the client does not send files: %s", stdin)
 		}
-		return serve(ctx, language, tooling, args, bytes.NewReader(data), stdout)
+		return serve(ctx, language, tooling, args, stdin, stdout)
 	}
 	document, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{Run: run})
 	if err != nil {
@@ -344,7 +343,7 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 	t.Cleanup(func() { serverTimeout = limit })
 	orders := t.TempDir()
 	writeProvider(t, orders, "orders", "while True:\n    pass\n")
-	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "server.py: no catalog within 1s") {
+	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "server.py: did not answer within 1s") {
 		t.Fatalf("server that never answers: %v", err)
 	}
 }

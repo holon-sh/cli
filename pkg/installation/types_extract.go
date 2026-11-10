@@ -39,7 +39,7 @@ const checkerInstall = "python -m pip install --disable-pip-version-check --no-c
 
 // extractTypes is typegen's contract-runner hook. It runs the runner in the app's extraction image without
 // network access, so the server's imports resolve against the dependencies its image installs.
-func (o buildOptions) extractTypes(ctx context.Context, language, toolingDir string, args []string, stdin io.Reader, stdout io.Writer) error {
+func (o buildOptions) extractTypes(ctx context.Context, language, toolingDir string, args []string, stdin []byte, stdout io.Writer) error {
 	runner := contractRunners[language]
 	command := slices.Concat([]string{runner.program, "/holon-tooling/" + language + "/" + runner.runner, args[0], "/app"}, args[2:])
 	return o.runInImage(ctx, args[1], toolingDir, "", false, command, stdin, stdout)
@@ -83,7 +83,7 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 // /holon-tooling. It gives the command stdin, when there is one, and copies what the command printed to
 // stdout. With generated, it first copies those clients into the app, in a layer of their own so the
 // source's layers stay cached; with checker, the command can import the Python type checker.
-func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdin io.Reader, stdout io.Writer) error {
+func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdin []byte, stdout io.Writer) error {
 	env, err := commandenv.Environ(o.Env)
 	if err != nil {
 		return err
@@ -128,20 +128,12 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	defer os.RemoveAll(work)
 	input := "/dev/null"
 	if stdin != nil {
-		directory := filepath.Join(work, "input")
-		if err := os.Mkdir(directory, 0o700); err != nil {
+		if err := os.WriteFile(filepath.Join(work, "stdin"), stdin, 0o600); err != nil {
 			return err
 		}
-		data, err := io.ReadAll(stdin)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(directory, "stdin"), data, 0o600); err != nil {
-			return err
-		}
-		args = append(args, "--build-context", "input="+directory)
-		mounts += " --mount=type=bind,from=input,target=/holon-input,readonly"
-		input = "/holon-input/stdin"
+		args = append(args, "--build-context", "input="+work)
+		mounts += " --mount=type=bind,from=input,source=stdin,target=/holon-stdin,readonly"
+		input = "/holon-stdin"
 	}
 	words := make([]string, len(command))
 	for i, word := range command {

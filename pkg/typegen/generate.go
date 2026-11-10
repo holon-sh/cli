@@ -38,7 +38,7 @@ type Options struct {
 	// writing its answers to stdout, and exits when stdin ends. A failure the runner reports is a
 	// *RunnerError. It defaults to the host's Node.js or Python interpreter, which runs the server in its
 	// own directory and stops it after 30 seconds.
-	Run func(ctx context.Context, language, toolingDir string, args []string, stdin io.Reader, stdout io.Writer) error
+	Run func(ctx context.Context, language, toolingDir string, args []string, stdin []byte, stdout io.Writer) error
 }
 
 func validateEnv(env []string) error {
