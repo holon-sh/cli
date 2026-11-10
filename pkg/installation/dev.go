@@ -203,7 +203,6 @@ func (d *devLoop) renew(ctx context.Context) {
 	}
 }
 
-// watching is the status while every app runs the source last saved.
 const watching = "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev."
 
 func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
@@ -360,9 +359,6 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 	d.pending.Clear()
 }
 
-// rebuild applies a save: a project change as holon dev applies the project when it starts, and a source change by
-// restarting the app in place, or by rebuilding its image when the save changed what the image is built from. It reports
-// whether it applied a project change. A project change that failed to apply is tried again with the next save.
 func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 	contexts := change.contexts.Union(d.stopPreparation())
 	if change.manifest || d.unapplied {
@@ -383,8 +379,6 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 	return false
 }
 
-// apply brings the session to the project as it is now, as holon dev does when it starts: it builds the images whose
-// inputs changed, keeps the rest, and removes the apps the project no longer has. It reports whether the project changed.
 func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	manifest, err := resolveManifestFile(d.manifest.file)
 	if err != nil {
@@ -411,7 +405,6 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	}
 	d.options.output.deploying(request.Apps)
 	if err := d.update(ctx, request, removedApps(d.session.Apps, request.Apps)...); err != nil {
-		// The session still runs the images the earlier inputs built.
 		d.options.types.accepted = accepted
 		return false, err
 	}
@@ -420,8 +413,6 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// update moves the session to desired and removes the apps named in remove. An app whose image the update keeps keeps
-// running, so update restarts it in place when its source changed.
 func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[protocol.App], remove ...string) error {
 	updated, err := replaceExecution(ctx, d.manager, d.name, d.session, desired, remove...)
 	if err != nil {
@@ -430,7 +421,6 @@ func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[pr
 	}
 	for _, app := range desired.Apps {
 		i := slices.IndexFunc(d.session.Apps, func(running protocol.App) bool { return running.Name == app.Name })
-		// An app that failed to restart keeps showing why, rather than turning ready on its old source.
 		if i < 0 || d.session.Apps[i].Image != app.Image || d.session.Apps[i].Overlay == app.Overlay ||
 			d.restart(ctx, &d.session.Apps[i], app.Overlay) {
 			d.pending.Insert(app.Name)
@@ -496,7 +486,6 @@ func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) err
 			return fmt.Errorf("remote update failed: %w", err)
 		}
 	}
-	// Only now does the session run what these inputs built.
 	for _, app := range result.images {
 		d.changedImages.Delete(app.Name)
 	}

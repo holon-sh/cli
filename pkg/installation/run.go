@@ -230,12 +230,10 @@ type sessionRecord struct {
 	Inputs  map[string]string `json:"inputs"`
 }
 
-// keptImage is an image a session runs, and the inputs it was built from.
 type keptImage struct {
 	inputs, image, overlay string
 }
 
-// keptImages are the images apps run that were built from inputs, so that a build from the same inputs can keep them.
 func keptImages(apps []protocol.App, inputs map[string]string) map[string]keptImage {
 	kept := map[string]keptImage{}
 	for _, app := range apps {
@@ -246,8 +244,6 @@ func keptImages(apps []protocol.App, inputs map[string]string) map[string]keptIm
 	return kept
 }
 
-// sessionRecordPath is where holon dev records the session it leaves for the next run of the same project and
-// selection, which picks it up whatever apps the project has by then.
 func (m *Client) sessionRecordPath(manifest manifestSpec, selection []string) string {
 	key := m.client.baseURL + "\x00" + manifest.file
 	for _, app := range manifest.sources {

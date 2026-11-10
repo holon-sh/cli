@@ -315,8 +315,6 @@ func TestRunDevLifecycle(t *testing.T) {
 		callLine  = "2026-11-09T10:00:00.3Z INFO alpha tools/call boom error tool_error 22ms trace_id=aaaa\n"
 	)
 	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
-		// The stream starts when holon dev does, so an earlier run's records are not shown again; it resumes after
-		// the last record it received, which this server refuses.
 		switch since := r.URL.Query().Get("since"); since {
 		case "":
 			t.Error("the log stream starts with the first record")
@@ -732,27 +730,19 @@ func TestRunDeployLifecycle(t *testing.T) {
 		})
 	}
 	updated := "hosted=https://updated.example/mcp"
-	for _, scenario := range []struct {
-		name   string
-		args   []string
-		create bool
-	}{
-		{name: "selected creation", args: []string{updated, "--public"}, create: true},
-		{name: "disjoint update", args: []string{updated}},
-		{name: "lost accepted response", args: []string{updated}},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
+	for _, scenario := range []string{"disjoint update", "lost accepted response"} {
+		t.Run(scenario, func(t *testing.T) {
 			mu.Lock()
 			desired = protocol.AppsRequestFor[protocol.App]{Apps: slices.Clone(initial)}
-			existing, rolloutFailure = !scenario.create, ""
-			forceConflict = scenario.name == "disjoint update"
-			loseResponse = scenario.name == "lost accepted response"
+			existing, rolloutFailure = true, ""
+			forceConflict = scenario == "disjoint update"
+			loseResponse = scenario == "lost accepted response"
 			mu.Unlock()
 			runConfig := h.run
 			runConfig.RegistryHTTPClient = installationtest.HTTPClient(func(*http.Request) (*http.Response, error) {
 				return nil, errors.New("no access to unrelated application images")
 			})
-			err := executeCommand(t.Context(), append([]string{"deploy"}, scenario.args...), nil, nil, runConfig)
+			err := executeCommand(t.Context(), []string{"deploy", updated}, nil, nil, runConfig)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {

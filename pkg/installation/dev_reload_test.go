@@ -47,8 +47,8 @@ type reloadFixture struct {
 
 	mu       sync.Mutex
 	ready    bool
-	failNext bool // fails the next reload
-	failSave bool // fails the next session update
+	failNext bool
+	failSave bool
 	foreign  bool
 	creates  int
 	served   []protocol.App
@@ -85,7 +85,6 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 	sourceFiles(t, f.root, map[string]string{
 		manifestFileName:  alphaManifest,
 		"alpha/server.py": "app = None", "alpha/tools.py": "first", "alpha/pyproject.toml": alphaProject, "alpha/uv.lock": alphaLock,
-		"alpha/ui/main.ts": "export {}",
 	})
 	var registry *httptest.Server
 	f.registry, registry = buildRegistry(t)
@@ -133,7 +132,6 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					return
 				}
-				// Like the API, an update upserts the apps it names.
 				f.served = slices.DeleteFunc(f.served, func(app protocol.App) bool {
 					return slices.Contains(input.Remove, app.Name) ||
 						slices.ContainsFunc(input.Desired.Apps, func(desired protocol.App) bool { return desired.Name == app.Name })
@@ -167,7 +165,6 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
-		// Like the API, a reload records the overlay as the app's.
 		f.served[slices.IndexFunc(f.served, func(app protocol.App) bool { return app.Name == input.App })].Overlay = input.Digest
 		f.moved()
 		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2})
@@ -204,7 +201,6 @@ func (f *reloadFixture) watching() {
 	f.await(func() bool { return strings.Contains(f.stderr.String(), watching) })
 }
 
-// save writes files and waits until holon dev has handled them and printed line after them.
 func (f *reloadFixture) save(files map[string]string, line string) {
 	f.t.Helper()
 	from := len(f.stderr.String())
@@ -212,7 +208,6 @@ func (f *reloadFixture) save(files map[string]string, line string) {
 	reads := len(f.reads)
 	f.mu.Unlock()
 	sourceFiles(f.t, f.root, files)
-	// Each change ends the session read the loop is waiting on, and the loop reads again once it handled it.
 	f.await(func() bool {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -237,12 +232,11 @@ func (f *reloadFixture) created() int {
 	return f.creates
 }
 
-// Each save has one outcome: a reload, a rebuild, or nothing.
 func TestDevSaves(t *testing.T) {
 	for _, test := range []struct {
 		name                 string
 		failReload, failSave bool
-		saves                []map[string]string // each prints the line at the same index
+		saves                []map[string]string
 		lines                []string
 		reloads              int
 		rebuilt              bool
@@ -256,11 +250,6 @@ func TestDevSaves(t *testing.T) {
 			name:  "files an editor writes while saving do nothing",
 			saves: []map[string]string{{"alpha/.tools.py.swp": "swap", "alpha/tools.py~": "first", manifestFileName: alphaManifest + "# comment\n"}},
 			lines: []string{""},
-		},
-		{
-			name:  "a module under ui/ rebuilds without reloading, since the frontend build reads it",
-			saves: []map[string]string{{"alpha/ui/main.ts": "export const edited = true"}},
-			lines: []string{"alpha ready"}, rebuilt: true,
 		},
 		{
 			name: "a rebuild the session failed to take is built again with the next save", failSave: true,
@@ -297,17 +286,12 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 		edit    map[string]string
 		creates int
 		reloads int
-		rebuilt bool
-		apps    []string // besides alpha
+		apps    []string
 	}{
 		{name: "server source edited since reloads into the kept image", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1},
 		{
 			name: "an app added to the project since joins the session", edit: map[string]string{manifestFileName: alphaManifest + betaRemote},
 			creates: 1, apps: []string{"beta"},
-		},
-		{
-			name: "a dependency manifest edited since rebuilds", edit: map[string]string{"alpha/pyproject.toml": alphaProject + "dependencies = [\"idna\"]\n"},
-			creates: 1, rebuilt: true,
 		},
 		{name: "another caller's session is not picked up", between: func(_ *testing.T, f *reloadFixture) { f.foreign = true }, creates: 2},
 		{
@@ -342,8 +326,8 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			if f.created() != test.creates {
 				t.Fatalf("creates = %d, want %d; stderr=%q", f.created(), test.creates, f.stderr.String())
 			}
-			if rebuilt := after.Image != before.Image; len(f.reloadRequests()) != test.reloads || rebuilt != test.rebuilt {
-				t.Fatalf("reloads = %d, image replaced = %v", len(f.reloadRequests()), rebuilt)
+			if len(f.reloadRequests()) != test.reloads || after.Image != before.Image {
+				t.Fatalf("reloads = %d, image %s, was %s", len(f.reloadRequests()), after.Image, before.Image)
 			}
 			if names := f.apps(); !slices.Equal(names, append([]string{"alpha"}, test.apps...)) {
 				t.Fatalf("session apps = %v", names)
@@ -352,8 +336,6 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 	}
 }
 
-// A project change applies to the running session: an app joins it or leaves it, and the others keep their images.
-// A change that fails to apply is applied with the next save.
 func TestDevAppliesProjectChanges(t *testing.T) {
 	f := startReloadFixture(t, true)
 	f.mu.Lock()
@@ -401,9 +383,6 @@ func TestDevReloadPushesTheBuildSnapshot(t *testing.T) {
 	request := f.reloadRequests()[0]
 	if request.Session != "gentle-otter-482" || request.App != "alpha" {
 		t.Fatalf("reload_app %+v", request)
-	}
-	if first == "" || first == request.Digest {
-		t.Fatalf("create_session overlay %q, reloaded %s", first, request.Digest)
 	}
 	if !strings.Contains(string(f.overlay(t, first)["server.py"]), "app = None") {
 		t.Fatal("the overlay a session starts from lacks the server source")

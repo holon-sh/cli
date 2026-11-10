@@ -93,8 +93,6 @@ func (d *devLoop) stopPreparation() sets.Set[string] {
 	return stopped.contexts
 }
 
-// reloadApp restarts app in place on the source just saved. When the save changed what the app's image is built from,
-// it leaves the app to the rebuild that follows instead.
 func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	defer d.options.output.measure(app.Name, "reload")()
 	directory, err := os.MkdirTemp("", "holon-overlay-")
@@ -130,8 +128,6 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	return nil
 }
 
-// restart restarts app in place on the source overlay, which the session records as the app's. It reports whether the
-// app restarted.
 func (d *devLoop) restart(ctx context.Context, running *protocol.App, overlay string) bool {
 	app := running.Name
 	d.options.output.status(app, "reloading", progressWorking)

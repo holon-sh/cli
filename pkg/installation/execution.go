@@ -12,7 +12,6 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-// replaceExecution upserts desired's apps into session name and removes the apps named in remove.
 func replaceExecution(ctx context.Context, manager *Client, name string,
 	baseline protocol.SessionResponse, desired protocol.AppsRequestFor[protocol.App], remove ...string,
 ) (protocol.SessionResponse, error) {

@@ -41,7 +41,6 @@ func (w *typeWorkspace) close() {
 	}
 }
 
-// inputs are what each accepted app's image was built from.
 func (w *typeWorkspace) inputs() map[string]string {
 	inputs := map[string]string{}
 	for name, types := range w.accepted {
@@ -74,7 +73,6 @@ func (w *typeWorkspace) affected(ctx context.Context, app manifestApp, manifest 
 	})
 }
 
-// acquire locks the generated clients of manifest's path apps, in place of the ones it locked before.
 func (w *typeWorkspace) acquire(manifest manifestSpec) error {
 	w.close()
 	if w.accepted == nil {
