@@ -353,7 +353,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			})
 		}
 		await(stderr, "Configure API_KEY to start the session.", "log stream stopped")
-		await(stdout, appOutput)
+		await(stdout, printedLog(appOutput))
 		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "broken"})
 		await(stderr, "remote image preparation failed")
 		mu.Lock()
@@ -386,7 +386,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
-		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") || strings.Contains(stdout.String(), callLine) {
+		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") || strings.Contains(stdout.String(), printedLog(callLine)) {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}
 	})
@@ -802,7 +802,7 @@ func TestStreamLogsResumesAfterOutages(t *testing.T) {
 		}
 		seedAdminCredentials(t, client, oauth2.Token{AccessToken: "expired", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now()})
 		output := &installationtest.ObservedOutput{OnWrite: func(text string) {
-			if strings.HasSuffix(text, third) {
+			if strings.HasSuffix(text, printedLog(third)) {
 				cancel()
 			}
 		}}
@@ -815,7 +815,7 @@ func TestStreamLogsResumesAfterOutages(t *testing.T) {
 		if elapsed := time.Since(start); elapsed != 2*time.Second || refreshes != 2 || !slices.Equal(since, []string{"5m", "2026-11-07T10:00:00.2Z"}) {
 			t.Fatalf("resumed after %v with %d refreshes and since = %q", elapsed, refreshes, since)
 		}
-		if got := output.String(); got != first+second+third {
+		if got := output.String(); got != printedLog(first+second+third) {
 			t.Fatalf("output = %q", got)
 		}
 	})

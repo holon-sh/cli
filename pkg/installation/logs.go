@@ -6,6 +6,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -59,6 +60,9 @@ func newLogsCommand(config *commandConfig) *cobra.Command {
 			}
 			var lines strings.Builder
 			for _, r := range logs.Records {
+				if at, err := time.Parse(time.RFC3339Nano, r.Time); err == nil {
+					r.Time = logTime(at)
+				}
 				lines.WriteString(r.Time + " " + r.Severity + " " + r.App + " " + r.Body)
 				if r.TraceID != "" {
 					lines.WriteString(" trace_id=" + r.TraceID)
