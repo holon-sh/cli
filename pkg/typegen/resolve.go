@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
@@ -65,7 +66,7 @@ func endpointClient(source Source, o Options) *http.Client {
 	if err != nil {
 		return o.HTTPClient // liveContract reports the invalid URL.
 	}
-	transport := &endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: origin(endpoint), signIn: o.SignIn}
+	transport := &endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: endpoint.Scheme + "://" + endpoint.Host, signIn: o.SignIn}
 	if source.Alias != "" {
 		transport.variable = strings.TrimSuffix(protocol.DependencyEnvName(source.Alias), "_URL") + "_TOKEN"
 		transport.token = cmp.Or(commandenv.Value(o.Env, transport.variable), os.Getenv(transport.variable))
@@ -100,7 +101,7 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	from := t.variable
 	if token == "" && t.signIn != nil {
 		if token, err = t.signIn(request.Context(), t.origin); err != nil {
-			return nil, err
+			return nil, t.refuse(err)
 		}
 		if token != "" {
 			from = "signing in"
@@ -125,28 +126,22 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	case t.variable != "":
 		hint = "if it needs a token, set " + t.variable
 	}
-	refusal = fmt.Errorf("server refused the request with HTTP %d; %s", response.StatusCode, hint)
+	return nil, t.refuse(fmt.Errorf("server refused the request with HTTP %d; %s", response.StatusCode, hint))
+}
+
+func (t *endpointTransport) refuse(err error) error {
 	t.mu.Lock()
-	t.refusal = refusal
-	t.mu.Unlock()
-	return nil, refusal
+	defer t.mu.Unlock()
+	t.refusal = err
+	return err
 }
 
 func (t *endpointTransport) send(request *http.Request, token string) (*http.Response, error) {
-	// Redirects come through here too, and must not carry the token to another origin.
-	if token != "" && origin(request.URL) == t.origin {
-		request = request.Clone(request.Context())
-		request.Header.Set("Authorization", "Bearer "+token)
-	}
-	response, err := t.RoundTripper.RoundTrip(request)
+	response, err := t.RoundTripper.RoundTrip(clientutil.Bearer(request, t.origin, token))
 	if err == nil && refused(response) {
 		_ = response.Body.Close()
 	}
 	return response, err
-}
-
-func origin(u *url.URL) string {
-	return u.Scheme + "://" + u.Host
 }
 
 func refused(response *http.Response) bool {

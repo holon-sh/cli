@@ -302,7 +302,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 		alias = c.Server.Alias
 		absolute, _ := filepath.Abs(c.Server.Path)
 		c.server = p.paths[absolute]
-		if !pathInsideContext(c.server.origin, c.Dir) {
+		if !lexicallyInside(c.server.origin, c.Dir) {
 			return fmt.Errorf("%s: own server %s is outside %s", c.Name, c.server.origin, c.Dir)
 		}
 		identity = c.server.metadata.Identity

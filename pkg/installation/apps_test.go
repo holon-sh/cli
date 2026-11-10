@@ -4,13 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 )
+
+var columnGap = regexp.MustCompile(` {2,}`)
 
 func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 	app := func(name string) protocol.App {
@@ -21,9 +27,15 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		}
 	}
 	sessions := []protocol.SessionResponse{
-		{Name: "s-one", Revision: "1", Apps: []protocol.App{app("chat"), app("other")}},
+		{
+			Name: "s-one", Revision: "1", Apps: []protocol.App{app("chat"), app("other")}, ExpiresAt: "2026-11-10T12:08:20Z",
+			Endpoints: []protocol.SessionEndpoint{{Name: "chat", URL: "https://s-one.example/chat/mcp"}},
+		},
 		{Name: "s-two", Revision: "1", Apps: []protocol.App{app("chat")}},
-		{Name: "s-three", Revision: "1", Apps: []protocol.App{app("other")}},
+		{Name: "s-three", Revision: "1", Apps: []protocol.App{app("other"), {
+			Name: "hf", Remote: &protocol.Remote{URL: "https://huggingface.co/mcp"}, Access: &protocol.AppAccess{Server: &protocol.AccessRule{}},
+		}}},
+		{Name: "s-empty", Revision: "1", Apps: []protocol.App{}, ExpiresAt: "2026-11-11T11:59:00Z"},
 	}
 	h := newRunHarness(t)
 	var updates []string
@@ -56,12 +68,24 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		installationtest.WriteJSON(w, protocol.SessionResponse{Name: input.Session, Revision: "2"})
 	})
 	h.start(t, nil)
+	h.run.Clock = testingclock.NewFakeClock(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
 	for _, test := range []struct {
 		args    []string
 		updates []string
 		output  []string
 		err     string
 	}{
+		{
+			// Every session lists, with its expiry, including one whose apps were all removed.
+			args: []string{"app", "list"},
+			output: []string{
+				"s-one 8m chat https://s-one.example/chat/mcp image registry.example/chat@",
+				"s-one 8m other - ",
+				"s-two - chat",
+				"s-three - hf - remote huggingface.co public huggingface.co:443",
+				"s-empty 23h59m -\n",
+			},
+		},
 		{
 			args:    []string{"access", "set", "chat", "oauth", "app:chat:read"},
 			updates: []string{"s-one remove= chat:oauth app:chat:read", "s-two remove= chat:oauth app:chat:read"},
@@ -94,9 +118,10 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		if !slices.Equal(updates, test.updates) {
 			t.Fatalf("holon %v: updates=%q, want %q", test.args, updates, test.updates)
 		}
+		output := columnGap.ReplaceAllString(out.String(), " ")
 		for _, want := range test.output {
-			if !strings.Contains(out.String(), want) {
-				t.Fatalf("holon %v: output=%q, want %q", test.args, out.String(), want)
+			if !strings.Contains(output, want) {
+				t.Fatalf("holon %v: output=%q, want %q", test.args, output, want)
 			}
 		}
 	}

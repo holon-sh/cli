@@ -1,10 +1,10 @@
 package installation
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,7 +20,6 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/opencontainers/go-digest"
-	"github.com/zitadel/oidc/v3/pkg/client/rp"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 	"k8s.io/utils/ptr"
@@ -315,60 +314,81 @@ func (m *Client) revokeRefreshTokens(ctx context.Context) error {
 	if state.OAuth == nil {
 		return nil
 	}
-	party, err := m.relyingParty(ctx, state.OAuth.Issuer, state.OAuth.CLIClientID)
+	_, revocation, err := m.discover(ctx, state.OAuth.Issuer, state.OAuth.CLIClientID)
 	if err != nil {
 		return err
 	}
 	for _, token := range state.Tokens {
-		err = errors.Join(err, rp.RevokeToken(ctx, party, ptr.Deref(token, oauth2.Token{}).RefreshToken, "refresh_token"))
+		err = errors.Join(err, m.revoke(ctx, revocation, state.OAuth.CLIClientID, ptr.Deref(token, oauth2.Token{}).RefreshToken))
 	}
 	return err
 }
 
-func (m *Client) relyingParty(ctx context.Context, issuer, clientID string) (rp.RelyingParty, error) {
-	client := *m.client.client
-	client.Timeout = discoveryTimeout
-	client.Transport = boundedTransport{base: cmp.Or(client.Transport, http.DefaultTransport)}
-	// This library uses [OIDC Discovery §4], whose well-known path differs from RFC 8414 for path issuers.
-	//
-	// [OIDC Discovery §4]: https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfig
-	party, err := rp.NewRelyingPartyOIDC(ctx, issuer, clientID, "", "", []string{"openid", "offline_access"}, rp.WithHTTPClient(&client), rp.WithAuthStyle(oauth2.AuthStyleInParams))
+func (m *Client) revoke(ctx context.Context, endpoint, clientID, token string) error {
+	if endpoint == "" {
+		return fmt.Errorf("%w: issuer does not advertise a revocation endpoint", errOAuthFailed)
+	}
+	form := url.Values{"token": {token}, "token_type_hint": {"refresh_token"}, "client_id": {clientID}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, cmp.Or(ctx.Err(), fmt.Errorf("OIDC discovery: %w", errOAuthFailed))
+		return err
 	}
-	device, revoke := party.GetDeviceAuthorizationEndpoint(), party.GetRevokeEndpoint()
-	if !httpsURL(party.OAuthConfig().Endpoint.TokenURL) || device != "" && !httpsURL(device) || revoke != "" && !httpsURL(revoke) {
-		return nil, errMalformedResponse
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// The response body is ignored per [RFC 7009 §2.2], and could echo the token.
+	//
+	// [RFC 7009 §2.2]: https://www.rfc-editor.org/rfc/rfc7009.html#section-2.2
+	status, _, err := m.identityRequest(request)
+	if err == nil && status != http.StatusOK {
+		err = fmt.Errorf("%w: HTTP %d", errOAuthFailed, status)
 	}
-	return party, nil
+	return err
+}
+
+// discover reads the issuer's metadata at the [OIDC Discovery §4] path, which differs from RFC 8414 for path issuers,
+// and returns its revocation endpoint beside the client configuration.
+//
+// [OIDC Discovery §4]: https://openid.net/specs/openid-connect-discovery-1_0.html#ProviderConfig
+func (m *Client) discover(ctx context.Context, issuer, clientID string) (*oauth2.Config, string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(issuer, "/")+"/.well-known/openid-configuration", nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("OIDC discovery: %w", errOAuthFailed)
+	}
+	var metadata struct {
+		Issuer     string `json:"issuer"`
+		Token      string `json:"token_endpoint"`
+		Device     string `json:"device_authorization_endpoint"`
+		Revocation string `json:"revocation_endpoint"`
+	}
+	status, body, err := m.identityRequest(request)
+	if err != nil || status != http.StatusOK || json.Unmarshal(body, &metadata) != nil || metadata.Issuer != issuer {
+		return nil, "", cmp.Or(ctx.Err(), fmt.Errorf("OIDC discovery: %w", errOAuthFailed))
+	}
+	if !httpsURL(metadata.Token) || metadata.Device != "" && !httpsURL(metadata.Device) || metadata.Revocation != "" && !httpsURL(metadata.Revocation) {
+		return nil, "", errMalformedResponse
+	}
+	return &oauth2.Config{
+		ClientID: clientID,
+		Scopes:   []string{"openid", "offline_access"},
+		Endpoint: oauth2.Endpoint{TokenURL: metadata.Token, DeviceAuthURL: metadata.Device, AuthStyle: oauth2.AuthStyleInParams},
+	}, metadata.Revocation, nil
 }
 
 func (m *Client) oauthConfig(ctx context.Context) (*oauth2.Config, error) {
-	party, err := m.relyingParty(ctx, m.info.OAuth.Issuer, m.info.OAuth.CLIClientID)
-	if err != nil {
-		return nil, err
-	}
-	config := party.OAuthConfig()
-	config.Endpoint.DeviceAuthURL = party.GetDeviceAuthorizationEndpoint()
-	return config, nil
+	config, _, err := m.discover(ctx, m.info.OAuth.Issuer, m.info.OAuth.CLIClientID)
+	return config, err
 }
 
-type boundedTransport struct {
-	base http.RoundTripper
-}
-
-func (t boundedTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	response, err := t.base.RoundTrip(request)
+// identityRequest sends request to the identity provider and reads at most maxDiscoveryBytes of the response.
+func (m *Client) identityRequest(request *http.Request) (int, []byte, error) {
+	client := *m.client.client
+	client.Timeout = discoveryTimeout
+	response, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
+	defer func() { _ = response.Body.Close() }()
 	body, err := clientutil.ReadLimited(response.Body, maxDiscoveryBytes)
-	_ = response.Body.Close()
-	if err != nil {
-		return nil, err
-	}
-	response.Body = io.NopCloser(bytes.NewReader(body))
-	return response, nil
+	return response.StatusCode, body, err
 }
 
 func (m *Client) oauthContext(ctx context.Context) context.Context {
@@ -502,11 +522,7 @@ func (m *Client) controlToken(ctx context.Context) (string, error) {
 	if m.info.OAuth == nil {
 		return "", nil
 	}
-	return m.accessToken(ctx, m.info.OAuth.AdminAudience)
-}
-
-func (m *Client) accessToken(ctx context.Context, audience string) (string, error) {
-	token, err := m.resourceToken(ctx, audience)
+	token, err := m.resourceToken(ctx, m.info.OAuth.AdminAudience)
 	if err != nil {
 		return "", err
 	}
@@ -590,8 +606,8 @@ func (config ClientConfig) AppToken(ctx context.Context, origin string) (string,
 		return "", nil
 	}
 	manager, err := NewClient(ctx, config)
-	if err != nil || manager.info.OAuth == nil {
+	if err != nil {
 		return "", err
 	}
-	return manager.accessToken(ctx, origin)
+	return manager.controlToken(ctx)
 }

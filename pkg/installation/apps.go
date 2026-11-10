@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"sigs.k8s.io/yaml"
@@ -40,12 +41,17 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				now := config.clock().Now()
 				table := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-				_, _ = fmt.Fprintln(table, "SESSION\tAPP\tSOURCE\tACCESS\tEGRESS\tRESTRICTED")
+				_, _ = fmt.Fprintln(table, "SESSION\tEXPIRES\tAPP\tURL\tSOURCE\tACCESS\tEGRESS\tRESTRICTED")
 				for _, session := range sessions {
+					expires := expiresIn(session.ExpiresAt, now)
+					if len(session.Apps) == 0 {
+						_, _ = fmt.Fprintf(table, "%s\t%s\t-\n", session.Name, expires)
+					}
 					for _, app := range session.Apps {
-						_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", session.Name, app.Name, appSource(app),
-							accessSummary(app.Access), egressSummary(app.Egress), egressCut(session, app.Name))
+						_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", session.Name, expires, app.Name, appURL(session, app.Name),
+							appSource(app), accessSummary(app.Access), egressSummary(app), egressCut(session, app.Name))
 					}
 				}
 				return table.Flush()
@@ -255,11 +261,29 @@ func sessionApps(cmd *cobra.Command, config *commandConfig, scope configurationS
 	return manager, targets, nil
 }
 
+// expiresIn is how long a development session has left, at least a minute; production never expires.
+func expiresIn(expiresAt string, now time.Time) string {
+	expiry, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		return "-"
+	}
+	return strings.TrimSuffix(max(expiry.Sub(now), time.Minute).Round(time.Minute).String(), "0s")
+}
+
+// appURL is the app's MCP endpoint once the session serves it.
+func appURL(session protocol.SessionResponse, app string) string {
+	for _, endpoint := range session.Endpoints {
+		if endpoint.Name == app {
+			return endpoint.URL
+		}
+	}
+	return "-"
+}
+
 func appSource(app protocol.App) string {
 	switch {
 	case app.Remote != nil:
-		host, _, _ := strings.Cut(strings.TrimPrefix(app.Remote.URL, "https://"), "/")
-		return "remote " + host
+		return "remote " + remoteHost(*app.Remote)
 	case app.Release != nil && app.Release.Name != "":
 		return "registry " + app.Release.Name + "@" + app.Release.Version
 	}
@@ -282,7 +306,20 @@ func accessRule(rule protocol.AccessRule) string {
 	return strings.Join(append([]string{"oauth"}, rule.OAuth.Scopes...), " ")
 }
 
-func egressSummary(egress protocol.Egress) string {
+func remoteHost(remote protocol.Remote) string {
+	host, _, _ := strings.Cut(strings.TrimPrefix(remote.URL, "https://"), "/")
+	return host
+}
+
+func egressSummary(app protocol.App) string {
+	if app.Remote != nil {
+		host := remoteHost(*app.Remote)
+		if !strings.Contains(host, ":") {
+			host += ":443"
+		}
+		return host
+	}
+	egress := app.Egress
 	if egress == nil {
 		return "any"
 	}

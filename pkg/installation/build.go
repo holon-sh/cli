@@ -9,7 +9,6 @@ import (
 	"maps"
 	"net/http"
 	"os"
-	"path/filepath"
 	"slices"
 	"sync"
 
@@ -26,7 +25,6 @@ type buildOptions struct {
 	importPackage func(context.Context, manifestApp) (protocol.ResolvedAppBuild, error)
 	catalogTag    string
 	types         *typeWorkspace
-	metadataGrant protocol.UploadGrant
 	architectures []string
 	builder       buildApplication
 	builders      *builderConnections
@@ -142,17 +140,6 @@ func regularNoSymlink(path, label string) error {
 		return fmt.Errorf("%s must be a regular file, not a symlink or directory: %s", label, path)
 	}
 	return nil
-}
-
-func pathInsideContext(path, contextPath string) bool {
-	if realPath, err := filepath.EvalSymlinks(path); err == nil {
-		path = realPath
-	}
-	if realContext, err := filepath.EvalSymlinks(contextPath); err == nil {
-		contextPath = realContext
-	}
-	relative, _ := filepath.Rel(contextPath, path)
-	return filepath.IsLocal(relative)
 }
 
 func buildManifestImages(

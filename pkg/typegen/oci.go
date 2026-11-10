@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,31 +23,26 @@ const (
 	homeEnv         = "HOME"
 )
 
-// imageRepository authenticates with Docker-stored credentials.
-func imageRepository(name string, extraEnv []string, client *http.Client) (*remote.Repository, error) {
-	repository, err := remote.NewRepository(name)
-	if err != nil {
+// DockerCredential looks registry credentials up in the Docker config, by the host being contacted.
+// DOCKER_CONFIG and HOME entries in env override this process's own.
+func DockerCredential(env []string) (auth.CredentialFunc, error) {
+	if err := validateEnv(env); err != nil {
 		return nil, err
 	}
-	authClient := &auth.Client{Client: cmp.Or(client, retry.DefaultClient), Cache: auth.NewCache()}
-	repository.Client = authClient
-	if err := validateEnv(extraEnv); err != nil {
-		return nil, err
-	}
-	env := map[string]string{
+	values := map[string]string{
 		dockerConfigEnv: os.Getenv(dockerConfigEnv),
 		homeEnv:         os.Getenv(homeEnv),
 	}
-	for _, entry := range extraEnv {
+	for _, entry := range env {
 		key, value, _ := strings.Cut(entry, "=")
-		env[key] = value
+		values[key] = value
 	}
-	configDir := env[dockerConfigEnv]
+	configDir := values[dockerConfigEnv]
 	if configDir == "" {
-		home := env[homeEnv]
+		home := values[homeEnv]
 		if home == "" {
-			home, err = os.UserHomeDir()
-			if err != nil {
+			var err error
+			if home, err = os.UserHomeDir(); err != nil {
 				return nil, err
 			}
 		}
@@ -58,8 +52,7 @@ func imageRepository(name string, extraEnv []string, client *http.Client) (*remo
 	if err != nil {
 		return nil, fmt.Errorf("read source registry credentials: %w", err)
 	}
-	authClient.Credential = credentials.Credential(store)
-	return repository, nil
+	return credentials.Credential(store), nil
 }
 
 // ReadDocument reads an image index's contract annotation, then the named blob.
@@ -85,10 +78,15 @@ func resolveTypeMetadata(ctx context.Context, image string, o Options) (*Documen
 	if err != nil {
 		return nil, err
 	}
-	repository, err := imageRepository(named.Name(), o.Env, o.HTTPClient)
+	repository, err := remote.NewRepository(named.Name())
 	if err != nil {
 		return nil, err
 	}
+	credential, err := DockerCredential(o.Env)
+	if err != nil {
+		return nil, err
+	}
+	repository.Client = &auth.Client{Client: cmp.Or(o.HTTPClient, retry.DefaultClient), Cache: auth.NewCache(), Credential: credential}
 	descriptor, err := repository.Resolve(ctx, image)
 	if err != nil {
 		return nil, fmt.Errorf("resolve dependency contract for %s: %w", image, err)

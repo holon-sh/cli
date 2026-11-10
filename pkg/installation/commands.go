@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"strings"
@@ -49,11 +50,20 @@ func newCommands(config commandConfig) []*cobra.Command {
 				if err := manager.loginInteractive(cmd.Context()); err != nil {
 					return err
 				}
-				if err := saveOrigin(config.Auth, manager.client.baseURL); err != nil {
-					return err
+				// Reading the identity proves the new credentials work before the installation is selected.
+				if manager.info.OAuth != nil {
+					var me struct {
+						Identity struct {
+							Subject string
+							Profile struct{ Email string }
+						}
+					}
+					if err := manager.Call(cmd.Context(), protocol.DevPlane, "get_identity", struct{}{}, &me); err != nil {
+						return err
+					}
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Signed in to %s as %s\n", manager.client.baseURL, cmp.Or(me.Identity.Profile.Email, me.Identity.Subject))
 				}
-				_, err = fmt.Fprintln(cmd.ErrOrStderr(), "Selected Holon installation "+manager.client.baseURL)
-				return err
+				return saveOrigin(config.Auth, manager.client.baseURL)
 			},
 		},
 		{

@@ -42,10 +42,10 @@ import (
 	orascontent "oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/content/oci"
 	"oras.land/oras-go/v2/registry/remote"
-	registryauth "oras.land/oras-go/v2/registry/remote/auth"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/ociimage"
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
 
@@ -175,13 +175,13 @@ func publishPlatform(
 		request.builders.clients.CompareAndDelete(platform, c)
 		return ocispec.Descriptor{}, err
 	}
-	credentials, err := imageRepository("registry-1.docker.io/library/unused", "", request.httpClient)
+	credentials, err := typegen.DockerCredential(nil)
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	authentication := authprovider.NewDockerAuthProvider(authprovider.DockerAuthProviderConfig{
 		AuthConfigProvider: func(ctx context.Context, host string, _ []string, _ authprovider.ExpireCachedAuthCheck) (dockerconfig.AuthConfig, error) {
-			credential, err := credentials.Client.(*registryauth.Client).Credential(ctx, host)
+			credential, err := credentials(ctx, host)
 			return dockerconfig.AuthConfig{
 				Username: credential.Username, Password: credential.Password,
 				IdentityToken: credential.RefreshToken, RegistryToken: credential.AccessToken,
