@@ -57,12 +57,10 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			options := options
 			logs := options.output.logs(stderr)
 			options.Stderr = logs
-			defer func() { logs.finished(options.output, app.Name, "uploaded", err) }()
-			action := "building"
+			defer func() { err = logs.finished(options.output, app.Name, "uploaded", err) }()
 			if app.resolved.Image != "" || app.resolved.registryPackage != nil {
-				action = "importing"
+				options.output.status(app.Name, "importing", progressWorking)
 			}
-			options.output.status(app.Name, action, progressWorking)
 			if app.resolved.registryPackage != nil {
 				build, err := options.importPackage(ctx, app)
 				if err != nil {

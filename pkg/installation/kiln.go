@@ -51,22 +51,23 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	if err != nil {
 		return "", "", err
 	}
-	if kept, ok := options.kept[app.Name]; ok && kept.inputs == p.inputs {
-		return kept.image, kept.overlay, nil
-	}
 	request.upload = upload
-	build := options.builder
-	if build == nil {
-		build = publishSource
-	}
-	image, err := build(ctx, request, options.Stderr)
-	if err != nil {
-		return "", "", fmt.Errorf("build %s: %w", app.Name, err)
+	kept := options.kept[app.Name]
+	image := kept.image
+	if kept.inputs != p.inputs || image == "" {
+		options.output.status(app.Name, "building", progressWorking)
+		build := options.builder
+		if build == nil {
+			build = publishSource
+		}
+		if image, err = build(ctx, request, options.Stderr); err != nil {
+			return "", "", fmt.Errorf("build %s: %w", app.Name, err)
+		}
 	}
 	if !request.Development {
 		return image, "", nil
 	}
-	overlay, err := request.pushOverlay(ctx, "")
+	overlay, err := request.pushOverlay(ctx, kept.overlay)
 	return image, overlay, err
 }
 

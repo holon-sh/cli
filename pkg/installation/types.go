@@ -37,7 +37,16 @@ type typeWorkspace struct {
 func (w *typeWorkspace) close() {
 	if w.release != nil {
 		w.release()
+		w.release = nil
 	}
+}
+
+func (w *typeWorkspace) inputs() map[string]string {
+	inputs := map[string]string{}
+	for name, types := range w.accepted {
+		inputs[name] = types.inputs
+	}
+	return inputs
 }
 
 func (w *typeWorkspace) accept(manifest manifestSpec) {
@@ -65,7 +74,10 @@ func (w *typeWorkspace) affected(ctx context.Context, app manifestApp, manifest 
 }
 
 func (w *typeWorkspace) acquire(manifest manifestSpec) error {
-	w.accepted = map[string]*preparedTypes{}
+	w.close()
+	if w.accepted == nil {
+		w.accepted = map[string]*preparedTypes{}
+	}
 	var consumers []typegen.Consumer
 	for _, app := range manifest.Apps {
 		if app.Path != "" {
@@ -104,8 +116,9 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	byApp := map[string]typegen.Source{}
 	var consumers []typegen.Consumer
 	needed := map[string]bool{}
+	logs := options.output.logs(options.Stderr)
 	typeOptions := typegen.Options{
-		Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.Stderr, Run: options.extractTypes,
+		Env: options.Env, HTTPClient: options.HTTPClient, Stderr: logs, Run: options.extractTypes,
 	}
 	var pathApps []*manifestApp
 	for i := range manifest.Apps {
@@ -171,7 +184,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	}
 	if options.types != nil {
 		if err := typegen.Install(ctx, consumers, typeOptions); err != nil {
-			return manifestSpec{}, nil, err
+			return manifestSpec{}, nil, logs.explain(err)
 		}
 	}
 	for _, app := range pathApps {

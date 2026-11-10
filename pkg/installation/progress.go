@@ -7,6 +7,8 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -288,21 +290,36 @@ func (l *buildLog) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (l *buildLog) failed(app string) {
-	if len(l.tail) > 0 {
-		_, _ = fmt.Fprintf(l.writer, "\nBuild diagnostics (%s):\n%s\n", app, strings.TrimSpace(string(l.tail)))
+var stepTime = regexp.MustCompile(`(?m)^\d+\.\d+ ?`)
+
+func (l *buildLog) explain(err error) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	output := strings.TrimSpace(string(l.tail))
+	if _, step, ok := strings.Cut(output, "\n------\n > "); ok {
+		_, step, _ = strings.Cut(step, ":\n")
+		step, _, _ = strings.Cut(step, "\n------")
+		output = stepTime.ReplaceAllString(step, "")
+	} else if _, exited := errors.AsType[*exec.ExitError](err); exited {
+		output = output[strings.LastIndexByte(output, '\n')+1:]
+	} else {
+		return err
 	}
+	if output = strings.TrimSpace(output); output == "" {
+		return err
+	}
+	return fmt.Errorf("%w:\n%s", err, output)
 }
 
-func (l *buildLog) finished(output *progressOutput, app, phase string, err error) {
+func (l *buildLog) finished(output *progressOutput, app, phase string, err error) error {
 	state := progressWorking
 	if errors.Is(err, context.Canceled) {
 		phase, state = "stopped", progressIdle
 	} else if err != nil {
-		l.failed(app)
-		phase, state = "failed", progressError
+		err, phase, state = l.explain(err), "failed", progressError
 	}
 	output.status(app, phase, state)
+	return err
 }
 
 type progressFunc func([]byte) (int, error)
