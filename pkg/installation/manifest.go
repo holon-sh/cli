@@ -165,9 +165,6 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 			if err := a.Registry.Validate(); err != nil {
 				errs = append(errs, label+".registry: "+err.Error())
 			}
-			if a.Registry.Remote != nil {
-				errs = append(errs, label+".registry.remote is no longer supported; name the endpoint with remote: {url: ...}")
-			}
 		}
 		if a.Run != nil {
 			if a.Registry == nil || a.Registry.Package == nil || a.Registry.Package.RegistryType != "oci" {

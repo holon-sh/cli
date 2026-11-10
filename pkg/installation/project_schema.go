@@ -2,7 +2,6 @@ package installation
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,51 +92,38 @@ func validateProject(data []byte) []string {
 	var problems []string
 	var describe func(*validator.ValidationError)
 	describe = func(e *validator.ValidationError) {
-		at := fieldPath(instance, e.InstanceLocation)
-		switch k := e.ErrorKind.(type) {
-		case *kind.AdditionalProperties:
+		for _, cause := range e.Causes {
+			describe(cause)
+		}
+		if len(e.Causes) != 0 {
+			return
+		}
+		problem := e.ErrorKind.LocalizedString(printer)
+		if unknown, ok := e.ErrorKind.(*kind.AdditionalProperties); ok {
 			var allowed []string
 			if parent, err := compiler.Compile(e.SchemaURL); err == nil {
 				allowed = slices.Sorted(maps.Keys(parent.Properties))
 			}
-			problems = append(problems, fmt.Sprintf("%sunknown field %s; allowed: %s", at, strings.Join(k.Properties, ", "), cmp.Or(strings.Join(allowed, ", "), "none")))
-		case *kind.OneOf:
-			var forms []string
-			for _, cause := range e.Causes {
-				for len(cause.Causes) == 1 {
-					cause = cause.Causes[0]
-				}
-				forms = append(forms, cause.ErrorKind.LocalizedString(printer))
-			}
-			problems = append(problems, at+cmp.Or(strings.Join(forms, ", or "), k.LocalizedString(printer)))
-		default:
-			if len(e.Causes) == 0 {
-				problems = append(problems, at+e.ErrorKind.LocalizedString(printer))
-			}
-			for _, cause := range e.Causes {
-				describe(cause)
-			}
+			problem = fmt.Sprintf("unknown field %s; allowed: %s", strings.Join(unknown.Properties, ", "), strings.Join(allowed, ", "))
 		}
+		problems = append(problems, fieldPath(e.InstanceLocation)+problem)
 	}
 	describe(invalid)
 	return problems
 }
 
-// fieldPath writes a JSON pointer into instance as apps[0].registry, followed by ": ".
-func fieldPath(instance any, location []string) string {
+// fieldPath writes a location in the document as apps[0].registry, followed by ": ".
+func fieldPath(location []string) string {
 	var path strings.Builder
 	for _, segment := range location {
-		if list, ok := instance.([]any); ok {
-			index, _ := strconv.Atoi(segment)
-			fmt.Fprintf(&path, "[%d]", index)
-			instance = list[index]
+		if _, err := strconv.Atoi(segment); err == nil {
+			path.WriteString("[" + segment + "]")
 			continue
 		}
 		if path.Len() != 0 {
 			path.WriteByte('.')
 		}
 		path.WriteString(segment)
-		instance = instance.(map[string]any)[segment]
 	}
 	if path.Len() == 0 {
 		return ""

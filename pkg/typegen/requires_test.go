@@ -40,7 +40,7 @@ func TestDeclaredSources(t *testing.T) {
 			if test.data != "" {
 				put(t, root, "server.json", test.data)
 			}
-			got, err := DeclaredSources(root, nil)
+			got, err := DeclaredSources(root)
 			if test.err != "" {
 				if err == nil || !strings.Contains(err.Error(), filepath.Join(root, "server.json")) || !strings.Contains(err.Error(), test.err) {
 					t.Fatalf("DeclaredSources error = %v, want server.json and %q", err, test.err)
@@ -54,35 +54,9 @@ func TestDeclaredSources(t *testing.T) {
 	}
 }
 
-func TestDeclaredURLOverride(t *testing.T) {
-	live := tokenServer(t, "secret")
-	root := t.TempDir()
-	put(t, root, "server.json", `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"docs":{},"orders":{"name":"example.com/orders","version":"1.0.0"}}}}}}`)
-	for _, test := range []struct{ name, location, want string }{
-		{name: "set", location: live.URL},
-		{name: "invalid", location: "ftp://docs.example", want: "DOCS_MCP_URL: MCP URL must be an HTTP(S) URL"},
-		{name: "unset", want: "dependency docs names no server"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			sources, err := DeclaredSources(root, []string{"DOCS_MCP_URL=" + test.location, "ORDERS_MCP_URL=" + live.URL})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if sources[1].Registry == nil || sources[1].Endpoint != "" {
-				t.Fatalf("registry entry = %+v, want it left alone", sources[1])
-			}
-			var progress strings.Builder
-			document, err := ResolveDocument(t.Context(), sources[0], Options{Stderr: &progress, Env: []string{"DOCS_MCP_TOKEN=secret"}})
-			if test.want != "" {
-				if err == nil || !strings.Contains(err.Error(), test.want) {
-					t.Fatalf("ResolveDocument = %v, want %q", err, test.want)
-				}
-				return
-			}
-			if err != nil || document.Identity.Name != "orders" || !strings.Contains(progress.String(), live.URL) {
-				t.Fatalf("ResolveDocument = %+v, %v; progress %q", document, err, progress.String())
-			}
-		})
+func TestEmptyDependencyOutsideAProject(t *testing.T) {
+	if _, err := ResolveDocument(t.Context(), Source{Alias: "docs"}, Options{}); err == nil || !strings.Contains(err.Error(), "dependency docs names no server") {
+		t.Fatalf("ResolveDocument = %v, want the dependency named", err)
 	}
 }
 

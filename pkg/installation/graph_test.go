@@ -107,7 +107,7 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	writeDescriptor(t, filepath.Join(root, "alpha-secret/server.json"), secretAlpha)
 	orphanAlpha := descriptorDocument("alpha")
 	orphanAlpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
-		"sh.holon": map[string]any{"requires": map[string]any{"zeta": map[string]any{}}},
+		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{"zeta": {Name: "io.github.acme/zeta", Version: "1.0.0"}}},
 	}}
 	writeDescriptor(t, filepath.Join(root, "alpha-orphan/server.json"), orphanAlpha)
 	writeDescriptor(t, filepath.Join(root, "invalid/server.json"), map[string]any{})
@@ -133,7 +133,7 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata"), Access: policy}}
 		}},
 		{name: "dependency directory without access", want: "app beta needs an access rule", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
-		{name: "undeclared dependency", want: "alpha requires zeta", change: func(p *manifestSpec) {
+		{name: "undeclared dependency", want: `registry: {name: io.github.acme/zeta, version: "1.0.0"}`, change: func(p *manifestSpec) {
 			p.Apps[0].Path = filepath.Join(root, "alpha-orphan")
 		}},
 		{name: "dependency cycle", want: "cycle", change: func(p *manifestSpec) {

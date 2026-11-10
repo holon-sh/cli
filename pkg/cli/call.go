@@ -123,7 +123,7 @@ func target(arg string) (typegen.Source, error) {
 	if err != nil || source.Path == "" {
 		return source, err
 	}
-	declared, err := typegen.DeclaredSources(".", nil)
+	declared, err := typegen.DeclaredSources(".")
 	if err != nil {
 		return typegen.Source{}, err
 	}

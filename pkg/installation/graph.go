@@ -25,7 +25,7 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 		}
 	}
 	nodes := map[string]*manifestApp{}
-	requiredBy := map[string]string{}
+	requiredBy := map[string]*manifestApp{}
 	for len(apps) > 0 {
 		name := apps[0]
 		apps = apps[1:]
@@ -33,8 +33,8 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 			continue
 		}
 		app, err := manifest.app(name)
-		if err != nil && requiredBy[name] != "" {
-			return nil, fmt.Errorf("%s requires %s, which is not an app in this project; declare it in holon.yaml, as remote: {url: ...} for an MCP endpoint", requiredBy[name], name)
+		if requirer := requiredBy[name]; err != nil && requirer != nil {
+			return nil, undeclaredDependency(requirer, name)
 		} else if err != nil {
 			return nil, err
 		}
@@ -70,11 +70,28 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 		}
 		nodes[app.Name] = &app
 		for _, dependency := range app.resolved.Requires {
-			requiredBy[dependency] = cmp.Or(requiredBy[dependency], app.Name)
+			requiredBy[dependency] = cmp.Or(requiredBy[dependency], &app)
 		}
 		apps = append(apps, app.resolved.Requires...)
 	}
 	return nodes, nil
+}
+
+// undeclaredDependency explains a dependency the project lacks, with the holon.yaml entry for the
+// server the requirer's server.json names.
+func undeclaredDependency(requirer *manifestApp, name string) error {
+	missing := fmt.Sprintf("%s requires %s, which is not an app in this project", requirer.Name, name)
+	pin := requirer.resolved.descriptor.Requires[name]
+	source := "remote: {url: " + pin.URL + "}"
+	switch {
+	case pin.Name != "" && pin.Registry != "":
+		source = fmt.Sprintf("registry: {name: %s, version: %q, registry: %s}", pin.Name, pin.Version, pin.Registry)
+	case pin.Name != "":
+		source = fmt.Sprintf("registry: {name: %s, version: %q}", pin.Name, pin.Version)
+	case pin.URL == "":
+		return errors.New(missing + "; declare it in holon.yaml")
+	}
+	return fmt.Errorf("%s; add it to holon.yaml:\n  - name: %s\n    %s\n    access: {server: {oauth: {}}}", missing, name, source)
 }
 
 func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...string) (manifestSpec, error) {

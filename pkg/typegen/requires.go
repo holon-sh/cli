@@ -1,7 +1,6 @@
 package typegen
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -9,9 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-
-	"github.com/holon-sh/cli/internal/commandenv"
-	"github.com/holon-sh/protocol"
 )
 
 // serverMention is what an MCP server's entry names: the protocol, an SDK or holon-sh.
@@ -64,9 +60,9 @@ func AppConsumer(name, dir string) (*Consumer, error) {
 }
 
 // DeclaredSources returns one source per sh.holon.requires entry, sorted by alias: its registry
-// version or URL, with <ALIAS>_MCP_URL in place of a URL. An empty entry, without that variable, has
-// its alias alone, which a project replaces with its app of that name.
-func DeclaredSources(dir string, env []string) ([]Source, error) {
+// version or URL. An empty entry has its alias alone, which a project replaces with its app of that
+// name.
+func DeclaredSources(dir string) ([]Source, error) {
 	d, err := readDescriptor(dir)
 	if err != nil || d == nil {
 		return nil, err
@@ -77,11 +73,6 @@ func DeclaredSources(dir string, env []string) ([]Source, error) {
 		source := Source{Alias: alias, Endpoint: requirement.URL}
 		if requirement.Name != "" {
 			source.Registry = &requirement.RegistryRef
-		} else {
-			variable := protocol.DependencyEnvName(alias)
-			if location := cmp.Or(commandenv.Value(env, variable), os.Getenv(variable)); location != "" {
-				source.Endpoint, source.from = location, variable
-			}
 		}
 		sources = append(sources, source)
 	}
