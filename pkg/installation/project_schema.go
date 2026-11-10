@@ -37,7 +37,7 @@ func ProjectJSONSchema() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	reflected.WithID("https://holon.sh/schema/v1/project.schema.json").
+	reflected.WithID(projectSchemaID).
 		WithSchema("https://json-schema.org/draft/2020-12/schema").WithTitle("Holon project manifest")
 	reflected.WithDescription("Field reference for holon.yaml. Declare at least one app. " +
 		"The CLI validates source choices, app names, paths, and references.")
@@ -59,11 +59,7 @@ var projectSchema = sync.OnceValues(func() (*validator.Compiler, error) {
 		return nil, err
 	}
 	compiler := validator.NewCompiler()
-	if err := compiler.AddResource(projectSchemaID, document); err != nil {
-		return nil, err
-	}
-	_, err = compiler.Compile(projectSchemaID)
-	return compiler, err
+	return compiler, compiler.AddResource(projectSchemaID, document)
 })
 
 const projectSchemaID = "https://holon.sh/schema/v1/project.schema.json"
