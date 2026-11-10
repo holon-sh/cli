@@ -29,7 +29,9 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 			Endpoints: []protocol.SessionEndpoint{{Name: "chat", URL: "https://s-one.example/chat/mcp"}},
 		},
 		{Name: "s-two", Revision: "1", Apps: []protocol.App{app("chat")}},
-		{Name: "s-three", Revision: "1", Apps: []protocol.App{app("other")}},
+		{Name: "s-three", Revision: "1", Apps: []protocol.App{app("other"), {
+			Name: "hf", Remote: &protocol.Remote{URL: "https://huggingface.co/mcp"}, Access: &protocol.AppAccess{Server: &protocol.AccessRule{}},
+		}}},
 		{Name: "s-empty", Revision: "1", Apps: []protocol.App{}, ExpiresAt: "2026-11-11T11:59:00Z"},
 	}
 	h := newRunHarness(t)
@@ -78,6 +80,7 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 				"s-one    8m       other  -  ",
 				"s-two    -        chat",
 				"s-empty  23h59m   -\n",
+				"huggingface.co:443",
 			},
 		},
 		{
