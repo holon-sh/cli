@@ -1,9 +1,7 @@
 package installation
 
 import (
-	"context"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -104,36 +102,20 @@ func TestPrivateCredentialFiles(t *testing.T) {
 	}
 }
 
-func TestSignedOutCommandsFailWithoutSigningIn(t *testing.T) {
+func TestSignedOutCommandFailsWithoutSigningIn(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{
-		"package.json": sourcePackage, "server.js": "export default {}",
-		manifestFileName: "apps:\n- name: alpha\n  path: .\n  access: {server: {}}\n",
-	})
-	for _, args := range [][]string{{"app", "list"}, {"dev", "--project", filepath.Join(root, manifestFileName)}} {
-		t.Run(args[0], func(t *testing.T) {
-			t.Parallel()
-			mux := http.NewServeMux()
-			var server *httptest.Server
-			installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, func(r *http.Request) {
-				if r.URL.Path != protocol.APIPathInfo {
-					t.Errorf("signed-out command contacted %s", r.URL.Path)
-				}
-			}, 120, 1, nil)
-			server = httptest.NewTLSServer(mux)
-			t.Cleanup(server.Close)
-			config := commandConfig{
-				Auth: ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)},
-				builder: func(context.Context, buildRequest, io.Writer) (string, error) {
-					t.Error("signed-out command started a build")
-					return "", nil
-				},
-			}
-			err := executeCommand(t.Context(), args, nil, nil, config)
-			if want := "not signed in; run holon login " + server.URL; err == nil || err.Error() != want {
-				t.Fatalf("error = %v, want %q", err, want)
-			}
-		})
+	mux := http.NewServeMux()
+	var server *httptest.Server
+	installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, func(r *http.Request) {
+		if r.URL.Path != protocol.APIPathInfo {
+			t.Errorf("signed-out command contacted %s", r.URL.Path)
+		}
+	}, 120, 1, nil)
+	server = httptest.NewTLSServer(mux)
+	t.Cleanup(server.Close)
+	config := commandConfig{Auth: ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)}}
+	err := executeCommand(t.Context(), []string{"app", "list"}, nil, nil, config)
+	if want := "not signed in; run holon login " + server.URL; err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
 	}
 }

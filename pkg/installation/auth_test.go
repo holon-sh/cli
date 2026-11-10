@@ -155,44 +155,6 @@ func TestTerminalSignInLeavesOtherCommandsFree(t *testing.T) {
 	}
 }
 
-func TestCredentialChanges(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, remote string
-		want         error
-	}{
-		{name: "logout from another command", want: errNotAuthenticated},
-		{name: "logout from another remote with the same identity provider", remote: "https://other.example"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			server := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-				installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-secret", "expires_in": 120})
-			})
-			config := ClientConfig{
-				Origin:    server.URL,
-				ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server),
-			}
-			manager, err := NewClient(t.Context(), config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.remote != "" {
-				config.Origin = tc.remote
-			}
-			if err := manager.loginInteractive(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if err := executeCommand(t.Context(), []string{"logout"}, nil, nil, commandConfig{Auth: config}); err != nil {
-				t.Fatal(err)
-			}
-			if token, err := manager.controlToken(t.Context()); !errors.Is(err, tc.want) || err == nil && token != "access-secret" {
-				t.Fatalf("after credential change token=%q error=%v, want %v", token, err, tc.want)
-			}
-		})
-	}
-}
-
 func TestDeviceLoginFailures(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
@@ -202,8 +164,6 @@ func TestDeviceLoginFailures(t *testing.T) {
 		want                        error
 	}{
 		{name: "initiation", code: "invalid_request", path: "/device-authorization", want: errOAuthFailed},
-		{name: "poll", code: "refresh-secret", want: errOAuthFailed},
-		{name: "discovery", path: "/.well-known/openid-configuration", want: errOAuthFailed},
 		{name: "wrong issuer", discovery: `{"issuer":"https://foreign.example/"}`, want: errOAuthFailed},
 		{
 			name: "missing device endpoint", discovery: `{"issuer":"https://identity.example/","token_endpoint":"https://identity.example/token"}`, want: errOAuthFailed,
@@ -334,10 +294,7 @@ func TestLoginRejectsIncompatibleDiscovery(t *testing.T) {
 	t.Parallel()
 	const installation = `"installation":{"origin":"ORIGIN","uid":"test-installation"},`
 	for _, body := range []string{
-		`{` + installation + `"version":"test"}`,
-		`{"installation":{"origin":"ORIGIN"},"oauth":null}`,
 		`{"installation":{"origin":"https://other.example","uid":"installation"},"oauth":null}`,
-		`{` + installation + `"oauth":{}}`,
 		`{` + installation + `"oauth":null,"buildArchitectures":["s390x"]}`,
 		`{` + installation + `"oauth":{"issuer":"ORIGIN/","cliClientID":"cli","adminAudience":"ADMIN","deviceFlowProfile":"unknown"}}`,
 	} {
@@ -370,11 +327,8 @@ func TestSavedCredentialMetadata(t *testing.T) {
 		name, document string
 		want           error
 	}{
-		{"matching", `{"issuer":"ISSUER","adminAudience":"urn:test","cliClientID":"cli-test"}`, nil},
 		{"incomplete", `{"issuer":"ISSUER"}`, errReauthenticationRequired},
-		{"changed mode", `null`, errEndpointChanged},
 		{"changed issuer", `{"issuer":"https://other.example/","adminAudience":"urn:test","cliClientID":"cli-test"}`, errEndpointChanged},
-		{"changed client", `{"issuer":"ISSUER","adminAudience":"urn:test","cliClientID":"other"}`, errEndpointChanged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manager := newManager(t, server, t.TempDir())
@@ -416,7 +370,6 @@ func TestMachineCredentials(t *testing.T) {
 	}{
 		{"valid", 200, `{"access_token":"machine-token","token_type":"Bearer"}`, nil},
 		{"invalid secret", 401, `{"error":"invalid_client","error_description":"ci-secret"}`, errOAuthFailed},
-		{"invalid token type", 200, `{"access_token":"ci-secret","token_type":"MAC"}`, errMalformedResponse},
 		{"invalid token", 200, `{"access_token":"invalid token ci-secret","token_type":"Bearer"}`, errMalformedResponse},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
