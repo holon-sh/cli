@@ -21,8 +21,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// extraction is what a runner prints: the server's description and capabilities, and each list's
-// pages or the error listing it.
 type extraction struct {
 	ServerInfo   json.RawMessage         `json:"serverInfo"`
 	Capabilities *mcp.ServerCapabilities `json:"capabilities"`
@@ -184,8 +182,6 @@ func (s *preparedSource) committedContract(ctx context.Context) (*Document, erro
 	return document, nil
 }
 
-// runServer runs the source's server, in dir, through its language's contract runner and parses
-// what it prints.
 func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Options) (*extraction, error) {
 	extensions, _ := json.Marshal(clientExtensions)
 	args := append([]string{"contract", dir, s.entry, string(extensions)}, catalogMethods...)

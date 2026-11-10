@@ -134,7 +134,6 @@ func needNode(t *testing.T) {
 	}
 }
 
-// listing is what a runner prints for a server that lists tools, a page each.
 func listing(tools ...mcpcontract.Tool) extraction {
 	var pages []json.RawMessage
 	for _, tool := range tools {
@@ -146,7 +145,6 @@ func listing(tools ...mcpcontract.Tool) extraction {
 
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
 // snapshot's server.json name, printing an extraction or returning an error as the runner's failure.
-// A runner is asked for every list by a client that sends files.
 func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
 	return func(_ context.Context, _, tooling string, args []string, stdout io.Writer) error {
 		root, entry := args[1], args[2]

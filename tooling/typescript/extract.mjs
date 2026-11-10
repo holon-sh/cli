@@ -9,7 +9,6 @@ import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createSandbox, MissingPackage } from "./sandbox.mjs";
 
-// Results are recorded as the server wrote them.
 const anything = { "~standard": { version: 1, vendor: "holon", validate: value => ({ value }) } };
 
 // contract evaluates one entry in the sandbox, connects to its server as a client with extensions,
@@ -23,15 +22,12 @@ export async function contract(root, entry, extensions, methods) {
     let handler = exported;
     if (typeof exported?.fetch !== "function") {
       if (typeof exported?.registerTool !== "function") throw new Error("the default export is neither a createMcpHandler handler nor an McpServer");
-      // Serve it with the SDK copy the entry imports, so its McpServer and handler match. The handler
-      // wants an instance per request; the one instance serves each in turn, as requests come one at a time.
       const { createMcpHandler } = await sandbox.import(sandbox.resolve("@modelcontextprotocol/server", file));
       handler = createMcpHandler(async () => {
         await exported.close();
         return exported;
       });
     }
-    // The modern protocol: on the legacy path the SDK server needs crypto, which the sandbox lacks.
     const client = new Client({ name: "holon-contract", version: "1" }, { capabilities: { extensions }, versionNegotiation: { mode: "auto" } });
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL("http://holon-contract/mcp"), {

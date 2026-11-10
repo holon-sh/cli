@@ -272,7 +272,7 @@ async def catalog(
                     answered = await client.session.send_request(request, Page)
                     pages.append(answered.model_dump())
                 lists[method] = {"pages": pages}
-            except Exception as error:  # noqa: BLE001 - the CLI judges each method's failure
+            except Exception as error:  # noqa: BLE001
                 lists[method] = {"error": diagnostic(error)}
         info, capabilities = client.server_info, client.server_capabilities
     return {
