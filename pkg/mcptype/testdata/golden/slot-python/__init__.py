@@ -15,6 +15,7 @@ import builtins as _builtins
 import typing as _typing
 
 from holon.ext.files import File as _File
+from holon.ext.events import Subscription as _Subscription
 
 MysqlInputLabeledColumn = _typing.TypedDict("MysqlInputLabeledColumn", {"column": _builtins.str, "label": _builtins.str})
 
@@ -31,6 +32,10 @@ OrdersGetOrderInput = _typing.TypedDict("OrdersGetOrderInput", {"count": _typing
 OrdersGetOrderOutput = _typing.TypedDict("OrdersGetOrderOutput", {"total": _builtins.float})
 
 OrdersThenInput = _typing.TypedDict("OrdersThenInput", {})
+
+OrdersOrderShippedArguments = _typing.TypedDict("OrdersOrderShippedArguments", {"orderId": _typing.NotRequired[_builtins.str]})
+
+OrdersOrderShippedData = _typing.TypedDict("OrdersOrderShippedData", {"carrier": _typing.NotRequired[_builtins.str], "orderId": _builtins.str})
 
 SchemasCallToolInput = _typing.TypedDict("SchemasCallToolInput", {"a": _typing.NotRequired[_builtins.int], "b": _builtins.str})
 
@@ -79,6 +84,10 @@ WithHyphenGetOrderInput = _typing.TypedDict("WithHyphenGetOrderInput", {"count":
 WithHyphenGetOrderOutput = _typing.TypedDict("WithHyphenGetOrderOutput", {"total": _builtins.float})
 
 WithHyphenThenInput = _typing.TypedDict("WithHyphenThenInput", {})
+
+WithHyphenOrderShippedArguments = _typing.TypedDict("WithHyphenOrderShippedArguments", {"orderId": _typing.NotRequired[_builtins.str]})
+
+WithHyphenOrderShippedData = _typing.TypedDict("WithHyphenOrderShippedData", {"carrier": _typing.NotRequired[_builtins.str], "orderId": _builtins.str})
 
 class Inputs:
     class empty:
@@ -176,22 +185,44 @@ class OutputTypes:
 class EmptyTools(_typing.Protocol):
     pass
 
+class EmptyEvents(_typing.Protocol):
+    async def list(self) -> _builtins.list[_builtins.dict[_builtins.str, _typing.Any]]: ...
+
+class EmptyExt(_typing.Protocol):
+    events: EmptyEvents
+
 class EmptyApp(_typing.Protocol):
     tools: EmptyTools
+    ext: EmptyExt
 
 class MysqlTools(_typing.Protocol):
     async def select(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[MysqlSelectInput]) -> MysqlOutputRoot: ...
 
+class MysqlEvents(_typing.Protocol):
+    async def list(self) -> _builtins.list[_builtins.dict[_builtins.str, _typing.Any]]: ...
+
+class MysqlExt(_typing.Protocol):
+    events: MysqlEvents
+
 class MysqlApp(_typing.Protocol):
     tools: MysqlTools
+    ext: MysqlExt
     async def call_tool(self, name: _typing.Literal["select"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[MysqlSelectInput]) -> _ToolResult[MysqlOutputRoot]: ...
 
 class OrdersTools(_typing.Protocol):
     async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[OrdersGetOrderInput]) -> OrdersGetOrderOutput: ...
     async def then(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[OrdersThenInput]) -> _CompleteResult[_builtins.object]: ...
 
+class OrdersEvents(_typing.Protocol):
+    async def list(self) -> _builtins.list[_builtins.dict[_builtins.str, _typing.Any]]: ...
+    def subscribe(self, name: _typing.Literal["order.shipped"], arguments: OrdersOrderShippedArguments, /, *, cursor: _builtins.str | None = ..., max_age: _builtins.float | None = ..., delivery: _typing.Literal["poll", "push"] | None = ..., on_gap: _typing.Callable[[], _builtins.object] | None = ...) -> _Subscription[OrdersOrderShippedData]: ...
+
+class OrdersExt(_typing.Protocol):
+    events: OrdersEvents
+
 class OrdersApp(_typing.Protocol):
     tools: OrdersTools
+    ext: OrdersExt
     @_typing.overload
     async def call_tool(self, name: _typing.Literal["get_order"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[OrdersGetOrderInput]) -> _ToolResult[OrdersGetOrderOutput]: ...
     @_typing.overload
@@ -209,8 +240,15 @@ class SchemasTools(_typing.Protocol):
     async def weird_keys(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasWeirdKeysInput]) -> SchemasWeirdKeysOutput: ...
     async def moji(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SchemasMojiInput]) -> _builtins.str: ...
 
+class SchemasEvents(_typing.Protocol):
+    async def list(self) -> _builtins.list[_builtins.dict[_builtins.str, _typing.Any]]: ...
+
+class SchemasExt(_typing.Protocol):
+    events: SchemasEvents
+
 class SchemasApp(_typing.Protocol):
     tools: SchemasTools
+    ext: SchemasExt
     @_typing.overload
     async def call_tool(self, name: _typing.Literal["-"], options: _CallOptions | None = ..., /, **arguments: _builtins.object) -> _ToolResult[_builtins.object]: ...
     @_typing.overload
@@ -244,8 +282,16 @@ class WithHyphenTools(_typing.Protocol):
     async def get_order(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[WithHyphenGetOrderInput]) -> WithHyphenGetOrderOutput: ...
     async def then(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[WithHyphenThenInput]) -> _CompleteResult[_builtins.object]: ...
 
+class WithHyphenEvents(_typing.Protocol):
+    async def list(self) -> _builtins.list[_builtins.dict[_builtins.str, _typing.Any]]: ...
+    def subscribe(self, name: _typing.Literal["order.shipped"], arguments: WithHyphenOrderShippedArguments, /, *, cursor: _builtins.str | None = ..., max_age: _builtins.float | None = ..., delivery: _typing.Literal["poll", "push"] | None = ..., on_gap: _typing.Callable[[], _builtins.object] | None = ...) -> _Subscription[WithHyphenOrderShippedData]: ...
+
+class WithHyphenExt(_typing.Protocol):
+    events: WithHyphenEvents
+
 class WithHyphenApp(_typing.Protocol):
     tools: WithHyphenTools
+    ext: WithHyphenExt
     @_typing.overload
     async def call_tool(self, name: _typing.Literal["get_order"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[WithHyphenGetOrderInput]) -> _ToolResult[WithHyphenGetOrderOutput]: ...
     @_typing.overload

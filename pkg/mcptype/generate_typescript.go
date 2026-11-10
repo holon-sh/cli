@@ -35,18 +35,6 @@ func resourceContracts(contracts map[string]contract) map[string]contract {
 	return result
 }
 
-func eventContracts(contracts map[string]contract) map[string]contract {
-	result := make(map[string]contract, len(contracts))
-	for alias, source := range contracts {
-		tools := make(map[string]contractTool, len(source.Events))
-		for name, event := range source.Events {
-			tools[name] = contractTool{Input: event.Input, Output: event.Payload}
-		}
-		result[alias] = contract{Tools: tools}
-	}
-	return result
-}
-
 const eventTypes = "export type Events = { readonly [A in keyof EventArguments]: { [K in keyof EventArguments[A]]: { arguments: EventArguments[A][K]; data: K extends keyof EventData[A] ? EventData[A][K] : unknown } } };\n"
 
 // runtimes are the modules each TypeScript target's clients import their runtime and its declarations from.

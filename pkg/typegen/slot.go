@@ -13,10 +13,12 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-// ContractVersion is the generated-client contract the holon-sh and holon-ui packages declare as
-// holon.contractVersion: clients live in the project, in generated/holon-sh or generated/holon-ui,
-// and import the runtime as holon-sh/runtime or holon-ui/runtime. From contract 3, ToolClient takes
-// each app's events as its fourth type parameter.
+// ContractVersion is the generated-client contract the runtimes read: the npm packages holon-sh and
+// holon-ui declare it as holon.contractVersion, and the Python holon-sh as
+// holon.contract.CONTRACT_VERSION. TypeScript clients live in the project, in generated/holon-sh or
+// generated/holon-ui, and import the runtime as holon-sh/runtime or holon-ui/runtime. From contract
+// 3, each app's client has its events typed by name: ToolClient's fourth type parameter in
+// TypeScript, ext.events in Python. Generation and checks refuse a runtime of another contract.
 const ContractVersion = 3
 
 // slots are the project directories each target's generated clients occupy.

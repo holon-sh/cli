@@ -156,7 +156,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		consumer                    Consumer
 	}{
 		{"npm", fmt.Sprintf("mkdir -p node_modules/holon-sh\nprintf '%%s' '{\"holon\":{\"contractVersion\":%d}}' > node_modules/holon-sh/package.json", ContractVersion), "node_modules/holon-sh/package.json", c},
-		{"uv", "mkdir -p .venv/bin\n: > .venv/bin/python", ".venv/bin/python", Consumer{Name: "app", Dir: python, Targets: []string{TargetPy}}},
+		{"uv", fmt.Sprintf("mkdir -p .venv/bin\nprintf '#!/bin/sh\\necho %d\\n' > .venv/bin/python\nchmod +x .venv/bin/python", ContractVersion), ".venv/bin/python", Consumer{Name: "app", Dir: python, Targets: []string{TargetPy}}},
 	} {
 		put(t, bin, test.manager, "#!/bin/sh\nset -e\n"+test.install+"\n")
 		if err := os.Chmod(filepath.Join(bin, test.manager), 0o755); err != nil {
@@ -182,6 +182,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 }
 
 // A runtime of another contract gets one install, which can bring it up to date, before generation stops.
+// A Python environment whose holon-sh reads another contract stops it too.
 func TestGenerateRefusesARuntimeOfAnotherContract(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "node_modules/holon-sh/package.json", `{"name":"holon-sh","version":"0.0.1-dev.6","holon":{"slot":"generated","contractVersion":1}}`)
@@ -196,6 +197,16 @@ func TestGenerateRefusesARuntimeOfAnotherContract(t *testing.T) {
 	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
 	if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil || !strings.Contains(err.Error(), "holon-sh 0.0.1-dev.6 keeps generated clients inside node_modules; upgrade it") || !isFile(filepath.Join(app, "installed")) {
 		t.Fatalf("contract 1 runtime = %v", err)
+	}
+	python := filepath.Join(root, "python")
+	put(t, python, "pyproject.toml", "[project]\nname = \"app\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
+	put(t, python, ".venv/bin/python", "#!/bin/sh\necho 0\n")
+	if err := os.Chmod(filepath.Join(python, ".venv/bin/python"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c = Consumer{Name: "app", Dir: python, Targets: []string{TargetPy}, Sources: c.Sources}
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil || !strings.Contains(err.Error(), "reads an older generated client contract; upgrade it to a release that reads contract") {
+		t.Fatalf("python runtime before contracts = %v", err)
 	}
 }
 

@@ -44,7 +44,7 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	case "node", "browser":
 		generated, err = generateTypeScriptPackage(ctx, request, catalogs)
 	case "python":
-		generated = generatePythonPackage(request, catalogs)
+		generated, err = generatePythonPackage(ctx, request, catalogs)
 	default:
 		generated = generateGoPackage(request, catalogs)
 	}
@@ -63,6 +63,18 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 		files[path] = []byte(text)
 	}
 	return files, nil
+}
+
+func eventContracts(contracts map[string]contract) map[string]contract {
+	result := make(map[string]contract, len(contracts))
+	for alias, source := range contracts {
+		tools := make(map[string]contractTool, len(source.Events))
+		for name, event := range source.Events {
+			tools[name] = contractTool{Input: event.Input, Output: event.Payload}
+		}
+		result[alias] = contract{Tools: tools}
+	}
+	return result
 }
 
 func (r generateRequest) validate() error {

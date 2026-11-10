@@ -1,6 +1,7 @@
 package mcptype
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"strconv"
@@ -31,7 +32,11 @@ const pythonClients = `def _clients(bindings: _typing.Mapping[str, _Binding] | N
             setattr(tools, method, getattr(tools, tool))
     return _typing.cast(_Clients, apps)`
 
-func generatePythonPackage(request generateRequest, catalogs map[string]catalog) map[string]string {
+func generatePythonPackage(ctx context.Context, request generateRequest, catalogs map[string]catalog) (map[string]string, error) {
+	events, err := compileCatalogs(ctx, eventContracts(request.contracts), false)
+	if err != nil {
+		return nil, err
+	}
 	renamed := map[string]map[string]string{}
 	for binding, tools := range catalogs {
 		methods := pythonMethods(tools)
@@ -44,11 +49,11 @@ func generatePythonPackage(request generateRequest, catalogs map[string]catalog)
 	literal := strconv.QuoteToASCII(string(encode([]Value{request.caller(), request.contracts, renamed})))
 	module := strings.Join([]string{
 		pythonHeader,
-		generatePython(catalogs),
+		generatePython(catalogs, events),
 		fmt.Sprintf("_identity, _contracts, _methods = _json.loads(%s)", literal),
 		pythonClients,
 		"apps = _clients()",
 		"def create_apps(bindings: _typing.Mapping[str, _Binding]) -> _Clients:\n    return _clients(bindings)",
 	}, "\n\n")
-	return map[string]string{"__init__.py": module + "\n"}
+	return map[string]string{"__init__.py": module + "\n"}, nil
 }
