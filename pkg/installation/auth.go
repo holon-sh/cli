@@ -46,21 +46,25 @@ const (
 
 var (
 	errOAuthFailed              = errors.New("OAuth request failed")
-	errNotAuthenticated         = errors.New("not authenticated")
+	errNotAuthenticated         = errors.New("not signed in")
 	errCredentialUnavailable    = errors.New("credential store unavailable")
 	errCredentialChanged        = errors.New("credentials changed by another process")
 	errEndpointChanged          = errors.New("authentication endpoint changed")
 	errDeviceDenied             = errors.New("device authorization denied")
 	errDeviceExpired            = errors.New("device authorization expired")
 	errRefreshFailed            = errors.New("token refresh failed")
-	errReauthenticationRequired = errors.New("reauthentication required; rerun the command")
+	errReauthenticationRequired = errors.New("sign-in expired")
 	errNoRefreshToken           = errors.New("authorization did not return a refresh token")
 )
 
+// signedOut reports an error that only holon login clears.
+func signedOut(err error) bool {
+	return errors.Is(err, errReauthenticationRequired) || errors.Is(err, errNotAuthenticated) || errors.Is(err, errEndpointChanged)
+}
+
 // credentialsLost reports an error that retrying cannot clear, because this process must authenticate again.
 func credentialsLost(err error) bool {
-	return errors.Is(err, errReauthenticationRequired) || errors.Is(err, errNotAuthenticated) ||
-		errors.Is(err, errCredentialChanged) || errors.Is(err, errEndpointChanged)
+	return signedOut(err) || errors.Is(err, errCredentialChanged)
 }
 
 type ClientConfig struct {
@@ -163,31 +167,29 @@ func (m *Client) loginInteractive(ctx context.Context) error {
 	if m.machine != nil {
 		return errors.New("service-account credentials are supplied by the environment")
 	}
-	return m.withLock(ctx, func() error { return m.login(ctx) })
-}
-
-func (m *Client) login(ctx context.Context) error {
-	state := authState{OAuth: targetForOAuth(m.info.OAuth), Version: rand.Text(), Tokens: map[string]*oauth2.Token{}}
-	if m.info.OAuth != nil {
-		config, err := m.oauthConfig(ctx)
-		if err != nil {
+	return m.withLock(ctx, func() error {
+		state := authState{OAuth: targetForOAuth(m.info.OAuth), Version: rand.Text(), Tokens: map[string]*oauth2.Token{}}
+		if m.info.OAuth != nil {
+			config, err := m.oauthConfig(ctx)
+			if err != nil {
+				return err
+			}
+			tokens, err := m.deviceToken(ctx, config, m.info.OAuth.AdminAudience)
+			if err != nil {
+				return err
+			}
+			state.Tokens[m.info.OAuth.AdminAudience] = tokens
+		}
+		if err := m.writeState(state); err != nil {
 			return err
 		}
-		tokens, err := m.deviceToken(ctx, config, m.info.OAuth.AdminAudience)
-		if err != nil {
+		m.state = state
+		if m.info.OAuth == nil {
+			_, err := fmt.Fprintln(m.output, "Connected to "+m.client.baseURL+" (authentication disabled)")
 			return err
 		}
-		state.Tokens[m.info.OAuth.AdminAudience] = tokens
-	}
-	if err := m.writeState(state); err != nil {
-		return err
-	}
-	m.state = state
-	if m.info.OAuth == nil {
-		_, err := fmt.Fprintln(m.output, "Connected to "+m.client.baseURL+" (authentication disabled)")
-		return err
-	}
-	return nil
+		return nil
+	})
 }
 
 func (m *Client) token(ctx context.Context, audience string) (*oauth2.Token, error) {
@@ -507,17 +509,13 @@ func (m *Client) resourceToken(ctx context.Context, audience string) (*oauth2.To
 		return m.machineToken(ctx, audience)
 	}
 	var result *oauth2.Token
-	err := m.withLock(ctx, func() error {
-		initial := m.state.Version == ""
-		var err error
+	err := m.withLock(ctx, func() (err error) {
 		result, err = m.token(ctx, audience)
-		if initial &&
-			(errors.Is(err, errNotAuthenticated) || errors.Is(err, errEndpointChanged) || errors.Is(err, errReauthenticationRequired)) {
-			err = m.login(ctx)
-			result = m.state.Tokens[audience]
-		}
 		return err
 	})
+	if signedOut(err) {
+		return nil, fmt.Errorf("%w; run holon login %s", err, m.client.baseURL)
+	}
 	return result, err
 }
 
