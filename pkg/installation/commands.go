@@ -52,24 +52,20 @@ func newCommands(config commandConfig) []*cobra.Command {
 				if err := manager.loginInteractive(cmd.Context()); err != nil {
 					return err
 				}
-				if err := saveOrigin(config.Auth, manager.client.baseURL); err != nil {
-					return err
-				}
-				message := "Selected Holon installation " + manager.client.baseURL
+				// Reading the identity proves the new credentials work before the installation is selected.
 				if manager.info.OAuth != nil {
 					var me struct {
 						Identity struct {
 							Subject string
-							Profile struct{ Name, Email string }
+							Profile struct{ Email string }
 						}
 					}
-					if manager.Call(cmd.Context(), protocol.DevPlane, toolGetIdentity, struct{}{}, &me) == nil {
-						message = "Signed in to " + manager.client.baseURL + " as " +
-							cmp.Or(me.Identity.Profile.Email, me.Identity.Profile.Name, me.Identity.Subject)
+					if err := manager.Call(cmd.Context(), protocol.DevPlane, toolGetIdentity, struct{}{}, &me); err != nil {
+						return err
 					}
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Signed in to %s as %s\n", manager.client.baseURL, cmp.Or(me.Identity.Profile.Email, me.Identity.Subject))
 				}
-				_, err = fmt.Fprintln(cmd.ErrOrStderr(), message)
-				return err
+				return saveOrigin(config.Auth, manager.client.baseURL)
 			},
 		},
 		{

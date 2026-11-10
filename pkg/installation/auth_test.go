@@ -97,7 +97,7 @@ func TestLogin(t *testing.T) {
 			}
 			signedIn := "Signed in to " + server.URL + " as dev@example.com\n"
 			if tc.bearer == "" {
-				signedIn = "Selected Holon installation " + server.URL + "\n"
+				signedIn = "Connected to " + server.URL + " (authentication disabled)\n"
 			}
 			if !strings.Contains(progress.String(), signedIn) {
 				t.Fatalf("progress = %q, want %q", progress.String(), signedIn)
