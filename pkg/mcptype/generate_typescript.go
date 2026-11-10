@@ -42,7 +42,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	// Resources take names that tools left free, in the same declarations.
 	names := map[string]bool{}
 	tools := generateTypeScript(catalogs, names, [4]string{"Inputs", "Outputs", "InputTypes", "OutputTypes"})
-	catalogs, err := compileCatalogs(ctx, resourceContracts(request.contracts))
+	catalogs, err := compileCatalogs(ctx, resourceContracts(request.contracts), true)
 	if err != nil {
 		return nil, err
 	}
