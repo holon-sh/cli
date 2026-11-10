@@ -67,11 +67,18 @@ func TestLogin(t *testing.T) {
 					installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one", "expires_in": 120})
 				})
 			}
-			installationtest.NewControlFixtures(t, mux).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
+			control := installationtest.NewControlFixtures(t, mux)
+			control.Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, r *http.Request) {
 				if got := r.Header.Get(protocol.HeaderAuthorization); got != tc.bearer {
 					t.Errorf("authorization = %q, want %q", got, tc.bearer)
 				}
 				installationtest.WriteJSON(w, struct{}{})
+			})
+			control.Handle([]string{toolGetIdentity}, nil, func(w http.ResponseWriter, _ *http.Request) {
+				installationtest.WriteJSON(w, map[string]any{"identity": map[string]any{
+					"issuer": "https://identity.example", "subject": "user-1", "scopes": []string{},
+					"profile": map[string]any{"name": "Dev", "email": "dev@example.com"},
+				}})
 			})
 			server = httptest.NewTLSServer(mux)
 			t.Cleanup(server.Close)
@@ -87,6 +94,13 @@ func TestLogin(t *testing.T) {
 			}
 			if tc.bearer != "" && !strings.Contains(progress.String(), "ABCD-EFGH") {
 				t.Fatalf("device instructions: %q", progress.String())
+			}
+			signedIn := "Signed in to " + server.URL + " as dev@example.com\n"
+			if tc.bearer == "" {
+				signedIn = "Selected Holon installation " + server.URL + "\n"
+			}
+			if !strings.Contains(progress.String(), signedIn) {
+				t.Fatalf("progress = %q, want %q", progress.String(), signedIn)
 			}
 			for _, secret := range []string{"access-secret", "device-secret", "refresh-one"} {
 				if strings.Contains(output.String()+progress.String(), secret) {

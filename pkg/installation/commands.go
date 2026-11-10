@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/protocol"
 )
+
+const toolGetIdentity = "get_identity"
 
 const appsHelp = "APP is an app in holon.yaml (or -p FILE), else the directory ./APP with a server.json. " +
 	"APP=SOURCE names an app's source: a directory, an MCP Registry server version URL, or an https MCP endpoint. " +
@@ -52,7 +55,21 @@ func newCommands(config commandConfig) []*cobra.Command {
 				if err := saveOrigin(config.Auth, manager.client.baseURL); err != nil {
 					return err
 				}
-				_, err = fmt.Fprintln(cmd.ErrOrStderr(), "Selected Holon installation "+manager.client.baseURL)
+				message := "Selected Holon installation " + manager.client.baseURL
+				if manager.info.OAuth != nil {
+					var me struct {
+						Identity struct {
+							Subject string
+							Profile struct{ Name, Email string }
+						}
+					}
+					if err := manager.Call(cmd.Context(), protocol.DevPlane, toolGetIdentity, struct{}{}, &me); err != nil {
+						return err
+					}
+					message = "Signed in to " + manager.client.baseURL + " as " +
+						cmp.Or(me.Identity.Profile.Email, me.Identity.Profile.Name, me.Identity.Subject)
+				}
+				_, err = fmt.Fprintln(cmd.ErrOrStderr(), message)
 				return err
 			},
 		},
