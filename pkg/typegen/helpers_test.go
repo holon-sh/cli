@@ -1,7 +1,6 @@
 package typegen
 
 import (
-	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -20,6 +19,8 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/protocol"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
@@ -137,7 +138,7 @@ func needNode(t *testing.T) {
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
 // snapshot's server.json name, serving an extraction or returning an error as the runner's failure.
 func fakeRun(results map[string]any) func(context.Context, string, string, []string, []byte, io.Writer) error {
-	return func(_ context.Context, _, tooling string, args []string, stdin []byte, stdout io.Writer) error {
+	return func(ctx context.Context, _, tooling string, args []string, stdin []byte, stdout io.Writer) error {
 		root, entry := args[1], args[2]
 		if !lexicallyInside(root, filepath.Dir(tooling)) || !isFile(filepath.Join(root, entry)) {
 			return fmt.Errorf("entry %s is not in a snapshot under %s: %s", entry, filepath.Dir(tooling), root)
@@ -148,7 +149,7 @@ func fakeRun(results map[string]any) func(context.Context, string, string, []str
 		}
 		switch result := results[descriptor.Name].(type) {
 		case extraction:
-			return serveCatalog(stdin, stdout, result)
+			return serveCatalog(ctx, stdin, stdout, result)
 		case error:
 			return result
 		default:
@@ -157,54 +158,58 @@ func fakeRun(results map[string]any) func(context.Context, string, string, []str
 	}
 }
 
-func serveCatalog(stdin []byte, stdout io.Writer, result extraction) error {
-	contract := cmp.Or(result.Contract, &mcpcontract.Contract{})
-	info := result.ServerInfo
-	if info == nil {
-		info = json.RawMessage(`{"name":"example.com/fake","version":"1.0.0"}`)
-	}
-	encoder := json.NewEncoder(stdout)
-	scanner := bufio.NewScanner(bytes.NewReader(stdin))
-	for scanner.Scan() {
-		var request struct {
-			ID     json.RawMessage
-			Method string
-			Params struct{ Cursor string }
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+func serveCatalog(ctx context.Context, stdin []byte, stdout io.Writer, result extraction) error {
+	info := &mcp.Implementation{Name: "example.com/fake", Version: "1.0.0"}
+	if result.ServerInfo != nil {
+		info = &mcp.Implementation{}
+		if err := json.Unmarshal(result.ServerInfo, info); err != nil {
 			return err
 		}
-		if request.ID == nil {
+	}
+	server := mcp.NewServer(info, &mcp.ServerOptions{PageSize: 1})
+	contract := cmp.Or(result.Contract, &mcpcontract.Contract{})
+	for _, tool := range contract.Tools {
+		server.AddTool(&mcp.Tool{Name: tool.Name, InputSchema: tool.Input, OutputSchema: tool.Output}, nil)
+	}
+	for _, resource := range contract.Resources {
+		server.AddResource(&mcp.Resource{URI: resource.URI, Name: resource.URI, Meta: mcp.Meta{"sh.holon/outputSchema": resource.Output}}, nil)
+	}
+	client, transport := mcp.NewInMemoryTransports()
+	if _, err := server.Connect(ctx, transport, nil); err != nil {
+		return err
+	}
+	connection, err := client.Connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	var messages []jsonrpc.Message
+	for line := range bytes.Lines(stdin) {
+		message, err := jsonrpc.DecodeMessage(line)
+		if err != nil {
+			return err
+		}
+		messages = append(messages, message)
+	}
+	go func() {
+		for _, message := range messages {
+			_ = connection.Write(ctx, message)
+		}
+	}()
+	for _, message := range messages {
+		if request, ok := message.(*jsonrpc.Request); !ok || !request.IsCall() {
 			continue
 		}
-		answer := map[string]any{}
-		items := []any{}
-		switch request.Method {
-		case "server/discover":
-			answer["supportedVersions"] = []string{"2026-07-28"}
-			answer["capabilities"] = map[string]any{"tools": map[string]any{}, "resources": map[string]any{}}
-			answer["_meta"] = map[string]any{"io.modelcontextprotocol/serverInfo": info}
-		case "tools/list":
-			for _, tool := range contract.Tools {
-				items = append(items, tool)
-			}
-		case "resources/list":
-			for _, resource := range contract.Resources {
-				items = append(items, map[string]any{"uri": resource.URI, "_meta": map[string]any{"sh.holon/outputSchema": resource.Output}})
-			}
+		answer, err := connection.Read(ctx)
+		if err != nil {
+			return err
 		}
-		if key, list := strings.TrimSuffix(request.Method, "/list"), strings.HasSuffix(request.Method, "/list"); list {
-			page, _ := strconv.Atoi(request.Params.Cursor)
-			answer[key] = items[min(page, len(items)):min(page+1, len(items))]
-			if page+1 < len(items) {
-				answer["nextCursor"] = strconv.Itoa(page + 1)
-			}
-		}
-		if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": answer}); err != nil {
+		data, _ := jsonrpc.EncodeMessage(answer)
+		if _, err := stdout.Write(append(data, '\n')); err != nil {
 			return err
 		}
 	}
-	return scanner.Err()
+	return nil
 }
 
 type registryResponse func(*http.Request) (*http.Response, error)
