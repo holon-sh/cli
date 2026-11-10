@@ -1,7 +1,7 @@
 """Obtain an application's MCP contract by running its server and asking it.
 
-Usage: extract.py contract ROOT ENTRY. The contract (the server's tools, resources and its own
-description) is printed on stdout; a failure is a diagnostic on stderr with status 2, or status 3
+Usage: extract.py contract ROOT ENTRY. The contract (the server's tools, resources, events and its
+own description) is printed on stdout; a failure is a diagnostic on stderr with status 2, or status 3
 with the uninstalled package's name as the last line. The runner re-runs itself without site
 packages or the caller's environment, where an import finder serves the application's files, the
 standard library and its environment's installed packages (mcp and pydantic among them), and names
@@ -39,6 +39,9 @@ if TYPE_CHECKING:
     from mcp.server import MCPServer, Server
 
 RESOURCE_SCHEMA = "sh.holon/outputSchema"
+# MCP Events, the draft extension of the Triggers & Events Working Group: a server that declares it
+# answers events/list, however it serves it.
+EVENTS_EXTENSION = "io.modelcontextprotocol/events"
 STDLIB = Path(sysconfig.get_paths()["stdlib"]).resolve()
 EPOCH = 315532800  # 1980-01-01T00:00:00Z, the instant the frozen clock shows
 MONOTONIC = time.monotonic
@@ -236,9 +239,13 @@ def find_server(module: object) -> MCPServer | Server[Any]:
 
 
 async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
+    from mcp import types
     from mcp.client import Client
     from mcp.server import MCPServer
     from mcp.server.lowlevel.server import lifespan
+
+    class ListEventsResult(types.PaginatedResult):
+        events: list[dict[str, Any]]
 
     # A lifespan is the server's startup, which an in-process Client enters before listing
     # (https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/client/client.py#L118).
@@ -248,6 +255,7 @@ async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
     lowlevel.lifespan = lifespan
     tools: list[dict[str, Any]] = []
     resources: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
     async with Client(server) as client:
         info = client.server_info
         capabilities = client.server_capabilities
@@ -273,10 +281,31 @@ async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
             ]
             if not (cursor := listed.next_cursor):
                 break
+        while capabilities and EVENTS_EXTENSION in (capabilities.extensions or {}):
+            # The SDK sends a method outside the specification as a generic request.
+            answered = await client.session.send_request(
+                types.Request[types.PaginatedRequestParams, str](
+                    method="events/list",
+                    params=types.PaginatedRequestParams(cursor=cursor),
+                ),
+                ListEventsResult,
+            )
+            # A type may leave either schema out: any arguments, and data of any shape.
+            events += [
+                {
+                    "name": event["name"],
+                    "inputSchema": event.get("inputSchema", {"type": "object"}),
+                    "payloadSchema": event.get("payloadSchema", {}),
+                }
+                for event in answered.events
+            ]
+            if not (cursor := answered.next_cursor):
+                break
     return {
         "serverInfo": info.model_dump(by_alias=True, exclude_none=True) if info else {},
         "tools": sorted(tools, key=lambda tool: tool["name"]),
         "resources": sorted(resources, key=lambda resource: resource["uri"]),
+        "events": sorted(events, key=lambda event: event["name"]),
     }
 
 

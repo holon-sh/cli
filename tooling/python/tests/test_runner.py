@@ -38,12 +38,28 @@ LIFESPAN = """
 SERVER = """
     import json
 
+    from mcp import types
     from mcp.server import MCPServer
+    from mcp.server.extension import Extension, MethodBinding
     from catalog.region import Region
     from src.lifespan import lifespan
     from src.models import Order
 
-    server = MCPServer("orders", lifespan=lifespan)
+    # MCP Events served without an SDK of its own: events/list in two pages, the second type
+    # without schemas.
+    class Events(Extension):
+        identifier = "io.modelcontextprotocol/events"
+
+        def methods(self):
+            async def listed(context, params):
+                if params.cursor:
+                    return {"events": [{"name": "order.opened", "delivery": ["poll"]}]}
+                shipped = {"name": "order.shipped", "delivery": ["poll"], "inputSchema": {"type": "object"}, "payloadSchema": Order.model_json_schema()}
+                return {"events": [shipped], "nextCursor": "2"}
+
+            return [MethodBinding("events/list", types.PaginatedRequestParams, listed)]
+
+    server = MCPServer("orders", lifespan=lifespan, extensions=[Events()])
 
     @server.tool()
     def read(id: str, region: Region = Region.EU) -> Order:
@@ -130,7 +146,16 @@ def test_the_bundle_extracts_each_servers_catalog(tmp_path):
         },
         {"uri": "ui://orders/app.html", "outputSchema": {}},
     ]
+    opened, shipped = contract["events"]
+    assert opened == {
+        "name": "order.opened",
+        "inputSchema": {"type": "object"},
+        "payloadSchema": {},
+    }
+    assert shipped["name"] == "order.shipped"
+    assert list(shipped["payloadSchema"]["properties"]) == ["id"]
     assert [tool["name"] for tool in result["low"]["tools"]] == ["lookup"]
+    assert result["low"]["events"] == []
 
 
 FROZEN = """

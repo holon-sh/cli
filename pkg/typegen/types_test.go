@@ -152,8 +152,17 @@ export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch 
 	mustReject(t, app, "'fetsh' does not exist")
 }
 
+// editsSchema is a group of edits, each one of a union told apart by its op, as Pydantic writes a
+// discriminated union whose literal has a default.
+const editsSchema = `{"type":"object","required":["edits"],"properties":{"edits":{"type":"array","items":{
+	"oneOf":[{"$ref":"#/$defs/Updated"},{"$ref":"#/$defs/Removed"}],
+	"discriminator":{"propertyName":"op","mapping":{"cell.updated":"#/$defs/Updated","cell.removed":"#/$defs/Removed"}}}}},
+"$defs":{
+	"Updated":{"type":"object","required":["id","code"],"properties":{"op":{"const":"cell.updated","default":"cell.updated","type":"string"},"id":{"type":"string"},"code":{"type":"string"}}},
+	"Removed":{"type":"object","required":["id"],"properties":{"op":{"const":"cell.removed","default":"cell.removed","type":"string"},"id":{"type":"string"}}}}}`
+
 // An app's events are subscribed to by name, with their arguments checked and their data typed, as a
-// tool's input and output are.
+// tool's input and output are. A union narrows on the field that tells its members apart.
 func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 	t.Parallel()
 	app := typeScriptApp(t)
@@ -161,27 +170,30 @@ func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh", name))
 	}
 	orders := ordersMetadata()
-	orders.Schema.Events = []mcpcontract.Event{{Name: "order.shipped",
-		Input:   json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}`),
-		Payload: json.RawMessage(`{"type":"object","properties":{"carrier":{"type":"string"}},"required":["carrier"]}`)}}
+	orders.Schema.Events = []mcpcontract.Event{{Name: "cells.edited",
+		Input:   json.RawMessage(`{"type":"object","properties":{"notebook":{"type":"string"}},"required":["notebook"],"additionalProperties":false}`),
+		Payload: json.RawMessage(editsSchema)}}
 	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, orders)}}}
 	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 		t.Fatal(err)
 	}
 	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
-for await (const { data } of await apps.orders.events.subscribe("order.shipped", { id: "1" })) {
-  const carrier: string = data.carrier;
+for await (const { data } of await apps.orders.events.subscribe("cells.edited", { notebook: "1" })) {
+  for (const edit of data.edits) {
+    if (edit.op === "cell.updated") { const code: string = edit.code; }
+    else { const id: string = edit.id; }
+  }
 }
 `)
 	if output, err := check(t, app); err != nil {
 		t.Fatalf("check: %v\n%s", err, output)
 	}
 	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
-export const misnamed = apps.orders.events.subscribe("order.shiped", { id: "1" });
-export const misargued = apps.orders.events.subscribe("order.shipped", { di: "1" });
-for await (const { data } of await apps.orders.events.subscribe("order.shipped", { id: "1" })) data.carier;
+export const misnamed = apps.orders.events.subscribe("cells.edit", { notebook: "1" });
+export const misargued = apps.orders.events.subscribe("cells.edited", { notbook: "1" });
+for await (const { data } of await apps.orders.events.subscribe("cells.edited", { notebook: "1" })) data.edits[0]!.code;
 `)
-	mustReject(t, app, `"order.shiped"`, "'di' does not exist", "'carier' does not exist")
+	mustReject(t, app, `"cells.edit"`, "'notbook' does not exist", "Property 'code' does not exist")
 }
 
 func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {
