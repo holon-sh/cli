@@ -161,7 +161,7 @@ func readSecret(cmd *cobra.Command, variable string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	value := strings.TrimRight(string(secret), "\r\n")
+	value := strings.TrimSuffix(strings.TrimSuffix(string(secret), "\n"), "\r")
 	if value == "" {
 		return "", errors.New("secret value is empty")
 	}
