@@ -20,7 +20,7 @@ import (
 
 const targetHelp = "TARGET is an MCP server's URL, [ALIAS=]URL to send <ALIAS>_MCP_TOKEN as its bearer token, an MCP registry version URL (its streamable-http remote is used), or a dependency the server.json in the working directory declares under sh.holon.requires."
 
-func newList(signIn func(context.Context, string) (string, error)) *cobra.Command {
+func newList(signIn typegen.SignIn) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{Use: "list TARGET", Short: "List an MCP server's tools, prompts and resources", Long: "List an MCP server's tools, prompts, resources and resource templates, after its name, version, negotiated protocol version and instructions.\n\n" + targetHelp, Example: `  # A remote server
   holon list https://huggingface.co/mcp
@@ -52,7 +52,7 @@ func newList(signIn func(context.Context, string) (string, error)) *cobra.Comman
 	return cmd
 }
 
-func newCall(signIn func(context.Context, string) (string, error)) *cobra.Command {
+func newCall(signIn typegen.SignIn) *cobra.Command {
 	var asJSON bool
 	var raw string
 	cmd := &cobra.Command{Use: "call TARGET TOOL [KEY=VALUE...]", Short: "Call a tool on an MCP server", Long: "Call a tool on an MCP server and print its result: the structured content when the tool returns some, otherwise its text. A result the tool marks as an error exits 1.\n\n" +
@@ -108,7 +108,7 @@ func newCall(signIn func(context.Context, string) (string, error)) *cobra.Comman
 	return cmd
 }
 
-func connect(cmd *cobra.Command, arg string, signIn func(context.Context, string) (string, error)) (*mcp.ClientSession, error) {
+func connect(cmd *cobra.Command, arg string, signIn typegen.SignIn) (*mcp.ClientSession, error) {
 	source, err := target(arg)
 	if err != nil {
 		return nil, err

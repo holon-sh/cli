@@ -26,13 +26,16 @@ import (
 // unversioned stands in when no source names a version.
 const unversioned = "0.0.0"
 
+// SignIn returns a bearer token for an endpoint's origin (scheme://host), or "" when it holds no
+// credential for that origin.
+type SignIn func(ctx context.Context, origin string) (string, error)
+
 type Options struct {
 	Env            []string
 	HTTPClient     *http.Client
 	Stdout, Stderr io.Writer
-	// SignIn returns a bearer token for an endpoint's origin (scheme://host) once the endpoint refuses
-	// a request without one, or "" when it holds no credential for that origin.
-	SignIn func(ctx context.Context, origin string) (string, error)
+	// SignIn supplies a token to an endpoint that refuses a request without one.
+	SignIn SignIn
 	// Run runs one server through its language's contract runner, toolingDir/<language>/runner.mjs or
 	// extract.py, with args (contract ROOT ENTRY), copying the runner's stdout to stdout. A failure the
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which

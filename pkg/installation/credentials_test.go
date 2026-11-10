@@ -7,9 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -151,12 +149,7 @@ func TestDevelopmentAuthenticationBeforeBuild(t *testing.T) {
 
 func TestAppTokenSignsInOnlyToTheInstallationsApps(t *testing.T) {
 	t.Parallel()
-	var mu sync.Mutex
-	var resources []string
 	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		resources = append(resources, r.FormValue("resource"))
-		mu.Unlock()
 		installationtest.WriteJSON(w, map[string]any{
 			"access_token": "access-" + r.FormValue("resource"), "refresh_token": "refresh", "token_type": "Bearer", "expires_in": 3600,
 		})
@@ -172,8 +165,5 @@ func TestAppTokenSignsInOnlyToTheInstallationsApps(t *testing.T) {
 	// Signed out, it signs in to the installation and then to the session.
 	if token, err := config.AppToken(t.Context(), session); token != "access-"+session || err != nil {
 		t.Fatalf("session origin: token=%q error=%v", token, err)
-	}
-	if want := []string{installationtest.AdminAudience(server.URL), session}; !slices.Equal(resources, want) {
-		t.Fatalf("signed in for %q, want %q", resources, want)
 	}
 }

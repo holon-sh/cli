@@ -80,7 +80,7 @@ type endpointTransport struct {
 	http.RoundTripper
 	origin   *url.URL
 	variable string
-	signIn   func(ctx context.Context, origin string) (string, error)
+	signIn   SignIn
 
 	mu    sync.Mutex
 	token string
@@ -100,13 +100,14 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	if err != nil || !refused(response) {
 		return response, err
 	}
-	signedIn := false
+	from := t.variable
 	if token == "" && t.signIn != nil {
 		// Signing in waits for a refusal, so an endpoint that needs no token never asks for one.
 		if token, err = t.signIn(request.Context(), t.origin.Scheme+"://"+t.origin.Host); err != nil {
 			return nil, err
 		}
-		if signedIn = token != ""; signedIn {
+		if token != "" {
+			from = "signing in"
 			t.mu.Lock()
 			t.token = token
 			t.mu.Unlock()
@@ -123,17 +124,12 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	}
 	hint := "if it needs a token, write ALIAS=URL and set ALIAS_MCP_TOKEN"
 	switch {
-	case signedIn:
-		hint = "the token came from signing in"
 	case token != "":
-		hint = "the token came from " + t.variable
+		hint = "the token came from " + from
 	case t.variable != "":
 		hint = "if it needs a token, set " + t.variable
 	}
 	refusal = fmt.Errorf("server refused the request with HTTP %d; %s", response.StatusCode, hint)
-	if response.StatusCode == http.StatusUnauthorized && token == "" {
-		refusal = fmt.Errorf("server requires sign-in (HTTP 401); %s", hint)
-	}
 	t.mu.Lock()
 	t.refusal = refusal
 	t.mu.Unlock()

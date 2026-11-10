@@ -46,13 +46,23 @@ func versionedServer(t *testing.T, name, version string) *httptest.Server {
 	return httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
 }
 
-// liveServerBehind serves a live MCP server to requests whose Authorization header check accepts.
+// liveServerBehind serves a live MCP server to requests whose Authorization header check accepts. It
+// refuses others as an MCP gateway does: 401 without a token, 403 with one, and 400 to the legacy
+// initialize the SDK falls back to after a refused server/discover.
 func liveServerBehind(t *testing.T, check func(authorization string) bool) *httptest.Server {
 	t.Helper()
 	live := liveServer(t, "orders")
 	t.Cleanup(live.Close)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !check(r.Header.Get("Authorization")) {
+		switch authorization := r.Header.Get("Authorization"); {
+		case check(authorization):
+		case r.Header.Get("Mcp-Method") == "": // Of the handshake, only server/discover names its method.
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		case authorization == "":
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		default:
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -81,15 +91,28 @@ func tokenlessServer(t *testing.T) *httptest.Server {
 func TestEndpointToken(t *testing.T) {
 	server := tokenServer(t, "good-value")
 	for _, test := range []struct {
-		name, alias, env, want string
+		name, alias, env, signedIn, want string
+		asks                             int
 	}{
-		{"hyphenated alias", "my-docs", "MY_DOCS_MCP_TOKEN=good-value", ""},
-		{"refused", "docs", "DOCS_MCP_TOKEN=bad-value", "HTTP 403; the token came from DOCS_MCP_TOKEN"},
-		{"missing", "docs", "OTHER_MCP_TOKEN=good-value", "HTTP 403; if it needs a token, set DOCS_MCP_TOKEN"},
-		{"no alias to name it", "", "DOCS_MCP_TOKEN=good-value", "write ALIAS=URL and set ALIAS_MCP_TOKEN"},
+		{name: "hyphenated alias", alias: "my-docs", env: "MY_DOCS_MCP_TOKEN=good-value"},
+		{name: "refused", alias: "docs", env: "DOCS_MCP_TOKEN=bad-value", signedIn: "good-value", want: "HTTP 403; the token came from DOCS_MCP_TOKEN"},
+		{name: "missing", alias: "docs", env: "OTHER_MCP_TOKEN=good-value", want: "HTTP 401; if it needs a token, set DOCS_MCP_TOKEN", asks: 1},
+		{name: "no alias to name it", env: "DOCS_MCP_TOKEN=good-value", want: "HTTP 401; if it needs a token, write ALIAS=URL and set ALIAS_MCP_TOKEN", asks: 1},
+		{name: "signed in", signedIn: "good-value", asks: 1},
+		{name: "signed in and refused", signedIn: "bad-value", want: "HTTP 403; the token came from signing in", asks: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Endpoint: server.URL}, Options{Env: []string{test.env}})
+			asks := 0
+			signIn := func(_ context.Context, origin string) (string, error) {
+				if asks++; origin != server.URL {
+					t.Errorf("signed in to %s, want the endpoint's origin %s", origin, server.URL)
+				}
+				return test.signedIn, nil
+			}
+			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Endpoint: server.URL}, Options{Env: []string{test.env}, SignIn: signIn})
+			if asks != test.asks {
+				t.Errorf("signed in %d times, want %d", asks, test.asks)
+			}
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), "-value") {
 					t.Fatalf("ResolveDocument = %v, want %q without the token", err, test.want)

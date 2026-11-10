@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// ordersServer serves one tool that echoes its arguments as structured content, failing for id "0".
+// ordersServer serves one tool that echoes its arguments as structured content, failing for id "0", to
+// requests that carry the token run signs in with.
 func ordersServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: "example.com/orders", Version: "1.2.0"}, &mcp.ServerOptions{Instructions: "Look orders up by id."})
@@ -27,7 +27,14 @@ func ordersServer(t *testing.T) *httptest.Server {
 	server.AddPrompt(&mcp.Prompt{Name: "summarize", Arguments: []*mcp.PromptArgument{{Name: "id", Required: true}, {Name: "tone"}}}, func(context.Context, *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 		return &mcp.GetPromptResult{}, nil
 	})
-	live := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer signed-in" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(live.Close)
 	return live
 }
@@ -65,51 +72,4 @@ func TestCallReadsEachValueAsJSONOrAString(t *testing.T) {
 	run(t, `has no tool "write"; it has read`, "call", live.URL, "write")
 	// A string that reads as JSON is quoted.
 	run(t, "read returned an error", "call", live.URL, "read", `id="0"`)
-}
-
-// guarded admits only requests bearing token; a refused initialize gets 400, as the platform's gateway answers the
-// legacy initialize the SDK falls back to.
-func guarded(t *testing.T, token string, next http.Handler) *httptest.Server {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") == "Bearer "+token {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if r.Header.Get("Mcp-Method") == "" { // Only server/discover names its method in a header.
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"`)
-		w.WriteHeader(http.StatusUnauthorized)
-	}))
-	t.Cleanup(server.Close)
-	return server
-}
-
-func TestCallSignsInOnceTheEndpointRequiresIt(t *testing.T) {
-	live := guarded(t, "signed-in", ordersServer(t).Config.Handler)
-	var asked []string
-	signIn := func(_ context.Context, origin string) (string, error) {
-		asked = append(asked, origin)
-		return "signed-in", nil
-	}
-	if got := runSignedIn(t, signIn, "", "call", live.URL+"/mcp/orders", "read", "id=A-1"); got != "{\n  \"id\": \"A-1\"\n}\n" {
-		t.Errorf("a signed-in call printed %q", got)
-	}
-	if !slices.Equal(asked, []string{live.URL}) {
-		t.Errorf("signed in for %q, want once for the endpoint's origin %s", asked, live.URL)
-	}
-	// An endpoint that admits anyone never asks.
-	runSignedIn(t, func(context.Context, string) (string, error) {
-		t.Error("an open endpoint asked for sign-in")
-		return "", nil
-	}, "", "list", ordersServer(t).URL)
-}
-
-func TestListReportsThatAnEndpointRequiresSignIn(t *testing.T) {
-	live := guarded(t, "signed-in", http.NotFoundHandler())
-	noCredential := func(context.Context, string) (string, error) { return "", nil }
-	// Not the 400 the legacy initialize after the refused server/discover gets.
-	runSignedIn(t, noCredential, "requires sign-in (HTTP 401)", "list", live.URL+"/mcp/orders")
 }
