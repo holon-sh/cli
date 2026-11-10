@@ -84,12 +84,12 @@ func TestLogin(t *testing.T) {
 			t.Cleanup(server.Close)
 			config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)}}
 			var output, progress strings.Builder
-			for _, args := range [][]string{{"login", server.URL}, {"login"}, {"config", "delete", "REGION", "--env", "prod"}} {
+			for _, args := range [][]string{{"login", server.URL}, {"login"}, {"config", "delete", "chat", "REGION", "--env", "prod"}} {
 				if err := executeCommand(t.Context(), args, &output, &progress, config); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if !strings.HasPrefix(output.String(), "Deleted config REGION in production") {
+			if !strings.HasPrefix(output.String(), "Deleted config REGION for chat in production") {
 				t.Fatalf("stdout = %q", output.String())
 			}
 			if tc.bearer != "" && !strings.Contains(progress.String(), "ABCD-EFGH") {
@@ -408,7 +408,7 @@ func TestMachineCredentials(t *testing.T) {
 			})
 			config := machineTestConfig(t, server)
 			var output strings.Builder
-			err := executeCommand(t.Context(), []string{"config", "delete", "REGION", "--env", "prod"}, &output, &output, config)
+			err := executeCommand(t.Context(), []string{"config", "delete", "chat", "REGION", "--env", "prod"}, &output, &output, config)
 			if !errors.Is(err, scenario.want) || strings.Contains(fmt.Sprint(err)+output.String(), "ci-secret") || strings.Contains(output.String(), "machine-token") {
 				t.Fatalf("error = %v, output = %q", err, output.String())
 			}
@@ -423,7 +423,7 @@ func TestMachineCredentials(t *testing.T) {
 		{"HOLON_CLIENT_ID=", "HOLON_CLIENT_SECRET="},
 	} {
 		config := commandConfig{Env: env, Auth: ClientConfig{Origin: "https://unused.example", ConfigDir: t.TempDir()}}
-		if err := executeCommand(t.Context(), []string{"config", "delete", "REGION", "--env", "prod"}, nil, nil, config); err == nil ||
+		if err := executeCommand(t.Context(), []string{"config", "delete", "chat", "REGION", "--env", "prod"}, nil, nil, config); err == nil ||
 			!strings.Contains(err.Error(), "requires HOLON_CLIENT_ID and HOLON_CLIENT_SECRET together") {
 			t.Fatalf("incomplete credentials fell back: %v", err)
 		}
@@ -432,7 +432,7 @@ func TestMachineCredentials(t *testing.T) {
 		installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}})
 	}))
 	defer server.Close()
-	if err := executeCommand(t.Context(), []string{"config", "delete", "REGION", "--env", "prod"}, nil, nil, machineTestConfig(t, server)); err == nil ||
+	if err := executeCommand(t.Context(), []string{"config", "delete", "chat", "REGION", "--env", "prod"}, nil, nil, machineTestConfig(t, server)); err == nil ||
 		!strings.Contains(err.Error(), "requires an identity-enabled installation") {
 		t.Fatalf("machine authentication on anonymous installation: %v", err)
 	}
