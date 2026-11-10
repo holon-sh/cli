@@ -82,6 +82,7 @@ type pythonEmitter struct {
 	shapes  []string
 	names   map[string]bool
 	emitted map[*declaration]bool // Shared types already written.
+	events  bool
 	// Python evaluates TypedDict fields and alias values on import, so while a shape's recursive
 	// types are declared their names may not exist yet. Every other type is rendered after them, and
 	// a shared type is written when first rendered, before whatever uses it.
@@ -260,7 +261,7 @@ func (e *pythonEmitter) input(value typ, name string) (string, []string) {
 }
 
 // generatePython writes the typing-only module body: shapes, export classes, protocols and _Clients.
-func generatePython(contracts map[string]catalog) string {
+func generatePython(contracts, events map[string]catalog) string {
 	emitter := &pythonEmitter{names: map[string]bool{"Inputs": true, "Outputs": true, "InputTypes": true, "OutputTypes": true}, emitted: map[*declaration]bool{}}
 	var clients []string
 	exportNames := []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"}
@@ -309,9 +310,27 @@ func generatePython(contracts map[string]catalog) string {
 				appExports[i+2] = append(appExports[i+2], pythonBlock(fmt.Sprintf("        class %s:", method), types, "            "))
 			}
 		}
+		eventsName := unique(emitter.names, typeIdentifier(binding)+"Events")
+		extName := unique(emitter.names, typeIdentifier(binding)+"Ext")
+		appEvents := events[binding]
+		nameDeclarations(emitter.names, binding, appEvents, pythonDeclares)
+		var subscriptions []string
+		for _, name := range sortedKeys(appEvents) {
+			event := appEvents[name]
+			prefix := typeIdentifier(binding) + typeIdentifier(name)
+			emitter.declare(event.input)
+			emitter.declare(event.output)
+			arguments, _ := emitter.input(event.input.value, prefix+"Arguments")
+			data := emitter.render(event.output.value, prefix+"Data")
+			emitter.events = true
+			subscriptions = append(subscriptions, fmt.Sprintf("    def subscribe(self, name: _typing.Literal[%s], arguments: %s, /, *, cursor: _builtins.str | None = ..., max_age: _builtins.float | None = ..., delivery: _typing.Literal[\"poll\", \"push\"] | None = ..., on_gap: _typing.Callable[[], _builtins.object] | None = ...) -> _Subscription[%s]: ...", quoted(name), arguments, data))
+		}
+		eventMethods := append([]string{"    async def list(self) -> _builtins.list[_builtins.dict[_builtins.str, _typing.Any]]: ..."}, pythonOverloaded(subscriptions)...)
 		var app []string
 		clients = append(clients, pythonBlock(fmt.Sprintf("class %s(_typing.Protocol):", toolsName), methods, "    "))
-		app = append(app, "    tools: "+toolsName)
+		clients = append(clients, pythonBlock(fmt.Sprintf("class %s(_typing.Protocol):", eventsName), eventMethods, "    "))
+		clients = append(clients, pythonBlock(fmt.Sprintf("class %s(_typing.Protocol):", extName), []string{"    events: " + eventsName}, "    "))
+		app = append(app, "    tools: "+toolsName, "    ext: "+extName)
 		app = append(app, pythonOverloaded(calls)...)
 		clients = append(clients, pythonBlock(fmt.Sprintf("class %s(_typing.Protocol):", appName), app, "    "))
 		if pythonIdentifier(binding) {
@@ -325,6 +344,12 @@ func generatePython(contracts map[string]catalog) string {
 	imports := "import builtins as _builtins\nimport typing as _typing"
 	if emitter.files {
 		imports += "\n\nfrom holon.ext.files import File as _File"
+	}
+	if emitter.events && !emitter.files {
+		imports += "\n"
+	}
+	if emitter.events {
+		imports += "\nfrom holon.ext.events import Subscription as _Subscription"
 	}
 	sections := []string{imports}
 	sections = append(sections, emitter.shapes...)

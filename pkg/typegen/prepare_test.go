@@ -155,7 +155,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		manager, install, installed string
 		consumer                    Consumer
 	}{
-		{"npm", "mkdir -p node_modules/holon-sh\nprintf '%s' '{\"holon\":{\"contractVersion\":2}}' > node_modules/holon-sh/package.json", "node_modules/holon-sh/package.json", c},
+		{"npm", "mkdir -p node_modules/holon-sh\nprintf '%s' '{}' > node_modules/holon-sh/package.json", "node_modules/holon-sh/package.json", c},
 		{"uv", "mkdir -p .venv/bin\n: > .venv/bin/python", ".venv/bin/python", Consumer{Name: "app", Dir: python, Targets: []string{TargetPy}}},
 	} {
 		put(t, bin, test.manager, "#!/bin/sh\nset -e\n"+test.install+"\n")
@@ -178,24 +178,6 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	err := Generate(t.Context(), []Consumer{c}, Options{Run: extract})
 	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run npm install holon-sh") {
 		t.Fatalf("undeclared runtime = %v", err)
-	}
-}
-
-// A runtime of another contract gets one install, which can bring it up to date, before generation stops.
-func TestGenerateRefusesARuntimeOfAnotherContract(t *testing.T) {
-	root := t.TempDir()
-	put(t, root, "node_modules/holon-sh/package.json", `{"name":"holon-sh","version":"0.0.1-dev.6","holon":{"slot":"generated","contractVersion":1}}`)
-	app := filepath.Join(root, "app")
-	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	bin := t.TempDir()
-	put(t, bin, "npm", "#!/bin/sh\ntouch installed\n")
-	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil || !strings.Contains(err.Error(), "holon-sh 0.0.1-dev.6 keeps generated clients inside node_modules; upgrade it") || !isFile(filepath.Join(app, "installed")) {
-		t.Fatalf("contract 1 runtime = %v", err)
 	}
 }
 

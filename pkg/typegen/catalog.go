@@ -21,7 +21,22 @@ func newClient() *mcp.Client {
 	// Generated clients send files, so the contract lists the tools a server shows only to clients that do
 	// (https://github.com/modelcontextprotocol/experimental-ext-file-uploads/blob/main/specification/draft/file-uploads.md#backward-compatibility).
 	capabilities.AddExtension("io.modelcontextprotocol/files", map[string]any{"upload": map[string]any{}, "download": map[string]any{}})
-	return mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "0.0.1"}, &mcp.ClientOptions{Capabilities: capabilities})
+	client := mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "0.0.1"}, &mcp.ClientOptions{Capabilities: capabilities})
+	_ = mcp.AddSendingCustomMethod[*listEventsParams, *listEventsResult](client, "events/list")
+	return client
+}
+
+const eventsExtension = "io.modelcontextprotocol/events"
+
+type listEventsParams struct {
+	mcp.ParamsBase
+	Cursor string `json:"cursor,omitempty"`
+}
+
+type listEventsResult struct {
+	mcp.ResultBase
+	Events     []mcpcontract.Event `json:"events"`
+	NextCursor string              `json:"nextCursor,omitempty"`
 }
 
 func listCatalog(ctx context.Context, session *mcp.ClientSession) (*mcpcontract.Contract, error) {
@@ -52,8 +67,21 @@ func listCatalog(ctx context.Context, session *mcp.ClientSession) (*mcpcontract.
 			contract.Resources = append(contract.Resources, mcpcontract.Resource{URI: resource.URI, Output: output})
 		}
 	}
+	if _, ok := capabilities.Extensions[eventsExtension]; ok {
+		for params := (&listEventsParams{}); ; {
+			page, err := mcp.CallCustomMethod[*listEventsParams, *listEventsResult](ctx, session, "events/list", params)
+			if err != nil {
+				return nil, fmt.Errorf("events/list: %w", err)
+			}
+			contract.Events = append(contract.Events, page.Events...)
+			if params.Cursor = page.NextCursor; params.Cursor == "" {
+				break
+			}
+		}
+	}
 	slices.SortFunc(contract.Tools, func(a, b mcpcontract.Tool) int { return cmp.Compare(a.Name, b.Name) })
 	slices.SortFunc(contract.Resources, func(a, b mcpcontract.Resource) int { return cmp.Compare(a.URI, b.URI) })
+	slices.SortFunc(contract.Events, func(a, b mcpcontract.Event) int { return cmp.Compare(a.Name, b.Name) })
 	return contract, nil
 }
 
@@ -185,6 +213,7 @@ func guess(request *jsonrpc.Request) json.RawMessage {
 	var params mcp.InitializeParams
 	_ = json.Unmarshal(request.Params, &params)
 	capabilities := &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}, Resources: &mcp.ResourceCapabilities{}}
+	capabilities.AddExtension(eventsExtension, nil)
 	var result any = struct{}{}
 	switch request.Method {
 	case "server/discover":

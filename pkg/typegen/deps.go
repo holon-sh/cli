@@ -27,9 +27,6 @@ type PackageJSON struct {
 	PackageManager                                                        string `json:"packageManager"`
 	Scripts                                                               map[string]string
 	Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
-	Holon                                                                 struct {
-		ContractVersion int `json:"contractVersion"`
-	}
 }
 
 // Launches reports whether the package starts itself, through main or a start script, so that

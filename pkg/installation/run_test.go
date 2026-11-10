@@ -64,9 +64,10 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "0s", "--project", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "1.5s", "--project", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "25h", "--project", project}},
-		{"--env must be dev or prod", []string{"config", "set", "--env", "staging", "API_URL", "value"}},
-		{"--session requires a development session", []string{"config", "set", "--session", "production", "API_URL", "value"}},
-		{`invalid variable name "not-valid"`, []string{"config", "set", "not-valid", "value"}},
+		{"--env must be dev or prod", []string{"config", "set", "--env", "staging", "chat", "API_URL", "value"}},
+		{"--session requires a development session", []string{"config", "set", "--session", "production", "chat", "API_URL", "value"}},
+		{`invalid variable name "not-valid"`, []string{"config", "set", "chat", "not-valid", "value"}},
+		{`invalid app name "Chat"`, []string{"config", "set", "Chat", "API_URL", "value"}},
 	} {
 		config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir()}}
 		if err := executeCommand(t.Context(), tc.args, nil, nil, config); err == nil || !strings.Contains(err.Error(), tc.want) {

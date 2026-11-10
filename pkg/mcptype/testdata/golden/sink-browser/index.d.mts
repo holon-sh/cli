@@ -143,8 +143,41 @@ export interface Resources {
   "ünï": {
   };
 }
+export interface EventArguments {
+  "123": {
+  };
+  "_private": {
+  };
+  "for": {
+  };
+  "orders": {
+  };
+  "orders!": {
+  };
+  "with-hyphen": {
+  };
+  "ünï": {
+  };
+}
+export interface EventData {
+  "123": {
+  };
+  "_private": {
+  };
+  "for": {
+  };
+  "orders": {
+  };
+  "orders!": {
+  };
+  "with-hyphen": {
+  };
+  "ünï": {
+  };
+}
+export type Events = { readonly [A in keyof EventArguments]: { [K in keyof EventArguments[A]]: { arguments: EventArguments[A][K]; data: K extends keyof EventData[A] ? EventData[A][K] : unknown } } };
 
-export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };
+export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> };
 export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 export type { ExposeOptions, PageResult, PageSchema, PageInput, PageAnnotations, PageTool, PageHost } from "holon-ui/runtime";

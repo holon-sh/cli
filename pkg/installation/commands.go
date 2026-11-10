@@ -29,7 +29,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 			Use:   "login [ORIGIN]",
 			Short: "Sign in and select a Holon installation",
 			Example: `  # Sign in and select an installation
-  holon login acme.cloud.holon-labs.dev
+  holon login acme.holonlabs.io
 
   # Sign in again to the selected installation
   holon login`,
@@ -73,7 +73,7 @@ func newCommands(config commandConfig) []*cobra.Command {
   holon logout
 
   # Sign out of another installation
-  holon logout --origin acme.cloud.holon-labs.dev`,
+  holon logout --origin acme.holonlabs.io`,
 			Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				manager, err := newLocalAuthManager(config.Auth)

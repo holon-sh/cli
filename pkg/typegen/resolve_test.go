@@ -27,12 +27,28 @@ func (h hostTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func liveServer(t *testing.T, name string) *httptest.Server {
 	t.Helper()
-	return versionedServer(t, name, "99")
+	return versionedServer(t, name, "99", true)
 }
 
-func versionedServer(t *testing.T, name, version string) *httptest.Server {
+func versionedServer(t *testing.T, name, version string, events bool) *httptest.Server {
 	t.Helper()
-	server := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, nil)
+	var options *mcp.ServerOptions
+	if events {
+		options = &mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{}}
+		options.Capabilities.AddExtension(eventsExtension, nil)
+	}
+	server := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, options)
+	if options != nil {
+		pages := map[string]*listEventsResult{
+			"":  {Events: []mcpcontract.Event{{Name: "order.shipped", Input: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}}}`), Payload: json.RawMessage(`{"type":"string"}`)}}, NextCursor: "2"},
+			"2": {Events: []mcpcontract.Event{{Name: "order.opened", Input: json.RawMessage(`{"type":"object"}`), Payload: json.RawMessage(`{}`)}}},
+		}
+		if err := mcp.AddReceivingCustomMethod(server, "events/list", func(_ context.Context, _ *mcp.ServerSession, params *listEventsParams) (*listEventsResult, error) {
+			return pages[params.Cursor], nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	schema := json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`)
 	server.AddTool(&mcp.Tool{Name: "read", InputSchema: schema, OutputSchema: schema}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		t.Error("contract discovery executed a tool")
@@ -206,7 +222,7 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	if metadata.Identity != (mcpcontract.Identity{Name: "Orders Live", Version: "99"}) {
 		t.Fatalf("live contract = %+v", metadata)
 	}
-	bareServer := versionedServer(t, "bare", "")
+	bareServer := versionedServer(t, "bare", "", false)
 	defer bareServer.Close()
 	bare, err := ResolveDocument(t.Context(), Source{Endpoint: bareServer.URL}, Options{HTTPClient: bareServer.Client()})
 	if err != nil || bare.Identity != (mcpcontract.Identity{Name: "bare", Version: "0.0.0"}) {
@@ -218,6 +234,10 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	}
 	if outputs["orders://typed"] != `{"type":"string"}` || outputs["orders://untyped"] != `{}` {
 		t.Fatalf("resource schemas: %v", outputs)
+	}
+	events := mustJSON(t, metadata.Schema.Events)
+	if want := `[{"name":"order.opened","inputSchema":{"type":"object"},"payloadSchema":{}},{"name":"order.shipped","inputSchema":{"type":"object","properties":{"id":{"type":"string"}}},"payloadSchema":{"type":"string"}}]`; string(events) != want || bare.Schema.Events != nil {
+		t.Fatalf("events = %s, a server without them %v", events, bare.Schema.Events)
 	}
 	// As a consumer source the alias derives from that name.
 	c := Consumer{Name: "app", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Endpoint: live.URL}}}

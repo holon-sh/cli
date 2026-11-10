@@ -36,13 +36,6 @@ func withScope(cmd *cobra.Command, run func(*cobra.Command, []string, configurat
 	return cmd
 }
 
-func (scope configurationScope) session() string {
-	if scope == protocol.ProductionName {
-		return ""
-	}
-	return string(scope)
-}
-
 func (scope configurationScope) label() string {
 	switch scope {
 	case protocol.ProductionName:
@@ -68,43 +61,38 @@ func commandGroup(use, short string, commands ...*cobra.Command) *cobra.Command 
 }
 
 func newSecretCommand(config *commandConfig) *cobra.Command {
-	return commandGroup("secret", "Manage secret values",
-		newValueCommand("secret", &cobra.Command{
-			Use:   "set VARIABLE",
-			Short: "set a secret value",
-			Long:  "Set a secret value. On a terminal the value is read from a hidden prompt; otherwise it is read from standard input, with the trailing newline removed.",
-			Example: scopedExample("Set the secret API_KEY for development", "holon secret set API_KEY") + `
+	return newValuesCommand(config, "secret", "API_KEY", &cobra.Command{
+		Use:  "set APP VARIABLE",
+		Long: "Set a secret value for an app. On a terminal the value is read from a hidden prompt; otherwise it is read from standard input, with the trailing newline removed.",
+		Example: scopedExample("Set the secret API_KEY of the app chat for development", "holon secret set chat API_KEY") + `
 
   # Pipe the value in from a script or CI
-  printenv API_KEY | holon secret set API_KEY`,
-			Args: cobra.ExactArgs(1),
-		}, func(cmd *cobra.Command, args []string) (string, error) {
-			return readSecret(cmd, args[0])
-		}, config),
-		newValueCommand("secret", &cobra.Command{
-			Use:     "delete VARIABLE",
-			Short:   "delete a secret value",
-			Example: scopedExample("Delete the secret API_KEY for development", "holon secret delete API_KEY"),
-			Args:    cobra.ExactArgs(1),
-		}, nil, config),
-	)
+  printenv API_KEY | holon secret set chat API_KEY`,
+		Args: cobra.ExactArgs(2),
+	}, func(cmd *cobra.Command, args []string) (string, error) {
+		return readSecret(cmd, args[1])
+	})
 }
 
 func newConfigCommand(config *commandConfig) *cobra.Command {
-	return commandGroup("config", "Manage config values",
-		newValueCommand("config", &cobra.Command{
-			Use:     "set VARIABLE VALUE",
-			Short:   "set a config value",
-			Example: scopedExample("Set the config REGION for development", "holon config set REGION us-east1"),
+	return newValuesCommand(config, "config", "REGION", &cobra.Command{
+		Use:     "set APP VARIABLE VALUE",
+		Example: scopedExample("Set the config REGION of the app chat for development", "holon config set chat REGION us-east1"),
+		Args:    cobra.ExactArgs(3),
+	}, func(_ *cobra.Command, args []string) (string, error) {
+		return args[2], nil
+	})
+}
+
+func newValuesCommand(config *commandConfig, kind, sample string, set *cobra.Command, value func(*cobra.Command, []string) (string, error)) *cobra.Command {
+	set.Short = "set a " + kind + " value for an app"
+	return commandGroup(kind, "Manage the "+kind+" values each app receives",
+		newValueCommand(kind, set, value, config),
+		newValueCommand(kind, &cobra.Command{
+			Use:     "delete APP VARIABLE",
+			Short:   "delete a " + kind + " value of an app",
+			Example: scopedExample("Delete the "+kind+" "+sample+" of the app chat for development", "holon "+kind+" delete chat "+sample),
 			Args:    cobra.ExactArgs(2),
-		}, func(_ *cobra.Command, args []string) (string, error) {
-			return args[1], nil
-		}, config),
-		newValueCommand("config", &cobra.Command{
-			Use:     "delete VARIABLE",
-			Short:   "delete a config value",
-			Example: scopedExample("Delete the config REGION for development", "holon config delete REGION"),
-			Args:    cobra.ExactArgs(1),
 		}, nil, config),
 	)
 }
@@ -113,11 +101,18 @@ func newConfigCommand(config *commandConfig) *cobra.Command {
 // when value is nil.
 func newValueCommand(kind string, cmd *cobra.Command, value func(*cobra.Command, []string) (string, error), config *commandConfig) *cobra.Command {
 	return withScope(cmd, func(cmd *cobra.Command, args []string, scope configurationScope) error {
-		variable := args[0]
+		app, variable := args[0], args[1]
+		if !protocol.ValidAppName(app) {
+			return fmt.Errorf("invalid app name %q", app)
+		}
 		if !protocol.ValidEnvName(variable) {
 			return fmt.Errorf("invalid variable name %q", variable)
 		}
-		request := protocol.VariableRequest{Session: scope.session(), Kind: kind, Variable: variable}
+		session := string(scope)
+		if scope == protocol.ProductionName {
+			session = ""
+		}
+		request := protocol.VariableRequest{Session: session, Apps: []string{app}, Kind: kind, Variable: variable}
 		var input any = request
 		tool, verb := protocol.ToolDeleteValue, "Deleted"
 		if value != nil {
@@ -128,7 +123,7 @@ func newValueCommand(kind string, cmd *cobra.Command, value func(*cobra.Command,
 			if !protocol.ValidInputValue(v) {
 				return errors.New("value must be single-line text without NUL characters")
 			}
-			input, tool, verb = protocol.SetValueRequest{VariableRequest: request, Value: v}, protocol.ToolSetValue, "Stored"
+			input, tool, verb = protocol.SetValueRequest{VariableRequest: request, Value: &v}, protocol.ToolSetValue, "Stored"
 		}
 		ctx := cmd.Context()
 		manager, err := NewClient(ctx, config.Auth)
@@ -138,8 +133,8 @@ func newValueCommand(kind string, cmd *cobra.Command, value func(*cobra.Command,
 		if err := manager.Call(ctx, ControlPlane(string(scope)), tool, input, &struct{}{}); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s in %s on %s. Deployments pick this up on their next deploy.\n",
-			verb, kind, variable, scope.label(), manager.client.baseURL)
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s for %s in %s on %s. Deployments pick this up on their next deploy.\n",
+			verb, kind, variable, app, scope.label(), manager.client.baseURL)
 		return err
 	})
 }

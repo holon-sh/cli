@@ -26,12 +26,7 @@ const (
 func newAppCommand(config *commandConfig) *cobra.Command {
 	return commandGroup("app", "Inspect and remove deployed apps",
 		withScope(&cobra.Command{Use: "list", Short: "List apps with their source, access and egress", Args: cobra.NoArgs,
-			Example: `  # List the apps of every development session
-  holon app list
-
-  # Production, or one development session
-  holon app list --env prod
-  holon app list --session my-session`},
+			Example: scopedExample("List the apps of every development session", "holon app list")},
 			func(cmd *cobra.Command, _ []string, scope configurationScope) error {
 				manager, err := NewClient(cmd.Context(), config.Auth)
 				if err != nil {
@@ -57,13 +52,8 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				return table.Flush()
 			}),
 		withScope(&cobra.Command{Use: "get APP", Short: "Print an app's declaration as YAML", Args: cobra.ExactArgs(1),
-			Long: "Print an app's declaration. " + everyDevelopmentSession,
-			Example: `  # Print an app's declaration from every development session
-  holon app get chat
-
-  # Production, or one development session
-  holon app get chat --env prod
-  holon app get chat --session my-session`},
+			Long:    "Print an app's declaration. " + everyDevelopmentSession,
+			Example: scopedExample("Print an app's declaration from every development session", "holon app get chat")},
 			func(cmd *cobra.Command, args []string, scope configurationScope) error {
 				_, targets, err := sessionApps(cmd, config, scope, args[0])
 				if err != nil {
@@ -159,15 +149,10 @@ func newAccessCommand(config *commandConfig) *cobra.Command {
 			})
 		}),
 		withScope(&cobra.Command{
-			Use:   "delete APP/TOOL",
-			Short: "Delete a tool rule so the tool follows the server rule",
-			Args:  cobra.ExactArgs(1),
-			Example: `  # Make a tool follow its app's rule again in every development session
-  holon access delete chat/send_message
-
-  # Production, or one development session
-  holon access delete chat/send_message --env prod
-  holon access delete chat/send_message --session my-session`,
+			Use:     "delete APP/TOOL",
+			Short:   "Delete a tool rule so the tool follows the server rule",
+			Args:    cobra.ExactArgs(1),
+			Example: scopedExample("Make a tool follow its app's rule again in every development session", "holon access delete chat/send_message"),
 		}, func(cmd *cobra.Command, args []string, scope configurationScope) error {
 			return updateAccess(cmd, config, scope, args[0], func(access *protocol.AppAccess, tool string) error {
 				if tool == "" {
