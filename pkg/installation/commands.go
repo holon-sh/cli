@@ -13,8 +13,6 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-const toolGetIdentity = "get_identity"
-
 const appsHelp = "APP is an app in holon.yaml (or -p FILE), else the directory ./APP with a server.json. " +
 	"APP=SOURCE names an app's source: a directory, an MCP Registry server version URL, or an https MCP endpoint. " +
 	"Without APP arguments, every app in holon.yaml runs, or without one every ./*/server.json directory.\n\n" +
@@ -60,7 +58,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 							Profile struct{ Email string }
 						}
 					}
-					if err := manager.Call(cmd.Context(), protocol.DevPlane, toolGetIdentity, struct{}{}, &me); err != nil {
+					if err := manager.Call(cmd.Context(), protocol.DevPlane, "get_identity", struct{}{}, &me); err != nil {
 						return err
 					}
 					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Signed in to %s as %s\n", manager.client.baseURL, cmp.Or(me.Identity.Profile.Email, me.Identity.Subject))

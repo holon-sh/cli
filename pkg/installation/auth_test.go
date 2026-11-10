@@ -74,7 +74,7 @@ func TestLogin(t *testing.T) {
 				}
 				installationtest.WriteJSON(w, struct{}{})
 			})
-			control.Handle([]string{toolGetIdentity}, nil, func(w http.ResponseWriter, _ *http.Request) {
+			control.Handle([]string{"get_identity"}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, map[string]any{"identity": map[string]any{
 					"issuer": "https://identity.example", "subject": "user-1", "scopes": []string{},
 					"profile": map[string]any{"name": "Dev", "email": "dev@example.com"},
