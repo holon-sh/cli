@@ -13,7 +13,7 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-var errNoInstallation = errors.New("no Holon installation selected; run holon login <team>.cloud.holon-labs.dev")
+var errNoInstallation = errors.New("no Holon installation selected; run holon login <team>.holonlabs.io")
 
 type clientConfig struct {
 	Origin string `json:"origin"`
