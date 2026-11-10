@@ -85,7 +85,7 @@ func Install(ctx context.Context, consumers []Consumer, options Options) error {
 					err = mapClients(c.Dir, target, o)
 				}
 			case TargetPy:
-				err = ensurePythonRuntime(c.Dir)
+				err = ensurePythonRuntime(ctx, c.Dir, o)
 			}
 			if err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
@@ -222,7 +222,7 @@ func DeclaredTargets(dir string) ([]string, error) {
 			targets = append(targets, target)
 		}
 	}
-	if ensurePythonRuntime(dir) == nil {
+	if declared, err := pythonDependencies(dir); err == nil && declared[PythonRuntime] {
 		targets = append(targets, TargetPy)
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil && requiresGoRuntime(data) {
@@ -242,14 +242,25 @@ func requiresGoRuntime(data []byte) bool {
 // PythonRuntime is the Python package that generated Python clients import.
 const PythonRuntime = "holon-sh"
 
-// ensurePythonRuntime requires holon-sh among the project's declared Python dependencies.
-func ensurePythonRuntime(dir string) error {
+// ensurePythonRuntime installs a Python project's dependencies with uv sync, as holon init does, unless it
+// has an environment of its own.
+func ensurePythonRuntime(ctx context.Context, dir string, o Options) error {
+	if pythonEnvironment(dir, "") != "" {
+		return nil
+	}
 	declared, err := pythonDependencies(dir)
 	if err != nil {
 		return err
 	}
 	if !declared[PythonRuntime] {
 		return fmt.Errorf("%s does not depend on holon-sh; run uv add holon-sh (or add it to requirements.txt)", dir)
+	}
+	fmt.Fprintf(o.Stderr, "%s: uv sync\n", filepath.Base(dir))
+	if err := validateEnv(o.Env); err != nil {
+		return err
+	}
+	if err := commandenv.RunStreaming(ctx, dir, "uv", []string{"sync"}, nil, append(os.Environ(), o.Env...), o.Stderr, o.Stderr); err != nil {
+		return fmt.Errorf("uv sync in %s: %w", dir, err)
 	}
 	return nil
 }

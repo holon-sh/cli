@@ -144,23 +144,31 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 }
 
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
+	t.Setenv("VIRTUAL_ENV", "")
 	c, extract := checkoutConsumer(t, TargetTS)
+	python := t.TempDir()
+	put(t, python, "pyproject.toml", "[project]\nname = \"app\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
 	bin := t.TempDir()
-	put(t, bin, "npm", "#!/bin/sh\nset -e\nprintf '{}' > package-lock.json\nmkdir -p node_modules/holon-sh\nprintf '%s' '{\"holon\":{\"contractVersion\":2}}' > node_modules/holon-sh/package.json\n")
-	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	var output bytes.Buffer
-	if err := Generate(t.Context(), []Consumer{c}, Options{Stdout: &output, Stderr: &output, Run: extract}); err != nil {
-		t.Fatalf("generate: %v\n%s", err, &output)
-	}
-	if client := read(t, c.Dir, "generated/holon-sh/index.mjs"); !strings.Contains(client, `"lookup"`) {
-		t.Fatalf("project has no generated client:\n%s", client)
-	}
-	put(t, bin, "npm", "#!/bin/sh\nexit 17\n")
-	if err := Generate(t.Context(), []Consumer{c}, Options{Run: extract}); err != nil {
-		t.Fatalf("installed runtime was reinstalled: %v", err)
+	for _, test := range []struct {
+		manager, install, installed string
+		consumer                    Consumer
+	}{
+		{"npm", "mkdir -p node_modules/holon-sh\nprintf '%s' '{\"holon\":{\"contractVersion\":2}}' > node_modules/holon-sh/package.json", "node_modules/holon-sh/package.json", c},
+		{"uv", "mkdir -p .venv/bin\n: > .venv/bin/python", ".venv/bin/python", Consumer{Name: "app", Dir: python, Targets: []string{TargetPy}}},
+	} {
+		put(t, bin, test.manager, "#!/bin/sh\nset -e\n"+test.install+"\n")
+		if err := os.Chmod(filepath.Join(bin, test.manager), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Stdout: &output, Stderr: &output, Run: extract}); err != nil || !isFile(filepath.Join(test.consumer.Dir, test.installed)) {
+			t.Fatalf("%s: generate: %v\n%s", test.manager, err, &output)
+		}
+		put(t, bin, test.manager, "#!/bin/sh\nexit 17\n")
+		if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Run: extract}); err != nil {
+			t.Fatalf("%s: installed runtime was reinstalled: %v", test.manager, err)
+		}
 	}
 	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
 		t.Fatal(err)
