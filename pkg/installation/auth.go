@@ -326,7 +326,7 @@ func (m *Client) revokeRefreshTokens(ctx context.Context) error {
 
 func (m *Client) revoke(ctx context.Context, endpoint, clientID, token string) error {
 	if endpoint == "" {
-		return errors.New("RelyingParty does not support RevokeCaller")
+		return fmt.Errorf("%w: issuer does not advertise a revocation endpoint", errOAuthFailed)
 	}
 	form := url.Values{"token": {token}, "token_type_hint": {"refresh_token"}, "client_id": {clientID}}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
@@ -334,14 +334,14 @@ func (m *Client) revoke(ctx context.Context, endpoint, clientID, token string) e
 		return err
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	status, body, err := m.identityRequest(request)
-	if err != nil {
-		return err
+	// The response body is ignored per [RFC 7009 §2.2], and could echo the token.
+	//
+	// [RFC 7009 §2.2]: https://www.rfc-editor.org/rfc/rfc7009.html#section-2.2
+	status, _, err := m.identityRequest(request)
+	if err == nil && status != http.StatusOK {
+		err = fmt.Errorf("%w: HTTP %d", errOAuthFailed, status)
 	}
-	if status != http.StatusOK {
-		return fmt.Errorf("revoke returned status %d and text: %s", status, body)
-	}
-	return nil
+	return err
 }
 
 // discover reads the issuer's metadata at the [OIDC Discovery §4] path, which differs from RFC 8414 for path issuers,
