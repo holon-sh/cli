@@ -42,19 +42,13 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				}
 				table := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 				_, _ = fmt.Fprintln(table, "SESSION\tAPP\tSOURCE\tACCESS\tEGRESS\tRESTRICTED")
-				development := false
 				for _, session := range sessions {
-					development = development || session.Name != protocol.ProductionName && len(session.Apps) > 0
 					for _, app := range session.Apps {
 						_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", session.Name, app.Name, appSource(app),
 							accessSummary(app.Access), egressSummary(app.Egress), egressCut(session, app.Name))
 					}
 				}
-				if err := table.Flush(); err != nil || !development {
-					return err
-				}
-				_, err = fmt.Fprintln(cmd.OutOrStdout(), "Development sessions admit only signed-in developers, whatever the access rule.")
-				return err
+				return table.Flush()
 			}),
 		withScope(&cobra.Command{Use: "get APP", Short: "Print an app's declaration as YAML", Args: cobra.ExactArgs(1),
 			Long: "Print an app's declaration. " + everyDevelopmentSession,
@@ -127,8 +121,8 @@ func newAccessCommand(config *commandConfig) *cobra.Command {
   holon access set chat oauth
   holon access set chat oauth app:chat:read
 
-  # Let anyone call an app
-  holon access set chat public
+  # Let anyone call an app in production; a development session admits only signed-in developers whatever the rule
+  holon access set chat public --env prod
 
   # Replace the rule of one tool
   holon access set chat/send_message oauth app:chat:write
