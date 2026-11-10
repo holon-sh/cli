@@ -245,11 +245,11 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	var background sync.WaitGroup
 	background.Go(func() { d.renew(ctx) })
 	background.Go(func() {
-		input := protocol.SessionLogsRequest{
-			AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}}, Event: protocol.MCPCallEvent,
-		}
-		if err := d.manager.StreamLogs(ctx, input, d.options.output.logs(stdout)); ctx.Err() == nil {
-			d.options.output.problem("request stream", fmt.Errorf("stopped: %w", err))
+		var input protocol.SessionLogsRequest
+		input.Session = d.name
+		records := &resumingWriter{out: stdout, stdio: !d.options.output.verbose}
+		if err := d.manager.streamLogs(ctx, input, records); ctx.Err() == nil {
+			d.options.output.problem("log stream", fmt.Errorf("stopped: %w", err))
 		}
 	})
 	defer func() {

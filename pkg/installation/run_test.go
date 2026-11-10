@@ -40,7 +40,7 @@ func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 
 func executeCommandWithInput(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, config commandConfig) error {
 	config.Auth.Env = append([]string{"HOLON_ORIGIN="}, config.Auth.Env...)
-	command := sharedcli.NewCommand("dev")
+	command := sharedcli.NewCommand("dev", nil)
 	command.AddCommand(newCommands(config)...)
 	command.SetArgs(args)
 	command.SetIn(stdin)
@@ -313,11 +313,19 @@ func TestRunDevLifecycle(t *testing.T) {
 			}
 			installationtest.WriteJSON(w, session())
 		})
+	const (
+		appOutput = "2026-11-09T10:00:00.1Z  alpha starting boom\n2026-11-09T10:00:00.2Z  alpha " + traceback + "\n"
+		callLine  = "2026-11-09T10:00:00.3Z INFO alpha tools/call boom error tool_error 22ms trace_id=aaaa\n"
+	)
 	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
-		if query := r.URL.Query(); query.Get("event") != "holon.mcp.call" || query.Get("follow") != "true" {
-			t.Errorf("request stream query = %s", r.URL.RawQuery)
+		switch query := r.URL.Query(); {
+		case query.Has("since"):
+			w.WriteHeader(http.StatusPreconditionFailed)
+		case query.Get("event") == protocol.MCPCallEvent:
+			_, _ = io.WriteString(w, callLine)
+		default:
+			_, _ = io.WriteString(w, appOutput+callLine)
 		}
-		w.WriteHeader(http.StatusPreconditionFailed)
 	})
 	h.start(t, build)
 	t.Run("ambiguous creation is not retried or deleted", func(t *testing.T) {
@@ -347,7 +355,8 @@ func TestRunDevLifecycle(t *testing.T) {
 				return !slices.ContainsFunc(texts, func(text string) bool { return !strings.Contains(output.String(), text) })
 			})
 		}
-		await(stderr, "Configure API_KEY to start the session.", "request stream stopped")
+		await(stderr, "Configure API_KEY to start the session.", "log stream stopped")
+		await(stdout, appOutput)
 		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "broken"})
 		await(stderr, "remote image preparation failed")
 		mu.Lock()
@@ -380,7 +389,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
-		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") {
+		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") || strings.Contains(stdout.String(), callLine) {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}
 	})

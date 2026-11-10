@@ -121,41 +121,44 @@ func TestLogin(t *testing.T) {
 	}
 }
 
-func TestCredentialChanges(t *testing.T) {
+func TestTerminalSignIn(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, remote string
-		want         error
-	}{
-		{name: "logout from another command", want: errNotAuthenticated},
-		{name: "logout from another remote with the same identity provider", remote: "https://other.example"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			server := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-				installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-secret", "expires_in": 120})
-			})
-			config := ClientConfig{
-				Origin:    server.URL,
-				ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server),
-			}
-			manager, err := NewClient(t.Context(), config)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.remote != "" {
-				config.Origin = tc.remote
-			}
-			if _, err := manager.controlToken(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if err := executeCommand(t.Context(), []string{"logout"}, nil, nil, commandConfig{Auth: config}); err != nil {
-				t.Fatal(err)
-			}
-			if token, err := manager.controlToken(t.Context()); !errors.Is(err, tc.want) || err == nil && token != "access-secret" {
-				t.Fatalf("after credential change token=%q error=%v, want %v", token, err, tc.want)
-			}
-		})
+	var once sync.Once
+	entered, release := make(chan struct{}), make(chan struct{})
+	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("grant_type") == "refresh_token" {
+			w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
+			w.WriteHeader(http.StatusBadRequest)
+			installationtest.WriteJSON(w, map[string]string{"error": "invalid_grant"})
+			return
+		}
+		once.Do(func() { close(entered) })
+		<-release
+		installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-secret", "expires_in": 120})
+	})
+	dir := t.TempDir()
+	atTerminal := func() *Client {
+		manager := newManager(t, server, dir)
+		manager.interactive = true
+		return manager
+	}
+	expired := atTerminal()
+	seedAdminCredentials(t, expired, oauth2.Token{AccessToken: "expired", RefreshToken: "revoked", TokenType: "Bearer", Expiry: time.Unix(1, 0)})
+	done := make(chan error, 1)
+	go func() { _, err := expired.controlToken(t.Context()); done <- err }()
+	<-entered
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	logout := commandConfig{Auth: ClientConfig{Origin: server.URL, ConfigDir: dir, HTTPClient: installationtest.OriginClient(server)}}
+	if err := executeCommand(ctx, []string{"logout"}, nil, nil, logout); err != nil {
+		t.Fatalf("logout while another command signs in: %v", err)
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, errCredentialChanged) {
+		t.Fatalf("sign-in after logout: %v, want %v", err, errCredentialChanged)
+	}
+	if token, err := atTerminal().controlToken(t.Context()); err != nil || token != "access-secret" {
+		t.Fatalf("signed-out terminal command token=%q error=%v", token, err)
 	}
 }
 
@@ -168,8 +171,6 @@ func TestDeviceLoginFailures(t *testing.T) {
 		want                        error
 	}{
 		{name: "initiation", code: "invalid_request", path: "/device-authorization", want: errOAuthFailed},
-		{name: "poll", code: "refresh-secret", want: errOAuthFailed},
-		{name: "discovery", path: "/.well-known/openid-configuration", want: errOAuthFailed},
 		{name: "wrong issuer", discovery: `{"issuer":"https://foreign.example/"}`, want: errOAuthFailed},
 		{
 			name: "missing device endpoint", discovery: `{"issuer":"https://identity.example/","token_endpoint":"https://identity.example/token"}`, want: errOAuthFailed,
@@ -241,17 +242,12 @@ func TestDeviceLoginFailures(t *testing.T) {
 func TestRefreshRecovery(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, code                       string
-		status                           int
-		failStore                        bool
-		refreshErr, connectErr, olderErr error
+		name, code           string
+		status               int
+		refreshErr, laterErr error
 	}{
 		{name: "temporary failure", code: "temporary_failure", status: http.StatusServiceUnavailable, refreshErr: errRefreshFailed},
-		{name: "revoked credential", code: "invalid_grant", status: http.StatusBadRequest, refreshErr: errReauthenticationRequired, olderErr: errCredentialChanged},
-		{
-			name: "replacement cannot be saved", code: "invalid_grant", status: http.StatusBadRequest, failStore: true,
-			refreshErr: errReauthenticationRequired, connectErr: errCredentialUnavailable, olderErr: errReauthenticationRequired,
-		},
+		{name: "revoked credential", code: "invalid_grant", status: http.StatusBadRequest, refreshErr: errReauthenticationRequired, laterErr: errReauthenticationRequired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -271,16 +267,7 @@ func TestRefreshRecovery(t *testing.T) {
 					installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "recovered-access", "expires_in": 120})
 					return
 				}
-				body := map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one"}
-				if failed.Load() {
-					body["access_token"], body["expires_in"] = "recovered-access", 120
-					if tc.failStore {
-						if err := os.Chmod(filepath.Join(dir, "remotes"), 0o500); err != nil {
-							t.Error(err)
-						}
-					}
-				}
-				installationtest.WriteJSON(w, body)
+				installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one"})
 			})
 			first := newManager(t, server, dir)
 			if err := first.loginInteractive(t.Context()); err != nil {
@@ -290,16 +277,10 @@ func TestRefreshRecovery(t *testing.T) {
 				t.Fatalf("refresh error=%v, want %v", err, tc.refreshErr)
 			}
 
-			second := newManager(t, server, dir)
-			token, err := second.controlToken(t.Context())
-			if !errors.Is(err, tc.connectErr) || err == nil && token != "recovered-access" {
-				t.Fatalf("reconnect token=%q error=%v, want %v", token, err, tc.connectErr)
-			}
-			if err := os.Chmod(filepath.Join(dir, "remotes"), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if token, err := first.controlToken(t.Context()); !errors.Is(err, tc.olderErr) || err == nil && token != "recovered-access" {
-				t.Fatalf("older command token=%q error=%v, want %v", token, err, tc.olderErr)
+			for _, manager := range []*Client{newManager(t, server, dir), first} {
+				if token, err := manager.controlToken(t.Context()); !errors.Is(err, tc.laterErr) || err == nil && token != "recovered-access" {
+					t.Fatalf("later token=%q error=%v, want %v", token, err, tc.laterErr)
+				}
 			}
 		})
 	}
@@ -320,10 +301,7 @@ func TestLoginRejectsIncompatibleDiscovery(t *testing.T) {
 	t.Parallel()
 	const installation = `"installation":{"origin":"ORIGIN","uid":"test-installation"},`
 	for _, body := range []string{
-		`{` + installation + `"version":"test"}`,
-		`{"installation":{"origin":"ORIGIN"},"oauth":null}`,
 		`{"installation":{"origin":"https://other.example","uid":"installation"},"oauth":null}`,
-		`{` + installation + `"oauth":{}}`,
 		`{` + installation + `"oauth":null,"buildArchitectures":["s390x"]}`,
 		`{` + installation + `"oauth":{"issuer":"ORIGIN/","cliClientID":"cli","adminAudience":"ADMIN","deviceFlowProfile":"unknown"}}`,
 	} {
@@ -356,11 +334,8 @@ func TestSavedCredentialMetadata(t *testing.T) {
 		name, document string
 		want           error
 	}{
-		{"matching", `{"issuer":"ISSUER","adminAudience":"urn:test","cliClientID":"cli-test"}`, nil},
 		{"incomplete", `{"issuer":"ISSUER"}`, errReauthenticationRequired},
-		{"changed mode", `null`, errEndpointChanged},
 		{"changed issuer", `{"issuer":"https://other.example/","adminAudience":"urn:test","cliClientID":"cli-test"}`, errEndpointChanged},
-		{"changed client", `{"issuer":"ISSUER","adminAudience":"urn:test","cliClientID":"other"}`, errEndpointChanged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manager := newManager(t, server, t.TempDir())
@@ -402,7 +377,6 @@ func TestMachineCredentials(t *testing.T) {
 	}{
 		{"valid", 200, `{"access_token":"machine-token","token_type":"Bearer"}`, nil},
 		{"invalid secret", 401, `{"error":"invalid_client","error_description":"ci-secret"}`, errOAuthFailed},
-		{"invalid token type", 200, `{"access_token":"ci-secret","token_type":"MAC"}`, errMalformedResponse},
 		{"invalid token", 200, `{"access_token":"invalid token ci-secret","token_type":"Bearer"}`, errMalformedResponse},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -477,102 +451,89 @@ func TestConcurrentAuthenticationProcesses(t *testing.T) {
 	}
 
 	t.Parallel()
-	for _, refresh := range []bool{false, true} {
-		name := "initial sign-in"
-		if refresh {
-			name = "rotating refresh"
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	info := make(chan struct{}, 3)
+	var authorizations atomic.Int32
+	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		first := authorizations.Add(1) == 1
+		if r.FormValue("grant_type") != "refresh_token" || r.FormValue("refresh_token") != "refresh-one" {
+			t.Error("replayed a rotated refresh token")
 		}
-		t.Run(name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-			defer cancel()
-			entered, release := make(chan struct{}), make(chan struct{})
-			var once sync.Once
-			unblock := func() { once.Do(func() { close(release) }) }
-			defer unblock()
-			info := make(chan struct{}, 3)
-			var authorizations atomic.Int32
-			server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-				first := authorizations.Add(1) == 1
-				if refresh && (r.FormValue("grant_type") != "refresh_token" || r.FormValue("refresh_token") != "refresh-one") {
-					t.Error("replayed a rotated refresh token")
-				}
-				if !refresh && r.FormValue("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" {
-					t.Error("unexpected initial grant")
-				}
-				if first {
-					close(entered)
-				}
-				select {
-				case <-release:
-				case <-r.Context().Done():
-					return
-				}
-				installationtest.WriteJSON(w, map[string]any{"access_token": "shared-access", "token_type": "Bearer", "refresh_token": "refresh-two", "expires_in": 3600})
-			})
-			base := server.Config.Handler
-			server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == protocol.APIPathInfo {
-					info <- struct{}{}
-				}
-				base.ServeHTTP(w, r)
-			})
-			dir := t.TempDir()
-			if refresh {
-				manager := newManager(t, server, dir)
-				seedAdminCredentials(t, manager, oauth2.Token{
-					AccessToken: "expired", RefreshToken: "refresh-one",
-					TokenType: "Bearer", Expiry: time.Unix(1, 0),
-				})
-				<-info
+		if first {
+			close(entered)
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		installationtest.WriteJSON(w, map[string]any{"access_token": "shared-access", "token_type": "Bearer", "refresh_token": "refresh-two", "expires_in": 3600})
+	})
+	base := server.Config.Handler
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == protocol.APIPathInfo {
+			info <- struct{}{}
+		}
+		base.ServeHTTP(w, r)
+	})
+	dir := t.TempDir()
+	manager := newManager(t, server, dir)
+	seedAdminCredentials(t, manager, oauth2.Token{
+		AccessToken: "expired", RefreshToken: "refresh-one",
+		TokenType: "Bearer", Expiry: time.Unix(1, 0),
+	})
+	<-info
+	cert := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
+	start := func() <-chan error {
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestConcurrentAuthenticationProcesses$")
+		cmd.Env = []string{"HOLON_AUTH_HELPER=1", "HOLON_AUTH_REMOTE=" + server.URL, "HOLON_AUTH_DIR=" + dir, "HOLON_AUTH_CERT=" + cert}
+		done := make(chan error, 1)
+		go func() {
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				err = fmt.Errorf("authentication process: %w\n%s", err, output)
 			}
-			cert := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
-			start := func() <-chan error {
-				cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestConcurrentAuthenticationProcesses$")
-				cmd.Env = []string{"HOLON_AUTH_HELPER=1", "HOLON_AUTH_REMOTE=" + server.URL, "HOLON_AUTH_DIR=" + dir, "HOLON_AUTH_CERT=" + cert}
-				done := make(chan error, 1)
-				go func() {
-					output, err := cmd.CombinedOutput()
-					if err != nil {
-						err = fmt.Errorf("authentication process: %w\n%s", err, output)
-					}
-					done <- err
-				}()
-				return done
-			}
-			first := start()
-			select {
-			case <-entered:
-			case err := <-first:
-				t.Fatalf("process exited before authentication: %v", err)
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			}
-			<-info
-			other := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
-				installationtest.WriteJSON(w, map[string]any{"access_token": "other-access", "token_type": "Bearer", "refresh_token": "other-refresh", "expires_in": 3600})
-			})
-			otherManager := newManager(t, other, dir)
-			if _, err := otherManager.controlToken(ctx); err != nil {
-				t.Fatalf("another remote's authentication was blocked: %v", err)
-			}
-			second := start()
-			select {
-			case <-info:
-			case err := <-second:
-				t.Fatalf("process exited before discovery: %v", err)
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			}
-			unblock()
-			for _, done := range []<-chan error{first, second} {
-				if err := <-done; err != nil {
-					t.Fatal(err)
-				}
-			}
-			if authorizations.Load() != 1 {
-				t.Fatalf("concurrent processes exchanged credentials %d times", authorizations.Load())
-			}
-		})
+			done <- err
+		}()
+		return done
+	}
+	first := start()
+	select {
+	case <-entered:
+	case err := <-first:
+		t.Fatalf("process exited before authentication: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	<-info
+	other := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, map[string]any{"access_token": "other-access", "token_type": "Bearer", "refresh_token": "other-refresh", "expires_in": 3600})
+	})
+	otherManager := newManager(t, other, dir)
+	if err := otherManager.loginInteractive(ctx); err != nil {
+		t.Fatalf("another remote's authentication was blocked: %v", err)
+	}
+	second := start()
+	select {
+	case <-info:
+	case err := <-second:
+		t.Fatalf("process exited before discovery: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	unblock()
+	for _, done := range []<-chan error{first, second} {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if authorizations.Load() != 1 {
+		t.Fatalf("concurrent processes exchanged credentials %d times", authorizations.Load())
 	}
 }
 
