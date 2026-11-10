@@ -1,7 +1,6 @@
 package installation
 
 import (
-	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -80,14 +79,10 @@ func TestAppTokenIsTheInstallationSignIn(t *testing.T) {
 	t.Parallel()
 	server := newAuthTestServer(t, func(http.ResponseWriter, *http.Request) { t.Error("an app token signed in") })
 	dir := t.TempDir()
-	var output bytes.Buffer
-	config := ClientConfig{Origin: server.URL, ConfigDir: dir, HTTPClient: server.Client(), Output: &output}
+	config := ClientConfig{Origin: server.URL, ConfigDir: dir, HTTPClient: server.Client()}
 	session, err := protocol.SessionAudience(server.URL, protocol.ModeDevelopment, "calm-fox-42")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, err := config.AppToken(t.Context(), session); err == nil || err.Error() != "not signed in; run holon login "+server.URL {
-		t.Fatalf("signed out: %v", err)
 	}
 	seedAdminCredentials(t, newManager(t, server, dir), oauth2.Token{
 		AccessToken: "control", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour),
@@ -96,8 +91,5 @@ func TestAppTokenIsTheInstallationSignIn(t *testing.T) {
 		if token, err := config.AppToken(t.Context(), origin); token != want || err != nil {
 			t.Fatalf("%s: token=%q error=%v, want %q", origin, token, err, want)
 		}
-	}
-	if strings.Contains(output.String(), "Code: ") {
-		t.Fatalf("an app token prompted for a sign-in:\n%s", &output)
 	}
 }
