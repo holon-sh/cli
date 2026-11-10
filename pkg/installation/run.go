@@ -523,7 +523,7 @@ func (w *resumingWriter) Write(p []byte) (int, error) {
 			if at.After(w.last) {
 				w.last = at
 			}
-			line = slices.Concat([]byte(logTime(at)+" "), rest, []byte("\n"))
+			line = bytes.Replace(line, token, []byte(logTime(at)), 1)
 		}
 		if !w.drop {
 			kept = append(kept, line...)

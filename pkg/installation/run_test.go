@@ -765,7 +765,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 func TestStreamLogsResumesAfterOutages(t *testing.T) {
 	t.Parallel()
 	const (
-		first  = "2026-11-07T10:00:00.1Z INFO alpha started\n"
+		first  = "2026-11-07T10:00:00.1Z INFO alpha started \t\n" // as the app printed it
 		second = "2026-11-07T10:00:00.2Z INFO alpha multi-line\n  continued\n"
 		third  = "2026-11-07T10:00:00.3Z INFO alpha resumed\n"
 	)
