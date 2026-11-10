@@ -516,6 +516,10 @@ type resumingWriter struct {
 	err     error
 }
 
+func logTime(at time.Time) string {
+	return at.Local().Format(time.TimeOnly)
+}
+
 func (w *resumingWriter) Write(p []byte) (int, error) {
 	w.partial = append(w.partial, p...)
 	end := bytes.LastIndexByte(w.partial, '\n') + 1
@@ -527,6 +531,7 @@ func (w *resumingWriter) Write(p []byte) (int, error) {
 			if at.After(w.last) {
 				w.last = at
 			}
+			line = bytes.Replace(line, token, []byte(logTime(at)), 1)
 		}
 		if !w.drop {
 			kept = append(kept, line...)

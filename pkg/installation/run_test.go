@@ -358,7 +358,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			})
 		}
 		await(stderr, "Configure API_KEY to start the session.", "log stream stopped")
-		await(stdout, appOutput)
+		await(stdout, "alpha starting boom", traceback)
 		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "broken"})
 		await(stderr, "remote image preparation failed")
 		mu.Lock()
@@ -388,7 +388,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
-		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") || strings.Contains(stdout.String(), callLine) {
+		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") || strings.Contains(stdout.String(), "tools/call") {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}
 	})
@@ -759,7 +759,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 func TestStreamLogsResumesAfterOutages(t *testing.T) {
 	t.Parallel()
 	const (
-		first  = "2026-11-07T10:00:00.1Z INFO alpha started\n"
+		first  = "2026-11-07T10:00:00.1Z INFO alpha started \t\n"
 		second = "2026-11-07T10:00:00.2Z INFO alpha multi-line\n  continued\n"
 		third  = "2026-11-07T10:00:00.3Z INFO alpha resumed\n"
 	)
@@ -796,7 +796,7 @@ func TestStreamLogsResumesAfterOutages(t *testing.T) {
 		}
 		seedAdminCredentials(t, client, oauth2.Token{AccessToken: "expired", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now()})
 		output := &installationtest.ObservedOutput{OnWrite: func(text string) {
-			if strings.HasSuffix(text, third) {
+			if strings.Contains(text, "resumed") {
 				cancel()
 			}
 		}}
@@ -809,7 +809,7 @@ func TestStreamLogsResumesAfterOutages(t *testing.T) {
 		if elapsed := time.Since(start); elapsed != 2*time.Second || refreshes != 2 || !slices.Equal(since, []string{"5m", "2026-11-07T10:00:00.2Z"}) {
 			t.Fatalf("resumed after %v with %d refreshes and since = %q", elapsed, refreshes, since)
 		}
-		if got := output.String(); got != first+second+third {
+		if got := output.String(); strings.Count(got, "started \t\n") != 1 || strings.Count(got, "continued") != 1 || !strings.Contains(got, "resumed") {
 			t.Fatalf("output = %q", got)
 		}
 	})
