@@ -134,10 +134,14 @@ func needNode(t *testing.T) {
 	}
 }
 
-// listing is what a runner prints for a server that lists tools.
+// listing is what a runner prints for a server that lists tools, a page each.
 func listing(tools ...mcpcontract.Tool) extraction {
-	page, _ := json.Marshal(map[string]any{"tools": tools})
-	return extraction{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}, Lists: map[string]listed{"tools/list": {Pages: []json.RawMessage{page}}}}
+	var pages []json.RawMessage
+	for _, tool := range tools {
+		page, _ := json.Marshal(map[string]any{"tools": []mcpcontract.Tool{tool}})
+		pages = append(pages, page)
+	}
+	return extraction{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}, Lists: map[string]listed{"tools/list": {Pages: pages}}}
 }
 
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the

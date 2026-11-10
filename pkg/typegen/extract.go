@@ -35,10 +35,11 @@ type listed struct {
 }
 
 func (e *extraction) pages(method string) ([]json.RawMessage, error) {
-	if list := e.Lists[method]; list.Error != "" {
+	list := e.Lists[method]
+	if list.Error != "" {
 		return nil, errors.New(list.Error)
 	}
-	return e.Lists[method].Pages, nil
+	return list.Pages, nil
 }
 
 // RunnerError is a contract runner's failure: the status it exited with and what it wrote to
@@ -187,8 +188,7 @@ func (s *preparedSource) committedContract(ctx context.Context) (*Document, erro
 // what it prints.
 func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Options) (*extraction, error) {
 	extensions, _ := json.Marshal(clientExtensions)
-	args := []string{"contract", dir, s.entry, string(extensions)}
-	args = append(args, catalogMethods...)
+	args := append([]string{"contract", dir, s.entry, string(extensions)}, catalogMethods...)
 	var stdout bytes.Buffer
 	var err error
 	if o.Run != nil {

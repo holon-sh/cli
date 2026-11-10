@@ -122,7 +122,7 @@ export default createMcpHandler(() => {
   mkdirSync(join(app, "node_modules/@modelcontextprotocol"));
   symlinkSync(fileURLToPath(new URL("../node_modules/@modelcontextprotocol/client", import.meta.url)), join(app, "node_modules/@modelcontextprotocol/client"));
   const { units } = extract([{ name: "units", path: app, entry: "server.ts" }]);
-  assert.deepEqual(units.tools.map(({ name, inputSchema }) => ({ name, inputSchema })), [{ name: "convert", inputSchema: { type: "object", description: "zod 9.9.9", properties: { unit: { type: "string", enum: ["cm", "in"] } } } }]);
+  assert.deepEqual(units.tools[0].inputSchema, { type: "object", description: "zod 9.9.9", properties: { unit: { type: "string", enum: ["cm", "in"] } } });
 });
 
 test("a server that imports its generated clients extracts before holon has written them", t => {

@@ -52,11 +52,7 @@ func dial(ctx context.Context, location string, client *http.Client) (*mcp.Clien
 	if err := mcpregistry.ValidateEndpoint(location); err != nil {
 		return nil, err
 	}
-	capabilities := &mcp.ClientCapabilities{}
-	for name, settings := range clientExtensions {
-		capabilities.AddExtension(name, settings)
-	}
-	c := mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "0.0.1"}, &mcp.ClientOptions{Capabilities: capabilities})
+	c := mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "0.0.1"}, &mcp.ClientOptions{Capabilities: &mcp.ClientCapabilities{Extensions: clientExtensions}})
 	if err := mcp.AddSendingCustomMethod[*listEventsParams, *listEventsResult](c, "events/list"); err != nil {
 		return nil, err
 	}

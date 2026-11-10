@@ -13,7 +13,7 @@ import (
 
 // Generated clients send files, so the contract lists the tools a server shows only to clients that do
 // (https://github.com/modelcontextprotocol/experimental-ext-file-uploads/blob/main/specification/draft/file-uploads.md#backward-compatibility).
-var clientExtensions = map[string]map[string]any{"io.modelcontextprotocol/files": {"upload": map[string]any{}, "download": map[string]any{}}}
+var clientExtensions = map[string]any{"io.modelcontextprotocol/files": map[string]any{"upload": map[string]any{}, "download": map[string]any{}}}
 
 const eventsExtension = "io.modelcontextprotocol/events"
 
@@ -40,6 +40,9 @@ func listCatalog(capabilities *mcp.ServerCapabilities, pages func(method string)
 			continue
 		}
 		listed, err := pages(method)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", method, err)
+		}
 		for _, data := range listed {
 			var page struct {
 				Tools     []mcpcontract.Tool
@@ -49,8 +52,8 @@ func listCatalog(capabilities *mcp.ServerCapabilities, pages func(method string)
 				}
 				Events []mcpcontract.Event
 			}
-			if err == nil {
-				err = json.Unmarshal(data, &page)
+			if err := json.Unmarshal(data, &page); err != nil {
+				return nil, fmt.Errorf("%s: %w", method, err)
 			}
 			contract.Tools, contract.Events = append(contract.Tools, page.Tools...), append(contract.Events, page.Events...)
 			for _, resource := range page.Resources {
@@ -60,9 +63,6 @@ func listCatalog(capabilities *mcp.ServerCapabilities, pages func(method string)
 				}
 				contract.Resources = append(contract.Resources, mcpcontract.Resource{URI: resource.URI, Output: output})
 			}
-		}
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", method, err)
 		}
 	}
 	slices.SortFunc(contract.Tools, func(a, b mcpcontract.Tool) int { return cmp.Compare(a.Name, b.Name) })

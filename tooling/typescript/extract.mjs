@@ -9,7 +9,6 @@ import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createSandbox, MissingPackage } from "./sandbox.mjs";
 
-const identity = { name: "holon-contract", version: "1" };
 // Results are recorded as the server wrote them.
 const anything = { "~standard": { version: 1, vendor: "holon", validate: value => ({ value }) } };
 
@@ -33,7 +32,7 @@ export async function contract(root, entry, extensions, methods) {
       });
     }
     // The modern protocol: on the legacy path the SDK server needs crypto, which the sandbox lacks.
-    const client = new Client(identity, { capabilities: { extensions }, versionNegotiation: { mode: "auto" } });
+    const client = new Client({ name: "holon-contract", version: "1" }, { capabilities: { extensions }, versionNegotiation: { mode: "auto" } });
     try {
       await client.connect(new StreamableHTTPClientTransport(new URL("http://holon-contract/mcp"), {
         fetch: (url, init) => handler.fetch(new Request(url, init)),

@@ -298,8 +298,7 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 func TestARunnersAnswersMakeTheContract(t *testing.T) {
 	orders := t.TempDir()
 	writeProvider(t, orders, "orders", pythonProvider)
-	answers := listing(mcpcontract.Tool{Name: "read", Input: json.RawMessage(`{"type":"object"}`)})
-	answers.Lists["tools/list"] = listed{Pages: append(answers.Lists["tools/list"].Pages, listing(lookupTool).Lists["tools/list"].Pages...)}
+	answers := listing(mcpcontract.Tool{Name: "read", Input: json.RawMessage(`{"type":"object"}`)}, lookupTool)
 	answers.Lists["resources/list"] = listed{Error: "Method not found"}
 	answers.Lists["events/list"] = listed{Error: "events are broken"}
 	answers.Capabilities.AddExtension(eventsExtension, nil)
