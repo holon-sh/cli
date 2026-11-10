@@ -176,7 +176,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		previous, first.kept = previousSession(ctx, manager, recordPath)
 	}
 	if previous.Name != "" {
-		if err := printStartingEndpoints(stdout, config.output, manager.client.baseURL, previous); err != nil {
+		if err := printStartingEndpoints(stdout, config.output, manager, previous.Name, resolved.Apps); err != nil {
 			return err
 		}
 	}
@@ -190,7 +190,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if previous.Name != "" {
 		session, err = replaceExecution(ctx, manager, previous.Name, previous, request)
 	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &session); err == nil {
-		err = printStartingEndpoints(stdout, config.output, manager.client.baseURL, session)
+		err = printStartingEndpoints(stdout, config.output, manager, session.Name, resolved.Apps)
 	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
 		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
 		err = fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
@@ -206,7 +206,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(ready)
 		}
-		if err := config.output.endpoints(stdout, "Ready", ready, false); err != nil {
+		if err := config.output.endpoints(stdout, "Ready", manager, ready.Name, resolved.Apps, false); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
@@ -261,6 +261,16 @@ func sessionPath(name, suffix string) string {
 	return path.Join(protocol.APIPathSessions, name, suffix)
 }
 
+// sessionAudience is the origin that serves session name, and the mode the session runs in.
+func (m *Client) sessionAudience(name string) (audience, mode string, err error) {
+	mode = protocol.ModeDevelopment
+	if name == protocol.ProductionName {
+		mode = protocol.ModeProduction
+	}
+	audience, err = protocol.SessionAudience(m.client.baseURL, mode, name)
+	return audience, mode, err
+}
+
 func ControlPlane(name string) protocol.Plane {
 	if name == protocol.ProductionName {
 		return protocol.AdminPlane
@@ -297,9 +307,6 @@ func SessionReady(session protocol.SessionResponse) (bool, error) {
 	}
 	condition := session.Condition(protocol.ConditionReady)
 	if condition.Status == "True" {
-		if len(session.Endpoints) == 0 {
-			return false, errors.New("session failed: ready session returned no endpoint")
-		}
 		return true, nil
 	}
 	if terminalCondition(condition) {
@@ -361,7 +368,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 		return err
 	}
 	config.output.apps(desired.Apps, "ready", progressDone)
-	return config.output.endpoints(stdout, "Ready", ready, false)
+	return config.output.endpoints(stdout, "Ready", manager, ready.Name, resolved.Apps, false)
 }
 
 func waitSessionReady(
@@ -419,53 +426,27 @@ func reportSessionProgress(
 	output.status(name, phase, state)
 }
 
-func printStartingEndpoints(stdout io.Writer, output *progressOutput, origin string, session protocol.SessionResponse) error {
-	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
+func printStartingEndpoints(stdout io.Writer, output *progressOutput, manager *Client, name string, apps []manifestApp) error {
+	if _, err := fmt.Fprintf(stdout, "Session  %s\n", name); err != nil {
 		return err
 	}
-	starting, err := startingSession(origin, session)
-	if err != nil {
-		return err
-	}
-	return output.endpoints(stdout, "Starting", starting, true)
+	return output.endpoints(stdout, "Starting", manager, name, apps, true)
 }
 
-func startingSession(origin string, session protocol.SessionResponse) (protocol.SessionResponse, error) {
-	base, err := protocol.SessionAudience(origin, protocol.ModeDevelopment, session.Name)
-	if err != nil {
-		return session, err
+// summary lists the endpoints of apps, the ones a command acted on, not the rest of session name. Only a source app can
+// export a frontend; a remote, registry or image app has no page the CLI knows of.
+func (m *Client) summary(name string, apps []manifestApp) (string, error) {
+	audience, mode, err := m.sessionAudience(name)
+	if err != nil || len(apps) == 0 {
+		return "", err
 	}
-	session.Endpoints = make([]protocol.SessionEndpoint, 0, len(session.Apps))
-	for _, app := range session.Apps {
-		session.Endpoints = append(session.Endpoints, protocol.SessionEndpoint{Name: app.Name, URL: base + protocol.AppPath(app.Name)})
-	}
-	return session, nil
-}
-
-func formatEndpoints(session protocol.SessionResponse) (string, error) {
-	if len(session.Endpoints) == 0 {
-		return "", nil
-	}
-	var output []byte
-	mode := protocol.ModeDevelopment
-	if session.Name == protocol.ProductionName {
-		mode = protocol.ModeProduction
-	}
-	for i, endpoint := range session.Endpoints {
-		website, err := url.Parse(endpoint.URL)
-		if err != nil {
-			return "", err
+	output := fmt.Appendf(nil, "  MCP tools (all apps)  %s\n", audience+protocol.MCPPath)
+	for _, app := range apps {
+		output = fmt.Appendf(output, "\n  %s\n", app.Name)
+		if app.Path != "" && !app.resolved.stdio {
+			output = fmt.Appendf(output, "    Browser  %s%s/\n", audience, strings.TrimSuffix(protocol.AppBrowserMount(app.resolved.App, mode), "/"))
 		}
-		if i == 0 {
-			website.Path = protocol.MCPPath
-			output = fmt.Appendf(output, "  MCP tools (all apps)  %s\n", website.String())
-		}
-		app := protocol.App{Name: endpoint.Name}
-		if index := slices.IndexFunc(session.Apps, func(candidate protocol.App) bool { return candidate.Name == endpoint.Name }); index >= 0 {
-			app = session.Apps[index]
-		}
-		website.Path = strings.TrimSuffix(protocol.AppBrowserMount(app, mode), "/") + "/"
-		output = fmt.Appendf(output, "\n  %s\n    Browser  %s\n    MCP      %s\n", endpoint.Name, website.String(), endpoint.URL)
+		output = fmt.Appendf(output, "    MCP      %s\n", audience+protocol.AppPath(app.Name))
 	}
 	return string(append(output, '\n')), nil
 }
