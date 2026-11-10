@@ -51,6 +51,13 @@ type commandConfig struct {
 	output             *progressOutput
 }
 
+func (c commandConfig) buildOptions(manager *Client, stderr io.Writer) buildOptions {
+	return buildOptions{
+		builder: c.builder, HTTPClient: c.RegistryHTTPClient, Stderr: stderr, Env: c.Env, output: c.output,
+		architectures: manager.info.BuildArchitectures, builders: new(builderConnections),
+	}
+}
+
 func (c commandConfig) clock() clock.WithTicker {
 	return cmp.Or[clock.WithTicker](c.Clock, clock.RealClock{})
 }
@@ -154,12 +161,8 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
-	options := buildOptions{
-		types:   new(typeWorkspace),
-		builder: config.builder, HTTPClient: config.RegistryHTTPClient,
-		Stderr: stderr, Env: config.Env, architectures: manager.info.BuildArchitectures, output: config.output,
-		builders: new(builderConnections), development: true,
-	}
+	options := config.buildOptions(manager, stderr)
+	options.types, options.development = new(typeWorkspace), true
 	defer options.types.close()
 	defer options.builders.close()
 	resolved, err := resolveManifest(ctx, manager, config.manifest, config.output, apps...)
@@ -345,16 +348,13 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	for _, app := range current.Apps {
 		manifest.deployed[app.Name] = app.Access
 	}
-	builders := new(builderConnections)
-	defer builders.close()
+	options := config.buildOptions(manager, stderr)
+	defer options.builders.close()
 	resolved, err := resolveManifest(ctx, manager, manifest, config.output, selection...)
 	if err != nil {
 		return err
 	}
-	desired, err := uploadManifest(ctx, manager, protocol.ProductionName, resolved, buildOptions{
-		builder: config.builder, HTTPClient: config.RegistryHTTPClient, Stderr: stderr, Env: config.Env, output: config.output,
-		builders: builders, architectures: manager.info.BuildArchitectures,
-	})
+	desired, err := uploadManifest(ctx, manager, protocol.ProductionName, resolved, options)
 	if err != nil {
 		return err
 	}
