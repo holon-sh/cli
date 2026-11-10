@@ -205,11 +205,10 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
-	session := dev.session
 	if request.TTLSeconds != nil {
-		ready, err := waitSessionReady(ctx, manager, session.Name, session, config.output)
+		ready, err := waitSessionReady(ctx, manager, dev.name, dev.session, config.output)
 		if err != nil {
-			return errors.Join(err, deleteWithFreshContext(manager, session.Name, session.UID))
+			return errors.Join(err, deleteWithFreshContext(manager, dev.name, dev.session.UID))
 		}
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(ready)
@@ -233,7 +232,7 @@ type sessionRecord struct {
 
 // keptImage is an image a session runs, and the inputs it was built from.
 type keptImage struct {
-	inputs, image string
+	inputs, image, overlay string
 }
 
 // keptImages are the images apps run that were built from inputs, so that a build from the same inputs can keep them.
@@ -241,7 +240,7 @@ func keptImages(apps []protocol.App, inputs map[string]string) map[string]keptIm
 	kept := map[string]keptImage{}
 	for _, app := range apps {
 		if inputs[app.Name] != "" {
-			kept[app.Name] = keptImage{inputs: inputs[app.Name], image: app.Image}
+			kept[app.Name] = keptImage{inputs: inputs[app.Name], image: app.Image, overlay: app.Overlay}
 		}
 	}
 	return kept

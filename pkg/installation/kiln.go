@@ -52,8 +52,9 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		return "", "", err
 	}
 	request.upload = upload
-	image := options.kept[app.Name].image
-	if options.kept[app.Name].inputs != p.inputs || image == "" {
+	kept := options.kept[app.Name]
+	image := kept.image
+	if kept.inputs != p.inputs || image == "" {
 		options.output.status(app.Name, "building", progressWorking)
 		build := options.builder
 		if build == nil {
@@ -66,7 +67,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	if !request.Development {
 		return image, "", nil
 	}
-	overlay, err := request.pushOverlay(ctx, "")
+	overlay, err := request.pushOverlay(ctx, kept.overlay)
 	return image, overlay, err
 }
 

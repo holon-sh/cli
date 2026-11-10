@@ -281,8 +281,25 @@ func TestDevSaves(t *testing.T) {
 			for i, files := range test.saves {
 				f.save(files, test.output[i])
 			}
-			if requests := f.reloadRequests(); len(requests) != test.reloads {
+			requests := f.reloadRequests()
+			if len(requests) != test.reloads {
 				t.Fatalf("reloads = %d", len(requests))
+			}
+			if test.reloads != 0 && !test.failReload {
+				request := requests[0]
+				if request.Session != "gentle-otter-482" || request.App != "alpha" {
+					t.Fatalf("reload_app %+v", request)
+				}
+				if before.Overlay == "" || before.Overlay == request.Digest {
+					t.Fatalf("create_session overlay %q, reloaded %s", before.Overlay, request.Digest)
+				}
+				if !strings.Contains(string(f.overlay(t, before.Overlay)["server.py"]), "app = None") {
+					t.Fatal("the overlay a session starts from lacks the server source")
+				}
+				entries := f.overlay(t, request.Digest)
+				if string(entries["tools.py"]) != "second" || !strings.Contains(string(entries[".holon/main.py"]), `start("server")`) {
+					t.Fatalf("overlay entries = %v", entries)
+				}
 			}
 			f.mu.Lock()
 			after := f.served[0]
@@ -290,9 +307,11 @@ func TestDevSaves(t *testing.T) {
 			if rebuilt := after.Image != before.Image; rebuilt != test.rebuilt {
 				t.Fatalf("image replaced = %v", rebuilt)
 			}
-			for name, content := range test.saves[len(test.saves)-1] {
-				if saved := string(f.overlay(t, after.Overlay)[strings.TrimPrefix(name, "alpha/")]); test.rebuilt && saved != content {
-					t.Fatalf("the rebuilt app runs %s %q", name, saved)
+			if test.rebuilt {
+				for name, content := range test.saves[len(test.saves)-1] {
+					if saved := string(f.overlay(t, after.Overlay)[strings.TrimPrefix(name, "alpha/")]); saved != content {
+						t.Fatalf("the rebuilt app runs %s %q", name, saved)
+					}
 				}
 			}
 		})
@@ -409,29 +428,6 @@ func TestDevDetachedStartsItsOwnSession(t *testing.T) {
 	f.await(func() bool { return f.created() == 2 })
 	f.update(func() {})
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Expires") })
-}
-
-func TestDevReloadPushesTheBuildSnapshot(t *testing.T) {
-	f := startReloadFixture(t, true)
-	f.mu.Lock()
-	first := f.served[0].Overlay
-	f.mu.Unlock()
-	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reloading\nalpha reloaded in 1.2 s\n")
-	request := f.reloadRequests()[0]
-	if request.Session != "gentle-otter-482" || request.App != "alpha" {
-		t.Fatalf("reload_app %+v", request)
-	}
-	if first == "" || first == request.Digest {
-		t.Fatalf("create_session overlay %q, reloaded %s", first, request.Digest)
-	}
-	if !strings.Contains(string(f.overlay(t, first)["server.py"]), "app = None") {
-		t.Fatal("the overlay a session starts from lacks the server source")
-	}
-	entries := f.overlay(t, request.Digest)
-	// The snapshot an image build would read, with its launcher.
-	if string(entries["tools.py"]) != "second" || !strings.Contains(string(entries[".holon/main.py"]), `start("server")`) {
-		t.Fatalf("overlay entries = %v", entries)
-	}
 }
 
 func (f *reloadFixture) overlay(t *testing.T, digest string) map[string][]byte {

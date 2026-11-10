@@ -116,7 +116,7 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 		d.changedImages.Insert(app.Name)
 		return nil
 	}
-	running := d.session.Apps[slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })]
+	running := &d.session.Apps[slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })]
 	plan.upload = newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
 	overlay, err := plan.pushOverlay(ctx, running.Overlay)
 	if err != nil {
@@ -126,11 +126,13 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 		d.options.output.status(app.Name, "unchanged", progressDone)
 		return nil
 	}
-	return d.restart(ctx, app.Name, overlay)
+	d.restart(ctx, running, overlay)
+	return nil
 }
 
 // restart restarts app in place on the source overlay, which the session records as the app's.
-func (d *devLoop) restart(ctx context.Context, app, overlay string) error {
+func (d *devLoop) restart(ctx context.Context, running *protocol.App, overlay string) {
+	app := running.Name
 	d.options.output.status(app, "reloading", progressWorking)
 	var result reloadAppResult
 	request := reloadAppRequest{
@@ -138,15 +140,11 @@ func (d *devLoop) restart(ctx context.Context, app, overlay string) error {
 		Digest:     overlay,
 	}
 	if err := d.manager.Call(ctx, ControlPlane(d.name), toolReloadApp, request, &result); err != nil {
-		return err
+		d.options.output.status(app, fmt.Sprintf("reload failed: %v", err), progressError)
+		return
 	}
-	for i := range d.session.Apps {
-		if d.session.Apps[i].Name == app {
-			d.session.Apps[i].Overlay = overlay
-		}
-	}
+	running.Overlay = overlay
 	d.options.output.status(app, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
-	return nil
 }
 
 func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {

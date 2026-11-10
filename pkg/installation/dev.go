@@ -238,7 +238,6 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		if err := d.settle(stdout); err != nil {
 			return err
 		}
-		// A preparation reports its own progress until it ends or deploys.
 		if d.pending.Len() > 0 {
 			reportSessionProgress(d.session, d.options.output, "Deploying apps", progressWorking)
 		} else if d.preparing == nil {
@@ -266,11 +265,12 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		case change := <-changes:
 			stopRead()
 			if d.rebuild(ctx, change) {
-				// The project may name other source directories.
-				_ = watcher.Close()
-				if watcher, err = newDevWatcher(d.manifest, d.clock, d.options.output); err != nil {
+				next, err := newDevWatcher(d.manifest, d.clock, d.options.output)
+				if err != nil {
 					return fmt.Errorf("watch build contexts: %w", err)
 				}
+				_ = watcher.Close()
+				watcher = next
 			}
 		}
 	}
@@ -363,9 +363,8 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 // restarting the app in place, or by rebuilding its image when the save changed what the image is built from. It reports
 // whether it applied a project change. A project change that failed to apply is tried again with the next save.
 func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
-	contexts := change.contexts
+	contexts := change.contexts.Union(d.stopPreparation())
 	if change.manifest || d.unapplied {
-		contexts = contexts.Union(d.stopPreparation())
 		applied, err := d.apply(ctx)
 		d.unapplied = err != nil
 		d.options.output.problem("project", err)
@@ -374,7 +373,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 		}
 	}
 	d.reload(ctx, change.contexts)
-	if contexts = contexts.Union(d.stopPreparation()); contexts.Len() != 0 || d.changedImages.Len() != 0 {
+	if contexts.Len() != 0 || d.changedImages.Len() != 0 {
 		d.prepare(ctx, contexts)
 	}
 	return false
@@ -426,9 +425,7 @@ func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[pr
 		d.pending.Insert(app.Name)
 		i := slices.IndexFunc(d.session.Apps, func(running protocol.App) bool { return running.Name == app.Name })
 		if i >= 0 && d.session.Apps[i].Image == app.Image && d.session.Apps[i].Overlay != app.Overlay {
-			if err := d.restart(ctx, app.Name, app.Overlay); err != nil {
-				d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
-			}
+			d.restart(ctx, &d.session.Apps[i], app.Overlay)
 		}
 	}
 	for _, name := range remove {
