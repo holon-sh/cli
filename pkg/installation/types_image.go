@@ -49,14 +49,7 @@ func contractRepository(image string, options buildOptions) (*remote.Repository,
 	if err != nil {
 		return nil, err
 	}
-	grant := ""
-	for _, path := range options.metadataGrant.Repositories {
-		if named.Name() == options.metadataGrant.Registry+"/"+path {
-			grant = options.metadataGrant.Grant
-			break
-		}
-	}
-	return imageRepository(named.Name(), grant, options.HTTPClient)
+	return imageRepository(named.Name(), "", options.HTTPClient)
 }
 
 func resolveTypeMetadata(ctx context.Context, image string, options buildOptions) (string, *typegen.Document, error) {

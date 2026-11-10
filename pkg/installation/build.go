@@ -26,7 +26,6 @@ type buildOptions struct {
 	importPackage func(context.Context, manifestApp) (protocol.ResolvedAppBuild, error)
 	catalogTag    string
 	types         *typeWorkspace
-	metadataGrant protocol.UploadGrant
 	architectures []string
 	builder       buildApplication
 	builders      *builderConnections
