@@ -3,6 +3,7 @@ package installation
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -80,18 +81,17 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 // undeclaredDependency explains a dependency the project lacks, with the holon.yaml entry for the
 // server the requirer's server.json names.
 func undeclaredDependency(requirer *manifestApp, name string) error {
-	missing := fmt.Sprintf("%s requires %s, which is not an app in this project", requirer.Name, name)
+	missing := fmt.Errorf("%s requires %s, which is not an app in this project; declare it in holon.yaml", requirer.Name, name)
 	pin := requirer.resolved.descriptor.Requires[name]
-	source := "remote: {url: " + pin.URL + "}"
-	switch {
-	case pin.Name != "" && pin.Registry != "":
-		source = fmt.Sprintf("registry: {name: %s, version: %q, registry: %s}", pin.Name, pin.Version, pin.Registry)
-	case pin.Name != "":
-		source = fmt.Sprintf("registry: {name: %s, version: %q}", pin.Name, pin.Version)
-	case pin.URL == "":
-		return errors.New(missing + "; declare it in holon.yaml")
+	if pin == (mcpregistry.Requirement{}) {
+		return missing
 	}
-	return fmt.Errorf("%s; add it to holon.yaml:\n  - name: %s\n    %s\n    access: {server: {oauth: {}}}", missing, name, source)
+	source, value := "registry", any(pin.RegistryRef)
+	if pin.URL != "" {
+		source, value = "remote", map[string]string{"url": pin.URL}
+	}
+	data, err := json.Marshal(value)
+	return cmp.Or(err, fmt.Errorf("%w:\n  - name: %s\n    %s: %s\n    access: {server: {oauth: {}}}", missing, name, source, data))
 }
 
 func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...string) (manifestSpec, error) {

@@ -80,11 +80,6 @@ type manifestApp struct {
 	resolved  resolvedApp
 }
 
-func (app *manifestApp) UnmarshalJSON(data []byte) error {
-	type declaration manifestApp
-	return protocol.DecodeJSONNonNull(data, (*declaration)(app))
-}
-
 func resolveAppMetadata(app *manifestApp, pkg mcpregistry.Package) error {
 	app.resolved.stdio = pkg.Transport.Type == "stdio"
 	port, _ := pkg.Port()
@@ -134,10 +129,10 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 	}
 	names := sets.New[string]()
 	for i := range p.Apps {
-		label := fmt.Sprintf("%s: apps[%d]", sourceName, i)
+		label := fmt.Sprintf("%s: apps.%d", sourceName, i)
 		a := &p.Apps[i]
-		if a.Port != nil && (a.Image == "" || !protocol.ValidPort(*a.Port)) {
-			errs = append(errs, label+".port requires image and must be between 1 and 65535")
+		if a.Port != nil && a.Image == "" {
+			errs = append(errs, label+".port requires image")
 		}
 		if err := protocol.ValidateAccess(a.Access); err != nil {
 			errs = append(errs, label+": "+err.Error())

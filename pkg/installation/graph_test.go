@@ -133,7 +133,7 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata"), Access: policy}}
 		}},
 		{name: "dependency directory without access", want: "app beta needs an access rule", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
-		{name: "undeclared dependency", want: `registry: {name: io.github.acme/zeta, version: "1.0.0"}`, change: func(p *manifestSpec) {
+		{name: "undeclared dependency", want: `registry: {"name":"io.github.acme/zeta","version":"1.0.0"}`, change: func(p *manifestSpec) {
 			p.Apps[0].Path = filepath.Join(root, "alpha-orphan")
 		}},
 		{name: "dependency cycle", want: "cycle", change: func(p *manifestSpec) {

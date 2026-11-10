@@ -50,7 +50,7 @@ func TestManifestErrorsNameTheField(t *testing.T) {
 	t.Chdir(root)
 	manifest := "apps:\n- name: hf\n  access: {server: {}}\n  remote: {url: https://huggingface.co/mcp, headers: {}}"
 	_, err := parseManifest([]byte(manifest), filepath.Join(root, manifestFileName))
-	if want := "holon.yaml: apps[0].remote: unknown field headers; allowed: url"; err == nil || err.Error() != want {
+	if want := "holon.yaml: apps.0.remote: unknown field headers; allowed: url"; err == nil || err.Error() != want {
 		t.Fatalf("error %v, want %q", err, want)
 	}
 }

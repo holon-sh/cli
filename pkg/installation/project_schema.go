@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -64,7 +63,7 @@ var projectSchema = sync.OnceValues(func() (*validator.Compiler, error) {
 const projectSchemaID = "https://holon.sh/schema/v1/project.schema.json"
 
 // validateProject checks a holon.yaml, converted to JSON, against ProjectJSONSchema and describes each
-// problem by its field path, such as apps[0].registry.
+// problem by its field path, such as apps.0.registry.
 func validateProject(data []byte) []string {
 	compiler, err := projectSchema()
 	if err != nil {
@@ -102,27 +101,11 @@ func validateProject(data []byte) []string {
 			}
 			problem = fmt.Sprintf("unknown field %s; allowed: %s", strings.Join(unknown.Properties, ", "), strings.Join(allowed, ", "))
 		}
-		problems = append(problems, fieldPath(e.InstanceLocation)+problem)
+		if len(e.InstanceLocation) != 0 {
+			problem = strings.Join(e.InstanceLocation, ".") + ": " + problem
+		}
+		problems = append(problems, problem)
 	}
 	describe(invalid)
 	return problems
-}
-
-// fieldPath writes a location in the document as apps[0].registry, followed by ": ".
-func fieldPath(location []string) string {
-	var path strings.Builder
-	for _, segment := range location {
-		if _, err := strconv.Atoi(segment); err == nil {
-			path.WriteString("[" + segment + "]")
-			continue
-		}
-		if path.Len() != 0 {
-			path.WriteByte('.')
-		}
-		path.WriteString(segment)
-	}
-	if path.Len() == 0 {
-		return ""
-	}
-	return path.String() + ": "
 }

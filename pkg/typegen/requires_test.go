@@ -55,7 +55,7 @@ func TestDeclaredSources(t *testing.T) {
 }
 
 func TestEmptyDependencyOutsideAProject(t *testing.T) {
-	if _, err := ResolveDocument(t.Context(), Source{Alias: "docs"}, Options{}); err == nil || !strings.Contains(err.Error(), "dependency docs names no server") {
+	if _, err := ResolveDocument(t.Context(), Source{Alias: "docs"}, Options{}); err == nil || !strings.Contains(err.Error(), "dependency docs has no server to read") {
 		t.Fatalf("ResolveDocument = %v, want the dependency named", err)
 	}
 }

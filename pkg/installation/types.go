@@ -176,7 +176,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		for i, dependency := range consumer.Sources {
 			source, ok := byApp[dependency.Alias]
 			if !ok {
-				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s image carries no MCP contract artifact", consumer.Name, dependency.Alias)
+				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s carries no MCP contract to type calls against", consumer.Name, dependency.Alias)
 			}
 			source.Alias = dependency.Alias
 			consumer.Sources[i] = source

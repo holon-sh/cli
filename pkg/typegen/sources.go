@@ -118,7 +118,7 @@ func (s Source) validate() error {
 	}
 	switch {
 	case set == 0 && s.Alias != "":
-		return fmt.Errorf("dependency %s names no server: declare an app named %s in holon.yaml, or give it a published version or url in server.json", s.Alias, s.Alias)
+		return fmt.Errorf("dependency %s has no server to read: make it a path, remote or registry app in holon.yaml, or give it a published version or url in server.json", s.Alias)
 	case set != 1:
 		return errors.New("a source is exactly one of a path, a registry version, an endpoint or a document")
 	}
