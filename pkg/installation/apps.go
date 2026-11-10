@@ -42,13 +42,19 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 				}
 				table := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 				_, _ = fmt.Fprintln(table, "SESSION\tAPP\tSOURCE\tACCESS\tEGRESS\tRESTRICTED")
+				development := false
 				for _, session := range sessions {
+					development = development || session.Name != protocol.ProductionName && len(session.Apps) > 0
 					for _, app := range session.Apps {
 						_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", session.Name, app.Name, appSource(app),
 							accessSummary(app.Access), egressSummary(app.Egress), egressCut(session, app.Name))
 					}
 				}
-				return table.Flush()
+				if err := table.Flush(); err != nil || !development {
+					return err
+				}
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), "Development sessions admit only signed-in developers, whatever the access rule.")
+				return err
 			}),
 		withScope(&cobra.Command{Use: "get APP", Short: "Print an app's declaration as YAML", Args: cobra.ExactArgs(1),
 			Long: "Print an app's declaration. " + everyDevelopmentSession,

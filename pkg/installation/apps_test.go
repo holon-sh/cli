@@ -24,6 +24,7 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		{Name: "s-one", Revision: "1", Apps: []protocol.App{app("chat"), app("other")}},
 		{Name: "s-two", Revision: "1", Apps: []protocol.App{app("chat")}},
 		{Name: "s-three", Revision: "1", Apps: []protocol.App{app("other")}},
+		{Name: protocol.ProductionName, Revision: "1", Apps: []protocol.App{app("other")}},
 	}
 	h := newRunHarness(t)
 	var updates []string
@@ -60,6 +61,7 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		args    []string
 		updates []string
 		output  []string
+		absent  string
 		err     string
 	}{
 		{
@@ -81,6 +83,8 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 			updates: []string{"s-two remove= chat:public"},
 			output:  []string{"chat access in dev session s-two: "},
 		},
+		{args: []string{"app", "list", "--session", "s-three"}, output: []string{"public", "admit only signed-in developers"}},
+		{args: []string{"app", "list", "--env", "prod"}, output: []string{"public"}, absent: "developers"},
 		{args: []string{"app", "get", "chat", "--session", "s-three"}, err: "app chat is not in dev session s-three"},
 		{args: []string{"app", "get", "missing"}, err: "app missing is not in any development session"},
 		{args: []string{"access", "delete", "chat/send_message"}, err: "dev session s-one: chat/send_message has no rule"},
@@ -98,6 +102,9 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 			if !strings.Contains(out.String(), want) {
 				t.Fatalf("holon %v: output=%q, want %q", test.args, out.String(), want)
 			}
+		}
+		if test.absent != "" && strings.Contains(out.String(), test.absent) {
+			t.Fatalf("holon %v: output=%q, want no %q", test.args, out.String(), test.absent)
 		}
 	}
 }

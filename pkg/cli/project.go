@@ -103,7 +103,7 @@ var listItem = regexp.MustCompile(`^(\s*)- `)
 // which it creates when there is none. It appends to an existing file's apps list in place, keeping
 // the rest of the file as written, and fails when that list does not end the file.
 func addApp(file, app, path string) ([]byte, error) {
-	entry := fmt.Sprintf("- name: %s\n  path: %q\n  access:\n    server: {}\n", app, path)
+	entry := fmt.Sprintf("- name: %s\n  path: %q\n  access:\n    server:\n      oauth: {}\n", app, path)
 	data, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
 		return []byte("apps:\n" + indent(entry, "  ")), nil
