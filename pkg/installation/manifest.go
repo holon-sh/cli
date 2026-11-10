@@ -65,6 +65,8 @@ type manifestApp struct {
 
 	Access *protocol.AppAccess `description:"Server and tool authorization: server: {} is public, oauth: {} requires sign-in. Development sessions admit only signed-in developers." json:"access" required:"true"`
 
+	Limits *protocol.Limits `description:"How often the app may be called: rates such as 600/min for all callers together (total), each signed-in identity (identity) and each calling app (caller). Server limits count every request, and a tool's limits count its calls as well." json:"limits,omitempty"`
+
 	Name string `description:"Unique app DNS label." json:"name,omitempty" required:"true"`
 
 	Image string `description:"SHA-256-pinned OCI image." json:"image,omitempty"`

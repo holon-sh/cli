@@ -40,7 +40,7 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 			return nil, fmt.Errorf("app %s needs an access rule: pass --public or --oauth", name)
 		}
 		app.resolved = resolvedApp{App: protocol.App{
-			Name: app.Name, Mount: app.Mount, Image: app.Image, Access: access,
+			Name: app.Name, Mount: app.Mount, Image: app.Image, Access: access, Limits: app.Limits,
 			OAuth: (*protocol.OAuthClient)(app.OAuth),
 		}}
 		if app.Path != "" {
