@@ -79,7 +79,7 @@ func TestRunDevRebuildsWhatASaveChanged(t *testing.T) {
 						}
 						served = input.Apps
 					}
-					response := apiSession(h, "alpha")
+					response := apiSession("alpha")
 					response["apps"] = served
 					installationtest.WriteJSON(w, response)
 				})

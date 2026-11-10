@@ -19,8 +19,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 	"k8s.io/utils/clock"
-
-	"github.com/holon-sh/protocol"
 )
 
 type progressState = tea.ProgramState
@@ -131,8 +129,10 @@ func progressStatusID(title string) string {
 
 type progressPreview string
 
-func (o *progressOutput) endpoints(stdout io.Writer, heading string, session protocol.SessionResponse, provisional bool) error {
-	block, err := formatEndpoints(session)
+func (o *progressOutput) endpoints(
+	stdout io.Writer, heading string, manager *Client, name string, apps []manifestApp, provisional bool,
+) error {
+	block, err := manager.summary(name, apps)
 	if err != nil || block == "" {
 		return err
 	}
