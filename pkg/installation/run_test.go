@@ -36,7 +36,7 @@ import (
 
 func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer, config commandConfig) error {
 	config.Auth.Env = append([]string{"HOLON_ORIGIN="}, config.Auth.Env...)
-	command := sharedcli.NewCommand("dev", nil)
+	command := sharedcli.NewCommand("dev")
 	command.AddCommand(newCommands(config)...)
 	command.SetArgs(args)
 	command.SetOut(cmp.Or(stdout, io.Discard))

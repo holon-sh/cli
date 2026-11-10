@@ -3,6 +3,7 @@ package typegen
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -216,6 +217,15 @@ export const owner: InputTypes["files"]["stat"]["Owner"] = { lgn: "a" };
 		python := pythonEnvironment(app, needPython(t))
 		if exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
 			t.Skip("mypy is not installed")
+		}
+		// That interpreter is the app's environment, so holon types generate installs none.
+		program, err := exec.LookPath(python)
+		if err != nil {
+			t.Fatal(err)
+		}
+		put(t, app, ".venv/bin/python", "#!/bin/sh\nexec '"+program+"' \"$@\"\n")
+		if err := os.Chmod(filepath.Join(app, ".venv/bin/python"), 0o755); err != nil {
+			t.Fatal(err)
 		}
 		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
 		generateFiles(t, app, TargetPy)

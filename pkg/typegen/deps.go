@@ -68,9 +68,10 @@ func PackageManager(dir string) (string, error) {
 	return packageManager(dir, manifest), nil
 }
 
-// Install installs missing declared SDK runtimes with the project's package manager, and maps
-// #holon-sh and #holon-ui to the clients in package.json. Call it before snapshotting sources: both
-// can change the project's package files.
+// Install installs missing declared SDK runtimes with the project's package manager, and a Python
+// project's dependencies with uv when it has no environment, and maps #holon-sh and #holon-ui to the
+// clients in package.json. Call it before snapshotting sources: both can change the project's package
+// files.
 func Install(ctx context.Context, consumers []Consumer, options Options) error {
 	o := options.defaults()
 	for _, c := range consumers {
@@ -85,7 +86,9 @@ func Install(ctx context.Context, consumers []Consumer, options Options) error {
 					err = mapClients(c.Dir, target, o)
 				}
 			case TargetPy:
-				err = ensurePythonRuntime(c.Dir)
+				if err = ensurePythonRuntime(c.Dir); err == nil {
+					err = ensurePythonEnvironment(ctx, c.Dir, o)
+				}
 			}
 			if err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
@@ -123,6 +126,29 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 		return fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
 	}
 	return installedRuntime(dir, pkg)
+}
+
+// ensurePythonEnvironment installs a Python project's dependencies into .venv with uv, as holon init does,
+// unless it has an environment of its own: the counterpart of ensureNodeRuntime's install.
+func ensurePythonEnvironment(ctx context.Context, dir string, o Options) error {
+	if pythonEnvironment(dir, "") != "" {
+		return nil
+	}
+	commands := [][]string{{"uv", "sync"}}
+	if !isFile(filepath.Join(dir, "pyproject.toml")) {
+		commands = [][]string{{"uv", "venv"}, {"uv", "pip", "install", "-r", "requirements.txt"}}
+	}
+	if err := validateEnv(o.Env); err != nil {
+		return err
+	}
+	for _, command := range commands {
+		line := strings.Join(command, " ")
+		fmt.Fprintf(o.Stderr, "%s: %s\n", filepath.Base(dir), line)
+		if err := commandenv.RunStreaming(ctx, dir, command[0], command[1:], nil, append(os.Environ(), o.Env...), o.Stderr, o.Stderr); err != nil {
+			return fmt.Errorf("%s in %s: %w", line, dir, err)
+		}
+	}
+	return nil
 }
 
 // mapClients gives a Node.js target's clients the import name #holon-sh or #holon-ui in the package.json

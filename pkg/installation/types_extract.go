@@ -20,7 +20,6 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/tailscale/hujson"
-	"k8s.io/utils/clock"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
@@ -47,33 +46,6 @@ func (o buildOptions) extractTypes(ctx context.Context, language, toolingDir str
 		return fmt.Errorf("prepare MCP types: %w", err)
 	}
 	return nil
-}
-
-// TypeImages runs Python apps that the host cannot in the images Kiln plans for them, for holon check and
-// holon types generate. It is nil when this holon was built without Kiln.
-func TypeImages() typegen.Images {
-	if !kiln.Linked {
-		return nil
-	}
-	return typeImages{}
-}
-
-type typeImages struct{}
-
-// options prints the image builds' logs to stderr only when one fails.
-func (typeImages) options(stderr io.Writer) buildOptions {
-	output, _, _ := newProgressOutput(io.Discard, stderr, false, clock.RealClock{})
-	return buildOptions{Stderr: stderr, output: output}
-}
-
-func (i typeImages) Extract(ctx context.Context, toolingDir, root, entry string, stdout, stderr io.Writer) error {
-	return i.options(stderr).extractTypes(ctx, "python", toolingDir, []string{"contract", root, entry}, stdout)
-}
-
-func (i typeImages) Check(ctx context.Context, toolingDir, root, generated string, stdout, stderr io.Writer) error {
-	runner := contractRunners["python"]
-	command := []string{runner.program, "/holon-tooling/python/" + runner.checker, "check", ""}
-	return i.options(stderr).runInImage(ctx, root, toolingDir, generated, true, command, stdout)
 }
 
 // checkTypes type-checks each path app that serves a contract against its generated clients, in the image

@@ -17,7 +17,7 @@ import (
 func run(t *testing.T, wantErr string, args ...string) string {
 	t.Helper()
 	var output bytes.Buffer
-	command := NewCommand("test", nil)
+	command := NewCommand("test")
 	command.SetArgs(args)
 	command.SetOut(&output)
 	command.SetErr(new(bytes.Buffer))

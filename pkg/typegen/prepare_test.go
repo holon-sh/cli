@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -173,6 +172,49 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	}
 }
 
+// A Python project with no environment gets one with uv, as a Node.js project gets npm install.
+func TestGenerateInstallsAPythonEnvironment(t *testing.T) {
+	t.Setenv("VIRTUAL_ENV", "")
+	root := t.TempDir()
+	orders, checkout := filepath.Join(root, "orders"), filepath.Join(root, "checkout")
+	writeProvider(t, orders, "orders", pythonProvider)
+	put(t, checkout, "pyproject.toml", "[project]\nname = \"checkout\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
+	c := Consumer{Name: "checkout", Dir: checkout, Targets: []string{TargetPy}, Sources: []Source{{Alias: "orders", Path: orders}}}
+	options := Options{Run: fakeRun(map[string]any{"example.com/orders": extraction{Tools: []mcpcontract.Tool{lookupTool}}})}
+	bin := t.TempDir()
+	uv := "#!/bin/sh\nset -e\necho \"$*\" >> uv.log\nmkdir -p .venv/bin\n: > .venv/bin/python\n"
+	put(t, bin, "uv", uv)
+	if err := os.Chmod(filepath.Join(bin, "uv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := Generate(t.Context(), []Consumer{c}, options); err != nil {
+		t.Fatal(err)
+	}
+	put(t, bin, "uv", "#!/bin/sh\nexit 17\n")
+	if err := Generate(t.Context(), []Consumer{c}, options); err != nil {
+		t.Fatalf("installed environment was reinstalled: %v", err)
+	}
+	if log := read(t, checkout, "uv.log"); log != "sync\n" {
+		t.Fatalf("uv ran %q", log)
+	}
+
+	// Without a pyproject.toml, uv installs requirements.txt.
+	for _, name := range []string{".venv", "uv.log", "pyproject.toml"} {
+		if err := os.RemoveAll(filepath.Join(checkout, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(t, checkout, "requirements.txt", "holon-sh\n")
+	put(t, bin, "uv", uv)
+	if err := Generate(t.Context(), []Consumer{c}, options); err != nil {
+		t.Fatal(err)
+	}
+	if log := read(t, checkout, "uv.log"); log != "venv\npip install -r requirements.txt\n" {
+		t.Fatalf("uv ran %q", log)
+	}
+}
+
 // A runtime of another contract gets one install, which can bring it up to date, before generation stops.
 func TestGenerateRefusesARuntimeOfAnotherContract(t *testing.T) {
 	root := t.TempDir()
@@ -313,74 +355,5 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 	writeProvider(t, orders, "orders", "while True:\n    pass\n")
 	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "server.py: no catalog within 1s") {
 		t.Fatalf("server that never answers: %v", err)
-	}
-}
-
-type fakeImages struct{}
-
-func (fakeImages) Extract(_ context.Context, tooling, root, entry string, stdout, _ io.Writer) error {
-	if !pathInsideContext(root, filepath.Dir(tooling)) || !isFile(filepath.Join(root, entry)) {
-		return fmt.Errorf("entry %s is not in a snapshot under %s: %s", entry, filepath.Dir(tooling), root)
-	}
-	return json.NewEncoder(stdout).Encode(extraction{Tools: []mcpcontract.Tool{lookupTool}})
-}
-
-func (fakeImages) Check(_ context.Context, tooling, root, generated string, _, _ io.Writer) error {
-	clients, _ := os.ReadFile(filepath.Join(generated, "holon", "apps", "__init__.py"))
-	switch {
-	case !isFile(filepath.Join(tooling, "python", "runner.py")):
-		return errors.New("no Python checker in the tooling directory")
-	case !isFile(filepath.Join(root, "main.py")) || isFile(filepath.Join(root, "holon", "apps", "__init__.py")):
-		return fmt.Errorf("%s is not a snapshot of the app without its clients", root)
-	case !strings.Contains(string(clients), "def lookup("):
-		return errors.New("the generated clients are not copied in")
-	}
-	return &RunnerError{Status: 1, Stderr: "Found 1 error in 1 file\n"}
-}
-
-func TestAPythonAppWithoutAnEnvironmentRunsInItsImage(t *testing.T) {
-	needPython(t)
-	t.Setenv("VIRTUAL_ENV", "")
-	root := t.TempDir()
-	orders, checkout := filepath.Join(root, "orders"), filepath.Join(root, "checkout")
-	writeProvider(t, orders, "orders", "import orders_database\n"+pythonProvider)
-	put(t, checkout, "pyproject.toml", "[project]\nname = \"checkout\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
-	put(t, checkout, "main.py", "from holon.apps import apps\nasync def total() -> None:\n    await apps.orders.tools.lookup(id=1)\n")
-	c := Consumer{Name: "checkout", Dir: checkout, Targets: []string{TargetPy}, Sources: []Source{{Alias: "orders", Path: orders}}}
-
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil || !strings.Contains(err.Error(), "orders_database is not installed; install the application's dependencies") {
-		t.Fatalf("without images: %v", err)
-	}
-	images := &fakeImages{}
-	var stderr bytes.Buffer
-	if err := Generate(t.Context(), []Consumer{c}, Options{Stderr: &stderr, Images: images}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(stderr.String(), "orders: orders_database is not installed here; reading the contract in the app's image") {
-		t.Fatalf("image extraction output:\n%s", stderr.String())
-	}
-	if clients := read(t, checkout, "holon/apps/__init__.py"); !strings.Contains(clients, "def lookup(") {
-		t.Fatalf("generated clients lack orders.lookup:\n%s", clients)
-	}
-
-	var output bytes.Buffer
-	err := Check(t.Context(), checkout, Options{Stdout: &output, Stderr: &output, Images: images})
-	if err == nil || !strings.Contains(err.Error(), "checkout does not type-check against its typed contracts: exit status 1") {
-		t.Fatalf("image check: %v\n%s", err, output.String())
-	}
-	for _, line := range []string{"checkout: no Python environment here; type-checking in the app's image", "Found 1 error"} {
-		if !strings.Contains(output.String(), line) {
-			t.Errorf("image check output lacks %q:\n%s", line, output.String())
-		}
-	}
-
-	// An app with an environment of its own is checked there.
-	put(t, checkout, ".venv/bin/python", "#!/bin/sh\necho checked with the app environment\n")
-	if err := os.Chmod(filepath.Join(checkout, ".venv/bin/python"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	output.Reset()
-	if err := Check(t.Context(), checkout, Options{Stdout: &output, Stderr: &output, Images: images}); err != nil || !strings.Contains(output.String(), "checked with the app environment") || strings.Contains(output.String(), "type-checking in the app's image") {
-		t.Fatalf("app environment check: %v\n%s", err, output.String())
 	}
 }
