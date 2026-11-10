@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +15,8 @@ import (
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 )
+
+var columnGap = regexp.MustCompile(` {2,}`)
 
 func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 	app := func(name string) protocol.App {
@@ -76,11 +79,11 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 			// Every session lists, with its expiry, including one whose apps were all removed.
 			args: []string{"app", "list"},
 			output: []string{
-				"s-one    8m       chat   https://s-one.example/chat/mcp  image registry.example/chat@",
-				"s-one    8m       other  -  ",
-				"s-two    -        chat",
-				"s-empty  23h59m   -\n",
-				"huggingface.co:443",
+				"s-one 8m chat https://s-one.example/chat/mcp image registry.example/chat@",
+				"s-one 8m other - ",
+				"s-two - chat",
+				"s-three - hf - remote huggingface.co public huggingface.co:443",
+				"s-empty 23h59m -\n",
 			},
 		},
 		{
@@ -115,9 +118,10 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		if !slices.Equal(updates, test.updates) {
 			t.Fatalf("holon %v: updates=%q, want %q", test.args, updates, test.updates)
 		}
+		output := columnGap.ReplaceAllString(out.String(), " ")
 		for _, want := range test.output {
-			if !strings.Contains(out.String(), want) {
-				t.Fatalf("holon %v: output=%q, want %q", test.args, out.String(), want)
+			if !strings.Contains(output, want) {
+				t.Fatalf("holon %v: output=%q, want %q", test.args, output, want)
 			}
 		}
 	}
