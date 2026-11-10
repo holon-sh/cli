@@ -46,9 +46,7 @@ func versionedServer(t *testing.T, name, version string) *httptest.Server {
 	return httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
 }
 
-// liveServerBehind serves a live MCP server to requests whose Authorization header check accepts. It
-// refuses others as an MCP gateway does: 401 without a token, 403 with one, and 400 to the legacy
-// initialize the SDK falls back to after a refused server/discover.
+// liveServerBehind serves a live MCP server to requests whose Authorization header check accepts.
 func liveServerBehind(t *testing.T, check func(authorization string) bool) *httptest.Server {
 	t.Helper()
 	live := liveServer(t, "orders")
@@ -56,7 +54,7 @@ func liveServerBehind(t *testing.T, check func(authorization string) bool) *http
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch authorization := r.Header.Get("Authorization"); {
 		case check(authorization):
-		case r.Header.Get("Mcp-Method") == "": // Of the handshake, only server/discover names its method.
+		case r.Header.Get("Mcp-Method") == "":
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		case authorization == "":

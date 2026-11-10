@@ -204,8 +204,7 @@ func newCheck(short string) *cobra.Command {
 
 const serverHelp = "A dependency, [ALIAS=]PATH or URL, paths relative to the working directory"
 
-// NewCommand builds the standalone CLI, including the check shortcut. signIn, which may be nil, signs
-// list and call in.
+// NewCommand builds the standalone CLI, including the check shortcut.
 func NewCommand(version string, signIn typegen.SignIn) *cobra.Command {
 	root := &cobra.Command{Use: "holon", Short: "MCP developer client", Version: version, SilenceUsage: true, SilenceErrors: true}
 	root.CompletionOptions.DisableDefaultCmd = true

@@ -119,7 +119,6 @@ func TestAppTokenSignsInOnlyToTheInstallationsApps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Signed out, it signs in to the installation and then to the session, whose token later commands reuse.
 	for range 2 {
 		if token, err := config.AppToken(t.Context(), session); token != "access-"+session || err != nil {
 			t.Fatalf("session origin: token=%q error=%v", token, err)

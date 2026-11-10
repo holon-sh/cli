@@ -58,9 +58,8 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	}
 }
 
-// endpointClient sends an endpoint source's token from <ALIAS>_MCP_TOKEN, or else o.SignIn's once the
-// endpoint refuses a request without one, and explains a refusal. A registry
-// record's remote never reaches here, so a token only goes to a URL its owner named.
+// endpointClient reads an endpoint source's token from <ALIAS>_MCP_TOKEN and explains a refusal.
+// A registry record's remote never reaches here, so a token only goes to a URL its owner named.
 func endpointClient(source Source, o Options) *http.Client {
 	endpoint, err := url.Parse(source.Endpoint)
 	if err != nil {
@@ -82,10 +81,8 @@ type endpointTransport struct {
 	variable string
 	signIn   SignIn
 
-	mu    sync.Mutex
-	token string
-	// refusal fails every later request unsent: after a refused server/discover the SDK falls back to
-	// a legacy initialize, whose own failure would hide why.
+	mu      sync.Mutex
+	token   string
 	refusal error
 }
 
@@ -102,7 +99,6 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	}
 	from := t.variable
 	if token == "" && t.signIn != nil {
-		// Signing in waits for a refusal, so an endpoint that needs no token never asks for one.
 		if token, err = t.signIn(request.Context(), t.origin); err != nil {
 			return nil, err
 		}
@@ -136,9 +132,8 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	return nil, refusal
 }
 
-// send sends request, with the token when it goes to origin: redirects come through here too, and must
-// not carry the token to another origin. A refused response's body is closed.
 func (t *endpointTransport) send(request *http.Request, token string) (*http.Response, error) {
+	// Redirects come through here too, and must not carry the token to another origin.
 	if token != "" && origin(request.URL) == t.origin {
 		request = request.Clone(request.Context())
 		request.Header.Set("Authorization", "Bearer "+token)

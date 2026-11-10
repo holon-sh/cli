@@ -11,8 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// ordersServer serves one tool that echoes its arguments as structured content, failing for id "0", to
-// requests that carry the token run signs in with.
+// ordersServer serves one tool that echoes its arguments as structured content, failing for id "0".
 func ordersServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: "example.com/orders", Version: "1.2.0"}, &mcp.ServerOptions{Instructions: "Look orders up by id."})

@@ -561,9 +561,6 @@ func (m *Client) Call(ctx context.Context, plane protocol.Plane, tool string, in
 	return m.client.Call(ctx, plane, token, tool, input, output)
 }
 
-// AppToken returns a bearer token for origin when it serves the selected installation's apps, in production or in a
-// session, signing in to it as the other commands do. Any other origin, and an installation without authentication,
-// gets "".
 func (config ClientConfig) AppToken(ctx context.Context, origin string) (string, error) {
 	local, err := newLocalAuthManager(config)
 	if err != nil {

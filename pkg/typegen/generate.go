@@ -26,8 +26,6 @@ import (
 // unversioned stands in when no source names a version.
 const unversioned = "0.0.0"
 
-// SignIn returns a bearer token for an endpoint's origin (scheme://host), or "" when it holds no
-// credential for that origin.
 type SignIn func(ctx context.Context, origin string) (string, error)
 
 type Options struct {
