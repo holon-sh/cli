@@ -151,10 +151,7 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	manager.client, err = newAPIClient(origin, config.HTTPClient, config.RequestTimeout)
-	if err != nil {
-		return nil, err
-	}
+	manager.client = newAPIClient(origin, config.HTTPClient, config.RequestTimeout)
 	manager.statePath = filepath.Join(dir, "remotes", digest.FromBytes([]byte(manager.client.baseURL)).Encoded()+".tokens.json")
 	return manager, nil
 }

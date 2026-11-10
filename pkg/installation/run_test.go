@@ -35,10 +35,15 @@ import (
 )
 
 func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer, config commandConfig) error {
+	return executeCommandWithInput(ctx, args, nil, stdout, stderr, config)
+}
+
+func executeCommandWithInput(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, config commandConfig) error {
 	config.Auth.Env = append([]string{"HOLON_ORIGIN="}, config.Auth.Env...)
 	command := sharedcli.NewCommand("dev")
 	command.AddCommand(newCommands(config)...)
 	command.SetArgs(args)
+	command.SetIn(stdin)
 	command.SetOut(cmp.Or(stdout, io.Discard))
 	command.SetErr(cmp.Or(stderr, io.Discard))
 	return command.ExecuteContext(ctx)
