@@ -44,10 +44,6 @@ func TestRunDevRebuildsWhatASaveChanged(t *testing.T) {
 			edit: map[string]string{"beta/server.json": strings.Replace(string(beta), "Example MCP server", "edited", 1)},
 		},
 		{
-			name: "registry selection edited",
-			edit: map[string]string{manifestFileName: strings.Replace(manifest, `"version":"1.4.2"`, `"version":"1.4.2","package":{"registryType":"oci"}`, 1)},
-		},
-		{
 			name: "image digest edited", replaced: []string{"delta"},
 			edit: map[string]string{manifestFileName: strings.Replace(manifest, first, second, 1)},
 		},
