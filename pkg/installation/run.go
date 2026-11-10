@@ -496,8 +496,8 @@ func (m *Client) streamLogs(ctx context.Context, input protocol.SessionLogsReque
 	}
 }
 
-// resumingWriter writes whole log lines, tracking the timestamp that leads each record, which it writes as logTime.
-// Records not after the last one written, with their continuation lines, are replays and are dropped.
+// resumingWriter writes whole log lines, tracking the timestamp that leads each record. Records not after the last
+// one written, with their continuation lines, are replays and are dropped.
 type resumingWriter struct {
 	out     io.Writer
 	stdio   bool
@@ -507,7 +507,6 @@ type resumingWriter struct {
 	err     error
 }
 
-// logTime is the local time of day at which a log record was written.
 func logTime(at time.Time) string {
 	return at.Local().Format(time.TimeOnly)
 }
