@@ -145,6 +145,9 @@ func newRunHarness(t *testing.T) *runHarness {
 
 func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
+	h.control.Handle([]string{protocol.ToolListValues}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, protocol.ConfigValues{Values: []protocol.ConfigValue{}})
+	})
 	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
 		w.WriteHeader(http.StatusOK)

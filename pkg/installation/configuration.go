@@ -1,8 +1,10 @@
 package installation
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -177,4 +179,49 @@ func scopedExample(title, command string) string {
   # Production, or one development session
   %s --env prod
   %s --session my-session`, title, command, command, command)
+}
+
+// declareSetValues gives each app built from source an input for every config value and secret set where session runs,
+// so each reaches the app's environment under its own name; a session's value replaces the developer-wide one on the
+// platform. Names an app already uses keep their meaning, a name another app declares as the other kind is skipped,
+// and PORT and HOLON_ variables stay Holon's.
+func declareSetValues(ctx context.Context, manager *Client, session string, manifest manifestSpec, apps []protocol.App) error {
+	if !slices.ContainsFunc(manifest.Apps, func(app manifestApp) bool { return app.Path != "" }) {
+		return nil
+	}
+	var listed protocol.ConfigValues
+	if err := manager.Call(ctx, ControlPlane(session), protocol.ToolListValues, struct{}{}, &listed); err != nil {
+		return fmt.Errorf("list config values: %w", err)
+	}
+	kinds := map[string]string{}
+	for _, app := range apps {
+		for name, input := range app.Inputs() {
+			kinds[name] = input.Kind()
+		}
+	}
+	for i, source := range manifest.Apps {
+		app := &apps[i]
+		if source.Path == "" {
+			continue
+		}
+		inputs, env := app.Inputs(), maps.Clone(app.Env)
+		if env == nil {
+			env = map[string]protocol.Input{}
+		}
+		for _, value := range listed.Values {
+			name := value.Variable
+			_, used := inputs[name]
+			_, templated := app.EnvTemplates[name]
+			if value.Session != "" && value.Session != session || used || templated || name == "PORT" || strings.HasPrefix(name, "HOLON_") ||
+				slices.ContainsFunc(app.Requires, func(target string) bool { return protocol.DependencyEnvName(target) == name }) {
+				continue
+			}
+			if kind, declared := kinds[name]; declared && kind != value.Kind {
+				continue
+			}
+			env[name] = protocol.Input{IsSecret: value.Kind == "secret"}
+		}
+		app.Env = env
+	}
+	return nil
 }

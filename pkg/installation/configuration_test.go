@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 )
@@ -76,5 +78,46 @@ func TestConfigurationCommands(t *testing.T) {
 		if !strings.Contains(out.String(), scope) {
 			t.Fatalf("stdout = %q, want %q", out.String(), scope)
 		}
+	}
+}
+
+func TestSourceAppsReceiveSetValues(t *testing.T) {
+	h := newRunHarness(t)
+	var planes []string
+	h.control.Handle([]string{protocol.ToolListValues}, nil, func(w http.ResponseWriter, r *http.Request) {
+		planes = append(planes, strings.TrimSuffix(r.Host, h.baseHost))
+		installationtest.WriteJSON(w, protocol.ConfigValues{Values: []protocol.ConfigValue{
+			{Kind: "config", Variable: "REGION"}, {Kind: "secret", Variable: "API_KEY"}, {Kind: "config", Variable: "DECLARED"},
+			{Kind: "config", Variable: "PORT"}, {Kind: "config", Variable: "HOLON_OVERLAY_FILE"}, {Kind: "secret", Variable: "ORDERS_MCP_URL"},
+			{Kind: "config", Variable: "CLIENT_SECRET"},
+			{Session: "mine", Kind: "secret", Variable: "REGION"}, {Session: "other", Kind: "config", Variable: "OTHER"},
+		}})
+	})
+	h.start(t, nil)
+	manager, err := NewClient(t.Context(), h.run.Auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := manifestSpec{Apps: []manifestApp{{Name: "app", Path: "app"}, {Name: "remote"}}}
+	for _, test := range []struct {
+		session, region string
+		secret          bool
+	}{{session: "", region: "config"}, {session: "mine", secret: true}, {session: protocol.ProductionName}} {
+		apps := []protocol.App{
+			{Name: "app", Requires: []string{"orders"}, Env: map[string]protocol.Input{"DECLARED": {Value: new("fixed")}}},
+			{Name: "remote", OAuth: &protocol.OAuthClient{ClientID: "id", ClientSecret: "CLIENT_SECRET"}},
+		}
+		if err := declareSetValues(t.Context(), manager, test.session, manifest, apps); err != nil {
+			t.Fatal(err)
+		}
+		want := map[string]protocol.Input{
+			"REGION": {IsSecret: test.secret}, "API_KEY": {IsSecret: true}, "DECLARED": {Value: new("fixed")},
+		}
+		if diff := cmp.Diff(want, apps[0].Env); diff != "" || apps[1].Env != nil {
+			t.Fatalf("%q environment (-want +got):\n%s\nremote: %v", test.session, diff, apps[1].Env)
+		}
+	}
+	if want := []string{"dev.", "dev.", "admin."}; !slices.Equal(planes, want) {
+		t.Fatalf("planes = %v, want %v", planes, want)
 	}
 }

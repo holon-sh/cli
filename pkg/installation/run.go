@@ -113,6 +113,9 @@ func uploadManifest(
 	}
 	defer cleanup()
 	built, err := buildManifestImages(ctx, manager, name, prepared, options)
+	if err == nil {
+		err = declareSetValues(ctx, manager, name, prepared, built)
+	}
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
