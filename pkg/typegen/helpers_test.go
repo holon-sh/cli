@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -141,11 +142,15 @@ func listing(tools ...mcpcontract.Tool) extraction {
 
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
 // snapshot's server.json name, printing an extraction or returning an error as the runner's failure.
+// A runner is asked for every list by a client that sends files.
 func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
 	return func(_ context.Context, _, tooling string, args []string, stdout io.Writer) error {
 		root, entry := args[1], args[2]
 		if !lexicallyInside(root, filepath.Dir(tooling)) || !isFile(filepath.Join(root, entry)) {
 			return fmt.Errorf("entry %s is not in a snapshot under %s: %s", entry, filepath.Dir(tooling), root)
+		}
+		if !strings.Contains(args[3], `"io.modelcontextprotocol/files"`) || !slices.Equal(args[4:], []string{"tools/list", "resources/list", "events/list"}) {
+			return fmt.Errorf("runner asked %q", args[3:])
 		}
 		var descriptor struct{ Name string }
 		if err := readTypeJSON(filepath.Join(root, "server.json"), &descriptor); err != nil && !errors.Is(err, fs.ErrNotExist) {

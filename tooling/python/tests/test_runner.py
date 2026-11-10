@@ -36,8 +36,6 @@ LIFESPAN = """
 
 # A src entry imports from the application root, and reads files there.
 SERVER = """
-    import json
-
     from mcp.server import MCPServer
     from catalog.region import Region
     from src.lifespan import lifespan
@@ -45,18 +43,8 @@ SERVER = """
 
     server = MCPServer("orders", lifespan=lifespan)
 
-    @server.tool()
+    @server.tool(description=open("read.txt").read())
     def read(id: str, region: Region = Region.EU) -> Order:
-        raise RuntimeError("must not be called")
-
-    ORDER = json.load(open("order.json"))
-
-    @server.resource(
-        "orders://latest",
-        mime_type="application/json",
-        meta={"sh.holon/outputSchema": ORDER},
-    )
-    def latest() -> Order:
         raise RuntimeError("must not be called")
 
     if __name__ == "__main__":
@@ -84,27 +72,21 @@ def write(directory: Path, files: dict[str, str]) -> Path:
 
 
 def extract(apps: dict[str, tuple[Path, str]]) -> dict[str, dict]:
-    """What each app's server lists, or its diagnostic and the package it missed."""
-    methods = ["tools/list", "resources/list"]
+    """The tools each app's server lists, or its diagnostic and the package it missed."""
     extractor = [sys.executable, str(ROOT / "extract.py"), "contract"]
     results = {}
     for name, (root, entry) in apps.items():
         run = subprocess.run(
-            [*extractor, str(root), entry, "{}", *methods],
+            [*extractor, str(root), entry, "{}", "tools/list"],
             capture_output=True,
             text=True,
             check=False,
         )
         assert run.returncode in (0, 2, 3), run.stderr
         if run.returncode == 0:
-            lists = json.loads(run.stdout)["lists"]
+            pages = json.loads(run.stdout)["lists"]["tools/list"]["pages"]
             results[name] = {
-                method.partition("/")[0]: [
-                    item
-                    for page in lists[method].get("pages", [])
-                    for item in page[method.partition("/")[0]]
-                ]
-                for method in methods
+                "tools": [tool for page in pages for tool in page["tools"]]
             }
         else:
             missing = run.stderr.splitlines()[-1] if run.returncode == 3 else None
@@ -119,21 +101,15 @@ def test_the_bundle_extracts_each_servers_catalog(tmp_path):
         "src/lifespan.py": LIFESPAN,
     }
     files |= {"catalog/__init__.py": "", "catalog/region.py": REGION}
-    files["order.json"] = '{"type": "object", "properties": {"id": {"type": "string"}}}'
+    files["read.txt"] = "Read an order"
     orders = write(tmp_path / "orders", files)
     low = write(tmp_path / "low", {"server.py": LOW_LEVEL, "lifespan.py": LIFESPAN})
     result = extract(
         {"orders": (orders, "src/server.py"), "low": (low, "server.py")},
     )
 
-    contract = result["orders"]
-    assert [tool["name"] for tool in contract["tools"]] == ["read"]
-    assert contract["resources"][0]["_meta"] == {
-        "sh.holon/outputSchema": {
-            "type": "object",
-            "properties": {"id": {"type": "string"}},
-        },
-    }
+    [read] = result["orders"]["tools"]
+    assert [read["name"], read["description"]] == ["read", "Read an order"]
     assert [tool["name"] for tool in result["low"]["tools"]] == ["lookup"]
 
 

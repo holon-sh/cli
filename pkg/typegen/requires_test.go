@@ -60,10 +60,12 @@ func TestEmptyDependencyOutsideAProject(t *testing.T) {
 	}
 }
 
+// The real runners report a server's description and its lists, here for a plain McpServer export,
+// which serves each request in turn.
 func TestServerDescribesItself(t *testing.T) {
 	for entry, source := range map[string]string{
-		"server.py": "from mcp.server import MCPServer\nserver = MCPServer(\"example.com/checkout\", version=\"1.2.3\", description=\"Checkout\")\n",
-		"server.ts": "import { McpServer } from \"@modelcontextprotocol/server\";\nexport default new McpServer({ name: \"example.com/checkout\", version: \"1.2.3\", description: \"Checkout\" });\n",
+		"server.py": "from mcp.server import MCPServer\nserver = MCPServer(\"example.com/checkout\", version=\"1.2.3\", description=\"Checkout\")\n@server.tool()\ndef read(id: str) -> str:\n    return id\n",
+		"server.ts": "import { McpServer } from \"@modelcontextprotocol/server\";\nconst server = new McpServer({ name: \"example.com/checkout\", version: \"1.2.3\", description: \"Checkout\" });\nserver.registerTool(\"read\", {}, () => ({ content: [] }));\nexport default server;\n",
 	} {
 		t.Run(entry, func(t *testing.T) {
 			if entry == "server.py" {
@@ -74,8 +76,9 @@ func TestServerDescribesItself(t *testing.T) {
 			root := t.TempDir()
 			put(t, root, entry, source)
 			want := mcpcontract.Identity{Name: "example.com/checkout", Version: "1.2.3"}
-			if document, err := ResolveDocument(t.Context(), Source{Path: root}, Options{}); err != nil || document.Identity != want {
-				t.Fatalf("identity = %+v, %v; want %+v", document, err, want)
+			document, err := ResolveDocument(t.Context(), Source{Path: root}, Options{})
+			if err != nil || document.Identity != want || len(document.Schema.Tools) != 1 || document.Schema.Tools[0].Name != "read" {
+				t.Fatalf("document = %+v, %v; want %+v with the tool read", document, err, want)
 			}
 		})
 	}

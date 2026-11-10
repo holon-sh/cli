@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -294,9 +293,8 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 	}
 }
 
-// A runner is asked for every list by a client that sends files, and prints each list's pages or the
-// error listing it. The contract takes the lists the server declares, page by page and sorted, and a
-// declared list that failed fails it.
+// A runner prints each list's pages or the error listing it. The contract takes the lists the server
+// declares, page by page and sorted, and a declared list that failed fails it.
 func TestARunnersAnswersMakeTheContract(t *testing.T) {
 	orders := t.TempDir()
 	writeProvider(t, orders, "orders", pythonProvider)
@@ -305,13 +303,7 @@ func TestARunnersAnswersMakeTheContract(t *testing.T) {
 	answers.Lists["resources/list"] = listed{Error: "Method not found"}
 	answers.Lists["events/list"] = listed{Error: "events are broken"}
 	answers.Capabilities.AddExtension(eventsExtension, nil)
-	serve := fakeRun(map[string]any{"example.com/orders": answers})
-	options := Options{Run: func(ctx context.Context, language, tooling string, args []string, stdout io.Writer) error {
-		if !strings.Contains(args[3], `"io.modelcontextprotocol/files"`) || !slices.Equal(args[4:], []string{"tools/list", "resources/list", "events/list"}) {
-			t.Errorf("runner asked %q", args[3:])
-		}
-		return serve(ctx, language, tooling, args, stdout)
-	}}
+	options := Options{Run: fakeRun(map[string]any{"example.com/orders": answers})}
 	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, options); err == nil || !strings.Contains(err.Error(), "events/list: events are broken") {
 		t.Fatalf("a declared list that failed: %v", err)
 	}

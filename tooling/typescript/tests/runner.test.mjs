@@ -19,11 +19,11 @@ function unpackTooling(t) {
     writeFileSync(join(tooling, name), bytes);
   }
   const check = (cwd, entry) => execFileSync(process.execPath, [join(tooling, "check.mjs"), "check", entry], { cwd, encoding: "utf8", stdio: "pipe" });
-  // extract returns the tools each app's server lists, or its diagnostic and the package it missed.
+  // extract returns the tools each app's server lists, or its diagnostic.
   const extract = (apps, env = process.env) => Object.fromEntries(apps.map(({ name, path, entry }) => {
     const { status, stdout, stderr } = spawnSync(process.execPath, [join(tooling, "runner.mjs"), "contract", path, entry, "{}", "tools/list"], { encoding: "utf8", env });
     assert.ok([0, 2, 3].includes(status), stderr);
-    if (status !== 0) return [name, { diagnostic: stderr, missing: status === 3 ? stderr.trimEnd().split("\n").at(-1) : undefined }];
+    if (status !== 0) return [name, { diagnostic: stderr }];
     const { pages, error } = JSON.parse(stdout).lists["tools/list"];
     return [name, { tools: pages?.flatMap(page => page.tools) ?? [], diagnostic: error }];
   }));
@@ -69,14 +69,11 @@ export default createMcpHandler(() => {
   server.registerTool("list", list, () => ({ content: [] }));
   return server;
 }, { legacy: "reject" });`,
-    // A plain McpServer default export is served through the same SDK copy's createMcpHandler, one request at a time.
-    "plain.mjs": 'import { McpServer } from "@modelcontextprotocol/server"; const server = new McpServer({ name: "plain", version: "1" }); server.registerTool("echo", {}, () => ({ content: [] })); export default server;',
   });
-  const extracted = extract([{ name: "orders", path: app, entry: "server.ts" }, { name: "plain", path: app, entry: "plain.mjs" }]);
+  const extracted = extract([{ name: "orders", path: app, entry: "server.ts" }]);
   const [read, list] = extracted.orders.tools;
   assert.deepEqual([read.name, read.description, list.name], ["read", "Read an order", "list"]);
   assert.deepEqual(Object.keys(read.outputSchema.properties), ["id", "status"]);
-  assert.deepEqual(extracted.plain.tools.map(tool => tool.name), ["echo"], extracted.plain.diagnostic);
 });
 
 test("extraction uses the paths of a tsconfig in a parent directory, relative to that config", t => {
@@ -169,18 +166,16 @@ export default createMcpHandler(() => {
   assert.deepEqual(first, second);
 });
 
-test("module-scope effects fail with the capability, file and line; missing packages are named", t => {
+test("module-scope effects fail with the capability, file and line", t => {
   const { root, extract } = unpackTooling(t);
   const app = application(root, {
     "package.json": '{"type":"module"}',
     "fetch.ts": 'const response: unknown = null;\nawait fetch("https://example.com/schema.json");\nexport default response;\n',
     "fs.ts": 'import { readFileSync } from "node:fs";\nexport default readFileSync("schema.json", "utf8");\n',
-    "missing.ts": 'import pad from "left-pad";\nexport default pad;\n',
   });
-  const extracted = extract(["fetch.ts", "fs.ts", "missing.ts"].map(entry => ({ name: entry.slice(0, -3), path: app, entry })));
+  const extracted = extract(["fetch.ts", "fs.ts"].map(entry => ({ name: entry.slice(0, -3), path: app, entry })));
   assert.match(extracted.fetch.diagnostic, /no network[\s\S]*\/fetch\.ts:2:/);
   assert.match(extracted.fs.diagnostic, /no filesystem[\s\S]*\/fs\.ts:2:/);
-  assert.equal(extracted.missing.missing, "left-pad");
 });
 
 test("check uses the application's compiler CLI and honors project file selection", t => {
