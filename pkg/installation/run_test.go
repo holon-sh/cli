@@ -40,7 +40,7 @@ func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 
 func executeCommandWithInput(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, config commandConfig) error {
 	config.Auth.Env = append([]string{"HOLON_ORIGIN="}, config.Auth.Env...)
-	command := sharedcli.NewCommand("dev")
+	command := sharedcli.NewCommand("dev", nil)
 	command.AddCommand(newCommands(config)...)
 	command.SetArgs(args)
 	command.SetIn(stdin)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -60,11 +61,11 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 // endpointClient reads an endpoint source's token from <ALIAS>_MCP_TOKEN and explains a refusal.
 // A registry record's remote never reaches here, so a token only goes to a URL its owner named.
 func endpointClient(source Source, o Options) *http.Client {
-	origin, err := url.Parse(source.Endpoint)
+	endpoint, err := url.Parse(source.Endpoint)
 	if err != nil {
 		return o.HTTPClient // liveContract reports the invalid URL.
 	}
-	transport := endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: origin}
+	transport := &endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: origin(endpoint), signIn: o.SignIn}
 	if source.Alias != "" {
 		transport.variable = strings.TrimSuffix(protocol.DependencyEnvName(source.Alias), "_URL") + "_TOKEN"
 		transport.token = cmp.Or(commandenv.Value(o.Env, transport.variable), os.Getenv(transport.variable))
@@ -76,29 +77,80 @@ func endpointClient(source Source, o Options) *http.Client {
 
 type endpointTransport struct {
 	http.RoundTripper
-	origin          *url.URL
-	variable, token string
+	origin   string
+	variable string
+	signIn   SignIn
+
+	mu      sync.Mutex
+	token   string
+	refusal error
 }
 
-func (t endpointTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	// Redirects come through here too, and must not carry the token to another origin.
-	if t.token != "" && request.URL.Scheme == t.origin.Scheme && request.URL.Host == t.origin.Host {
-		request = request.Clone(request.Context())
-		request.Header.Set("Authorization", "Bearer "+t.token)
+func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	token, refusal := t.token, t.refusal
+	t.mu.Unlock()
+	if refusal != nil {
+		return nil, refusal
 	}
-	response, err := t.RoundTripper.RoundTrip(request)
-	if err != nil || response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden {
+	response, err := t.send(request, token)
+	if err != nil || !refused(response) {
 		return response, err
 	}
-	_ = response.Body.Close()
+	from := t.variable
+	if token == "" && t.signIn != nil {
+		if token, err = t.signIn(request.Context(), t.origin); err != nil {
+			return nil, err
+		}
+		if token != "" {
+			from = "signing in"
+			t.mu.Lock()
+			t.token = token
+			t.mu.Unlock()
+			retry := request.Clone(request.Context())
+			if request.GetBody != nil {
+				if retry.Body, err = request.GetBody(); err != nil {
+					return nil, err
+				}
+			}
+			if response, err = t.send(retry, token); err != nil || !refused(response) {
+				return response, err
+			}
+		}
+	}
 	hint := "if it needs a token, write ALIAS=URL and set ALIAS_MCP_TOKEN"
 	switch {
-	case t.token != "":
-		hint = "the token came from " + t.variable
+	case token != "":
+		hint = "the token came from " + from
 	case t.variable != "":
 		hint = "if it needs a token, set " + t.variable
 	}
-	return nil, fmt.Errorf("server refused the request with HTTP %d; %s", response.StatusCode, hint)
+	refusal = fmt.Errorf("server refused the request with HTTP %d; %s", response.StatusCode, hint)
+	t.mu.Lock()
+	t.refusal = refusal
+	t.mu.Unlock()
+	return nil, refusal
+}
+
+func (t *endpointTransport) send(request *http.Request, token string) (*http.Response, error) {
+	// Redirects come through here too, and must not carry the token to another origin.
+	if token != "" && origin(request.URL) == t.origin {
+		request = request.Clone(request.Context())
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	response, err := t.RoundTripper.RoundTrip(request)
+	if err == nil && refused(response) {
+		_ = response.Body.Close()
+	}
+	return response, err
+}
+
+func origin(u *url.URL) string {
+	return u.Scheme + "://" + u.Host
+}
+
+func refused(response *http.Response) bool {
+	return response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden
 }
 
 // resolveRegistry fetches a registry record, then its first OCI package's

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 func run(t *testing.T, wantErr string, args ...string) string {
 	t.Helper()
 	var output bytes.Buffer
-	command := NewCommand("test")
+	command := NewCommand("test", func(context.Context, string) (string, error) { return "signed-in", nil })
 	command.SetArgs(args)
 	command.SetOut(&output)
 	command.SetErr(new(bytes.Buffer))

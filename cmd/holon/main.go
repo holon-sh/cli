@@ -20,7 +20,7 @@ func main() {
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	command := cli.NewCommand(version)
+	command := cli.NewCommand(version, installation.ClientConfig{Output: os.Stderr}.AppToken)
 	command.AddCommand(installation.Commands()...)
 	command.SetIn(os.Stdin)
 	command.SetOut(os.Stdout)
