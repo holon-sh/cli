@@ -169,7 +169,8 @@ const editsSchema = `{"type":"object","required":["edits"],"properties":{"edits"
 
 // An app's events are subscribed to by name, with their arguments checked and their data typed, as a
 // tool's input and output are. A union narrows on the field that tells its members apart, here in a
-// list and in the shape Pydantic writes for a discriminated union whose literal has a default.
+// list and in the shape Pydantic writes for a discriminated union whose literal has a default. A
+// runtime older than the clients, which would leave them untyped, fails the check.
 func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 	t.Parallel()
 	app := typeScriptApp(t)
@@ -201,6 +202,12 @@ export const misargued = apps.orders.events.subscribe("cells.edited", { notbook:
 for await (const { data } of await apps.orders.events.subscribe("cells.edited", { notebook: "1" })) data.edits[0]!.code;
 `)
 	mustReject(t, app, `"cells.edit"`, "'notbook' does not exist", "Property 'code' does not exist")
+	for _, name := range []string{"runtime.d.ts", "protocol.d.ts"} {
+		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh", name))
+	}
+	if output, err := check(t, app); err == nil || !strings.Contains(err.Error(), "generated for a newer holon-sh than the one installed; regenerate them with holon types generate") {
+		t.Fatalf("checked clients the installed runtime cannot type: %v\n%s", err, output)
+	}
 }
 
 func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {

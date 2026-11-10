@@ -71,15 +71,22 @@ func nodePackage(root, pkg string) string {
 	return ""
 }
 
-var toolClientDeclaration = regexp.MustCompile(`(?:interface|type)\s+ToolClient\s*<`)
+var (
+	toolClientDeclaration = regexp.MustCompile(`(?:interface|type)\s+ToolClient\s*<`)
+	toolClientUse         = regexp.MustCompile(`ToolClient\s*<`)
+)
 
 func runtimeTypesEvents(root, pkg string) bool {
+	return toolClientParameters(root, pkg) >= 4
+}
+
+func toolClientParameters(root, pkg string) int {
 	dir := nodePackage(root, pkg)
 	if dir != "" && pkg != "holon-sh" {
 		dir = nodePackage(dir, "holon-sh")
 	}
 	if dir == "" {
-		return false
+		return 0
 	}
 	for _, name := range []string{"protocol.d.ts", "runtime.d.ts"} {
 		data, err := os.ReadFile(filepath.Join(dir, name))
@@ -87,10 +94,22 @@ func runtimeTypesEvents(root, pkg string) bool {
 			continue
 		}
 		if at := toolClientDeclaration.FindIndex(data); at != nil {
-			return typeParameters(data[at[1]:]) >= 4
+			return typeParameters(data[at[1]:])
 		}
 	}
-	return false
+	return 0
+}
+
+func slotToolClientArguments(dir, target string) int {
+	data, err := os.ReadFile(filepath.Join(SlotDirectory(dir, target), "index.d.mts"))
+	if err != nil {
+		return 0
+	}
+	most := 0
+	for _, at := range toolClientUse.FindAllIndex(data, -1) {
+		most = max(most, typeParameters(data[at[1]:]))
+	}
+	return most
 }
 
 func typeParameters(declaration []byte) int {
