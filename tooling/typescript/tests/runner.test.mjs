@@ -68,7 +68,7 @@ export default createMcpHandler(() => {
   server.registerTool("list", list, () => ({ content: [] }));
   server.registerResource("Order", "orders://latest", { mimeType: "application/json", _meta: { "sh.holon/outputSchema": { type: "object" } } }, () => ({ contents: [] }));
   server.registerResource("Page", "ui://orders/app.html", { mimeType: "text/html" }, () => ({ contents: [] }));
-  // MCP Events, as holon-sh/events serves it. A type may leave its schemas out.
+  // MCP Events, as holon-sh/ext/events serves it. A type may leave its schemas out.
   const params = { "~standard": { version: 1, vendor: "test", validate: value => ({ value }) } };
   server.server.registerCapabilities({ extensions: { "io.modelcontextprotocol/events": {} } });
   server.server.setRequestHandler("events/list", { params }, () => ({ events: [

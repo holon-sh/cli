@@ -128,9 +128,7 @@ func mustReject(t *testing.T, app string, diagnostics ...string) {
 func TestGeneratedClientsBindAsTheRuntimeDoes(t *testing.T) {
 	t.Parallel()
 	app := typeScriptApp(t)
-	for _, name := range []string{"runtime.d.ts", "protocol.d.ts"} {
-		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh", name))
-	}
+	installRuntime(t, app, "testdata/holon-sh")
 	orders := ordersMetadata()
 	orders.Schema.Events = []mcpcontract.Event{{Name: "order.shipped", Input: json.RawMessage(`{"type":"object"}`), Payload: json.RawMessage(`{}`)}}
 	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, orders)}}}
@@ -174,9 +172,7 @@ const editsSchema = `{"type":"object","required":["edits"],"properties":{"edits"
 func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 	t.Parallel()
 	app := typeScriptApp(t)
-	for _, name := range []string{"runtime.d.ts", "protocol.d.ts"} {
-		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh-events", name))
-	}
+	installRuntime(t, app, "testdata/holon-sh-events")
 	orders := ordersMetadata()
 	orders.Schema.Events = []mcpcontract.Event{{Name: "cells.edited",
 		Input:   json.RawMessage(`{"type":"object","properties":{"notebook":{"type":"string"}},"required":["notebook"],"additionalProperties":false}`),
@@ -186,7 +182,7 @@ func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 		t.Fatal(err)
 	}
 	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
-for await (const { data } of await apps.orders.events.subscribe("cells.edited", { notebook: "1" })) {
+for await (const { data } of await apps.orders.ext.events.subscribe("cells.edited", { notebook: "1" })) {
   for (const edit of data.edits) {
     if (edit.op === "cell.updated") { const code: string = edit.code; }
     else { const id: string = edit.id; }
@@ -197,14 +193,12 @@ for await (const { data } of await apps.orders.events.subscribe("cells.edited", 
 		t.Fatalf("check: %v\n%s", err, output)
 	}
 	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
-export const misnamed = apps.orders.events.subscribe("cells.edit", { notebook: "1" });
-export const misargued = apps.orders.events.subscribe("cells.edited", { notbook: "1" });
-for await (const { data } of await apps.orders.events.subscribe("cells.edited", { notebook: "1" })) data.edits[0]!.code;
+export const misnamed = apps.orders.ext.events.subscribe("cells.edit", { notebook: "1" });
+export const misargued = apps.orders.ext.events.subscribe("cells.edited", { notbook: "1" });
+for await (const { data } of await apps.orders.ext.events.subscribe("cells.edited", { notebook: "1" })) data.edits[0]!.code;
 `)
 	mustReject(t, app, `"cells.edit"`, "'notbook' does not exist", "Property 'code' does not exist")
-	for _, name := range []string{"runtime.d.ts", "protocol.d.ts"} {
-		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh", name))
-	}
+	installRuntime(t, app, "testdata/holon-sh")
 	if output, err := check(t, app); err == nil || !strings.Contains(err.Error(), "generated for a newer holon-sh than the one installed; regenerate them with holon types generate") {
 		t.Fatalf("checked clients the installed runtime cannot type: %v\n%s", err, output)
 	}

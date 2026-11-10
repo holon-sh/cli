@@ -1,0 +1,1 @@
+{"name":"holon-sh","version":"0.0.1","exports":{"./runtime":{"types":"./runtime.d.ts"}},"holon":{"contractVersion":2}}

@@ -82,6 +82,17 @@ func runtimePackage(t *testing.T, app, pkg string) string {
 	return dir
 }
 
+func installRuntime(t *testing.T, app, fixture string) {
+	t.Helper()
+	dir := filepath.Join(app, "node_modules", "holon-sh")
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.CopyFS(dir, os.DirFS(fixture)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // linkTypeScript makes the tooling's compiler available to app, whose node_modules must exist.
 func linkTypeScript(t *testing.T, app string) {
 	t.Helper()

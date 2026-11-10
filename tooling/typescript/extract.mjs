@@ -43,7 +43,7 @@ async function catalog(handler) {
     // Request the complete catalog without listTools' client-specific filtering.
     const tools = capabilities.tools ? await all(client, "tools/list", "tools") : [];
     const resources = capabilities.resources ? await all(client, "resources/list", "resources") : [];
-    // MCP Events, the draft extension of the Triggers & Events Working Group, as holon-sh/events declares it.
+    // MCP Events, the draft extension of the Triggers & Events Working Group, as holon-sh/ext/events declares it.
     const events = capabilities.extensions?.[eventsExtension] ? await listEvents(client) : [];
     return {
       serverInfo: client.getServerVersion(),

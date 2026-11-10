@@ -2,6 +2,7 @@ package typegen
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -88,8 +89,22 @@ func toolClientParameters(root, pkg string) int {
 	if dir == "" {
 		return 0
 	}
+	declarations := dir
+	var manifest struct {
+		Exports map[string]json.RawMessage `json:"exports"`
+	}
+	if readTypeJSON(filepath.Join(dir, "package.json"), &manifest) == nil {
+		var types string
+		var conditions struct{ Types string }
+		if json.Unmarshal(manifest.Exports["./runtime"], &types) != nil && json.Unmarshal(manifest.Exports["./runtime"], &conditions) == nil {
+			types = conditions.Types
+		}
+		if found := filepath.Dir(filepath.Join(dir, filepath.FromSlash(types))); types != "" && lexicallyInside(found, dir) {
+			declarations = found
+		}
+	}
 	for _, name := range []string{"protocol.d.ts", "runtime.d.ts"} {
-		data, err := os.ReadFile(filepath.Join(dir, name))
+		data, err := os.ReadFile(filepath.Join(declarations, name))
 		if err != nil {
 			continue
 		}
