@@ -281,21 +281,26 @@ async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
             ]
             if not (cursor := listed.next_cursor):
                 break
-        while capabilities and EVENTS_EXTENSION in (capabilities.extensions or {}):
+        # An mcp that predates extensions has no such field.
+        extensions = getattr(capabilities, "extensions", None) or {}
+        while EVENTS_EXTENSION in extensions:
             # The SDK sends a method outside the specification as a generic request.
-            answered = await client.session.send_request(
-                types.Request[types.PaginatedRequestParams, str](
-                    method="events/list",
-                    params=types.PaginatedRequestParams(cursor=cursor),
-                ),
-                ListEventsResult,
-            )
-            # A type may leave either schema out: any arguments, and data of any shape.
+            try:
+                answered = await client.session.send_request(
+                    types.Request[types.PaginatedRequestParams, str](
+                        method="events/list",
+                        params=types.PaginatedRequestParams(cursor=cursor),
+                    ),
+                    ListEventsResult,
+                )
+            except Exception as error:
+                raise RuntimeError(f"listing its events failed: {error}") from error
+            # A type may leave either schema out, or give null: any arguments, and data of any shape.
             events += [
                 {
                     "name": event["name"],
-                    "inputSchema": event.get("inputSchema", {"type": "object"}),
-                    "payloadSchema": event.get("payloadSchema", {}),
+                    "inputSchema": absent(event.get("inputSchema"), {"type": "object"}),
+                    "payloadSchema": absent(event.get("payloadSchema"), {}),
                 }
                 for event in answered.events
             ]
@@ -307,6 +312,10 @@ async def catalog(server: MCPServer | Server[Any]) -> dict[str, Any]:
         "resources": sorted(resources, key=lambda resource: resource["uri"]),
         "events": sorted(events, key=lambda event: event["name"]),
     }
+
+
+def absent(schema: Any, default: dict[str, Any]) -> Any:
+    return default if schema is None else schema
 
 
 def contract(root: Path, entry: str, stdout: TextIO) -> int:

@@ -22,7 +22,6 @@ type contractResource struct {
 	Output Object
 }
 
-// contractEvent is one event type's subscription arguments and occurrence data.
 type contractEvent struct {
 	Input   Object
 	Payload Object
@@ -177,7 +176,6 @@ func decodeContract(value Value) (contract, error) {
 					return contract{}, err
 				}
 			}
-			// A subscription's arguments are an object, as a tool's are.
 			if event.Input["type"] != "object" {
 				return contract{}, fmt.Errorf("event %s: inputSchema must have type object", name)
 			}

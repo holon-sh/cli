@@ -40,8 +40,6 @@ func generatePythonPackage(request generateRequest, catalogs map[string]catalog)
 			renamed[binding] = methods
 		}
 	}
-	// A contract carries events, a Python server's too, but the Python runtime cannot subscribe yet,
-	// so its clients carry none.
 	contracts := make(map[string]contract, len(request.contracts))
 	for alias, source := range request.contracts {
 		contracts[alias] = contract{Tools: source.Tools, Resources: source.Resources}

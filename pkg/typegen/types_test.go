@@ -123,16 +123,23 @@ func mustReject(t *testing.T, app string, diagnostics ...string) {
 }
 
 // Generated clients take the runtime's binding and option types: with the published holon-sh
-// declarations, a session hook and a plain fetch bind, and a binding's fields are still checked.
+// declarations, a session hook and a plain fetch bind, and a binding's fields are still checked. A
+// dependency's events, which that runtime cannot type, leave the rest of its client typed.
 func TestGeneratedClientsBindAsTheRuntimeDoes(t *testing.T) {
 	t.Parallel()
 	app := typeScriptApp(t)
 	for _, name := range []string{"runtime.d.ts", "protocol.d.ts"} {
 		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh", name))
 	}
-	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+	orders := ordersMetadata()
+	orders.Schema.Events = []mcpcontract.Event{{Name: "order.shipped", Input: json.RawMessage(`{"type":"object"}`), Payload: json.RawMessage(`{}`)}}
+	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, orders)}}}
+	var notice bytes.Buffer
+	if err := Generate(t.Context(), []Consumer{c}, Options{Stderr: &notice}); err != nil {
 		t.Fatal(err)
+	}
+	if strings.Count(notice.String(), "events stay untyped") != 1 {
+		t.Errorf("notice = %q", notice.String())
 	}
 	put(t, app, "src/index.ts", `import { createApps, type EndpointBinding } from "#holon-sh";
 const binding: EndpointBinding = { endpoint: "mcp:", fetch };
@@ -148,12 +155,11 @@ export const total: Promise<number> = apps.orders.tools.lookup({ id: "1" }).then
 	}
 	put(t, app, "src/index.ts", `import { createApps } from "#holon-sh";
 export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch } });
+export const mistyped = createApps({ orders: { endpoint: "mcp:" } }).orders.tools.lookup({ id: 1 });
 `)
-	mustReject(t, app, "'fetsh' does not exist")
+	mustReject(t, app, "'fetsh' does not exist", "'number' is not assignable to type 'string'")
 }
 
-// editsSchema is a group of edits, each one of a union told apart by its op, as Pydantic writes a
-// discriminated union whose literal has a default.
 const editsSchema = `{"type":"object","required":["edits"],"properties":{"edits":{"type":"array","items":{
 	"oneOf":[{"$ref":"#/$defs/Updated"},{"$ref":"#/$defs/Removed"}],
 	"discriminator":{"propertyName":"op","mapping":{"cell.updated":"#/$defs/Updated","cell.removed":"#/$defs/Removed"}}}}},
@@ -162,12 +168,13 @@ const editsSchema = `{"type":"object","required":["edits"],"properties":{"edits"
 	"Removed":{"type":"object","required":["id"],"properties":{"op":{"const":"cell.removed","default":"cell.removed","type":"string"},"id":{"type":"string"}}}}}`
 
 // An app's events are subscribed to by name, with their arguments checked and their data typed, as a
-// tool's input and output are. A union narrows on the field that tells its members apart.
+// tool's input and output are. A union narrows on the field that tells its members apart, here in a
+// list and in the shape Pydantic writes for a discriminated union whose literal has a default.
 func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 	t.Parallel()
 	app := typeScriptApp(t)
 	for _, name := range []string{"runtime.d.ts", "protocol.d.ts"} {
-		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh", name))
+		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh-events", name))
 	}
 	orders := ordersMetadata()
 	orders.Schema.Events = []mcpcontract.Event{{Name: "cells.edited",

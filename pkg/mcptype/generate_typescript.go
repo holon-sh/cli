@@ -35,21 +35,21 @@ func resourceContracts(contracts map[string]contract) map[string]contract {
 	return result
 }
 
-// eventContracts compiles events as tools named by event, so an event's arguments are its input and
-// its data its output.
-func eventContracts(contracts map[string]contract) (map[string]contract, bool) {
-	result, declared := make(map[string]contract, len(contracts)), false
+func eventContracts(contracts map[string]contract) map[string]contract {
+	result := map[string]contract{}
 	for alias, source := range contracts {
+		if len(source.Events) == 0 {
+			continue
+		}
 		tools := make(map[string]contractTool, len(source.Events))
 		for name, event := range source.Events {
 			tools[name] = contractTool{Input: event.Input, Output: event.Payload}
 		}
-		result[alias], declared = contract{Tools: tools}, declared || len(tools) > 0
+		result[alias] = contract{Tools: tools}
 	}
-	return result, declared
+	return result
 }
 
-// eventTypes maps each app's event names to what the runtime's ToolClient takes for them.
 const eventTypes = "export type Events = { readonly [A in keyof EventArguments]: { [K in keyof EventArguments[A]]: { arguments: EventArguments[A][K]; data: K extends keyof EventData[A] ? EventData[A][K] : unknown } } };\n"
 
 // runtimes are the modules each TypeScript target's clients import their runtime and its declarations from.
@@ -64,16 +64,14 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		return nil, err
 	}
 	resources := generateTypeScript(catalogs, names, [4]string{1: "Resources"})
-	// Clients of apps without events are written as before, so they still check against runtimes
-	// whose ToolClient takes no events.
 	events, client := "", "ToolClient<Inputs[A], Outputs[A], Resources[A]>"
-	if contracts, declared := eventContracts(request.contracts); declared {
+	if contracts := eventContracts(request.contracts); request.TypedEvents && len(contracts) > 0 {
 		catalogs, err := compileCatalogs(ctx, contracts)
 		if err != nil {
 			return nil, err
 		}
 		events = generateTypeScript(catalogs, names, [4]string{"EventArguments", "EventData"}) + eventTypes
-		client = "ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]>"
+		client = "A extends keyof Events ? ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> : " + client
 	}
 	runtime := runtimes[request.Target]
 	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: %s };\n", runtime, runtime, tools, resources, events, client)

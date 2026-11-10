@@ -44,7 +44,7 @@ async function catalog(handler) {
     const tools = capabilities.tools ? await all(client, "tools/list", "tools") : [];
     const resources = capabilities.resources ? await all(client, "resources/list", "resources") : [];
     // MCP Events, the draft extension of the Triggers & Events Working Group, as holon-sh/events declares it.
-    const events = capabilities.extensions?.[eventsExtension] ? await all(client, "events/list", "events", anything) : [];
+    const events = capabilities.extensions?.[eventsExtension] ? await listEvents(client) : [];
     return {
       serverInfo: client.getServerVersion(),
       tools: tools.map(({ name, inputSchema, outputSchema }) => ({ name, inputSchema, ...(outputSchema && { outputSchema }) })).sort((a, b) => a.name.localeCompare(b.name)),
@@ -56,6 +56,14 @@ async function catalog(handler) {
   } finally {
     await client.close();
     await handler.close?.();
+  }
+}
+
+async function listEvents(client) {
+  try {
+    return await all(client, "events/list", "events", anything);
+  } catch (error) {
+    throw new Error(`listing its events failed: ${error?.message ?? error}`, { cause: error });
   }
 }
 

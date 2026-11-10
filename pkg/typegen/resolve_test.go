@@ -30,8 +30,6 @@ func liveServer(t *testing.T, name string) *httptest.Server {
 	return versionedServer(t, name, "99", true)
 }
 
-// versionedServer serves a tool and two resources. With events it also serves MCP Events: events/list
-// in two pages, the second type without schemas.
 func versionedServer(t *testing.T, name, version string, events bool) *httptest.Server {
 	t.Helper()
 	var options *mcp.ServerOptions
@@ -238,7 +236,7 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 		t.Fatalf("resource schemas: %v", outputs)
 	}
 	events := mustJSON(t, metadata.Schema.Events)
-	if want := `[{"name":"order.shipped","inputSchema":{"type":"object","properties":{"id":{"type":"string"}}},"payloadSchema":{"type":"string"}},{"name":"order.opened","inputSchema":{"type":"object"},"payloadSchema":{}}]`; string(events) != want || bare.Schema.Events != nil {
+	if want := `[{"name":"order.shipped","inputSchema":{"properties":{"id":{"type":"string"}},"type":"object"},"payloadSchema":{"type":"string"}},{"name":"order.opened","inputSchema":{"type":"object"},"payloadSchema":{}}]`; string(events) != want || bare.Schema.Events != nil {
 		t.Fatalf("events = %s, a server without them %v", events, bare.Schema.Events)
 	}
 	// As a consumer source the alias derives from that name.

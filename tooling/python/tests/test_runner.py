@@ -46,14 +46,15 @@ SERVER = """
     from src.models import Order
 
     # MCP Events served without an SDK of its own: events/list in two pages, the second type
-    # without schemas.
+    # with a null schema and none at all.
     class Events(Extension):
         identifier = "io.modelcontextprotocol/events"
 
         def methods(self):
             async def listed(context, params):
                 if params.cursor:
-                    return {"events": [{"name": "order.opened", "delivery": ["poll"]}]}
+                    opened = {"name": "order.opened", "delivery": ["poll"], "inputSchema": None}
+                    return {"events": [opened]}
                 shipped = {"name": "order.shipped", "delivery": ["poll"], "inputSchema": {"type": "object"}, "payloadSchema": Order.model_json_schema()}
                 return {"events": [shipped], "nextCursor": "2"}
 

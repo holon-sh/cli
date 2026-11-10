@@ -245,8 +245,6 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 	return NewDocument(ctx, &mcpcontract.Metadata{Identity: *identity, Schema: contract})
 }
 
-// eventsExtension is how a server declares MCP Events, the draft extension of the Triggers & Events
-// Working Group, whose events/list the MCP SDK does not know.
 const eventsExtension = "io.modelcontextprotocol/events"
 
 type listEventsParams struct {
@@ -261,29 +259,33 @@ type listEventsResult struct {
 }
 
 type listedEvent struct {
-	Name    string          `json:"name"`
-	Input   json.RawMessage `json:"inputSchema,omitempty"`
-	Payload json.RawMessage `json:"payloadSchema,omitempty"`
+	Name    string `json:"name"`
+	Input   any    `json:"inputSchema"`
+	Payload any    `json:"payloadSchema"`
 }
 
-// listEvents asks the server for its event types.
 func listEvents(ctx context.Context, session *mcp.ClientSession) ([]mcpcontract.Event, error) {
 	var events []mcpcontract.Event
 	params := &listEventsParams{}
 	for {
 		page, err := mcp.CallCustomMethod[*listEventsParams, *listEventsResult](ctx, session, "events/list", params)
 		if err != nil {
-			return nil, fmt.Errorf("events/list: %w", err)
+			return nil, fmt.Errorf("listing its events: %w", err)
 		}
-		for _, event := range page.Events {
-			// A server may leave either schema out: any arguments, and data of any shape.
-			if event.Input == nil {
-				event.Input = json.RawMessage(`{"type":"object"}`)
+		for _, listed := range page.Events {
+			event := mcpcontract.Event{Name: listed.Name, Input: json.RawMessage(`{"type":"object"}`), Payload: json.RawMessage(`{}`)}
+			for _, schema := range []struct {
+				value  any
+				target *json.RawMessage
+			}{{listed.Input, &event.Input}, {listed.Payload, &event.Payload}} {
+				if schema.value == nil {
+					continue
+				}
+				if *schema.target, err = json.Marshal(schema.value); err != nil {
+					return nil, err
+				}
 			}
-			if event.Payload == nil {
-				event.Payload = json.RawMessage(`{}`)
-			}
-			events = append(events, mcpcontract.Event(event))
+			events = append(events, event)
 		}
 		if page.NextCursor == "" {
 			return events, nil

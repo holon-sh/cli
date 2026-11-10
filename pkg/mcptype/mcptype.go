@@ -79,6 +79,9 @@ type GenerateRequest struct {
 	// Banner is the first-line comment on generated sources.
 	Banner   string `json:"banner,omitempty"`
 	GoModule string `json:"go_module,omitempty"`
+	// TypedEvents types the events of each app that has them in TypeScript clients, for a runtime
+	// whose ToolClient takes them as its fourth type parameter. Without it, events stay untyped.
+	TypedEvents bool `json:"typed_events,omitempty"`
 }
 
 // marshal decodes a private JSON tree, preserving schema number semantics.

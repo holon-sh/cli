@@ -93,7 +93,8 @@ type Prepared struct {
 	resolved  map[string]*mcpcontract.Metadata
 	documents map[string]*Document
 	// fetched holds each registry and endpoint source's resolution, keyed by source.
-	fetched map[string]*fetch
+	fetched       map[string]*fetch
+	untypedEvents bool
 }
 
 type fetch struct {
@@ -346,9 +347,13 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 		}
 	}
 	for _, target := range c.Targets {
-		files, err := generateTypes(ctx, target, request, c.metadata, alias)
+		files, untyped, err := generateTypes(ctx, target, request, c.metadata, alias, c.Dir)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
+		}
+		if untyped && !p.untypedEvents {
+			p.untypedEvents = true
+			fmt.Fprintf(p.options.Stderr, "%s: typing MCP Events needs a newer %s; events stay untyped\n", c.Name, NodePackages[target])
 		}
 		c.packages[target] = files
 	}
@@ -363,7 +368,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 
 // generateTypes generates one target's clients. Browser clients call the own server under its alias
 // or derived name; an alias also makes it a client in every other slot.
-func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, alias string) (map[string][]byte, error) {
+func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, alias, dir string) (files map[string][]byte, untyped bool, err error) {
 	switch target {
 	case TargetTS:
 		request.Target = "node"
@@ -377,13 +382,18 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 	}
 	if own.Schema != nil && alias != "" {
 		if _, exists := request.Contracts[alias]; exists {
-			return nil, fmt.Errorf("own client %s conflicts with a dependency alias", alias)
+			return nil, false, fmt.Errorf("own client %s conflicts with a dependency alias", alias)
 		}
 		request.Own = alias
 		request.Requires, request.Contracts = maps.Clone(request.Requires), maps.Clone(request.Contracts)
 		request.Requires[alias], request.Contracts[alias] = own.Identity, own.Schema
 	}
-	return mcptype.Generate(ctx, request)
+	if pkg, ok := NodePackages[target]; ok && slices.ContainsFunc(slices.Collect(maps.Values(request.Contracts)), func(c *mcpcontract.Contract) bool { return c != nil && len(c.Events) > 0 }) {
+		request.TypedEvents = runtimeTypesEvents(dir, pkg)
+		untyped = !request.TypedEvents
+	}
+	files, err = mcptype.Generate(ctx, request)
+	return files, untyped, err
 }
 
 // currentSources fails when any source directory changed since preparation.

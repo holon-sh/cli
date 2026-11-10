@@ -7,6 +7,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -55,6 +56,59 @@ func installedRuntime(root, pkg string) error {
 		return nil
 	}
 	return fmt.Errorf("%s is not installed for %s; install it before generating types", pkg, root)
+}
+
+func nodePackage(root, pkg string) string {
+	for dir := range ancestors(root) {
+		candidate := filepath.Join(dir, "node_modules", pkg)
+		if isFile(filepath.Join(candidate, "package.json")) {
+			if real, err := filepath.EvalSymlinks(candidate); err == nil {
+				return real
+			}
+			return candidate
+		}
+	}
+	return ""
+}
+
+var toolClientDeclaration = regexp.MustCompile(`(?:interface|type)\s+ToolClient\s*<`)
+
+func runtimeTypesEvents(root, pkg string) bool {
+	dir := nodePackage(root, pkg)
+	if dir != "" && pkg != "holon-sh" {
+		dir = nodePackage(dir, "holon-sh")
+	}
+	if dir == "" {
+		return false
+	}
+	for _, name := range []string{"protocol.d.ts", "runtime.d.ts"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		if at := toolClientDeclaration.FindIndex(data); at != nil {
+			return typeParameters(data[at[1]:]) >= 4
+		}
+	}
+	return false
+}
+
+func typeParameters(declaration []byte) int {
+	count, depth := 1, 0
+	for i, c := range declaration {
+		switch {
+		case c == '<' || c == '{' || c == '(' || c == '[':
+			depth++
+		case c == '>' && i > 0 && declaration[i-1] == '=':
+		case c == '>' && depth == 0:
+			return count
+		case c == '>' || c == '}' || c == ')' || c == ']':
+			depth--
+		case c == ',' && depth == 0:
+			count++
+		}
+	}
+	return 0
 }
 
 // SlotDirectory is the directory a target's generated clients occupy in the project at dir.
