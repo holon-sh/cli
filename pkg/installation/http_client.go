@@ -65,16 +65,12 @@ type apiClient struct {
 	timeout         time.Duration
 }
 
-func newAPIClient(origin string, transport *http.Client, timeout time.Duration) (*apiClient, error) {
-	base, err := protocol.CanonicalOrigin(origin)
-	if err != nil {
-		return nil, err
-	}
+func newAPIClient(origin string, transport *http.Client, timeout time.Duration) *apiClient {
 	client := *cmp.Or(transport, http.DefaultClient)
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	return &apiClient{baseURL: base, client: &client, timeout: cmp.Or(timeout, defaultHTTPTimeout)}, nil
+	return &apiClient{baseURL: origin, client: &client, timeout: cmp.Or(timeout, defaultHTTPTimeout)}
 }
 
 func (c *apiClient) Do(ctx context.Context, method, path string, request apiRequest, result any) error {

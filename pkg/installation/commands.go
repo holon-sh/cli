@@ -28,7 +28,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 			Use:   "login [ORIGIN]",
 			Short: "Sign in and select a Holon installation",
 			Example: `  # Sign in and select an installation
-  holon login https://acme.cloud.holon-labs.dev
+  holon login acme.cloud.holon-labs.dev
 
   # Sign in again to the selected installation
   holon login`,
@@ -63,7 +63,7 @@ func newCommands(config commandConfig) []*cobra.Command {
   holon logout
 
   # Sign out of another installation
-  holon logout --origin https://acme.cloud.holon-labs.dev`,
+  holon logout --origin acme.cloud.holon-labs.dev`,
 			Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				manager, err := newLocalAuthManager(config.Auth)
@@ -75,8 +75,8 @@ func newCommands(config commandConfig) []*cobra.Command {
 		},
 		newDevCommand(&config),
 		newDeployCommand(&config),
-		newConfigurationCommand("secret", &config),
-		newConfigurationCommand("config", &config),
+		newSecretCommand(&config),
+		newConfigCommand(&config),
 		newAppCommand(&config),
 		newAccessCommand(&config),
 		newEgressCommand(&config),
@@ -86,10 +86,11 @@ func newCommands(config commandConfig) []*cobra.Command {
 		cmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 			config.Auth.Output = cmd.ErrOrStderr()
 			_, config.Auth.Interactive = terminalFile(config.Auth.Output)
-			if cmd.Flags().Changed("origin") && config.Auth.Origin == "" {
-				return errors.New("public origin is invalid")
+			if !cmd.Flags().Changed("origin") {
+				return nil
 			}
-			return nil
+			_, err := canonicalOrigin(config.Auth.Origin)
+			return err
 		}
 	}
 	return installationCommands
