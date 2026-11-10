@@ -40,9 +40,8 @@ type HolonMetadata struct {
 	Egress wire.Egress `description:"Outbound TCP destinations: DNS names or IP addresses; {NAME} is a non-secret input." json:"egress,omitzero" nullable:"false"`
 }
 
-// Requirement is one sh.holon.requires entry. In a project the dependency is always the project's app
-// of that name. Outside one, a published version or a URL names the server to read; an empty entry
-// leaves it to <ALIAS>_MCP_URL.
+// Requirement is one sh.holon.requires entry: empty, a published name and version, or a URL. In a
+// project the dependency is the project's app of that name whatever the entry says.
 type Requirement struct {
 	wire.RegistryRef
 

@@ -60,8 +60,7 @@ func AppConsumer(name, dir string) (*Consumer, error) {
 }
 
 // DeclaredSources returns one source per sh.holon.requires entry, sorted by alias: its registry
-// version or URL. An empty entry has its alias alone, which a project replaces with its app of that
-// name.
+// version, its URL, or for an empty entry the alias alone.
 func DeclaredSources(dir string) ([]Source, error) {
 	d, err := readDescriptor(dir)
 	if err != nil || d == nil {

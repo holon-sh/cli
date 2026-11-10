@@ -46,33 +46,26 @@ func (manifestApp) Description() string {
 	return "Declare exactly one source: path, image, registry, or remote."
 }
 
-// projectSchema is ProjectJSONSchema compiled, with the compiler that resolves its locations.
-var projectSchema = sync.OnceValues(func() (*validator.Compiler, error) {
+var projectSchema = sync.OnceValues(func() (*validator.Compiler, *validator.Schema) {
 	generated, err := ProjectJSONSchema()
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 	document, err := validator.UnmarshalJSON(bytes.NewReader(generated))
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 	compiler := validator.NewCompiler()
-	return compiler, compiler.AddResource(projectSchemaID, document)
+	if err := compiler.AddResource(projectSchemaID, document); err != nil {
+		panic(err)
+	}
+	return compiler, compiler.MustCompile(projectSchemaID)
 })
 
 const projectSchemaID = "https://holon.sh/schema/v1/project.schema.json"
 
-// validateProject checks a holon.yaml, converted to JSON, against ProjectJSONSchema and describes each
-// problem by its field path, such as apps.0.registry.
 func validateProject(data []byte) []string {
-	compiler, err := projectSchema()
-	if err != nil {
-		return []string{err.Error()}
-	}
-	schema, err := compiler.Compile(projectSchemaID)
-	if err != nil {
-		return []string{err.Error()}
-	}
+	compiler, schema := projectSchema()
 	instance, err := validator.UnmarshalJSON(bytes.NewReader(data))
 	if err == nil {
 		err = schema.Validate(instance)

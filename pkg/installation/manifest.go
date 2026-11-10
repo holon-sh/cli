@@ -108,8 +108,6 @@ func resolveAppMetadata(app *manifestApp, pkg mcpregistry.Package) error {
 	return nil
 }
 
-// parseManifest reads a holon.yaml, naming it in errors by its path from the working directory when it
-// is inside it.
 func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 	sourceName = scaffold.Relative(sourceName)
 	document, err := yaml.YAMLToJSONStrict(data)

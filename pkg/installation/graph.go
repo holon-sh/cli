@@ -78,8 +78,6 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 	return nodes, nil
 }
 
-// undeclaredDependency explains a dependency the project lacks, with the holon.yaml entry for the
-// server the requirer's server.json names.
 func undeclaredDependency(requirer *manifestApp, name string) error {
 	missing := fmt.Errorf("%s requires %s, which is not an app in this project; declare it in holon.yaml", requirer.Name, name)
 	pin := requirer.resolved.descriptor.Requires[name]
@@ -168,8 +166,6 @@ func resolveApp(app *manifestApp) error {
 	return resolveAppMetadata(app, pkg)
 }
 
-// remoteApp is a remote endpoint with headers that are literals or secret references, each secret a
-// required input of the same name.
 func remoteApp(url string, headers map[string]mcpregistry.Value) (*protocol.Remote, map[string]protocol.Input, error) {
 	remote := &protocol.Remote{URL: url, Headers: map[string]string{}}
 	env := map[string]protocol.Input{}

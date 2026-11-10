@@ -24,9 +24,6 @@ type RunConfig struct {
 // SelectPackage returns the index of the one OCI, npm or PyPI package in d that matches selection,
 // whose empty fields match any package.
 func SelectPackage(d *Descriptor, selection protocol.PackageSelection) (int, error) {
-	if selection.RegistryType != "" && !supportedRegistryType(selection.RegistryType) {
-		return -1, errors.New("registryType must be oci, npm or pypi")
-	}
 	index, count := -1, 0
 	for i, pkg := range d.Packages {
 		if supportedRegistryType(pkg.RegistryType) && (selection.RegistryType == "" || selection.RegistryType == pkg.RegistryType) &&
@@ -37,12 +34,11 @@ func SelectPackage(d *Descriptor, selection protocol.PackageSelection) (int, err
 	}
 	var remotes []string
 	for _, remote := range d.Remotes {
-		if _, err := protocol.RemoteURL(remote.URL); err == nil && remote.Type == "streamable-http" {
+		if _, err := protocol.RemoteURL(remote.URL); err == nil && remote.Type == "streamable-http" && !slices.Contains(remotes, remote.URL) {
 			remotes = append(remotes, remote.URL)
 		}
 	}
-	slices.Sort(remotes)
-	switch remotes = slices.Compact(remotes); {
+	switch {
 	case count > 1:
 		return -1, errors.New("ambiguous package; select one with registry.package and its published identifier")
 	case count == 0 && len(remotes) != 0:
