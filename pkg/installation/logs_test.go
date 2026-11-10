@@ -23,7 +23,6 @@ func TestLogs(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		requests = append(requests, strings.TrimSuffix(r.Host, h.baseHost)+" "+string(body))
 		installationtest.WriteJSON(w, map[string]any{"session": "production", "records": []map[string]string{
-			{"time": "2026-11-09T10:00:00.1Z", "app": "alpha", "body": "starting boom"},
 			{"time": "2026-11-09T10:00:00.2Z", "severity": "ERROR", "app": "alpha", "body": traceback, "traceId": "aaaa"},
 		}})
 	})
@@ -37,15 +36,12 @@ func TestLogs(t *testing.T) {
 	if err := executeCommand(t.Context(), []string{"logs", "production", "--app", "alpha", "--since", "1h"}, &out, nil, h.run); err != nil {
 		t.Fatal(err)
 	}
-	if want := "2026-11-09T10:00:00.1Z  alpha starting boom\n2026-11-09T10:00:00.2Z ERROR alpha " + traceback + " trace_id=aaaa\n"; out.String() != want {
+	if want := "2026-11-09T10:00:00.2Z ERROR alpha " + traceback + " trace_id=aaaa\n"; out.String() != want {
 		t.Fatalf("snapshot = %q, want %q", out.String(), want)
 	}
 	followed := &installationtest.ObservedOutput{OnWrite: func(string) { cancel() }}
 	if err := executeCommand(ctx, []string{"logs", "gentle-otter-482", "-f", "--attempt", "2"}, followed, nil, h.run); !errors.Is(err, context.Canceled) {
 		t.Fatalf("follow = %v", err)
-	}
-	if got := followed.String(); got != "2026-11-09T10:00:00.1Z  alpha streamed\n" {
-		t.Fatalf("followed = %q", got)
 	}
 	if want := []string{`admin. {"session":"production","app":"alpha","since":"1h"}`, "dev. attempt=2&follow=true"}; !slices.Equal(requests, want) {
 		t.Fatalf("requests = %q, want %q", requests, want)

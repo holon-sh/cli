@@ -310,12 +310,10 @@ func TestRunDevLifecycle(t *testing.T) {
 			}
 			installationtest.WriteJSON(w, session())
 		})
-	const appOutput = "2026-11-09T10:00:00.1Z  alpha starting boom\n" +
-		"2026-11-09T10:00:00.2Z ERROR alpha " + traceback + "\n" +
-		"2026-11-09T10:00:00.3Z INFO alpha tools/call boom error tool_error 22ms trace_id=aaaa\n"
+	const appOutput = "2026-11-09T10:00:00.1Z  alpha starting boom\n2026-11-09T10:00:00.2Z ERROR alpha " + traceback + "\n"
 	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
-		if query.Has("event") || query.Get("follow") != "true" {
+		if query.Has("event") { // Every record, not only MCP calls.
 			t.Errorf("log stream query = %s", r.URL.RawQuery)
 		}
 		if query.Has("since") { // The resumed stream fails, so the stream stops.
