@@ -3,6 +3,7 @@ package typegen
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -90,12 +91,14 @@ func TestEndpointToken(t *testing.T) {
 	server := tokenServer(t, "good-value")
 	for _, test := range []struct {
 		name, alias, env, signedIn, want string
+		signInErr                        error
 	}{
-		{"refused", "my-docs", "MY_DOCS_MCP_TOKEN=bad-value", "good-value", "HTTP 403; the token came from MY_DOCS_MCP_TOKEN"},
-		{"missing", "docs", "OTHER_MCP_TOKEN=good-value", "", "HTTP 401; if it needs a token, set DOCS_MCP_TOKEN"},
-		{"no alias to name it", "", "DOCS_MCP_TOKEN=good-value", "", "HTTP 401; if it needs a token, write ALIAS=URL and set ALIAS_MCP_TOKEN"},
-		{"signed in", "", "", "good-value", ""},
-		{"signed in and refused", "", "", "bad-value", "HTTP 403; the token came from signing in"},
+		{"refused", "my-docs", "MY_DOCS_MCP_TOKEN=bad-value", "good-value", "HTTP 403; the token came from MY_DOCS_MCP_TOKEN", nil},
+		{"missing", "docs", "OTHER_MCP_TOKEN=good-value", "", "HTTP 401; if it needs a token, set DOCS_MCP_TOKEN", nil},
+		{"no alias to name it", "", "DOCS_MCP_TOKEN=good-value", "", "HTTP 401; if it needs a token, write ALIAS=URL and set ALIAS_MCP_TOKEN", nil},
+		{"signed in", "", "", "good-value", "", nil},
+		{"signed in and refused", "", "", "bad-value", "HTTP 403; the token came from signing in", nil},
+		{"signed out", "", "", "", "not signed in", errors.New("not signed in")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			signedIn := false
@@ -104,7 +107,7 @@ func TestEndpointToken(t *testing.T) {
 					t.Errorf("signed in again, or to %s rather than the endpoint's origin %s", origin, server.URL)
 				}
 				signedIn = true
-				return test.signedIn, nil
+				return test.signedIn, test.signInErr
 			}
 			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Endpoint: server.URL}, Options{Env: []string{test.env}, SignIn: signIn})
 			if test.want != "" {

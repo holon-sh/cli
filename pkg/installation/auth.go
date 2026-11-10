@@ -502,11 +502,7 @@ func (m *Client) controlToken(ctx context.Context) (string, error) {
 	if m.info.OAuth == nil {
 		return "", nil
 	}
-	return m.accessToken(ctx, m.info.OAuth.AdminAudience)
-}
-
-func (m *Client) accessToken(ctx context.Context, audience string) (string, error) {
-	token, err := m.resourceToken(ctx, audience)
+	token, err := m.resourceToken(ctx, m.info.OAuth.AdminAudience)
 	if err != nil {
 		return "", err
 	}
@@ -590,8 +586,8 @@ func (config ClientConfig) AppToken(ctx context.Context, origin string) (string,
 		return "", nil
 	}
 	manager, err := NewClient(ctx, config)
-	if err != nil || manager.info.OAuth == nil {
+	if err != nil {
 		return "", err
 	}
-	return manager.accessToken(ctx, origin)
+	return manager.controlToken(ctx)
 }

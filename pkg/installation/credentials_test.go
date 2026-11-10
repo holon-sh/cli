@@ -1,7 +1,6 @@
 package installation
 
 import (
-	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/oauth2"
 
@@ -75,28 +75,21 @@ func TestSignedOutCommandFailsWithoutSigningIn(t *testing.T) {
 	}
 }
 
-func TestAppTokenSignsInOnlyToTheInstallationsApps(t *testing.T) {
+func TestAppTokenIsTheInstallationSignIn(t *testing.T) {
 	t.Parallel()
-	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		installationtest.WriteJSON(w, map[string]any{
-			"access_token": "access-" + r.FormValue("resource"), "refresh_token": "refresh", "token_type": "Bearer", "expires_in": 3600,
-		})
-	})
-	var output bytes.Buffer
-	config := ClientConfig{Origin: server.URL, ConfigDir: t.TempDir(), HTTPClient: server.Client(), Output: &output, Interactive: true}
-	if token, err := config.AppToken(t.Context(), "https://example.com"); token != "" || err != nil {
-		t.Fatalf("another origin: token=%q error=%v", token, err)
-	}
+	server := newAuthTestServer(t, func(http.ResponseWriter, *http.Request) { t.Error("an app token signed in") })
+	dir := t.TempDir()
+	config := ClientConfig{Origin: server.URL, ConfigDir: dir, HTTPClient: server.Client()}
 	session, err := protocol.SessionAudience(server.URL, protocol.ModeDevelopment, "calm-fox-42")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		if token, err := config.AppToken(t.Context(), session); token != "access-"+session || err != nil {
-			t.Fatalf("session origin: token=%q error=%v", token, err)
+	seedAdminCredentials(t, newManager(t, server, dir), oauth2.Token{
+		AccessToken: "control", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour),
+	})
+	for origin, want := range map[string]string{"https://example.com": "", server.URL: "control", session: "control"} {
+		if token, err := config.AppToken(t.Context(), origin); token != want || err != nil {
+			t.Fatalf("%s: token=%q error=%v, want %q", origin, token, err, want)
 		}
-	}
-	if prompts := strings.Count(output.String(), "Code: "); prompts != 2 {
-		t.Fatalf("signed in %d times, want once for the installation and once for the session:\n%s", prompts, &output)
 	}
 }

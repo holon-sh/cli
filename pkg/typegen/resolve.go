@@ -100,7 +100,7 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	from := t.variable
 	if token == "" && t.signIn != nil {
 		if token, err = t.signIn(request.Context(), t.origin); err != nil {
-			return nil, err
+			return nil, t.refuse(err)
 		}
 		if token != "" {
 			from = "signing in"
@@ -125,11 +125,14 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	case t.variable != "":
 		hint = "if it needs a token, set " + t.variable
 	}
-	refusal = fmt.Errorf("server refused the request with HTTP %d; %s", response.StatusCode, hint)
+	return nil, t.refuse(fmt.Errorf("server refused the request with HTTP %d; %s", response.StatusCode, hint))
+}
+
+func (t *endpointTransport) refuse(err error) error {
 	t.mu.Lock()
-	t.refusal = refusal
-	t.mu.Unlock()
-	return nil, refusal
+	defer t.mu.Unlock()
+	t.refusal = err
+	return err
 }
 
 func (t *endpointTransport) send(request *http.Request, token string) (*http.Response, error) {
