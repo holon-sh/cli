@@ -25,6 +25,7 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 		}
 	}
 	nodes := map[string]*manifestApp{}
+	requiredBy := map[string]string{}
 	for len(apps) > 0 {
 		name := apps[0]
 		apps = apps[1:]
@@ -32,7 +33,9 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 			continue
 		}
 		app, err := manifest.app(name)
-		if err != nil {
+		if err != nil && requiredBy[name] != "" {
+			return nil, fmt.Errorf("%s requires %s, which is not an app in this project; declare it in holon.yaml, as remote: {url: ...} for an MCP endpoint", requiredBy[name], name)
+		} else if err != nil {
 			return nil, err
 		}
 		access := cmp.Or(app.Access, manifest.access, manifest.deployed[name])
@@ -66,6 +69,9 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 			app.resolved.Requires = slices.Sorted(maps.Keys(app.resolved.descriptor.Requires))
 		}
 		nodes[app.Name] = &app
+		for _, dependency := range app.resolved.Requires {
+			requiredBy[dependency] = cmp.Or(requiredBy[dependency], app.Name)
+		}
 		apps = append(apps, app.resolved.Requires...)
 	}
 	return nodes, nil

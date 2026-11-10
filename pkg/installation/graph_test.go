@@ -105,6 +105,11 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 		map[string]any{"name": "BETA_MCP_URL", "isSecret": true},
 	}
 	writeDescriptor(t, filepath.Join(root, "alpha-secret/server.json"), secretAlpha)
+	orphanAlpha := descriptorDocument("alpha")
+	orphanAlpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
+		"sh.holon": map[string]any{"requires": map[string]any{"zeta": map[string]any{}}},
+	}}
+	writeDescriptor(t, filepath.Join(root, "alpha-orphan/server.json"), orphanAlpha)
 	writeDescriptor(t, filepath.Join(root, "invalid/server.json"), map[string]any{})
 	invalidMetadata := descriptorDocument("invalid")
 	invalidMetadata["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
@@ -128,6 +133,9 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata"), Access: policy}}
 		}},
 		{name: "dependency directory without access", want: "app beta needs an access rule", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
+		{name: "undeclared dependency", want: "alpha requires zeta, which is not an app in this project", change: func(p *manifestSpec) {
+			p.Apps[0].Path = filepath.Join(root, "alpha-orphan")
+		}},
 		{name: "dependency cycle", want: "cycle", change: func(p *manifestSpec) {
 			p.Apps[1].Path = filepath.Join(root, "beta-cycle")
 		}},
