@@ -11,7 +11,7 @@ import (
 )
 
 func TestAddApp(t *testing.T) {
-	entry := "  - name: orders\n    path: \"orders\"\n    access:\n      server: {}\n"
+	entry := "  - name: orders\n    path: \"orders\"\n    access:\n      server:\n        oauth: {}\n"
 	for _, test := range []struct {
 		name, before, after, path, err string
 	}{
