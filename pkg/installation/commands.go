@@ -63,11 +63,10 @@ func newCommands(config commandConfig) []*cobra.Command {
 							Profile struct{ Name, Email string }
 						}
 					}
-					if err := manager.Call(cmd.Context(), protocol.DevPlane, toolGetIdentity, struct{}{}, &me); err != nil {
-						return err
+					if manager.Call(cmd.Context(), protocol.DevPlane, toolGetIdentity, struct{}{}, &me) == nil {
+						message = "Signed in to " + manager.client.baseURL + " as " +
+							cmp.Or(me.Identity.Profile.Email, me.Identity.Profile.Name, me.Identity.Subject)
 					}
-					message = "Signed in to " + manager.client.baseURL + " as " +
-						cmp.Or(me.Identity.Profile.Email, me.Identity.Profile.Name, me.Identity.Subject)
 				}
 				_, err = fmt.Fprintln(cmd.ErrOrStderr(), message)
 				return err
