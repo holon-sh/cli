@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/holon-sh/cli/internal/clientutil"
+
 	"github.com/holon-sh/protocol"
 )
 
@@ -73,22 +75,37 @@ func newConfigurationCommand(kind string, config *commandConfig) *cobra.Command 
 }
 
 func newConfigurationActionCommand(kind, action string, config *commandConfig) *cobra.Command {
-	use, argumentCount := action+" VARIABLE", 1
-	if action == "set" && kind == "config" {
+	use, argumentCount, long, example := action+" VARIABLE", 1, "", configurationExample(kind, action)
+	secretInput := action == "set" && kind == "secret"
+	switch {
+	case action == "set" && kind == "config":
 		use, argumentCount = "set VARIABLE VALUE", 2
+	case secretInput:
+		long = "Set a secret value. On a terminal the value is read from a hidden prompt; otherwise it is read from standard input, with the trailing newline removed."
+		example += "\n\n  # Pipe the value in from a script or CI\n  printenv API_KEY | holon secret set API_KEY"
 	}
 	return withScope(&cobra.Command{
 		Use:     use,
 		Short:   action + " a " + kind + " value",
-		Example: configurationExample(kind, action),
+		Long:    long,
+		Example: example,
 		Args:    cobra.ExactArgs(argumentCount),
 	}, func(cmd *cobra.Command, args []string, scope configurationScope) error {
 		variable, value := args[0], ""
 		if !protocol.ValidEnvName(variable) {
 			return fmt.Errorf("invalid variable name %q", variable)
 		}
-		if argumentCount == 2 {
+		switch {
+		case argumentCount == 2:
 			value = args[1]
+		case secretInput:
+			var err error
+			if value, err = readSecret(cmd, variable); err != nil {
+				return err
+			}
+		}
+		if action == "set" && !protocol.ValidInputValue(value) {
+			return errors.New("value must be single-line text without NUL characters")
 		}
 		return runConfiguration(cmd, kind, action, scope, variable, value, config.Auth)
 	})
@@ -105,25 +122,6 @@ func runConfiguration(cmd *cobra.Command, kind, action string, scope configurati
 	var input any = variableInput
 	if action == "set" {
 		tool, verb = protocol.ToolSetValue, "Stored"
-		if kind == "secret" {
-			input, ok := terminalFile(cmd.InOrStdin())
-			if !ok {
-				return errors.New("secret input requires a terminal")
-			}
-			stderr := cmd.ErrOrStderr()
-			if _, err := fmt.Fprintf(stderr, "Paste %s: ", variable); err != nil {
-				return err
-			}
-			secret, err := term.ReadPassword(int(input.Fd()))
-			_, _ = fmt.Fprintln(stderr)
-			if err != nil {
-				return err
-			}
-			value = string(secret)
-		}
-		if !protocol.ValidInputValue(value) {
-			return errors.New("value must be single-line text without NUL characters")
-		}
 		input = protocol.SetValueRequest{VariableRequest: variableInput, Value: value}
 	}
 	if err := manager.Call(ctx, ControlPlane(string(scope)), tool, input, &struct{}{}); err != nil {
@@ -132,6 +130,32 @@ func runConfiguration(cmd *cobra.Command, kind, action string, scope configurati
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s in %s on %s. Deployments pick this up on their next deploy.\n",
 		verb, kind, variable, scope.label(), manager.client.baseURL)
 	return err
+}
+
+// readSecret prompts for the value without echo on a terminal and otherwise
+// reads it from standard input, so scripts can pipe it in.
+// readSecret prompts without echo on a terminal and otherwise reads standard
+// input, so scripts can pipe the value in.
+func readSecret(cmd *cobra.Command, variable string) (string, error) {
+	in := cmd.InOrStdin()
+	var secret []byte
+	var err error
+	if file, ok := terminalFile(in); ok {
+		stderr := cmd.ErrOrStderr()
+		_, _ = fmt.Fprintf(stderr, "Paste %s: ", variable)
+		secret, err = term.ReadPassword(int(file.Fd()))
+		_, _ = fmt.Fprintln(stderr)
+	} else {
+		secret, err = clientutil.ReadLimited(in, maxHTTPBody)
+	}
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimRight(string(secret), "\r\n")
+	if value == "" {
+		return "", errors.New("secret value is empty")
+	}
+	return value, nil
 }
 
 func configurationExample(kind, action string) string {
@@ -143,9 +167,6 @@ func configurationExample(kind, action string) string {
 		}
 	}
 	title := fmt.Sprintf("%s the %s %s for development", strings.ToUpper(action[:1])+action[1:], kind, variable)
-	if kind == "secret" && action == "set" {
-		title += "; the value is read from the terminal"
-	}
 	return fmt.Sprintf(`  # %s
   %s
 

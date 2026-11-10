@@ -46,6 +46,13 @@ func TestConfigurationCommands(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "API_KEY"}, strings.NewReader("piped-secret\n"), &out, nil, h.run); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "API_KEY"}, strings.NewReader("\n"), nil, nil, h.run); err == nil ||
+		!strings.Contains(err.Error(), "secret value is empty") {
+		t.Fatalf("empty secret: %v", err)
+	}
 	if err := executeCommand(t.Context(), []string{"config", "set", "REGION", "sensitive\nline"}, nil, nil, h.run); err == nil ||
 		strings.Contains(err.Error(), "sensitive") {
 		t.Fatalf("invalid value diagnostics: %v", err)
@@ -61,6 +68,7 @@ func TestConfigurationCommands(t *testing.T) {
 		`admin. set_egress {"app":"alpha","expectedRevision":"1","policy":{"allow":[]}}`,
 		`admin. get_egress {"app":"*"}`,
 		`admin. set_egress {"app":"*","expectedRevision":"1","policy":{}}`,
+		`dev. set_value {"kind":"secret","variable":"API_KEY","value":"piped-secret"}`,
 	}
 	if !slices.Equal(sent, want) {
 		t.Fatalf("sent = %q, want %q", sent, want)
