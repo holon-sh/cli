@@ -89,8 +89,7 @@ func TestSourceAppsReceiveSetValues(t *testing.T) {
 		installationtest.WriteJSON(w, protocol.ConfigValues{Values: []protocol.ConfigValue{
 			{Kind: "config", Variable: "REGION"}, {Kind: "secret", Variable: "API_KEY"}, {Kind: "config", Variable: "DECLARED"},
 			{Kind: "config", Variable: "PORT"}, {Kind: "config", Variable: "HOLON_OVERLAY_FILE"}, {Kind: "secret", Variable: "ORDERS_MCP_URL"},
-			{Kind: "config", Variable: "CLIENT_SECRET"},
-			{Session: "mine", Kind: "secret", Variable: "REGION"}, {Session: "other", Kind: "config", Variable: "OTHER"},
+			{Kind: "config", Variable: "CLIENT_SECRET"}, {Session: "resumed", Kind: "secret", Variable: "SESSION_KEY"},
 		}})
 	})
 	h.start(t, nil)
@@ -99,25 +98,22 @@ func TestSourceAppsReceiveSetValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := manifestSpec{Apps: []manifestApp{{Name: "app", Path: "app"}, {Name: "remote"}}}
-	for _, test := range []struct {
-		session, region string
-		secret          bool
-	}{{session: "", region: "config"}, {session: "mine", secret: true}, {session: protocol.ProductionName}} {
+	for _, name := range []string{"", protocol.ProductionName} {
 		apps := []protocol.App{
 			{Name: "app", Requires: []string{"orders"}, Env: map[string]protocol.Input{"DECLARED": {Value: new("fixed")}}},
 			{Name: "remote", OAuth: &protocol.OAuthClient{ClientID: "id", ClientSecret: "CLIENT_SECRET"}},
 		}
-		if err := declareSetValues(t.Context(), manager, test.session, manifest, apps); err != nil {
+		if err := declareSetValues(t.Context(), manager, name, manifest, apps); err != nil {
 			t.Fatal(err)
 		}
 		want := map[string]protocol.Input{
-			"REGION": {IsSecret: test.secret}, "API_KEY": {IsSecret: true}, "DECLARED": {Value: new("fixed")},
+			"REGION": {}, "API_KEY": {IsSecret: true}, "SESSION_KEY": {IsSecret: true}, "DECLARED": {Value: new("fixed")},
 		}
 		if diff := cmp.Diff(want, apps[0].Env); diff != "" || apps[1].Env != nil {
-			t.Fatalf("%q environment (-want +got):\n%s\nremote: %v", test.session, diff, apps[1].Env)
+			t.Fatalf("%q environment (-want +got):\n%s\nremote: %v", name, diff, apps[1].Env)
 		}
 	}
-	if want := []string{"dev.", "dev.", "admin."}; !slices.Equal(planes, want) {
+	if want := []string{"dev.", "admin."}; !slices.Equal(planes, want) {
 		t.Fatalf("planes = %v, want %v", planes, want)
 	}
 }

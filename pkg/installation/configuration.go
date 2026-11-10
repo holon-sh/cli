@@ -38,13 +38,6 @@ func withScope(cmd *cobra.Command, run func(*cobra.Command, []string, configurat
 	return cmd
 }
 
-func (scope configurationScope) session() string {
-	if scope == protocol.ProductionName {
-		return ""
-	}
-	return string(scope)
-}
-
 func (scope configurationScope) label() string {
 	switch scope {
 	case protocol.ProductionName:
@@ -70,42 +63,38 @@ func commandGroup(use, short string, commands ...*cobra.Command) *cobra.Command 
 }
 
 func newSecretCommand(config *commandConfig) *cobra.Command {
-	return commandGroup("secret", "Manage secret values",
-		newValueCommand("secret", &cobra.Command{
-			Use:   "set VARIABLE",
-			Short: "set a secret value",
-			Long:  "Set a secret value. On a terminal the value is read from a hidden prompt; otherwise it is read from standard input, with the trailing newline removed.",
-			Example: scopedExample("Set the secret API_KEY for development", "holon secret set API_KEY") + `
+	return newValuesCommand(config, "secret", "API_KEY", &cobra.Command{
+		Use:  "set VARIABLE",
+		Long: "Set a secret value. On a terminal the value is read from a hidden prompt; otherwise it is read from standard input, with the trailing newline removed.",
+		Example: scopedExample("Set the secret API_KEY for development", "holon secret set API_KEY") + `
 
   # Pipe the value in from a script or CI
   printenv API_KEY | holon secret set API_KEY`,
-			Args: cobra.ExactArgs(1),
-		}, func(cmd *cobra.Command, args []string) (string, error) {
-			return readSecret(cmd, args[0])
-		}, config),
-		newValueCommand("secret", &cobra.Command{
-			Use:     "delete VARIABLE",
-			Short:   "delete a secret value",
-			Example: scopedExample("Delete the secret API_KEY for development", "holon secret delete API_KEY"),
-			Args:    cobra.ExactArgs(1),
-		}, nil, config),
-	)
+		Args: cobra.ExactArgs(1),
+	}, func(cmd *cobra.Command, args []string) (string, error) {
+		return readSecret(cmd, args[0])
+	})
 }
 
 func newConfigCommand(config *commandConfig) *cobra.Command {
-	return commandGroup("config", "Manage config values",
-		newValueCommand("config", &cobra.Command{
-			Use:     "set VARIABLE VALUE",
-			Short:   "set a config value",
-			Example: scopedExample("Set the config REGION for development", "holon config set REGION us-east1"),
-			Args:    cobra.ExactArgs(2),
-		}, func(_ *cobra.Command, args []string) (string, error) {
-			return args[1], nil
-		}, config),
-		newValueCommand("config", &cobra.Command{
+	return newValuesCommand(config, "config", "REGION", &cobra.Command{
+		Use:     "set VARIABLE VALUE",
+		Example: scopedExample("Set the config REGION for development", "holon config set REGION us-east1"),
+		Args:    cobra.ExactArgs(2),
+	}, func(_ *cobra.Command, args []string) (string, error) {
+		return args[1], nil
+	})
+}
+
+// newValuesCommand groups set, which stores what value returns, with delete for one kind of value.
+func newValuesCommand(config *commandConfig, kind, sample string, set *cobra.Command, value func(*cobra.Command, []string) (string, error)) *cobra.Command {
+	set.Short = "set a " + kind + " value"
+	return commandGroup(kind, "Manage "+kind+" values",
+		newValueCommand(kind, set, value, config),
+		newValueCommand(kind, &cobra.Command{
 			Use:     "delete VARIABLE",
-			Short:   "delete a config value",
-			Example: scopedExample("Delete the config REGION for development", "holon config delete REGION"),
+			Short:   "delete a " + kind + " value",
+			Example: scopedExample("Delete the "+kind+" "+sample+" for development", "holon "+kind+" delete "+sample),
 			Args:    cobra.ExactArgs(1),
 		}, nil, config),
 	)
@@ -119,7 +108,11 @@ func newValueCommand(kind string, cmd *cobra.Command, value func(*cobra.Command,
 		if !protocol.ValidEnvName(variable) {
 			return fmt.Errorf("invalid variable name %q", variable)
 		}
-		request := protocol.VariableRequest{Session: scope.session(), Kind: kind, Variable: variable}
+		session := string(scope)
+		if scope == protocol.ProductionName {
+			session = ""
+		}
+		request := protocol.VariableRequest{Session: session, Kind: kind, Variable: variable}
 		var input any = request
 		tool, verb := protocol.ToolDeleteValue, "Deleted"
 		if value != nil {
@@ -181,45 +174,37 @@ func scopedExample(title, command string) string {
   %s --session my-session`, title, command, command, command)
 }
 
-// declareSetValues gives each app built from source an input for every config value and secret set where session runs,
-// so each reaches the app's environment under its own name; a session's value replaces the developer-wide one on the
-// platform. Names an app already uses keep their meaning, a name another app declares as the other kind is skipped,
-// and PORT and HOLON_ variables stay Holon's.
-func declareSetValues(ctx context.Context, manager *Client, session string, manifest manifestSpec, apps []protocol.App) error {
-	if !slices.ContainsFunc(manifest.Apps, func(app manifestApp) bool { return app.Path != "" }) {
-		return nil
-	}
+// declareSetValues declares every config value and secret set on the plane that serves session name as an input of
+// each app built from source, so the platform puts it in the app's environment under its own name. The platform picks
+// the value a session sees, and a name set only for another session stays unset; a name listed twice keeps its first
+// kind. Names the app already declares or templates, Holon's PORT, HOLON_ and dependency URL variables, and names
+// another app declares as the other kind are left alone.
+func declareSetValues(ctx context.Context, manager *Client, name string, manifest manifestSpec, apps []protocol.App) error {
 	var listed protocol.ConfigValues
-	if err := manager.Call(ctx, ControlPlane(session), protocol.ToolListValues, struct{}{}, &listed); err != nil {
+	if err := manager.Call(ctx, ControlPlane(name), protocol.ToolListValues, struct{}{}, &listed); err != nil {
 		return fmt.Errorf("list config values: %w", err)
 	}
-	kinds := map[string]string{}
-	for _, app := range apps {
-		for name, input := range app.Inputs() {
-			kinds[name] = input.Kind()
-		}
+	kinds, err := inputKinds(apps)
+	if err != nil {
+		return err
 	}
 	for i, source := range manifest.Apps {
 		app := &apps[i]
 		if source.Path == "" {
 			continue
 		}
-		inputs, env := app.Inputs(), maps.Clone(app.Env)
-		if env == nil {
-			env = map[string]protocol.Input{}
-		}
+		env := map[string]protocol.Input{}
+		maps.Copy(env, app.Env)
 		for _, value := range listed.Values {
-			name := value.Variable
-			_, used := inputs[name]
-			_, templated := app.EnvTemplates[name]
-			if value.Session != "" && value.Session != session || used || templated || name == "PORT" || strings.HasPrefix(name, "HOLON_") ||
-				slices.ContainsFunc(app.Requires, func(target string) bool { return protocol.DependencyEnvName(target) == name }) {
+			variable, input := value.Variable, protocol.Input{IsSecret: value.Kind == "secret"}
+			_, declared := env[variable]
+			_, templated := app.EnvTemplates[variable]
+			kind, used := kinds[variable]
+			if declared || templated || used && kind != input.Kind() || variable == "PORT" || strings.HasPrefix(variable, "HOLON_") ||
+				slices.ContainsFunc(app.Requires, func(target string) bool { return protocol.DependencyEnvName(target) == variable }) {
 				continue
 			}
-			if kind, declared := kinds[name]; declared && kind != value.Kind {
-				continue
-			}
-			env[name] = protocol.Input{IsSecret: value.Kind == "secret"}
+			env[variable] = input
 		}
 		app.Env = env
 	}

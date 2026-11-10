@@ -79,7 +79,6 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	resolved := manifest
 	resolved.Apps = nil
 	selections := map[string]mcpregistry.Requirement{}
-	envTypes := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(nodes)) {
 		app := nodes[name]
 		if err := resolveApp(app); err != nil {
@@ -100,14 +99,10 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 		if err := cmp.Or(declaration.OAuth.Validate(declaration.Env), declaration.Egress.Validate(declaration.Env)); err != nil {
 			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
 		}
-		for variable, input := range declaration.Inputs() {
-			kind := input.Kind()
-			if cmp.Or(envTypes[variable], kind) != kind {
-				return manifestSpec{}, fmt.Errorf("conflicting environment declarations for %s", variable)
-			}
-			envTypes[variable] = kind
-		}
 		resolved.Apps = append(resolved.Apps, *app)
+	}
+	if _, err := inputKinds(resolved.declarations()); err != nil {
+		return manifestSpec{}, err
 	}
 	if err := protocol.ValidateAppMounts(resolved.declarations()); err != nil {
 		return manifestSpec{}, err
@@ -116,6 +111,20 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 		return manifestSpec{}, errors.New(strings.Join(problems, "; "))
 	}
 	return resolved, nil
+}
+
+// inputKinds maps each input the apps declare to its kind, config or secret, which must agree across apps.
+func inputKinds(apps []protocol.App) (map[string]string, error) {
+	kinds := map[string]string{}
+	for _, app := range apps {
+		for variable, input := range app.Inputs() {
+			if kind := input.Kind(); cmp.Or(kinds[variable], kind) != kind {
+				return nil, fmt.Errorf("conflicting environment declarations for %s", variable)
+			}
+			kinds[variable] = input.Kind()
+		}
+	}
+	return kinds, nil
 }
 
 func satisfies(app *manifestApp, requirement mcpregistry.Requirement) bool {
