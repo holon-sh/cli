@@ -14,7 +14,7 @@ from holon.client import ToolResult as _ToolResult
 import builtins as _builtins
 import typing as _typing
 
-from holon.files import File as _File
+from holon.ext.files import File as _File
 
 MysqlInputLabeledColumn = _typing.TypedDict("MysqlInputLabeledColumn", {"column": _builtins.str, "label": _builtins.str})
 

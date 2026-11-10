@@ -324,7 +324,7 @@ func generatePython(contracts map[string]catalog) string {
 	}
 	imports := "import builtins as _builtins\nimport typing as _typing"
 	if emitter.files {
-		imports += "\n\nfrom holon.files import File as _File"
+		imports += "\n\nfrom holon.ext.files import File as _File"
 	}
 	sections := []string{imports}
 	sections = append(sections, emitter.shapes...)

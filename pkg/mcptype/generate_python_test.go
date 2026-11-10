@@ -82,7 +82,7 @@ func TestPythonMethodsCallToolsNamedOtherwise(t *testing.T) {
 			}
 		}
 	}
-	files = map[string][]byte{"holon/apps/__init__.py": files["__init__.py"], "holon/client.py": []byte(pythonRuntime), "holon/files.py": []byte("class File: ...\n")}
+	files = map[string][]byte{"holon/apps/__init__.py": files["__init__.py"], "holon/client.py": []byte(pythonRuntime), "holon/ext/files.py": []byte("class File: ...\n")}
 	files["typed.py"] = []byte(`from holon.apps import Inputs, Outputs, apps
 async def use(request: Inputs.schemas.runtime_run) -> Outputs.schemas.runtime_run:
     await apps.schemas.tools.runtime_run(code=1)
