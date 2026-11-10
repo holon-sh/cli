@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/typegen"
@@ -111,7 +112,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		app := &manifest.Apps[i]
 		switch {
 		case app.Path != "":
-			if pathInsideContext(parent, app.Path) {
+			if clientutil.PathInside(parent, app.Path) {
 				return manifestSpec{}, nil, fmt.Errorf("%s: build metadata must be outside application source", app.Name)
 			}
 			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name)}

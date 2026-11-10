@@ -273,7 +273,7 @@ func readTypeJSON(path string, out any) error {
 	}
 	return json.Unmarshal(data, out)
 }
-func pathInsideContext(path, root string) bool {
+func lexicallyInside(path, root string) bool {
 	relative, err := filepath.Rel(root, path)
 	return err == nil && filepath.IsLocal(relative)
 }

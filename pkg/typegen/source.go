@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/moby/patternmatcher"
 	"github.com/moby/patternmatcher/ignorefile"
 )
@@ -43,7 +44,7 @@ func GeneratedSource(root, path string) bool {
 		return true
 	}
 	return slices.ContainsFunc(targets, func(target string) bool {
-		return pathInsideContext(path, SlotDirectory(root, target)) && generatedSlot(root, target)
+		return lexicallyInside(path, SlotDirectory(root, target)) && generatedSlot(root, target)
 	})
 }
 
@@ -103,7 +104,7 @@ func SnapshotSource(name, dir, destination string) (string, error) {
 			if err != nil {
 				return err
 			}
-			if !pathInsideContext(resolved, root) {
+			if !clientutil.PathInside(resolved, root) {
 				return fmt.Errorf("source symlink escapes application: %s", relative)
 			}
 			excluded, err := IgnoredSource(root, resolved, matcher)
