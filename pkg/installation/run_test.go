@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,7 +22,6 @@ import (
 	"time"
 
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
-	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"golang.org/x/oauth2"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -468,23 +466,8 @@ func apiSession(names ...string) map[string]any {
 
 func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 	remote := "apps:\n- name: alpha\n  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n"
-	selection := "apps:\n- name: unused\n  path: ./not-checked-out\n  access: {server: {}}\n"
-	var dependency *protocol.RegistrySource
-	var dependencyName string
-	requires := map[string]any{"delta": map[string]string{"url": "https://upstream.example/mcp"}}
-	for _, name := range []string{"gamma", "beta", "alpha"} {
-		document := descriptorDocument(name)
-		delete(document, "packages")
-		document["remotes"] = []any{map[string]any{"type": "streamable-http", "url": "https://upstream.example/mcp"}}
-		document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": requires}}}
-		if dependency != nil {
-			data, _ := json.Marshal(dependency)
-			selection += fmt.Sprintf("- name: %s\n  registry: %s\n  access: {server: {}}\n", dependencyName, data)
-		}
-		dependency, dependencyName = descriptorRegistry(t, document), name
-		requires = map[string]any{name: dependency.RegistryRef}
-	}
-	alpha := "alpha=" + dependency.Registry + "/v0.1/servers/" + url.PathEscape(dependency.Name) + "/versions/" + dependency.Version
+	selection := "apps:\n- name: unused\n  path: ./not-checked-out\n  access: {server: {}}\n" +
+		"- name: beta\n  remote: {url: https://upstream.example/mcp}\n  access: {server: {}}\n"
 	for _, tc := range []struct {
 		name, file, manifest string
 		apps, want           []string
@@ -497,8 +480,9 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 		},
 		{name: "yml fallback", file: "holon.yml", manifest: remote, want: []string{"alpha"}},
 		{
-			name: "command-line sources, file dependencies and repeated names", file: manifestFileName, manifest: selection,
-			apps: []string{"delta=https://upstream.example/mcp", alpha, "delta", "--public"}, want: []string{"alpha", "beta", "delta", "gamma"},
+			name: "command-line sources, file apps and repeated names", file: manifestFileName, manifest: selection,
+			apps: []string{"delta=https://upstream.example/mcp", "alpha=https://upstream.example/mcp", "delta", "beta", "--public"},
+			want: []string{"alpha", "beta", "delta"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

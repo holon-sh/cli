@@ -1,7 +1,6 @@
 package typegen
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"maps"
@@ -9,9 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-
-	"github.com/holon-sh/cli/internal/commandenv"
-	"github.com/holon-sh/protocol"
 )
 
 // serverMention is what an MCP server's entry names: the protocol, an SDK or holon-sh.
@@ -63,8 +59,9 @@ func AppConsumer(name, dir string) (*Consumer, error) {
 	return &Consumer{Name: name, Dir: dir, Targets: targets, Server: own}, nil
 }
 
-// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias.
-func DeclaredSources(dir string, env []string) ([]Source, error) {
+// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias: its registry
+// version, its URL, or for an empty entry the alias alone.
+func DeclaredSources(dir string) ([]Source, error) {
 	d, err := readDescriptor(dir)
 	if err != nil || d == nil {
 		return nil, err
@@ -73,13 +70,8 @@ func DeclaredSources(dir string, env []string) ([]Source, error) {
 	for _, alias := range slices.Sorted(maps.Keys(d.Requires)) {
 		requirement := d.Requires[alias]
 		source := Source{Alias: alias, Endpoint: requirement.URL}
-		if requirement.URL == "" {
+		if requirement.Name != "" {
 			source.Registry = &requirement.RegistryRef
-		} else {
-			variable := protocol.DependencyEnvName(alias)
-			if location := cmp.Or(commandenv.Value(env, variable), os.Getenv(variable)); location != "" {
-				source.Endpoint, source.from = location, variable
-			}
 		}
 		sources = append(sources, source)
 	}

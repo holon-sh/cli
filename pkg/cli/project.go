@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/holon-sh/cli/pkg/typegen"
+	"github.com/holon-sh/protocol"
 )
 
 // projectFiles are the project manifests holon dev reads by default, in order. Only the fields that
@@ -25,12 +26,13 @@ type projectApp struct {
 	Remote *struct {
 		URL string `json:"url"`
 	} `json:"remote"`
+	Registry *protocol.RegistryRef `json:"registry"`
 }
 
 // projectConsumers reads the project manifest in dir and returns the appConsumer of each path app.
-// A dependency named after another app in the manifest is that app: a path app's source or a remote
-// app's endpoint. Other dependencies keep their sh.holon.requires registry reference. Without a
-// manifest it returns nil.
+// A dependency is the manifest's app of that name: a path app's source, a remote app's endpoint or a
+// registry app's version. Other dependencies keep what sh.holon.requires says. Without a manifest it
+// returns nil.
 func projectConsumers(dir string) ([]typegen.Consumer, error) {
 	file := projectFile(dir)
 	if file == "" {
@@ -46,7 +48,8 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 	if err := yaml.Unmarshal(data, &project); err != nil {
 		return nil, fmt.Errorf("%s: %w", file, err)
 	}
-	// The apps a dependency can name: each path app's resolved directory, or a remote app's endpoint.
+	// The apps a dependency can name: each path app's resolved directory, a remote app's endpoint or a
+	// registry app's version.
 	apps := map[string]typegen.Source{}
 	for _, app := range project.Apps {
 		switch {
@@ -60,6 +63,8 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 			apps[app.Name] = typegen.Source{Path: path}
 		case app.Remote != nil:
 			apps[app.Name] = typegen.Source{Endpoint: app.Remote.URL}
+		case app.Registry != nil:
+			apps[app.Name] = typegen.Source{Registry: app.Registry}
 		}
 	}
 	var consumers []typegen.Consumer

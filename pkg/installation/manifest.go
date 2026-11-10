@@ -2,6 +2,7 @@ package installation
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/cli/pkg/scaffold"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
@@ -72,15 +74,10 @@ type manifestApp struct {
 	Port *int `description:"HTTP port for image apps only; defaults to 3000." json:"port,omitempty" maximum:"65535" minimum:"1"`
 
 	Path      string                       `description:"Relative source directory."                                              json:"path,omitempty"`
-	Registry  *protocol.RegistrySource     `description:"Registry server reference; package or remote selection may be inferred." json:"registry,omitempty"`
+	Registry  *protocol.RegistrySource     `description:"MCP Registry server whose OCI, npm or PyPI package Holon runs; the package may be inferred. Name a remote endpoint with remote." json:"registry,omitempty"`
 	Run       *packageRun                  `description:"Registry runtime arguments; cannot combine with arguments or headers."   json:"run,omitempty"`
 	Arguments map[string]mcpregistry.Value `description:"Argument literals, or secrets named for the input (--api-key: API_KEY)." json:"arguments,omitempty"`
 	resolved  resolvedApp
-}
-
-func (app *manifestApp) UnmarshalJSON(data []byte) error {
-	type declaration manifestApp
-	return protocol.DecodeJSONNonNull(data, (*declaration)(app))
 }
 
 func resolveAppMetadata(app *manifestApp, pkg mcpregistry.Package) error {
@@ -112,8 +109,16 @@ func resolveAppMetadata(app *manifestApp, pkg mcpregistry.Package) error {
 }
 
 func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
+	sourceName = scaffold.Relative(sourceName)
+	document, err := yaml.YAMLToJSONStrict(data)
+	if err != nil {
+		return manifestSpec{}, fmt.Errorf("%s: %w", sourceName, err)
+	}
+	if problems := validateProject(document); len(problems) != 0 {
+		return manifestSpec{}, fmt.Errorf("%s: %s", sourceName, strings.Join(problems, "\n"+sourceName+": "))
+	}
 	var p manifestSpec
-	if err := yaml.UnmarshalStrict(data, &p); err != nil {
+	if err := json.Unmarshal(document, &p); err != nil {
 		return manifestSpec{}, fmt.Errorf("%s: %w", sourceName, err)
 	}
 	var errs []string
@@ -122,10 +127,10 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 	}
 	names := sets.New[string]()
 	for i := range p.Apps {
-		label := fmt.Sprintf("%s: apps[%d]", sourceName, i)
+		label := fmt.Sprintf("%s: apps.%d", sourceName, i)
 		a := &p.Apps[i]
-		if a.Port != nil && (a.Image == "" || !protocol.ValidPort(*a.Port)) {
-			errs = append(errs, label+".port requires image and must be between 1 and 65535")
+		if a.Port != nil && a.Image == "" {
+			errs = append(errs, label+".port requires image")
 		}
 		if err := protocol.ValidateAccess(a.Access); err != nil {
 			errs = append(errs, label+": "+err.Error())
