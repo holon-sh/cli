@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
@@ -291,23 +292,23 @@ func (l *buildLog) Write(data []byte) (int, error) {
 
 var stepTime = regexp.MustCompile(`(?m)^\d+\.\d+ ?`)
 
-func (l *buildLog) diagnosis() string {
+func (l *buildLog) explain(err error) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	output := strings.TrimSpace(string(l.tail))
 	if _, step, ok := strings.Cut(output, "\n------\n > "); ok {
 		_, step, _ = strings.Cut(step, ":\n")
 		step, _, _ = strings.Cut(step, "\n------")
-		return strings.TrimSpace(stepTime.ReplaceAllString(step, ""))
+		output = stepTime.ReplaceAllString(step, "")
+	} else if _, exited := errors.AsType[*exec.ExitError](err); exited {
+		output = output[strings.LastIndexByte(output, '\n')+1:]
+	} else {
+		return err
 	}
-	return output[strings.LastIndexByte(output, '\n')+1:]
-}
-
-func (l *buildLog) explain(err error) error {
-	if diagnosis := l.diagnosis(); diagnosis != "" {
-		return fmt.Errorf("%w:\n%s", err, diagnosis)
+	if output = strings.TrimSpace(output); output == "" {
+		return err
 	}
-	return err
+	return fmt.Errorf("%w:\n%s", err, output)
 }
 
 func (l *buildLog) finished(output *progressOutput, app, phase string, err error) error {

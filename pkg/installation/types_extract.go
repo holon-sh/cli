@@ -145,10 +145,7 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 		"--output", "type=local,dest=" + exported}, args, []string{source})
 	logs := o.output.logs(o.Stderr)
 	if err := commandenv.RunStreaming(ctx, "", "docker", args, nil, env, logs, logs); err != nil {
-		if diagnosis := logs.diagnosis(); diagnosis != "" && ctx.Err() == nil {
-			return errors.New(diagnosis)
-		}
-		return err
+		return logs.explain(err)
 	}
 	read := func(name string) ([]byte, error) {
 		path := filepath.Join(exported, name)

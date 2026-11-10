@@ -82,6 +82,7 @@ func TestRunPreparationFailures(t *testing.T) {
 			command: "deploy", access: "--public", want: "fixture build failed:\nnpm error missing: fixture-package",
 			diagnostics: "#7 0.311 npm notice noise\n------\n > [build 2/3] RUN npm ci:\n0.312 npm error missing: fixture-package\n------\n",
 		},
+		{command: "deploy", access: "--public", want: "fixture build failed", diagnostics: "npm notice from an earlier step"},
 		{command: "dev", access: "--oauth", want: "requires a configured identity provider"},
 		{command: "deploy", access: "--public", want: "source changed during preparation", edit: "logic.ts"},
 	} {
@@ -109,7 +110,7 @@ func TestRunPreparationFailures(t *testing.T) {
 			})
 			var stderr bytes.Buffer
 			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &stderr, h.run)
-			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(stderr.String(), "notice") {
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(stderr.String()+err.Error(), "notice") {
 				t.Fatalf("error=%v stderr=%q, want %q", err, stderr.String(), tc.want)
 			}
 		})
