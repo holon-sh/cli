@@ -15,10 +15,15 @@ func TestChanges(t *testing.T) {
 	const equivalent = `{"type":"object","properties":{"id":{"type":["null","string"],"enum":[null,"b","a"]},"value":{"anyOf":[{"type":"number"},{"description":"new","type":"string"}]}},"dependentSchemas":{"id":{"properties":{"value":{"type":"string","description":"new"}}}},"not":{"properties":{"blocked":{"title":"new","type":"boolean"}}}}`
 	get := mcpcontract.Tool{Name: "get", Input: json.RawMessage(input), Output: json.RawMessage(`{"type":"number"}`)}
 	summary := mcpcontract.Resource{URI: "orders://summary", Output: json.RawMessage(`{"type":"object"}`)}
+	shipped := mcpcontract.Event{Name: "order.shipped", Input: json.RawMessage(`{"type":"object"}`), Payload: json.RawMessage(`{"type":"string"}`)}
 	identity := mcpcontract.Identity{Name: "example/orders", Version: "1"}
-	expected := &mcpcontract.Metadata{Identity: identity, Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{get}, Resources: []mcpcontract.Resource{summary}}}
+	expected := &mcpcontract.Metadata{Identity: identity, Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{get}, Resources: []mcpcontract.Resource{summary}, Events: []mcpcontract.Event{shipped}}}
 	published := func(version string, tools []mcpcontract.Tool, resources ...mcpcontract.Resource) *mcpcontract.Metadata {
-		return &mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: identity.Name, Version: version}, Schema: &mcpcontract.Contract{Tools: tools, Resources: resources}}
+		return &mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: identity.Name, Version: version}, Schema: &mcpcontract.Contract{Tools: tools, Resources: resources, Events: []mcpcontract.Event{shipped}}}
+	}
+	events := func(metadata *mcpcontract.Metadata, events ...mcpcontract.Event) *mcpcontract.Metadata {
+		metadata.Schema.Events = events
+		return metadata
 	}
 	for _, test := range []struct {
 		name      string
@@ -31,6 +36,9 @@ func TestChanges(t *testing.T) {
 		{"tool output removed", published("1", []mcpcontract.Tool{{Name: get.Name, Input: get.Input}}, summary), []string{"tool_output_changed get"}},
 		{"tool output changed", published("1", []mcpcontract.Tool{{Name: get.Name, Input: get.Input, Output: json.RawMessage(`{"type":"string"}`)}}, summary), []string{"tool_output_changed get"}},
 		{"resource removed", published("1", []mcpcontract.Tool{get}), []string{"resource_removed orders://summary"}},
+		{"event removed", events(published("1", []mcpcontract.Tool{get}, summary)), []string{"event_removed order.shipped"}},
+		{"event arguments", events(published("1", []mcpcontract.Tool{get}, summary), mcpcontract.Event{Name: shipped.Name, Input: json.RawMessage(`{"type":"object","required":["id"]}`), Payload: shipped.Payload}), []string{"event_input_changed order.shipped"}},
+		{"event data", events(published("1", []mcpcontract.Tool{get}, summary), mcpcontract.Event{Name: shipped.Name, Input: shipped.Input, Payload: json.RawMessage(`{"type":"number"}`)}), []string{"event_payload_changed order.shipped"}},
 		{"no published contract", nil, []string{"no_contract"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

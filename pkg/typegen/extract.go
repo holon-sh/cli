@@ -24,6 +24,7 @@ import (
 type extraction struct {
 	Tools      []mcpcontract.Tool     `json:"tools"`
 	Resources  []mcpcontract.Resource `json:"resources"`
+	Events     []mcpcontract.Event    `json:"events"`
 	ServerInfo json.RawMessage        `json:"serverInfo"`
 }
 

@@ -40,8 +40,13 @@ func generatePythonPackage(request generateRequest, catalogs map[string]catalog)
 			renamed[binding] = methods
 		}
 	}
+	// The Python runtime has no events yet, so its clients carry none.
+	contracts := make(map[string]contract, len(request.contracts))
+	for alias, source := range request.contracts {
+		contracts[alias] = contract{Tools: source.Tools, Resources: source.Resources}
+	}
 	// Go's ASCII quoted literals also evaluate as Python strings.
-	literal := strconv.QuoteToASCII(string(encode([]Value{request.caller(), request.contracts, renamed})))
+	literal := strconv.QuoteToASCII(string(encode([]Value{request.caller(), contracts, renamed})))
 	module := strings.Join([]string{
 		pythonHeader,
 		generatePython(catalogs),

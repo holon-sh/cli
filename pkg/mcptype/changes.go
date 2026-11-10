@@ -6,7 +6,7 @@ import (
 )
 
 // changes lists what breaks expected if published is deployed. Empty means compatible.
-// Identity first, then tools by name, then resources by URI.
+// Identity first, then tools by name, then resources by URI, then events by name.
 func changes(expected *metadata, published *metadata) []Change {
 	if published == nil || published.Schema == nil {
 		return []Change{{Kind: "no_contract", Text: "no published contract"}}
@@ -38,6 +38,18 @@ func changes(expected *metadata, published *metadata) []Change {
 			result = append(result, Change{Kind: "resource_removed", Name: uri, Text: fmt.Sprintf("resource %s removed", uri)})
 		case !reflect.DeepEqual(actual.Output, want.Resources[uri].Output):
 			result = append(result, Change{Kind: "resource_output_changed", Name: uri, Text: fmt.Sprintf("resource %s contents changed", uri)})
+		}
+	}
+	for _, name := range sortedKeys(want.Events) {
+		event := want.Events[name]
+		actual, ok := have.Events[name]
+		switch {
+		case !ok:
+			result = append(result, Change{Kind: "event_removed", Name: name, Text: fmt.Sprintf("event %s removed", name)})
+		case !reflect.DeepEqual(actual.Input, event.Input):
+			result = append(result, Change{Kind: "event_input_changed", Name: name, Text: fmt.Sprintf("event %s arguments changed", name)})
+		case !reflect.DeepEqual(actual.Payload, event.Payload):
+			result = append(result, Change{Kind: "event_payload_changed", Name: name, Text: fmt.Sprintf("event %s data changed", name)})
 		}
 	}
 	return result

@@ -61,12 +61,20 @@ export const read = { description: meta.description, inputSchema: z.object({ id:
 export const list = { inputSchema: z.object({ status }) };`,
     "server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { list, read } from "./tools.js";
+import { order } from "@schemas/order";
 export default createMcpHandler(() => {
   const server = new McpServer({ name: "orders", version: "1" });
   server.registerTool("read", read, () => { throw new Error("not called"); });
   server.registerTool("list", list, () => ({ content: [] }));
   server.registerResource("Order", "orders://latest", { mimeType: "application/json", _meta: { "sh.holon/outputSchema": { type: "object" } } }, () => ({ contents: [] }));
   server.registerResource("Page", "ui://orders/app.html", { mimeType: "text/html" }, () => ({ contents: [] }));
+  // MCP Events, as holon-sh/events serves it. A type may leave its schemas out.
+  const params = { "~standard": { version: 1, vendor: "test", validate: value => ({ value }) } };
+  server.server.registerCapabilities({ extensions: { "io.modelcontextprotocol/events": {} } });
+  server.server.setRequestHandler("events/list", { params }, () => ({ events: [
+    { name: "order.shipped", delivery: ["poll"], inputSchema: { type: "object", properties: { id: { type: "string" } } }, payloadSchema: order.toJSONSchema() },
+    { name: "order.opened", delivery: ["push"] },
+  ] }));
   return server;
 }, { legacy: "reject" });`,
     // A plain McpServer default export is served through the same SDK copy's createMcpHandler.
@@ -76,7 +84,11 @@ export default createMcpHandler(() => {
   assert.deepEqual(extracted.orders.tools.map(tool => tool.name), ["list", "read"]);
   assert.deepEqual(Object.keys(extracted.orders.tools[1].outputSchema.properties), ["id", "status"]);
   assert.deepEqual(extracted.orders.resources, [{ uri: "orders://latest", outputSchema: { type: "object" } }, { uri: "ui://orders/app.html", outputSchema: {} }]);
+  assert.deepEqual(extracted.orders.events.map(({ name, inputSchema }) => [name, inputSchema]), [["order.opened", { type: "object" }], ["order.shipped", { type: "object", properties: { id: { type: "string" } } }]]);
+  assert.deepEqual(Object.keys(extracted.orders.events[1].payloadSchema.properties), ["id", "status"]);
+  assert.deepEqual(extracted.orders.events[0].payloadSchema, {});
   assert.deepEqual(extracted.plain.tools, []);
+  assert.deepEqual(extracted.plain.events, []);
 });
 
 test("extraction uses the paths of a tsconfig in a parent directory, relative to that config", t => {

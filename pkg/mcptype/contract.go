@@ -22,10 +22,17 @@ type contractResource struct {
 	Output Object
 }
 
-// contract holds tools keyed by name and resources keyed by URI. The wire format is v1's arrays, written in key order.
+// contractEvent is one event type's subscription arguments and occurrence data.
+type contractEvent struct {
+	Input   Object
+	Payload Object
+}
+
+// contract holds tools keyed by name, resources keyed by URI and events keyed by name. The wire format is v1's arrays, written in key order.
 type contract struct {
 	Tools     map[string]contractTool
 	Resources map[string]contractResource
+	Events    map[string]contractEvent
 }
 
 // metadata is the document an image publishes.
@@ -74,7 +81,7 @@ func decodeContract(value Value) (contract, error) {
 	if err != nil {
 		return contract{}, err
 	}
-	result := contract{Tools: map[string]contractTool{}, Resources: map[string]contractResource{}}
+	result := contract{Tools: map[string]contractTool{}, Resources: map[string]contractResource{}, Events: map[string]contractEvent{}}
 	for _, item := range tools {
 		entry, err := asObject(item)
 		if err != nil {
@@ -140,6 +147,46 @@ func decodeContract(value Value) (contract, error) {
 			result.Resources[uri] = resource
 		}
 	}
+	if raw, ok := object["events"]; ok {
+		events, err := asArray(raw)
+		if err != nil {
+			return contract{}, err
+		}
+		for _, item := range events {
+			entry, err := asObject(item)
+			if err != nil {
+				return contract{}, err
+			}
+			raw, err := requiredField(entry, "name")
+			if err != nil {
+				return contract{}, err
+			}
+			name, err := asString(raw)
+			if err != nil {
+				return contract{}, err
+			}
+			event := contractEvent{}
+			for _, field := range []struct {
+				name   string
+				target *Object
+			}{{"inputSchema", &event.Input}, {"payloadSchema", &event.Payload}} {
+				if raw, err = requiredField(entry, field.name); err != nil {
+					return contract{}, err
+				}
+				if *field.target, err = asObject(raw); err != nil {
+					return contract{}, err
+				}
+			}
+			// A subscription's arguments are an object, as a tool's are.
+			if event.Input["type"] != "object" {
+				return contract{}, fmt.Errorf("event %s: inputSchema must have type object", name)
+			}
+			if _, exists := result.Events[name]; name == "" || exists {
+				return contract{}, errors.New("event names must be nonempty and unique")
+			}
+			result.Events[name] = event
+		}
+	}
 	return result, nil
 }
 
@@ -191,7 +238,7 @@ func decodeMetadata(value Value) (metadata, error) {
 	return result, nil
 }
 
-// MarshalJSON writes the contract with tools and resources sorted by name or URI.
+// MarshalJSON writes the contract with tools, resources and events sorted by name or URI.
 func (c contract) MarshalJSON() ([]byte, error) {
 	tools := make([]Value, 0, len(c.Tools))
 	for _, name := range sortedKeys(c.Tools) {
@@ -209,6 +256,13 @@ func (c contract) MarshalJSON() ([]byte, error) {
 			resources = append(resources, Object{"uri": uri, "outputSchema": c.Resources[uri].Output})
 		}
 		wire["resources"] = resources
+	}
+	if len(c.Events) > 0 {
+		events := make([]Value, 0, len(c.Events))
+		for _, name := range sortedKeys(c.Events) {
+			events = append(events, Object{"name": name, "inputSchema": c.Events[name].Input, "payloadSchema": c.Events[name].Payload})
+		}
+		wire["events"] = events
 	}
 	return json.Marshal(wire)
 }

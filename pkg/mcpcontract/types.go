@@ -45,9 +45,19 @@ type Resource struct {
 	Output json.RawMessage `json:"outputSchema"`
 }
 
+// Event is an event type a server lists with events/list, from MCP Events, the draft extension of
+// the Triggers & Events Working Group: the schemas of a subscription's arguments and of an
+// occurrence's data.
+type Event struct {
+	Name    string          `json:"name"`
+	Input   json.RawMessage `json:"inputSchema"`
+	Payload json.RawMessage `json:"payloadSchema"`
+}
+
 type Contract struct {
 	Tools     []Tool     `json:"tools"`
 	Resources []Resource `json:"resources,omitempty"`
+	Events    []Event    `json:"events,omitempty"`
 }
 
 // MarshalJSON writes "tools" as an array even when there are none, as the v1

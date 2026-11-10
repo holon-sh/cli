@@ -18,6 +18,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/protocol"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // ResolveDocument returns one source's contract document without writing anything: a path source
@@ -236,5 +237,57 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 			contract.Resources = append(contract.Resources, mcpcontract.Resource{URI: resource.URI, Output: output})
 		}
 	}
+	if _, ok := initialized.Capabilities.Extensions[eventsExtension]; ok {
+		if contract.Events, err = listEvents(ctx, session); err != nil {
+			return nil, err
+		}
+	}
 	return NewDocument(ctx, &mcpcontract.Metadata{Identity: *identity, Schema: contract})
+}
+
+// eventsExtension is how a server declares MCP Events, the draft extension of the Triggers & Events
+// Working Group, whose events/list the MCP SDK does not know.
+const eventsExtension = "io.modelcontextprotocol/events"
+
+type listEventsParams struct {
+	mcp.ParamsBase
+	Cursor string `json:"cursor,omitempty"`
+}
+
+type listEventsResult struct {
+	mcp.ResultBase
+	Events     []listedEvent `json:"events"`
+	NextCursor string        `json:"nextCursor,omitempty"`
+}
+
+type listedEvent struct {
+	Name    string          `json:"name"`
+	Input   json.RawMessage `json:"inputSchema,omitempty"`
+	Payload json.RawMessage `json:"payloadSchema,omitempty"`
+}
+
+// listEvents asks the server for its event types.
+func listEvents(ctx context.Context, session *mcp.ClientSession) ([]mcpcontract.Event, error) {
+	var events []mcpcontract.Event
+	params := &listEventsParams{}
+	for {
+		page, err := mcp.CallCustomMethod[*listEventsParams, *listEventsResult](ctx, session, "events/list", params)
+		if err != nil {
+			return nil, fmt.Errorf("events/list: %w", err)
+		}
+		for _, event := range page.Events {
+			// A server may leave either schema out: any arguments, and data of any shape.
+			if event.Input == nil {
+				event.Input = json.RawMessage(`{"type":"object"}`)
+			}
+			if event.Payload == nil {
+				event.Payload = json.RawMessage(`{}`)
+			}
+			events = append(events, mcpcontract.Event(event))
+		}
+		if page.NextCursor == "" {
+			return events, nil
+		}
+		params.Cursor = page.NextCursor
+	}
 }

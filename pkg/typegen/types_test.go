@@ -152,6 +152,38 @@ export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch 
 	mustReject(t, app, "'fetsh' does not exist")
 }
 
+// An app's events are subscribed to by name, with their arguments checked and their data typed, as a
+// tool's input and output are.
+func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
+	t.Parallel()
+	app := typeScriptApp(t)
+	for _, name := range []string{"runtime.d.ts", "protocol.d.ts"} {
+		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh", name))
+	}
+	orders := ordersMetadata()
+	orders.Schema.Events = []mcpcontract.Event{{Name: "order.shipped",
+		Input:   json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}`),
+		Payload: json.RawMessage(`{"type":"object","properties":{"carrier":{"type":"string"}},"required":["carrier"]}`)}}
+	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, orders)}}}
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+for await (const { data } of await apps.orders.events.subscribe("order.shipped", { id: "1" })) {
+  const carrier: string = data.carrier;
+}
+`)
+	if output, err := check(t, app); err != nil {
+		t.Fatalf("check: %v\n%s", err, output)
+	}
+	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+export const misnamed = apps.orders.events.subscribe("order.shiped", { id: "1" });
+export const misargued = apps.orders.events.subscribe("order.shipped", { di: "1" });
+for await (const { data } of await apps.orders.events.subscribe("order.shipped", { id: "1" })) data.carier;
+`)
+	mustReject(t, app, `"order.shiped"`, "'di' does not exist", "'carier' does not exist")
+}
+
 func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {
 	t.Run("typescript", func(t *testing.T) {
 		t.Parallel()

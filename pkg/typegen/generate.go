@@ -63,7 +63,7 @@ type preparedSource struct {
 }
 
 func (s *preparedSource) extract(result *extraction) error {
-	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources}
+	s.metadata.Schema = &mcpcontract.Contract{Tools: result.Tools, Resources: result.Resources, Events: result.Events}
 	if s.metadata.Identity == (mcpcontract.Identity{}) {
 		descriptor, err := ParseDescriptor(result.ServerInfo)
 		if err != nil {

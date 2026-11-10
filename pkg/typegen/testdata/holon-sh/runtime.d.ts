@@ -1,7 +1,7 @@
-// holon-sh 0.0.1-dev.6: the published declarations the generated clients are checked against.
+// holon-sh with MCP Events (holon-sh/sdk-ts#38, unreleased): the declarations the generated clients are checked against.
 import type { AuthProvider, CallOptions, ToolClient } from "./protocol.js";
 export { ToolCallError } from "./protocol.js";
-export type { AuthProvider, CallOptions, CallMetadata, ElicitHandler, ToolCallOptions, ToolResult, ToolClient } from "./protocol.js";
+export type { AuthProvider, CallOptions, CallMetadata, ElicitHandler, EventOccurrence, EventType, SubscribeOptions, Subscription, ToolCallOptions, ToolResult, ToolClient } from "./protocol.js";
 
 /** Connection settings for an MCP endpoint. */
 export interface Binding {
@@ -20,10 +20,11 @@ export interface Binding {
 export type EndpointBinding = Binding;
 /** Calling application identity and its declared dependencies. */
 export interface Identity { name: string; version: string; requires?: Record<string, { name?: string; version?: string }> }
-/** Generation-time tool and JSON resource schemas. A null contract permits unvalidated callTool requests. */
+/** Generation-time tool, JSON resource and event schemas. A null contract permits unvalidated callTool requests. */
 export interface Contract {
   tools: Array<{ name: string; inputSchema: Record<string, unknown>; outputSchema?: Record<string, unknown> }>;
   resources?: Array<{ uri: string; outputSchema: Record<string, unknown> }>;
+  events?: Array<{ name: string; inputSchema?: Record<string, unknown>; payloadSchema?: Record<string, unknown> }>;
 }
 /** Untyped client returned by the low-level runtime. Generated clients specialize its inputs, outputs, and resources. */
 export type RuntimeClient = ToolClient<Record<string, Record<string, unknown>>, Record<string, unknown>, Record<string, unknown>>;
@@ -42,9 +43,7 @@ export interface CreateOptions<B = Binding> {
   /** Session for a binding the runtime does not connect to itself (anything without an endpoint). */
   session?: (app: string, binding: B) => ToolSession | undefined;
 }
-/** Construct runtime clients from identity and contracts. Connections open lazily. Explicit and resolved endpoint bindings reuse one session unless scoped is true; <NAME>_MCP_URL bindings use one session per call. Close persistent clients on shutdown. Most callers use the generated package root. */
+/** Construct runtime clients from identity and contracts. Connections open lazily. Explicit and resolved endpoint bindings reuse one session unless scoped is true; <NAME>_MCP_URL bindings use one session per call. Close persistent clients on shutdown. Most callers use the generated clients. */
 export declare function createApps<B = Binding>(identity: Identity, contracts: Record<string, Contract | null>, bindings?: Record<string, B>, options?: CreateOptions<B>): Readonly<Record<string, RuntimeClient>>;
 /** Construct only the explicitly bound dependencies. Unknown names throw; an empty binding map selects none. Used by generated createApps factories. */
 export declare function bindApps<B = Binding>(identity: Identity, contracts: Record<string, Contract | null>, bindings: Record<string, B>, options?: CreateOptions<B>): Readonly<Record<string, RuntimeClient>>;
-/** For hosts: register a process-wide resolver for clients created without explicit bindings. Explicit bindings take precedence; return undefined to fall back to the <NAME>_MCP_URL environment variable. Register during startup. */
-export declare function setDefaultBinding(resolve: (app: string) => Binding | undefined): void;

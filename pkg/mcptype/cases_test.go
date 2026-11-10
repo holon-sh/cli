@@ -127,7 +127,9 @@ func generationCases(t *testing.T) []generationCase {
             "properties": {"orderId": {"type": "string"}, "count": {"type": "integer"}}, "required": ["orderId"]},
          "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}},
         {"name": "then", "inputSchema": {"type": "object", "additionalProperties": false}}
-    ], "resources": [{"uri": "orders://summary", "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}}]}`
+    ], "resources": [{"uri": "orders://summary", "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}}],
+    "events": [{"name": "order.shipped", "inputSchema": {"type": "object", "additionalProperties": false, "properties": {"orderId": {"type": "string"}}},
+        "payloadSchema": {"type": "object", "properties": {"orderId": {"type": "string"}, "carrier": {"type": "string"}}, "required": ["orderId"]}}]}`
 	sampleContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}`
 	for _, target := range []string{"browser", "go"} {
 		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "go_module": "example.com/é/runtime", "own": "orders", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
@@ -149,6 +151,7 @@ func generationCases(t *testing.T) []generationCase {
 		{"identity-empty", `"identity": {"name": "", "version": "1"}`},
 		{"duplicate-tool", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}}, {"name":"read", "inputSchema":{"type":"object"}}]}}`},
 		{"output-null", `"contracts": {"x": {"tools": [{"name":"read", "inputSchema":{"type":"object"}, "outputSchema":null}]}}`},
+		{"duplicate-event", `"contracts": {"x": {"tools": [], "events": [{"name":"e", "inputSchema":{"type":"object"}, "payloadSchema":{}}, {"name":"e", "inputSchema":{"type":"object"}, "payloadSchema":{}}]}}`},
 		{"duplicate-resource", `"contracts": {"x": {"tools": [], "resources": [{"uri":"r://a", "outputSchema":{}}, {"uri":"r://a", "outputSchema":{}}]}}`},
 		{"unresolved-ref", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/nope"}}}}]}}`},
 		{"external-ref-in-cycle", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/$defs/A"}}, "$defs": {"A": {"anyOf": [{"$ref": "/$defs/B"}]}, "B": {"$ref": "#/$defs/A"}}}}]}}`},

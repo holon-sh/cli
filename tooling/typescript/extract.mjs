@@ -11,6 +11,7 @@ import { createSandbox, MissingPackage } from "./sandbox.mjs";
 
 const identity = { name: "holon-contract", version: "1" };
 const resourceSchemaKey = "sh.holon/outputSchema";
+const eventsExtension = "io.modelcontextprotocol/events";
 // contract evaluates one entry in the sandbox and asks its server for the catalog.
 export async function contract(root, entry) {
   const vendor = join(dirname(realpathSync(process.argv[1])), "vendor", "node_modules");
@@ -42,11 +43,15 @@ async function catalog(handler) {
     // Request the complete catalog without listTools' client-specific filtering.
     const tools = capabilities.tools ? await all(client, "tools/list", "tools") : [];
     const resources = capabilities.resources ? await all(client, "resources/list", "resources") : [];
+    // MCP Events, the draft extension of the Triggers & Events Working Group, as holon-sh/events declares it.
+    const events = capabilities.extensions?.[eventsExtension] ? await all(client, "events/list", "events", anything) : [];
     return {
       serverInfo: client.getServerVersion(),
       tools: tools.map(({ name, inputSchema, outputSchema }) => ({ name, inputSchema, ...(outputSchema && { outputSchema }) })).sort((a, b) => a.name.localeCompare(b.name)),
       // Like a live server's contract, a resource is typed only by its sh.holon/outputSchema.
       resources: resources.map(({ uri, _meta }) => ({ uri, outputSchema: _meta?.[resourceSchemaKey] ?? {} })).sort((a, b) => a.uri.localeCompare(b.uri)),
+      // A type may leave either schema out: any arguments, and data of any shape.
+      events: events.map(({ name, inputSchema, payloadSchema }) => ({ name, inputSchema: inputSchema ?? { type: "object" }, payloadSchema: payloadSchema ?? {} })).sort((a, b) => a.name.localeCompare(b.name)),
     };
   } finally {
     await client.close();
@@ -54,11 +59,15 @@ async function catalog(handler) {
   }
 }
 
-async function all(client, method, key) {
+// A method outside the specification needs a result schema; the contract checks what it returns.
+const anything = { "~standard": { version: 1, vendor: "holon", validate: value => ({ value }) } };
+
+async function all(client, method, key, schema) {
   const items = [];
   let cursor;
   do {
-    const page = await client.request({ method, params: cursor ? { cursor } : {} });
+    const request = { method, params: cursor ? { cursor } : {} };
+    const page = await (schema ? client.request(request, schema) : client.request(request));
     items.push(...page[key]);
     cursor = page.nextCursor;
   } while (cursor);
