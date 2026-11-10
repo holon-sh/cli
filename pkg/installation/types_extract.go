@@ -153,14 +153,21 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 		}
 		return err
 	}
-	result, err := os.ReadFile(filepath.Join(exported, "stdout"))
+	read := func(name string) ([]byte, error) {
+		path := filepath.Join(exported, name)
+		if err := regularNoSymlink(path, "MCP types "+name); err != nil {
+			return nil, err
+		}
+		return os.ReadFile(path)
+	}
+	result, err := read("stdout")
 	if err != nil {
 		return err
 	}
 	if _, err := stdout.Write(result); err != nil {
 		return err
 	}
-	status, err := os.ReadFile(filepath.Join(exported, "status"))
+	status, err := read("status")
 	if err != nil {
 		return err
 	}
@@ -168,7 +175,7 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	if err != nil || code == 0 {
 		return err
 	}
-	stderr, err := os.ReadFile(filepath.Join(exported, "stderr"))
+	stderr, err := read("stderr")
 	if err != nil {
 		return err
 	}
