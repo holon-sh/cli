@@ -228,9 +228,6 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		d.stopPreparation()
 	}()
 	d.options.architectures = d.session.BuildArchitectures
-	for _, app := range d.session.Apps {
-		d.pending.Insert(app.Name)
-	}
 	for ctx.Err() == nil {
 		if err := d.manager.authorizeOperation(ctx, d.session); err != nil {
 			return err

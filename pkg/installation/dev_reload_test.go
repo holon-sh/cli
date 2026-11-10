@@ -290,6 +290,10 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 	}{
 		{name: "server source edited since reloads into the kept image", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1},
 		{
+			name: "a reload that fails is not reported ready", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1,
+			between: func(_ *testing.T, f *reloadFixture) { f.failNext = true },
+		},
+		{
 			name: "an app added to the project since joins the session", edit: map[string]string{manifestFileName: alphaManifest + betaRemote},
 			creates: 1, apps: []string{"beta"},
 		},
@@ -331,6 +335,9 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			}
 			if names := f.apps(); !slices.Equal(names, append([]string{"alpha"}, test.apps...)) {
 				t.Fatalf("session apps = %v", names)
+			}
+			if strings.Contains(f.stderr.String(), "alpha reload failed") == strings.Contains(f.stderr.String(), "alpha ready") {
+				t.Fatalf("stderr=%q", f.stderr.String())
 			}
 		})
 	}

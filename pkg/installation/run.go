@@ -150,7 +150,6 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if config.jsonOutput {
 		stdout = stderr
 	}
-	started := config.clock().Now()
 	config.output.status("", "Authenticating", progressWorking)
 	manager, err := NewClient(ctx, config.Auth)
 	if err != nil {
@@ -173,7 +172,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	}
 	recordPath := manager.sessionRecordPath(config.manifest, apps)
 	dev := &devLoop{
-		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), started: started, options: options,
+		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), started: config.clock().Now(), options: options,
 		changedImages: sets.New[string](), pending: sets.New[string](), announce: true,
 	}
 	first := options
@@ -197,6 +196,9 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		err = dev.update(ctx, request, removedApps(dev.session.Apps, request.Apps)...)
 	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &dev.session); err == nil {
 		dev.name = dev.session.Name
+		for _, app := range request.Apps {
+			dev.pending.Insert(app.Name)
+		}
 		err = printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps)
 	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
 		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
