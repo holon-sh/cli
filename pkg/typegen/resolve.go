@@ -100,6 +100,9 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	from := t.variable
 	if token == "" && t.signIn != nil {
 		if token, err = t.signIn(request.Context(), t.origin); err != nil {
+			t.mu.Lock()
+			t.refusal = err
+			t.mu.Unlock()
 			return nil, err
 		}
 		if token != "" {
