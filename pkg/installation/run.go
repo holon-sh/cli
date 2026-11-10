@@ -176,7 +176,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		previous, first.kept = previousSession(ctx, manager, recordPath)
 	}
 	if previous.Name != "" {
-		if err := printStartingEndpoints(stdout, config.output, manager.client.baseURL, previous); err != nil {
+		if err := printStartingEndpoints(stdout, config.output, manager.client.baseURL, previous, resolved.Apps); err != nil {
 			return err
 		}
 	}
@@ -190,7 +190,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if previous.Name != "" {
 		session, err = replaceExecution(ctx, manager, previous.Name, previous, request)
 	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &session); err == nil {
-		err = printStartingEndpoints(stdout, config.output, manager.client.baseURL, session)
+		err = printStartingEndpoints(stdout, config.output, manager.client.baseURL, session, resolved.Apps)
 	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
 		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
 		err = fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
@@ -206,7 +206,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(ready)
 		}
-		if err := config.output.endpoints(stdout, "Ready", ready, false); err != nil {
+		if err := config.output.endpoints(stdout, "Ready", ready, resolved.Apps, false); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
@@ -361,7 +361,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 		return err
 	}
 	config.output.apps(desired.Apps, "ready", progressDone)
-	return config.output.endpoints(stdout, "Ready", ready, false)
+	return config.output.endpoints(stdout, "Ready", ready, resolved.Apps, false)
 }
 
 func waitSessionReady(
@@ -419,7 +419,9 @@ func reportSessionProgress(
 	output.status(name, phase, state)
 }
 
-func printStartingEndpoints(stdout io.Writer, output *progressOutput, origin string, session protocol.SessionResponse) error {
+func printStartingEndpoints(
+	stdout io.Writer, output *progressOutput, origin string, session protocol.SessionResponse, apps []manifestApp,
+) error {
 	if _, err := fmt.Fprintf(stdout, "Session  %s\n", session.Name); err != nil {
 		return err
 	}
@@ -427,7 +429,7 @@ func printStartingEndpoints(stdout io.Writer, output *progressOutput, origin str
 	if err != nil {
 		return err
 	}
-	return output.endpoints(stdout, "Starting", starting, true)
+	return output.endpoints(stdout, "Starting", starting, apps, true)
 }
 
 func startingSession(origin string, session protocol.SessionResponse) (protocol.SessionResponse, error) {
@@ -442,30 +444,37 @@ func startingSession(origin string, session protocol.SessionResponse) (protocol.
 	return session, nil
 }
 
-func formatEndpoints(session protocol.SessionResponse) (string, error) {
-	if len(session.Endpoints) == 0 {
-		return "", nil
-	}
-	var output []byte
+// formatEndpoints lists the apps a command acted on, not the rest of the session. Only a source app can export a
+// frontend; a remote, registry or image app has no page the CLI knows of.
+func formatEndpoints(session protocol.SessionResponse, apps []manifestApp) (string, error) {
 	mode := protocol.ModeDevelopment
 	if session.Name == protocol.ProductionName {
 		mode = protocol.ModeProduction
 	}
-	for i, endpoint := range session.Endpoints {
+	var output []byte
+	for _, app := range apps {
+		index := slices.IndexFunc(session.Endpoints, func(endpoint protocol.SessionEndpoint) bool { return endpoint.Name == app.Name })
+		if index < 0 {
+			continue
+		}
+		endpoint := session.Endpoints[index]
 		website, err := url.Parse(endpoint.URL)
 		if err != nil {
 			return "", err
 		}
-		if i == 0 {
+		if output == nil {
 			website.Path = protocol.MCPPath
 			output = fmt.Appendf(output, "  MCP tools (all apps)  %s\n", website.String())
 		}
-		app := protocol.App{Name: endpoint.Name}
-		if index := slices.IndexFunc(session.Apps, func(candidate protocol.App) bool { return candidate.Name == endpoint.Name }); index >= 0 {
-			app = session.Apps[index]
+		output = fmt.Appendf(output, "\n  %s\n", app.Name)
+		if app.Path != "" && !app.resolved.stdio {
+			website.Path = strings.TrimSuffix(protocol.AppBrowserMount(app.resolved.App, mode), "/") + "/"
+			output = fmt.Appendf(output, "    Browser  %s\n", website.String())
 		}
-		website.Path = strings.TrimSuffix(protocol.AppBrowserMount(app, mode), "/") + "/"
-		output = fmt.Appendf(output, "\n  %s\n    Browser  %s\n    MCP      %s\n", endpoint.Name, website.String(), endpoint.URL)
+		output = fmt.Appendf(output, "    MCP      %s\n", endpoint.URL)
+	}
+	if output == nil {
+		return "", nil
 	}
 	return string(append(output, '\n')), nil
 }

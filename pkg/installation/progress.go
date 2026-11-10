@@ -131,8 +131,10 @@ func progressStatusID(title string) string {
 
 type progressPreview string
 
-func (o *progressOutput) endpoints(stdout io.Writer, heading string, session protocol.SessionResponse, provisional bool) error {
-	block, err := formatEndpoints(session)
+func (o *progressOutput) endpoints(
+	stdout io.Writer, heading string, session protocol.SessionResponse, apps []manifestApp, provisional bool,
+) error {
+	block, err := formatEndpoints(session, apps)
 	if err != nil || block == "" {
 		return err
 	}
