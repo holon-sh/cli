@@ -87,6 +87,7 @@ type pythonEmitter struct {
 	// a shared type is written when first rendered, before whatever uses it.
 	declaring bool
 	merging   bool // Rendering an intersection whose recursive members are inlined.
+	files     bool // Whether a file argument was rendered, so that the module imports File.
 }
 
 // pythonTypedDict reports whether an object renders as a TypedDict rather than a dict.
@@ -145,6 +146,9 @@ func (e *pythonEmitter) render(value typ, name string) string {
 		return "_builtins.float"
 	case kindBoolean:
 		return "_builtins.bool"
+	case kindFile:
+		e.files = true
+		return "_File"
 	case kindNull:
 		return "None"
 	case kindLiteral:
@@ -318,7 +322,11 @@ func generatePython(contracts map[string]catalog) string {
 		}
 		indices = append(indices, fmt.Sprintf("    def __getitem__(self, name: _typing.Literal[%s]) -> %s: ...", quoted(binding), appName))
 	}
-	sections := []string{"import builtins as _builtins\nimport typing as _typing"}
+	imports := "import builtins as _builtins\nimport typing as _typing"
+	if emitter.files {
+		imports += "\n\nfrom holon.files import File as _File"
+	}
+	sections := []string{imports}
 	sections = append(sections, emitter.shapes...)
 	for i, name := range exportNames {
 		sections = append(sections, pythonBlock(fmt.Sprintf("class %s:", name), exports[i], "    "))

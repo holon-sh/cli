@@ -15,19 +15,21 @@ type compiledTool struct {
 	structured    bool
 }
 
-func parseCatalog(ctx context.Context, contract contract) (catalog, error) {
+// parseCatalog parses a contract's tools. With files, their inputs take file arguments; outputs
+// never do.
+func parseCatalog(ctx context.Context, contract contract, files bool) (catalog, error) {
 	names := sortedKeys(contract.Tools)
 	tools := make([]compiledTool, len(names))
 	inputs, outputs := make([]*shape, len(names)), make([]*shape, len(names))
 	for i, name := range names {
 		tool := contract.Tools[name]
-		input, err := parseShape(ctx, tool.Input)
+		input, err := parseShape(ctx, tool.Input, files)
 		if err != nil {
 			return catalog{}, err
 		}
 		output := shape{named: map[string]typ{}}
 		if tool.Output != nil {
-			if output, err = parseShape(ctx, tool.Output); err != nil {
+			if output, err = parseShape(ctx, tool.Output, false); err != nil {
 				return catalog{}, err
 			}
 		}
@@ -310,8 +312,9 @@ func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
 	}
 }
 
-// compileCatalogs validates the binding names and compiles every contract's schemas.
-func compileCatalogs(ctx context.Context, contracts map[string]contract) (map[string]catalog, error) {
+// compileCatalogs validates the binding names and compiles every contract's schemas, with file
+// arguments if files.
+func compileCatalogs(ctx context.Context, contracts map[string]contract, files bool) (map[string]catalog, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -320,7 +323,7 @@ func compileCatalogs(ctx context.Context, contracts map[string]contract) (map[st
 		if name == "" {
 			return nil, errors.New("binding names must be nonempty")
 		}
-		compiled, err := parseCatalog(ctx, contracts[name])
+		compiled, err := parseCatalog(ctx, contracts[name], files)
 		if err != nil {
 			return nil, err
 		}
