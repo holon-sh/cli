@@ -247,7 +247,6 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	background.Go(func() {
 		var input protocol.SessionLogsRequest
 		input.Session = d.name
-		// Holon's record of each MCP call has a severity, so it shows only with --verbose.
 		records := &resumingWriter{out: stdout, stdio: !d.options.output.verbose}
 		if err := d.manager.streamLogs(ctx, input, records); ctx.Err() == nil {
 			d.options.output.problem("log stream", fmt.Errorf("stopped: %w", err))

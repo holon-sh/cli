@@ -316,10 +316,10 @@ func TestRunDevLifecycle(t *testing.T) {
 	)
 	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
-		if query.Has("event") { // Every record, not only MCP calls.
+		if query.Has("event") {
 			t.Errorf("log stream query = %s", r.URL.RawQuery)
 		}
-		if query.Has("since") { // The resumed stream fails, so the stream stops.
+		if query.Has("since") {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return
 		}
@@ -387,7 +387,6 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
 			t.Fatalf("source edit updates = %#v", updates)
 		}
-		// Holon's record of each call shows only with --verbose.
 		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") || strings.Contains(stdout.String(), callLine) {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}

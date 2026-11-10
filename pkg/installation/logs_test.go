@@ -14,7 +14,6 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-// traceback is what a Python app writes to stderr when a tool raises.
 const traceback = "Tool 'boom' raised an unexpected exception\nTraceback (most recent call last):\nRuntimeError: boom"
 
 func TestLogs(t *testing.T) {

@@ -73,7 +73,6 @@ func newLogsCommand(config *commandConfig) *cobra.Command {
 	return cmd
 }
 
-// logSession names the one development session that runs app, or any app when app is empty.
 func logSession(cmd *cobra.Command, manager *Client, app string) (string, error) {
 	sessions, err := scopeSessions(cmd.Context(), manager, "")
 	if err != nil {

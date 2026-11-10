@@ -497,8 +497,7 @@ func (m *Client) streamLogs(ctx context.Context, input protocol.SessionLogsReque
 }
 
 // resumingWriter writes whole log lines, tracking the timestamp that leads each record. Records not after the last
-// one written, with their continuation lines, are replays and are dropped. With stdio set, so are records with a
-// severity: in the server's "time severity app body" lines, what apps write to stdout and stderr has none.
+// one written, with their continuation lines, are replays and are dropped.
 type resumingWriter struct {
 	out     io.Writer
 	stdio   bool
@@ -525,7 +524,6 @@ func (w *resumingWriter) Write(p []byte) (int, error) {
 		}
 	}
 	w.partial = append(w.partial[:0], w.partial[end:]...)
-	// One write per chunk: a terminal redraws its progress display on each.
 	if len(kept) > 0 {
 		if _, w.err = w.out.Write(kept); w.err != nil {
 			return 0, w.err
