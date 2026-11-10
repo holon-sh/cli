@@ -78,7 +78,11 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ command, access, want, diagnostics, edit string }{
-		{command: "deploy", access: "--public", want: "fixture build failed", diagnostics: "missing dependency: fixture-package"},
+		{
+			command: "deploy", access: "--public", want: "fixture build failed:\nnpm error missing: fixture-package",
+			diagnostics: "#7 0.311 npm notice noise\n------\n > [build 2/3] RUN npm ci:\n0.312 npm error missing: fixture-package\n------\n",
+		},
+		{command: "deploy", access: "--public", want: "fixture build failed", diagnostics: "npm notice from an earlier step"},
 		{command: "dev", access: "--oauth", want: "requires a configured identity provider"},
 		{command: "deploy", access: "--public", want: "source changed during preparation", edit: "logic.ts"},
 	} {
@@ -104,10 +108,10 @@ func TestRunPreparationFailures(t *testing.T) {
 				_, _ = io.WriteString(progress, tc.diagnostics+"\n")
 				return "", errors.New("fixture build failed")
 			})
-			var diagnostics bytes.Buffer
-			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &diagnostics, h.run)
-			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(diagnostics.String(), tc.diagnostics) {
-				t.Fatalf("error=%v diagnostics=%q, want %q", err, diagnostics.String(), tc.want)
+			var stderr bytes.Buffer
+			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &stderr, h.run)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(stderr.String()+err.Error(), "notice") {
+				t.Fatalf("error=%v stderr=%q, want %q", err, stderr.String(), tc.want)
 			}
 		})
 	}
