@@ -2,7 +2,6 @@ package scaffold
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,8 +9,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/holon-sh/cli/pkg/typegen"
 )
 
 func TestWriteRefusesToOverwrite(t *testing.T) {
@@ -117,8 +114,8 @@ func read(t *testing.T, dir, name string) string {
 
 func TestResolve(t *testing.T) {
 	npm := map[string]string{
-		"/holon-ui": fmt.Sprintf(`{"versions": {"0.0.1-dev.9": {"holon": {"contractVersion": %d}}, "0.0.1-dev.10": {"holon": {"contractVersion": %d}}, "0.0.1-dev.11": {"holon": {"contractVersion": %d}}}}`, typegen.ContractVersion, typegen.ContractVersion, typegen.ContractVersion+1),
-		"/holon-sh": fmt.Sprintf(`{"versions": {"0.0.1-dev.6": {"holon": {"contractVersion": %d}}}}`, typegen.ContractVersion-1),
+		"/holon-ui": `{"versions": {"0.0.1-dev.9": {}, "0.0.1-dev.10": {}, "0.0.1-dev.11": {}}}`,
+		"/holon-sh": `{"versions": {"0.0.1-dev.6": {}}}`,
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/pypi/holon-sh/json" {
@@ -139,11 +136,12 @@ func TestResolve(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := (Versions{HolonUI: "0.0.1-dev.10", HolonPy: "0.0.1.dev5", HolonTypes: holonTypes}); versions != want {
+		if want := (Versions{HolonUI: "0.0.1-dev.11", HolonPy: "0.0.1.dev5", HolonTypes: holonTypes}); versions != want {
 			t.Errorf("py versions from holon %s = %+v, want %+v", cli, versions, want)
 		}
 	}
-	if _, err := local.resolve(context.Background(), "ts", "0.0.1-dev.19"); err == nil || !strings.Contains(err.Error(), "npm holon-sh: no release reads the clients this holon writes") {
-		t.Errorf("ts Resolve = %v, want no holon-sh release for this contract", err)
+	versions, err := local.resolve(context.Background(), "ts", "0.0.1-dev.19")
+	if want := (Versions{HolonUI: "0.0.1-dev.11", HolonSH: "0.0.1-dev.6", HolonTypes: "0.0.1-dev.19"}); err != nil || versions != want {
+		t.Errorf("ts versions = %+v, %v, want %+v", versions, err, want)
 	}
 }

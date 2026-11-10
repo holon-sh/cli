@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -28,9 +27,6 @@ type PackageJSON struct {
 	PackageManager                                                        string `json:"packageManager"`
 	Scripts                                                               map[string]string
 	Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
-	Holon                                                                 struct {
-		ContractVersion int `json:"contractVersion"`
-	}
 }
 
 // Launches reports whether the package starts itself, through main or a start script, so that
@@ -246,8 +242,8 @@ const PythonRuntime = "holon-sh"
 // ensurePythonRuntime installs a Python project's dependencies with uv sync, as holon init does, unless it
 // has an environment of its own.
 func ensurePythonRuntime(ctx context.Context, dir string, o Options) error {
-	if python := pythonEnvironment(dir, ""); python != "" {
-		return pythonRuntimeContract(ctx, python, dir)
+	if pythonEnvironment(dir, "") != "" {
+		return nil
 	}
 	declared, err := pythonDependencies(dir)
 	if err != nil {
@@ -262,41 +258,6 @@ func ensurePythonRuntime(ctx context.Context, dir string, o Options) error {
 	}
 	if err := commandenv.RunStreaming(ctx, dir, "uv", []string{"sync"}, nil, append(os.Environ(), o.Env...), o.Stderr, o.Stderr); err != nil {
 		return fmt.Errorf("uv sync in %s: %w", dir, err)
-	}
-	if python := pythonEnvironment(dir, ""); python != "" {
-		return pythonRuntimeContract(ctx, python, dir)
-	}
-	return nil
-}
-
-const pythonContractProbe = `import importlib.util
-try:
-    from holon.contract import CONTRACT_VERSION
-except ImportError:
-    try:
-        CONTRACT_VERSION = 0 if importlib.util.find_spec("holon.client") else -1
-    except ImportError:
-        CONTRACT_VERSION = -1
-print(CONTRACT_VERSION)
-`
-
-func pythonRuntimeContract(ctx context.Context, python, dir string) error {
-	command := exec.CommandContext(ctx, python, "-c", pythonContractProbe)
-	command.Dir = dir
-	output, err := command.Output()
-	if err != nil {
-		return fmt.Errorf("%s did not say which holon-sh it has: %w", python, err)
-	}
-	version, err := strconv.Atoi(strings.TrimSpace(string(output)))
-	switch {
-	case err != nil:
-		return fmt.Errorf("%s did not say which holon-sh it has: %q", python, output)
-	case version < 0:
-		return fmt.Errorf("%s is not installed for %s; install it before generating types", PythonRuntime, dir)
-	case version < ContractVersion:
-		return fmt.Errorf("the %s installed for %s reads an older generated client contract; upgrade it to a release that reads contract %d", PythonRuntime, dir, ContractVersion)
-	case version > ContractVersion:
-		return fmt.Errorf("the %s installed for %s expects generated client contract %d; this holon writes contract %d, so upgrade holon", PythonRuntime, dir, version, ContractVersion)
 	}
 	return nil
 }

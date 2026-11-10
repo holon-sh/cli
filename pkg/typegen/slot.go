@@ -13,14 +13,6 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-// ContractVersion is the generated-client contract the runtimes read: the npm packages holon-sh and
-// holon-ui declare it as holon.contractVersion, and the Python holon-sh as
-// holon.contract.CONTRACT_VERSION. TypeScript clients live in the project, in generated/holon-sh or
-// generated/holon-ui, and import the runtime as holon-sh/runtime or holon-ui/runtime. From contract
-// 3, each app's client has its events typed by name: ToolClient's fourth type parameter in
-// TypeScript, ext.events in Python. Generation and checks refuse a runtime of another contract.
-const ContractVersion = 3
-
 // slots are the project directories each target's generated clients occupy.
 var slots = map[string]string{TargetTS: "generated/holon-sh", TargetUI: "generated/holon-ui", TargetPy: "holon/apps", TargetGo: "holon"}
 
@@ -36,28 +28,12 @@ func ancestors(dir string) iter.Seq[string] {
 	}
 }
 
-// installedRuntime verifies that pkg, resolved upward from root as Node.js resolves it, runs the
-// clients this CLI generates.
+// installedRuntime verifies that pkg is installed where Node.js resolves it from root.
 func installedRuntime(root, pkg string) error {
 	for dir := range ancestors(root) {
-		var installed PackageJSON
-		err := readTypeJSON(filepath.Join(dir, "node_modules", pkg, "package.json"), &installed)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
+		if isFile(filepath.Join(dir, "node_modules", pkg, "package.json")) {
+			return nil
 		}
-		if err != nil {
-			return err
-		}
-		name := strings.TrimSpace(pkg + " " + installed.Version)
-		switch {
-		case installed.Holon.ContractVersion < 2:
-			return fmt.Errorf("%s keeps generated clients inside node_modules; upgrade it to a release that reads them from the project (holon.contractVersion %d)", name, ContractVersion)
-		case installed.Holon.ContractVersion < ContractVersion:
-			return fmt.Errorf("%s reads generated client contract %d; this holon writes contract %d, so upgrade it", name, installed.Holon.ContractVersion, ContractVersion)
-		case installed.Holon.ContractVersion > ContractVersion:
-			return fmt.Errorf("%s expects generated client contract %d; this holon writes contract %d, so upgrade holon", name, installed.Holon.ContractVersion, ContractVersion)
-		}
-		return nil
 	}
 	return fmt.Errorf("%s is not installed for %s; install it before generating types", pkg, root)
 }

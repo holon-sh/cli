@@ -1,12 +1,10 @@
 package installation
 
 import (
-	"fmt"
 	"path/filepath"
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
-	"github.com/holon-sh/cli/pkg/typegen"
 )
 
 // typedManifest writes the server descriptors typegen reads for in-memory test apps.
@@ -26,6 +24,6 @@ func typedManifest(t *testing.T, apps ...manifestApp) manifestSpec {
 func installRuntime(t *testing.T, root string) {
 	t.Helper()
 	for _, pkg := range []string{"holon-sh", "holon-ui"} {
-		sourceFiles(t, filepath.Join(root, "node_modules", pkg), map[string]string{"package.json": fmt.Sprintf(`{"name":%q,"holon":{"contractVersion":%d}}`, pkg, typegen.ContractVersion)})
+		sourceFiles(t, filepath.Join(root, "node_modules", pkg), map[string]string{"package.json": `{"name":"` + pkg + `"}`})
 	}
 }

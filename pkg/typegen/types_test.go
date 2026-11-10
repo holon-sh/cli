@@ -3,7 +3,6 @@ package typegen
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -203,7 +202,6 @@ for await (const { data } of await apps.orders.ext.events.subscribe("cells.edite
 			t.Skip("mypy is not installed in tooling/python/.venv")
 		}
 		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
-		put(t, app, "holon/contract.py", fmt.Sprintf("CONTRACT_VERSION = %d\n", ContractVersion))
 		put(t, app, "holon/client.py", `from typing import Any, Generic, TypeVar
 T = TypeVar("T")
 class Apps:
@@ -326,7 +324,6 @@ export const owner: InputTypes["files"]["stat"]["Owner"] = { lgn: "a" };
 			t.Skip("mypy is not installed in tooling/python/.venv")
 		}
 		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
-		put(t, app, "holon/contract.py", fmt.Sprintf("CONTRACT_VERSION = %d\n", ContractVersion))
 		generateFiles(t, app, TargetPy)
 		declaredOnce(t, read(t, app, "holon/apps/__init__.py"), `"login": _builtins.str`)
 		put(t, app, "holon/client.py", `from typing import Any, Generic, TypeVar

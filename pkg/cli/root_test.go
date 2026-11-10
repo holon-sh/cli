@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -50,7 +49,7 @@ func writeCLIFile(t *testing.T, root, name, content string) {
 func installCLIRuntime(t *testing.T, root string) {
 	t.Helper()
 	for _, pkg := range []string{"holon-sh", "holon-ui"} {
-		writeCLIFile(t, root, "node_modules/"+pkg+"/package.json", fmt.Sprintf(`{"name":%q,"holon":{"contractVersion":%d}}`, pkg, typegen.ContractVersion))
+		writeCLIFile(t, root, "node_modules/"+pkg+"/package.json", `{"name":"`+pkg+`"}`)
 	}
 }
 

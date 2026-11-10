@@ -3,14 +3,15 @@ package typegen
 import (
 	"errors"
 	"fmt"
-	"github.com/holon-sh/cli/pkg/mcpregistry"
-	"github.com/holon-sh/protocol"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/protocol"
 )
 
 var serverNamePattern = regexp.MustCompile(`^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`)

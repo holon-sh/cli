@@ -59,11 +59,6 @@ func Check(ctx context.Context, dir string, options Options) error {
 				return err
 			}
 		}
-		if language == "python" {
-			if err := pythonRuntimeContract(ctx, program, dir); err != nil {
-				return err
-			}
-		}
 		checker, err := tooling.File(language, l.checker)
 		if err != nil {
 			return err

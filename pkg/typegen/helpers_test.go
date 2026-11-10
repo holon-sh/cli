@@ -78,7 +78,7 @@ func writeProvider(t *testing.T, root, name, source string) {
 func runtimePackage(t *testing.T, app, pkg string) string {
 	t.Helper()
 	dir := filepath.Join(app, "node_modules", pkg)
-	put(t, dir, "package.json", fmt.Sprintf(`{"name":%q,"version":"0.0.1","exports":{"./runtime":{"types":"./runtime.d.ts"}},"holon":{"contractVersion":%d}}`, pkg, ContractVersion))
+	put(t, dir, "package.json", `{"name":"`+pkg+`","version":"0.0.1","exports":{"./runtime":{"types":"./runtime.d.ts"}}}`)
 	return dir
 }
 
