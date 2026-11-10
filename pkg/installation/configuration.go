@@ -152,16 +152,18 @@ func readSecret(cmd *cobra.Command, variable string) (string, error) {
 	var err error
 	if file, ok := terminalFile(in); ok {
 		stderr := cmd.ErrOrStderr()
-		_, _ = fmt.Fprintf(stderr, "Paste %s: ", variable)
+		if _, err := fmt.Fprintf(stderr, "Paste %s: ", variable); err != nil {
+			return "", err
+		}
 		secret, err = term.ReadPassword(int(file.Fd()))
 		_, _ = fmt.Fprintln(stderr)
 	} else {
-		secret, err = clientutil.ReadLimited(in, maxHTTPBody)
+		secret, err = clientutil.ReadLimited(in, maxRequestBody)
 	}
 	if err != nil {
 		return "", err
 	}
-	value := strings.TrimSuffix(strings.TrimSuffix(string(secret), "\n"), "\r")
+	value := strings.TrimSuffix(string(secret), "\n")
 	if value == "" {
 		return "", errors.New("secret value is empty")
 	}

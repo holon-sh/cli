@@ -51,7 +51,7 @@ func TestConfigurationCommands(t *testing.T) {
 		!strings.Contains(err.Error(), "secret value is empty") {
 		t.Fatalf("empty secret: %v", err)
 	}
-	if err := executeCommand(t.Context(), []string{"config", "set", "REGION", "sensitive\nline"}, nil, nil, h.run); err == nil ||
+	if err := executeCommandWithInput(t.Context(), []string{"secret", "set", "API_KEY"}, strings.NewReader("sensitive\n\n"), nil, nil, h.run); err == nil ||
 		strings.Contains(err.Error(), "sensitive") {
 		t.Fatalf("invalid value diagnostics: %v", err)
 	}
