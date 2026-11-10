@@ -25,9 +25,8 @@ var client = &http.Client{Timeout: 30 * time.Second}
 
 const cliPackage = "holon-types"
 
-// Resolve picks the SDK releases a new app in language pins, from npm's registry, or the one
-// npm_config_registry names, and PyPI: on npm, the newest release that reads the clients this holon
-// writes (holon.contractVersion); on PyPI, the newest release.
+// Resolve picks the newest SDK releases a new app in language pins, from npm's registry, or the one
+// npm_config_registry names, and PyPI.
 func Resolve(ctx context.Context, language, cliVersion string) (Versions, error) {
 	npm := cmp.Or(os.Getenv("npm_config_registry"), os.Getenv("NPM_CONFIG_REGISTRY"), "https://registry.npmjs.org")
 	return registries{npm: strings.TrimSuffix(npm, "/"), pypi: "https://pypi.org"}.resolve(ctx, language, cliVersion)
@@ -41,18 +40,18 @@ func (r registries) resolve(ctx context.Context, language, cliVersion string) (V
 	}
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() (err error) {
-		v.HolonUI, err = r.newestNPM(ctx, typegen.NodePackages[typegen.TargetUI], true)
+		v.HolonUI, err = r.newestNPM(ctx, typegen.NodePackages[typegen.TargetUI])
 		return err
 	})
 	switch language {
 	case typegen.TargetTS:
 		group.Go(func() (err error) {
-			v.HolonSH, err = r.newestNPM(ctx, typegen.NodePackages[typegen.TargetTS], true)
+			v.HolonSH, err = r.newestNPM(ctx, typegen.NodePackages[typegen.TargetTS])
 			return err
 		})
 		if !release {
 			group.Go(func() (err error) {
-				v.HolonTypes, err = r.newestNPM(ctx, cliPackage, false)
+				v.HolonTypes, err = r.newestNPM(ctx, cliPackage)
 				return err
 			})
 		}
@@ -71,22 +70,22 @@ func (r registries) resolve(ctx context.Context, language, cliVersion string) (V
 	return v, group.Wait()
 }
 
-func (r registries) newestNPM(ctx context.Context, pkg string, readsClients bool) (string, error) {
+func (r registries) newestNPM(ctx context.Context, pkg string) (string, error) {
 	var packument struct {
-		Versions map[string]typegen.PackageJSON
+		Versions map[string]json.RawMessage
 	}
 	if err := get(ctx, r.npm+"/"+url.PathEscape(pkg), &packument); err != nil {
 		return "", fmt.Errorf("npm %s: %w", pkg, err)
 	}
 	newest := ""
-	for version, manifest := range packument.Versions {
-		if (!readsClients || manifest.Holon.ContractVersion == typegen.ContractVersion) && semver.IsValid("v"+version) &&
+	for version := range packument.Versions {
+		if semver.IsValid("v"+version) &&
 			(newest == "" || semver.Compare("v"+version, "v"+newest) > 0) {
 			newest = version
 		}
 	}
 	if newest == "" {
-		return "", fmt.Errorf("npm %s: no release reads the clients this holon writes (holon.contractVersion %d)", pkg, typegen.ContractVersion)
+		return "", fmt.Errorf("npm %s: no release", pkg)
 	}
 	return newest, nil
 }

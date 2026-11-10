@@ -122,14 +122,12 @@ func mustReject(t *testing.T, app string, diagnostics ...string) {
 	}
 }
 
-// Generated clients take the runtime's binding and option types: with the published holon-sh
+// Generated clients take the runtime's binding and option types: with holon-sh's own
 // declarations, a session hook and a plain fetch bind, and a binding's fields are still checked.
 func TestGeneratedClientsBindAsTheRuntimeDoes(t *testing.T) {
 	t.Parallel()
 	app := typeScriptApp(t)
-	for _, name := range []string{"runtime.d.ts", "protocol.d.ts"} {
-		put(t, filepath.Join(app, "node_modules/holon-sh"), name, read(t, "testdata/holon-sh", name))
-	}
+	installRuntime(t, app, "testdata/holon-sh")
 	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
 	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 		t.Fatal(err)
@@ -150,6 +148,108 @@ export const total: Promise<number> = apps.orders.tools.lookup({ id: "1" }).then
 export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch } });
 `)
 	mustReject(t, app, "'fetsh' does not exist")
+}
+
+const editsSchema = `{"type":"object","required":["edits"],"properties":{"edits":{"type":"array","items":{
+	"oneOf":[{"$ref":"#/$defs/Updated"},{"$ref":"#/$defs/Removed"}],
+	"discriminator":{"propertyName":"op","mapping":{"cell.updated":"#/$defs/Updated","cell.removed":"#/$defs/Removed"}}}}},
+"$defs":{
+	"Updated":{"type":"object","required":["id","code"],"properties":{"op":{"const":"cell.updated","default":"cell.updated","type":"string"},"id":{"type":"string"},"code":{"type":"string"}}},
+	"Removed":{"type":"object","required":["id"],"properties":{"op":{"const":"cell.removed","default":"cell.removed","type":"string"},"id":{"type":"string"}}}}}`
+
+// An app's events are subscribed to by name, with their arguments checked and their data typed, as a
+// tool's input and output are. A union narrows on the field that tells its members apart, here in a
+// list and in the shape Pydantic writes for a discriminated union whose literal has a default.
+func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
+	orders := ordersMetadata()
+	orders.Schema.Events = []mcpcontract.Event{{Name: "cells.edited",
+		Input:   json.RawMessage(`{"type":"object","properties":{"notebook":{"type":"string"}},"required":["notebook"],"additionalProperties":false}`),
+		Payload: json.RawMessage(editsSchema)}}
+	t.Run("typescript", func(t *testing.T) {
+		t.Parallel()
+		app := typeScriptApp(t)
+		installRuntime(t, app, "testdata/holon-sh")
+		c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, orders)}}}
+		if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+			t.Fatal(err)
+		}
+		put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+for await (const { data } of await apps.orders.ext.events.subscribe("cells.edited", { notebook: "1" })) {
+  for (const edit of data.edits) {
+    if (edit.op === "cell.updated") { const code: string = edit.code; }
+    else { const id: string = edit.id; }
+  }
+}
+`)
+		if output, err := check(t, app); err != nil {
+			t.Fatalf("check: %v\n%s", err, output)
+		}
+		put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+export const misnamed = apps.orders.ext.events.subscribe("cells.edit", { notebook: "1" });
+export const misargued = apps.orders.ext.events.subscribe("cells.edited", { notbook: "1" });
+for await (const { data } of await apps.orders.ext.events.subscribe("cells.edited", { notebook: "1" })) data.edits[0]!.code;
+`)
+		mustReject(t, app, `"cells.edit"`, "'notbook' does not exist", "Property 'code' does not exist")
+	})
+	t.Run("python", func(t *testing.T) {
+		t.Parallel()
+		app := t.TempDir()
+		venv, err := filepath.Abs("../../tooling/python/.venv")
+		if err == nil {
+			err = os.Symlink(venv, filepath.Join(app, ".venv"))
+		}
+		if python := pythonEnvironment(app, ""); err != nil || exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
+			t.Skip("mypy is not installed in tooling/python/.venv")
+		}
+		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
+		put(t, app, "holon/client.py", `from typing import Any, Generic, TypeVar
+T = TypeVar("T")
+class Apps:
+    def __init__(self, *args: Any) -> None: ...
+    def __getitem__(self, name: str) -> Any: ...
+class Binding: ...
+class CallOptions: ...
+class CompleteResult(Generic[T]): ...
+class ToolResult(Generic[T]): ...
+`)
+		put(t, app, "holon/ext/__init__.py", "")
+		put(t, app, "holon/ext/events.pyi", `from typing import Any, Generic, TypeVar
+D = TypeVar("D")
+class Event(Generic[D]):
+    data: D
+class Subscription(Generic[D]):
+    async def __aenter__(self) -> "Subscription[D]": ...
+    async def __aexit__(self, *args: Any) -> None: ...
+    def __aiter__(self) -> "Subscription[D]": ...
+    async def __anext__(self) -> Event[D]: ...
+`)
+		c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, orders)}}}
+		if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+			t.Fatal(err)
+		}
+		put(t, app, "main.py", `from holon.apps import apps
+async def use() -> None:
+    async with apps.orders.ext.events.subscribe("cells.edited", {"notebook": "1"}) as changes:
+        async for event in changes:
+            for edit in event.data["edits"]:
+                if edit["op"] == "cell.updated":
+                    code: str = edit["code"]
+                else:
+                    id: str = edit["id"]
+`)
+		if output, err := check(t, app); err != nil {
+			t.Fatalf("check: %v\n%s", err, output)
+		}
+		put(t, app, "main.py", `from holon.apps import apps
+async def use() -> None:
+    apps.orders.ext.events.subscribe("cells.edit", {"notebook": "1"})
+    apps.orders.ext.events.subscribe("cells.edited", {"notbook": "1"})
+    async with apps.orders.ext.events.subscribe("cells.edited", {"notebook": "1"}) as changes:
+        async for event in changes:
+            event.data["edits"][0]["code"]
+`)
+		mustReject(t, app, `Literal['cells.edit']`, `Extra key "notbook"`, `has no key "code"`)
+	})
 }
 
 func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {

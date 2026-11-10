@@ -35,6 +35,8 @@ func resourceContracts(contracts map[string]contract) map[string]contract {
 	return result
 }
 
+const eventTypes = "export type Events = { readonly [A in keyof EventArguments]: { [K in keyof EventArguments[A]]: { arguments: EventArguments[A][K]; data: K extends keyof EventData[A] ? EventData[A][K] : unknown } } };\n"
+
 // runtimes are the modules each TypeScript target's clients import their runtime and its declarations from.
 var runtimes = map[string]string{"node": quoted("holon-sh/runtime"), "browser": quoted("holon-ui/runtime")}
 
@@ -47,8 +49,13 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		return nil, err
 	}
 	resources := generateTypeScript(catalogs, names, [4]string{1: "Resources"})
+	catalogs, err = compileCatalogs(ctx, eventContracts(request.contracts), false)
+	if err != nil {
+		return nil, err
+	}
+	events := generateTypeScript(catalogs, names, [4]string{"EventArguments", "EventData"}) + eventTypes
 	runtime := runtimes[request.Target]
-	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A]> };\n", runtime, runtime, tools, resources)
+	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> };\n", runtime, runtime, tools, resources, events)
 	identity, contracts := encode(request.caller()), encode(request.contracts)
 	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
 	if request.Target == "browser" {

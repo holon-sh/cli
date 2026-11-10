@@ -54,7 +54,11 @@ func dial(ctx context.Context, location string, client *http.Client) (*mcp.Clien
 	}
 	capabilities := &mcp.ClientCapabilities{}
 	capabilities.AddExtension("io.modelcontextprotocol/files", map[string]any{"upload": map[string]any{}, "download": map[string]any{}})
-	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "0.0.1"}, &mcp.ClientOptions{Capabilities: capabilities}).Connect(ctx, &mcp.StreamableClientTransport{Endpoint: location, HTTPClient: client, DisableStandaloneSSE: true}, nil)
+	c := mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "0.0.1"}, &mcp.ClientOptions{Capabilities: capabilities})
+	if err := mcp.AddSendingCustomMethod[*listEventsParams, *listEventsResult](c, "events/list"); err != nil {
+		return nil, err
+	}
+	session, err := c.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: location, HTTPClient: client, DisableStandaloneSSE: true}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", location, err)
 	}
