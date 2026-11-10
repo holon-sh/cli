@@ -69,6 +69,13 @@ type OrdersInputX1startsDashKeyAllEtc struct {
 	EmptyAll json.RawMessage "json:\"emptyAll,omitempty\""
 	EmptyAny json.RawMessage "json:\"emptyAny,omitempty\""
 	FalseSchema json.RawMessage "json:\"falseSchema,omitempty\""
+	Files *[]struct {
+	Data *string "json:\"data,omitempty\""
+	Id string "json:\"id\""
+	MimeType string "json:\"mimeType\""
+	Name *string "json:\"name,omitempty\""
+	Size json.Number "json:\"size\""
+} "json:\"files,omitempty\""
 	ImplicitTuple json.RawMessage "json:\"implicitTuple,omitempty\""
 	Literals json.RawMessage "json:\"literals\""
 	MapOf *map[string]string "json:\"mapOf,omitempty\""

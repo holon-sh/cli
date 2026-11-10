@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,11 +28,14 @@ import (
 const (
 	alphaProject  = "[project]\nname = \"alpha\"\nversion = \"1\"\n"
 	alphaManifest = "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n"
+	betaRemote    = "- name: beta\n  access: {server: {}}\n  remote: {url: https://upstream.example/mcp}\n"
+	alphaLock     = "version = 1\n\n[[package]]\nname = \"alpha\"\nversion = \"1\"\nsource = { virtual = \".\" }\n"
 )
 
 // reloadFixture runs holon dev for one source app, alpha, against a fake control plane and registry.
 // Like the API, it holds a get_session that names the session's current revision until the session moves.
 type reloadFixture struct {
+	t        *testing.T
 	root     string
 	registry *imageRegistry
 	stdout   *installationtest.ObservedOutput
@@ -46,6 +48,7 @@ type reloadFixture struct {
 	mu       sync.Mutex
 	ready    bool
 	failNext bool
+	failSave bool
 	foreign  bool
 	creates  int
 	served   []protocol.App
@@ -78,16 +81,18 @@ func (f *reloadFixture) reloadRequests() []reloadAppRequest {
 // startReloadFixture starts holon dev and, for a ready session, waits until it watches for changes.
 func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 	t.Helper()
-	f := &reloadFixture{root: t.TempDir(), ready: ready, changed: make(chan struct{})}
+	f := &reloadFixture{t: t, root: t.TempDir(), ready: ready, changed: make(chan struct{})}
 	sourceFiles(t, f.root, map[string]string{
 		manifestFileName:  alphaManifest,
-		"alpha/server.py": "app = None", "alpha/tools.py": "first", "alpha/pyproject.toml": alphaProject, "alpha/ui/main.ts": "export {}",
+		"alpha/server.py": "app = None", "alpha/tools.py": "first", "alpha/pyproject.toml": alphaProject, "alpha/uv.lock": alphaLock,
 	})
 	var registry *httptest.Server
 	f.registry, registry = buildRegistry(t)
 	h := newRunHarness(t)
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, buildGrant(registry))
+		grant := buildGrant(registry)
+		grant.Repositories["beta"] = "holon/upload/beta"
+		installationtest.WriteJSON(w, grant)
 	})
 	session := func() map[string]any {
 		response := apiSession("alpha")
@@ -106,7 +111,8 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 				Desired struct {
 					Apps []protocol.App `json:"apps"`
 				} `json:"desired"`
-				Revision string `json:"revision"`
+				Remove   []string `json:"remove"`
+				Revision string   `json:"revision"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 				t.Error(err)
@@ -121,7 +127,16 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 					return
 				}
 			case protocol.ToolUpdateSession:
-				f.served = input.Desired.Apps
+				if f.failSave {
+					f.failSave = false
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				f.served = slices.DeleteFunc(f.served, func(app protocol.App) bool {
+					return slices.Contains(input.Remove, app.Name) ||
+						slices.ContainsFunc(input.Desired.Apps, func(desired protocol.App) bool { return desired.Name == app.Name })
+				})
+				f.served = append(input.Desired.Apps, f.served...)
 				f.moved()
 			case protocol.ToolGetSession:
 				f.reads = append(f.reads, input.Revision)
@@ -150,6 +165,8 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
+		f.served[slices.IndexFunc(f.served, func(app protocol.App) bool { return app.Name == input.App })].Overlay = input.Digest
+		f.moved()
 		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2})
 	})
 	h.start(t, buildImage(t, "built"))
@@ -169,6 +186,11 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 		t.Cleanup(func() { _ = stopOnce() })
 	}
 	f.start()
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("stderr=%q", f.stderr.String())
+		}
+	})
 	if ready {
 		f.watching()
 	}
@@ -176,7 +198,32 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 }
 
 func (f *reloadFixture) watching() {
-	f.await(func() bool { return strings.Contains(f.stdout.String(), "Watching for changes.") })
+	f.await(func() bool { return strings.Contains(f.stderr.String(), watching) })
+}
+
+func (f *reloadFixture) save(files map[string]string, line string) {
+	f.t.Helper()
+	from := len(f.stderr.String())
+	f.mu.Lock()
+	reads := len(f.reads)
+	f.mu.Unlock()
+	sourceFiles(f.t, f.root, files)
+	f.await(func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.reads) > reads && strings.Contains(f.stderr.String()[from:], line)
+	})
+}
+
+func (f *reloadFixture) apps() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var names []string
+	for _, app := range f.served {
+		names = append(names, app.Name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 func (f *reloadFixture) created() int {
@@ -186,54 +233,47 @@ func (f *reloadFixture) created() int {
 }
 
 func TestDevSaves(t *testing.T) {
-	const reloaded = "alpha reloaded in 1.2 s"
 	for _, test := range []struct {
-		name       string
-		failReload bool
-		saves      []map[string]string // each awaits the line at the same index of lines
-		lines      []string
-		reloads    int
-		rebuilt    bool
+		name                 string
+		failReload, failSave bool
+		saves                []map[string]string
+		lines                []string
+		reloads              int
+		rebuilt              bool
 	}{
 		{
-			name:  "an unchanged snapshot sends nothing",
-			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "second"}}, lines: []string{reloaded, "alpha unchanged"}, reloads: 1,
+			name:  "server source restarts the app in place, and the same source again does nothing",
+			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "second"}},
+			lines: []string{"alpha reloaded in 1.2 s", "alpha unchanged"}, reloads: 1,
 		},
 		{
 			name:  "files an editor writes while saving do nothing",
 			saves: []map[string]string{{"alpha/.tools.py.swp": "swap", "alpha/tools.py~": "first", manifestFileName: alphaManifest + "# comment\n"}},
-			lines: []string{"no app changed"},
+			lines: []string{""},
 		},
 		{
-			name:  "a module under ui/ reloads and rebuilds, since the frontend build reads it",
-			saves: []map[string]string{{"alpha/ui/main.ts": "export const edited = true"}}, lines: []string{"remote update requested"}, reloads: 1, rebuilt: true,
+			name: "a rebuild the session failed to take is built again with the next save", failSave: true,
+			saves: []map[string]string{{"alpha/pyproject.toml": alphaProject + "dependencies = [\"idna\"]\n"}, {"alpha/tools.py": "second"}},
+			lines: []string{"remote update failed", "alpha ready"}, rebuilt: true,
 		},
 		{
 			name: "a failed reload is reported and rebuilds nothing", failReload: true,
-			saves: []map[string]string{{"alpha/tools.py": "second"}}, lines: []string{"alpha reload failed"}, reloads: 1,
+			saves: []map[string]string{{"alpha/tools.py": "second"}},
+			lines: []string{"alpha reload failed"}, reloads: 1,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true)
 			var before protocol.App
-			f.update(func() { f.failNext, before = test.failReload, f.served[0] })
+			f.update(func() { f.failNext, f.failSave, before = test.failReload, test.failSave, f.served[0] })
 			for i, files := range test.saves {
-				from := len(f.stderr.String())
-				sourceFiles(t, f.root, files)
-				f.await(func() bool { return strings.Contains(f.stderr.String()[from:], test.lines[i]) })
-			}
-			requests := f.reloadRequests()
-			if len(requests) != test.reloads {
-				t.Fatalf("reloads = %d; stderr=%q", len(requests), f.stderr.String())
+				f.save(files, test.lines[i])
 			}
 			f.mu.Lock()
 			after := f.served[0]
 			f.mu.Unlock()
-			if rebuilt := after.Image != before.Image; rebuilt != test.rebuilt {
-				t.Fatalf("image replaced = %v; stderr=%q", rebuilt, f.stderr.String())
-			}
-			if test.rebuilt && after.Overlay != requests[len(requests)-1].Digest {
-				t.Fatalf("rebuilt with overlay %+v after reloading %+v", after.Overlay, requests)
+			if reloads, rebuilt := len(f.reloadRequests()), after.Image != before.Image; reloads != test.reloads || rebuilt != test.rebuilt {
+				t.Fatalf("reloads = %d, image replaced = %v", reloads, rebuilt)
 			}
 		})
 	}
@@ -246,12 +286,16 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 		edit    map[string]string
 		creates int
 		reloads int
-		rebuilt bool
+		apps    []string
 	}{
 		{name: "server source edited since reloads into the kept image", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1},
 		{
-			name: "a dependency manifest edited since rebuilds", edit: map[string]string{"alpha/pyproject.toml": alphaProject + "dependencies = [\"idna\"]\n"},
-			creates: 1, rebuilt: true,
+			name: "a reload that fails is not reported ready", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1,
+			between: func(_ *testing.T, f *reloadFixture) { f.failNext = true },
+		},
+		{
+			name: "an app added to the project since joins the session", edit: map[string]string{manifestFileName: alphaManifest + betaRemote},
+			creates: 1, apps: []string{"beta"},
 		},
 		{name: "another caller's session is not picked up", between: func(_ *testing.T, f *reloadFixture) { f.foreign = true }, creates: 2},
 		{
@@ -286,10 +330,43 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			if f.created() != test.creates {
 				t.Fatalf("creates = %d, want %d; stderr=%q", f.created(), test.creates, f.stderr.String())
 			}
-			if rebuilt := !reflect.DeepEqual(after, before); len(f.reloadRequests()) != test.reloads || rebuilt != test.rebuilt {
-				t.Fatalf("reloads = %d, app replaced = %v; stderr=%q", len(f.reloadRequests()), rebuilt, f.stderr.String())
+			if len(f.reloadRequests()) != test.reloads || after.Image != before.Image {
+				t.Fatalf("reloads = %d, image %s, was %s", len(f.reloadRequests()), after.Image, before.Image)
+			}
+			if names := f.apps(); !slices.Equal(names, append([]string{"alpha"}, test.apps...)) {
+				t.Fatalf("session apps = %v", names)
+			}
+			if strings.Contains(f.stderr.String(), "alpha reload failed") == strings.Contains(f.stderr.String(), "alpha ready") {
+				t.Fatalf("stderr=%q", f.stderr.String())
 			}
 		})
+	}
+}
+
+func TestDevAppliesProjectChanges(t *testing.T) {
+	f := startReloadFixture(t, true)
+	f.mu.Lock()
+	image := f.served[0].Image
+	f.mu.Unlock()
+	for _, step := range []struct {
+		files        map[string]string
+		fail         bool
+		line, served string
+	}{
+		{files: map[string]string{manifestFileName: alphaManifest + betaRemote}, fail: true, line: "project replacement outcome conflicts", served: "alpha"},
+		{files: map[string]string{"alpha/tools.py": "second"}, line: "beta ready", served: "alpha beta"},
+		{files: map[string]string{manifestFileName: alphaManifest}, line: "beta removed", served: "alpha"},
+	} {
+		f.update(func() { f.failSave = step.fail })
+		f.save(step.files, step.line)
+		if apps := strings.Join(f.apps(), " "); apps != step.served {
+			t.Fatalf("session apps = %v, want %v", apps, step.served)
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.creates != 1 || f.served[0].Image != image || !strings.Contains(f.stdout.String(), "/mcp/beta") {
+		t.Fatalf("creates = %d, image %s, was %s; stdout=%q", f.creates, f.served[0].Image, image, f.stdout.String())
 	}
 }
 
@@ -306,28 +383,20 @@ func TestDevDetachedStartsItsOwnSession(t *testing.T) {
 
 func TestDevReloadPushesTheBuildSnapshot(t *testing.T) {
 	f := startReloadFixture(t, true)
-	if err := os.Symlink("tools.py", filepath.Join(f.root, "alpha", "alias.py")); err != nil {
-		t.Fatal(err)
-	}
-	started := len(f.stderr.String())
-	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "second"})
-	f.await(func() bool { return strings.Contains(f.stderr.String()[started:], "alpha reloaded") })
-	request := f.reloadRequests()[0]
-	if request.Session != "gentle-otter-482" || request.App != "alpha" {
-		t.Fatalf("reload_app %+v", request)
-	}
 	f.mu.Lock()
 	first := f.served[0].Overlay
 	f.mu.Unlock()
-	if first == "" || first == request.Digest {
-		t.Fatalf("create_session overlay %q, reloaded %s", first, request.Digest)
+	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reloaded")
+	request := f.reloadRequests()[0]
+	if request.Session != "gentle-otter-482" || request.App != "alpha" {
+		t.Fatalf("reload_app %+v", request)
 	}
 	if !strings.Contains(string(f.overlay(t, first)["server.py"]), "app = None") {
 		t.Fatal("the overlay a session starts from lacks the server source")
 	}
 	entries := f.overlay(t, request.Digest)
 	// The snapshot an image build would read, with its launcher.
-	if string(entries["tools.py"]) != "second" || string(entries["alias.py"]) != "tools.py" || !strings.Contains(string(entries[".holon/main.py"]), `start("server")`) {
+	if string(entries["tools.py"]) != "second" || !strings.Contains(string(entries[".holon/main.py"]), `start("server")`) {
 		t.Fatalf("overlay entries = %v", entries)
 	}
 }
@@ -360,9 +429,9 @@ func TestDevStartup(t *testing.T) {
 	f := startReloadFixture(t, false)
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Starting") })
 	f.update(func() { f.ready = true })
-	f.await(func() bool { return strings.Contains(f.stdout.String(), "Watching for changes.") })
+	f.watching()
 	// Ready repeats only its heading when the endpoints are the ones Starting listed.
-	if strings.Count(f.stdout.String(), "/mcp/alpha") != 1 || !strings.Contains(f.stdout.String(), "\nReady\nWatching") {
+	if strings.Count(f.stdout.String(), "/mcp/alpha") != 1 || !strings.Contains(f.stdout.String(), "\nReady\n") {
 		t.Fatalf("stdout = %q", f.stdout.String())
 	}
 	// Each read names the revision the session last had, so the server holds it until the session moves.

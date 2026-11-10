@@ -35,7 +35,7 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	if err := request.validate(); err != nil {
 		return nil, err
 	}
-	catalogs, err := compileCatalogs(ctx, request.contracts)
+	catalogs, err := compileCatalogs(ctx, request.contracts, request.Target != "go")
 	if err != nil {
 		return nil, err
 	}
