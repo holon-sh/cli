@@ -307,9 +307,6 @@ func SessionReady(session protocol.SessionResponse) (bool, error) {
 	}
 	condition := session.Condition(protocol.ConditionReady)
 	if condition.Status == "True" {
-		if len(session.Endpoints) == 0 {
-			return false, errors.New("session failed: ready session returned no endpoint")
-		}
 		return true, nil
 	}
 	if terminalCondition(condition) {

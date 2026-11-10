@@ -90,11 +90,9 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 		installationtest.WriteJSON(w, buildGrant(registry))
 	})
 	session := func() map[string]any {
-		response := apiSession(h, "alpha")
+		response := apiSession("alpha")
 		response["apps"], response["revision"] = f.served, strconv.Itoa(f.revision)
 		if !f.ready {
-			// As the API does, publish no endpoints until the apps are up.
-			response["endpoints"] = []protocol.SessionEndpoint{}
 			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
 		}
 		return response
