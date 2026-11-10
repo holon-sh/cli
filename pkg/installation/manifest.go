@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/cli/pkg/scaffold"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
@@ -115,10 +116,7 @@ func resolveAppMetadata(app *manifestApp, pkg mcpregistry.Package) error {
 // parseManifest reads a holon.yaml, naming it in errors by its path from the working directory when it
 // is inside it.
 func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
-	working, _ := os.Getwd()
-	if relative, err := filepath.Rel(working, sourceName); err == nil && filepath.IsLocal(relative) {
-		sourceName = relative
-	}
+	sourceName = scaffold.Relative(sourceName)
 	document, err := yaml.YAMLToJSONStrict(data)
 	if err != nil {
 		return manifestSpec{}, fmt.Errorf("%s: %w", sourceName, err)
