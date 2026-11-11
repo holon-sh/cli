@@ -3,6 +3,7 @@ package installation
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -56,6 +56,9 @@ type reloadFixture struct {
 	changed  chan struct{} // closed when the session moves past revision
 	reads    []string      // the revision each get_session named
 	reloads  []reloadAppRequest
+
+	holdBuilds    bool
+	held, stopped int
 }
 
 // update changes the session and moves it past its revision, which releases a held read.
@@ -169,7 +172,23 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 		f.moved()
 		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2})
 	})
-	h.start(t, buildImage(t, "built"))
+	built := buildImage(t, "built")
+	h.start(t, func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
+		f.mu.Lock()
+		hold := f.holdBuilds
+		if hold {
+			f.held++
+		}
+		f.mu.Unlock()
+		if !hold {
+			return built(ctx, request, progress)
+		}
+		<-ctx.Done()
+		f.mu.Lock()
+		f.stopped++
+		f.mu.Unlock()
+		return "", ctx.Err()
+	})
 	f.baseHost = h.baseHost
 	fc := testingclock.NewFakeClock(time.Now())
 	h.run.Clock = fc
@@ -442,41 +461,36 @@ func TestDevStartup(t *testing.T) {
 	})
 }
 
-// A save while the last save's types are still being prepared reloads at once, and stops that preparation.
 func TestDevSaveStopsTheLastPreparation(t *testing.T) {
-	bin, started := t.TempDir(), filepath.Join(t.TempDir(), "started")
-	// Stands in for npm installing the missing SDK runtime, which lasts until it is stopped.
-	sourceFiles(t, bin, map[string]string{"npm": "#!/bin/sh\necho $$ >> '" + started + "'\nexec sleep 600\n"})
-	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	f := startReloadFixture(t, true)
-	alpha := filepath.Join(f.root, "alpha")
-	installRuntime(t, alpha)
+	counts := func() (held, stopped int) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.held, f.stopped
+	}
+	f.mu.Lock()
+	f.holdBuilds = true
+	f.mu.Unlock()
+	sourceFiles(t, f.root, map[string]string{"alpha/uv.lock": "# edited\n" + alphaLock})
+	f.await(func() bool {
+		held, _ := counts()
+		return held == 1
+	})
+	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "second"})
+	f.await(func() bool {
+		held, stopped := counts()
+		return held == 2 && stopped == 1
+	})
+}
+
+func TestDevInstallsNothingOnThisMachine(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	f := startReloadFixture(t, true)
 	from := len(f.stderr.String())
 	sourceFiles(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
 	f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha ready") })
-	if err := os.RemoveAll(filepath.Join(alpha, "node_modules", "holon-sh")); err != nil {
-		t.Fatal(err)
-	}
-	runs := func() []string {
-		data, _ := os.ReadFile(started)
-		return strings.Fields(string(data))
-	}
-	for i, content := range []string{"second", "third"} {
-		from := len(f.stderr.String())
-		sourceFiles(t, f.root, map[string]string{"alpha/tools.py": content})
-		f.await(func() bool { return strings.Contains(f.stderr.String()[from:], "alpha reloaded") && len(runs()) == i+1 })
-	}
-	pid, err := strconv.Atoi(runs()[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if process, _ := os.FindProcess(pid); process.Signal(syscall.Signal(0)) == nil {
-		t.Fatal("the first save's preparation still runs")
-	}
-	if strings.Contains(f.stderr.String(), "MCP types") {
-		t.Fatalf("stderr=%q", f.stderr.String())
+	data, err := os.ReadFile(filepath.Join(f.root, "alpha", "package.json"))
+	if err != nil || !strings.Contains(string(data), `"#holon-sh"`) {
+		t.Fatalf("package.json = %s, %v", data, err)
 	}
 }
