@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"oras.land/oras-go/v2/registry/remote"
 
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
 
@@ -38,11 +40,13 @@ type recordAppSourceRequest struct {
 
 type reloadAppResult struct {
 	ElapsedSeconds float64 `json:"elapsedSeconds"`
+	Output         string  `json:"output"`
 }
 
 type packedSource struct {
 	overlay ocispec.Descriptor
 	file    string
+	build   bool
 	request buildRequest
 }
 
@@ -111,7 +115,12 @@ func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
 			continue
 		}
 		if err := d.reloadApp(ctx, app); err != nil {
-			d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
+			reason := err.Error()
+			if failure, ok := errors.AsType[*httpError](err); ok && failure.Message != "" {
+				reason = failure.Message
+				_, _ = io.WriteString(d.options.output.writer, failure.Output)
+			}
+			d.options.output.status(app.Name, "reload failed: "+reason, progressError)
 			d.pending.Delete(app.Name)
 			reloaded = false
 		}
@@ -158,7 +167,7 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 		return errors.New("application removed from the session")
 	}
 	packed, cleanup, err := d.pack(ctx, app)
-	if err == nil && packed.overlay.Digest.String() != d.sent[app.Name] {
+	if err == nil && (packed.overlay.Digest.String() != d.sent[app.Name] || packed.build && d.unbuilt.Has(app.Name)) {
 		if err = d.send(ctx, app.Name, packed); err == nil {
 			d.record(app.Name, packed, cleanup)
 			return nil
@@ -181,10 +190,20 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 	}
 	var result reloadAppResult
 	request := apiRequest{Plane: ControlPlane(d.name), Token: token, Body: file, ContentType: overlayMediaType}
-	if err := d.manager.client.send(ctx, path.Join(protocol.APIPathSessions, d.name, "apps", app, "source"), request, &result); err != nil {
+	target := path.Join(protocol.APIPathSessions, d.name, "apps", app, "source")
+	if !packed.build {
+		target += "?build=false"
+	}
+	if err := d.manager.client.send(ctx, target, request, &result); err != nil {
 		return err
 	}
 	d.sent[app] = packed.overlay.Digest.String()
+	if d.unbuilt.Delete(app); !packed.build {
+		d.unbuilt.Insert(app)
+	}
+	if d.options.output.verbose {
+		_, _ = io.WriteString(d.options.output.writer, result.Output)
+	}
 	d.options.output.status(app, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
 	return nil
 }
@@ -213,12 +232,21 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 }
 
 func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string, upload *imageUpload) (packedSource, error) {
-	if accepted := o.types.accepted[app.Name]; accepted != nil {
+	accepted := o.types.accepted[app.Name]
+	if accepted != nil {
 		staged := *accepted
 		staged.root = root
 		if err := stageTypes(&staged); err != nil {
 			return packedSource{}, err
 		}
+	}
+	var pkg typegen.PackageJSON
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err == nil {
+		err = json.Unmarshal(data, &pkg)
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return packedSource{}, err
 	}
 	entry, err := hostedEntry(app, root)
 	if err != nil {
@@ -237,6 +265,7 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	}
 	packed := packedSource{
 		file:    root + ".tar.zst",
+		build:   accepted != nil || pkg.Scripts["build"] == "",
 		request: buildRequest{app: app, upload: upload, httpClient: o.HTTPClient},
 	}
 	file, err := os.Create(packed.file)

@@ -33,6 +33,8 @@ const (
 	alphaLock     = "version = 1\n\n[[package]]\nname = \"alpha\"\nversion = \"1\"\nsource = { virtual = \".\" }\n"
 )
 
+const installed = "added 1 package\n"
+
 type reloadFixture struct {
 	t        *testing.T
 	root     string
@@ -47,6 +49,7 @@ type reloadFixture struct {
 	mu         sync.Mutex
 	ready      bool
 	failNext   bool
+	refusal    string
 	failSave   bool
 	unserved   bool
 	unrecorded bool
@@ -62,8 +65,8 @@ type reloadFixture struct {
 }
 
 type sentSource struct {
-	Session, App, Digest string
-	body                 []byte
+	Session, App, Digest, Query string
+	body                        []byte
 }
 
 // update changes the session and moves it past its revision, which releases a held read.
@@ -175,14 +178,20 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.reloads = append(f.reloads, sentSource{r.PathValue("id"), r.PathValue("app"), digest.FromBytes(body).String(), body})
+		f.reloads = append(f.reloads, sentSource{r.PathValue("id"), r.PathValue("app"), digest.FromBytes(body).String(), r.URL.RawQuery, body})
 		if f.failNext {
 			f.failNext = false
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
+		if f.refusal != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, f.refusal)
+			f.refusal = ""
+			return
+		}
 		f.unserved = false
-		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2})
+		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2, Output: installed})
 	})
 	h.control.Handle([]string{toolRecordAppSource}, nil, func(w http.ResponseWriter, r *http.Request) {
 		var input recordAppSourceRequest
@@ -275,6 +284,7 @@ func TestDevSaves(t *testing.T) {
 		name       string
 		failReload bool
 		unrecorded bool
+		refusal    string
 		saves      []map[string]string
 		lines      []string
 		reloads    int
@@ -299,11 +309,17 @@ func TestDevSaves(t *testing.T) {
 			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "third"}},
 			lines: []string{"alpha reloaded in 1.2 s", "alpha reloaded, but not recorded in the session: no answer within a minute"}, reloads: 2,
 		},
+		{
+			name:    "a source that does not install shows what the install printed, then why",
+			refusal: `{"error":{"code":"invalid_request","message":"npm install: exit status 1"},"output":"npm error 404\nnot found\n"}`,
+			saves:   []map[string]string{{"alpha/tools.py": "second"}},
+			lines:   []string{"npm error 404\nnot found\nalpha reload failed: npm install: exit status 1\n"}, reloads: 1,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true)
 			started := len(f.reloadRequests())
-			f.update(func() { f.failNext, f.unrecorded = test.failReload, test.unrecorded })
+			f.update(func() { f.failNext, f.unrecorded, f.refusal = test.failReload, test.unrecorded, test.refusal })
 			for i, files := range test.saves {
 				f.save(files, test.lines[i])
 			}
@@ -519,26 +535,67 @@ func (f *reloadFixture) overlay(t *testing.T, digest string) map[string][]byte {
 	}
 }
 
-func TestDevGeneratesClientsFromTheRunningApp(t *testing.T) {
-	f := startReloadFixture(t, true, map[string]string{
-		"alpha/server.py": "import mcp\n", "alpha/package.json": `{"private":true,"dependencies":{"holon-ui":"0.0.1"}}`,
-	})
-	generated := func(entries map[string][]byte) string {
-		var clients string
-		for name, data := range entries {
-			if strings.HasPrefix(name, "generated/holon-ui/") {
-				clients += string(data)
+func TestDevFirstSendsSourceThenItsGeneratedClients(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		project string
+		queries []string
+		clients bool
+	}{
+		{name: "an app with nothing to generate or build is sent once", queries: []string{""}},
+		{
+			name: "clients generated from the running app follow in a second send", project: `{"private":true,"dependencies":{"holon-ui":"0.0.1"}}`,
+			queries: []string{"", ""}, clients: true,
+		},
+		{
+			name:    "a page is built once its clients are in the source",
+			project: `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`,
+			queries: []string{"build=false", ""}, clients: true,
+		},
+		{
+			name: "a page that takes no client is sent again to be built", project: `{"private":true,"scripts":{"build":"vite build"}}`,
+			queries: []string{"build=false", ""},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := map[string]string{"alpha/server.py": "import mcp\n"}
+			if test.project != "" {
+				files["alpha/package.json"] = test.project
 			}
-		}
-		return clients
+			f := startReloadFixture(t, true, files)
+			reloads := f.reloadRequests()
+			var queries []string
+			for _, reload := range reloads {
+				queries = append(queries, reload.Query)
+			}
+			var clients string
+			for name, data := range f.overlay(t, reloads[len(reloads)-1].Digest) {
+				if strings.HasPrefix(name, "generated/holon-ui/") {
+					clients += string(data)
+				}
+			}
+			if !slices.Equal(queries, test.queries) || reloads[0].Digest != f.started || strings.Contains(clients, "lookup") != test.clients {
+				t.Fatalf("sends = %q, clients %q; stderr=%q", queries, clients, f.stderr.String())
+			}
+			if _, err := os.Stat(filepath.Join(f.root, "alpha", "generated", "holon-ui")); (err == nil) != test.clients {
+				t.Fatal(err)
+			}
+		})
 	}
-	reloads := f.reloadRequests()
-	if len(reloads) != 2 || reloads[0].Digest != f.started || generated(f.overlay(t, f.started)) != "" || !strings.Contains(generated(f.overlay(t, reloads[1].Digest)), "lookup") {
-		t.Fatalf("reloads = %d; stderr=%q", len(reloads), f.stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(f.root, "alpha", "generated", "holon-ui")); err != nil {
+}
+
+func TestDevShowsWhatAnInstallPrintedOnlyWhenVerbose(t *testing.T) {
+	f := startReloadFixture(t, true)
+	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reloaded")
+	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(f.stderr.String(), installed) {
+		t.Fatalf("stderr = %q", f.stderr.String())
+	}
+	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "third"})
+	f.start("--verbose")
+	f.await(func() bool { return strings.Contains(f.stderr.String(), installed+"alpha reloaded") })
 }
 
 func TestDevStartup(t *testing.T) {
