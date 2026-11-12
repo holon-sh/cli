@@ -20,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"oras.land/oras-go/v2/registry/remote"
 
-	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/protocol"
 )
 
@@ -68,7 +67,12 @@ func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error
 	return served, nil
 }
 
+var errUnstarted = errors.New("skipped: an app did not start from its source")
+
 func (d *devLoop) generate(ctx context.Context) error {
+	if !d.reload(ctx, d.paths(true)) {
+		return errUnstarted
+	}
 	options := d.options
 	var err error
 	if options.served, err = d.served(ctx); options.served == nil {
@@ -80,31 +84,43 @@ func (d *devLoop) generate(ctx context.Context) error {
 	}
 	cleanup()
 	d.options.types.accept(prepared)
-	for _, app := range d.manifest.Apps {
-		if app.Path == "" {
-			continue
-		}
-		if err := d.reloadApp(ctx, app); err != nil {
-			return fmt.Errorf("%s: %w", app.Name, err)
-		}
+	if !d.reload(ctx, d.paths(false)) {
+		return errUnstarted
 	}
 	return nil
 }
 
-func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) {
-	reloaded := contexts.Len() != 0
+func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
+	reloaded := true
 	for _, app := range d.manifest.Apps {
 		if !contexts.Has(app.Path) {
 			continue
 		}
 		if err := d.reloadApp(ctx, app); err != nil {
 			d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
+			d.pending.Delete(app.Name)
 			reloaded = false
 		}
 	}
-	if reloaded && d.pending.Len() == 0 {
-		d.options.output.problem("MCP types", d.generate(ctx))
+	return reloaded
+}
+
+func recordedSources(apps []protocol.App) map[string]string {
+	recorded := map[string]string{}
+	for _, app := range apps {
+		recorded[app.Name] = app.Overlay
 	}
+	return recorded
+}
+
+func (d *devLoop) paths(unsent bool) sets.Set[string] {
+	paths := sets.New[string]()
+	for _, app := range d.manifest.Apps {
+		if app.Path != "" && !(unsent && d.sent[app.Name] != "") {
+			paths.Insert(app.Path)
+		}
+	}
+	return paths
 }
 
 func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func(), error) {
@@ -136,16 +152,6 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	}
 	cleanup()
 	return err
-}
-
-func (d *devLoop) resend(ctx context.Context, manifest manifestSpec, name string) error {
-	i := slices.IndexFunc(manifest.Apps, func(app manifestApp) bool { return app.Name == name })
-	packed, cleanup, err := d.pack(ctx, manifest.Apps[i])
-	defer cleanup()
-	if err != nil {
-		return err
-	}
-	return d.send(ctx, name, packed)
 }
 
 func (d *devLoop) send(ctx context.Context, app string, packed packedSource) error {
@@ -191,17 +197,6 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 	})
 }
 
-func (o buildOptions) pushSource(ctx context.Context, app manifestApp, root string, upload *imageUpload, unless string) (string, error) {
-	packed, err := o.packSource(ctx, app, root, upload)
-	if err != nil {
-		return "", err
-	}
-	if packed.overlay.Digest.String() != unless {
-		err = packed.publish(ctx)
-	}
-	return packed.overlay.Digest.String(), err
-}
-
 func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string, upload *imageUpload) (packedSource, error) {
 	if accepted := o.types.accepted[app.Name]; accepted != nil {
 		staged := *accepted
@@ -227,7 +222,7 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	}
 	packed := packedSource{
 		file:    root + ".tar.zst",
-		request: buildRequest{Request: kiln.Request{Source: root}, app: app, upload: upload, httpClient: o.HTTPClient},
+		request: buildRequest{app: app, upload: upload, httpClient: o.HTTPClient},
 	}
 	file, err := os.Create(packed.file)
 	if err != nil {
