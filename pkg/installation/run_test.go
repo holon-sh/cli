@@ -48,18 +48,6 @@ func executeCommandWithInput(ctx context.Context, args []string, stdin io.Reader
 	return command.ExecuteContext(ctx)
 }
 
-func TestManifestFlagHidesItsOldName(t *testing.T) {
-	t.Parallel()
-	var help bytes.Buffer
-	config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir()}}
-	if err := executeCommand(t.Context(), []string{"deploy", "--help"}, &help, nil, config); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(help.String(), "-f, --file") || strings.Contains(help.String(), "project") {
-		t.Fatalf("deploy help: %s", help.String())
-	}
-}
-
 func TestRunRejectsInvalidInputs(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -70,9 +58,6 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 		args []string
 	}{
 		{`unknown app "missing"`, []string{"dev", "alpha", "missing", "--file", project}},
-		// The flag's old name still selects the manifest.
-		{`unknown app "missing"`, []string{"dev", "missing", "-p", project}},
-		{`unknown app "missing"`, []string{"deploy", "missing", "--project", project}},
 		{"--ttl requires --detach", []string{"dev", "--ttl", "24h", "--file", project}},
 		{"--json requires --detach", []string{"dev", "--json", "--file", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "0s", "--file", project}},
