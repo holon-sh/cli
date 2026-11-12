@@ -11,15 +11,15 @@ import (
 	"testing"
 )
 
-func TestWriteRefusesToOverwrite(t *testing.T) {
+func TestCheckRefusesToOverwrite(t *testing.T) {
 	for _, language := range Languages {
 		t.Run(language, func(t *testing.T) {
 			project := Project{Dir: filepath.Join(t.TempDir(), "orders"), Language: language, Name: "com.example/orders"}
 			if _, _, _, err := project.Write(); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, _, err := project.Write(); err == nil || !strings.Contains(err.Error(), "orders already has") {
-				t.Errorf("second Write = %v, want the files it would overwrite", err)
+			if err := project.Check(); err == nil || !strings.Contains(err.Error(), "orders already has") {
+				t.Errorf("Check after Write = %v, want the files it would overwrite", err)
 			}
 		})
 	}
