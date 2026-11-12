@@ -119,15 +119,15 @@ func uploadManifest(
 		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
 	defer cleanup()
+	if options.served != nil {
+		options.types.accept(prepared)
+	}
 	built, err := buildManifestImages(ctx, manager, name, prepared, options)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
 	if err := currentTypeSources(prepared); err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, err
-	}
-	if options.types != nil {
-		options.types.accept(prepared)
 	}
 	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
 }
@@ -175,13 +175,13 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	recordPath := manager.sessionRecordPath(config.manifest, apps)
 	dev := &devLoop{
 		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), started: config.clock().Now(), options: options,
-		changedImages: sets.New[string](), pending: sets.New[string](), announce: true,
+		pending: sets.New[string](), announce: true,
 	}
 	first := options
 	if config.devTTLSeconds == nil {
-		var inputs map[string]string
-		dev.session, inputs = previousSession(ctx, manager, recordPath)
-		dev.name, first.kept = dev.session.Name, keptImages(dev.session.Apps, inputs)
+		dev.session = previousSession(ctx, manager, recordPath)
+		dev.name = dev.session.Name
+		first.served = dev.served()
 	}
 	if dev.name != "" {
 		if err := printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps); err != nil {
@@ -211,43 +211,32 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	}
 	if request.TTLSeconds != nil {
 		ready, err := waitSessionReady(ctx, manager, dev.name, dev.session, config.output)
+		if err == nil {
+			dev.session = ready
+			err = dev.generate(ctx)
+		}
 		if err != nil {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 			defer cancel()
 			return errors.Join(err, manager.DeleteSession(cleanup, dev.name, dev.session.UID, true))
 		}
 		if config.jsonOutput {
-			return json.NewEncoder(resultWriter).Encode(ready)
+			return json.NewEncoder(resultWriter).Encode(dev.session)
 		}
-		if err := config.output.endpoints(stdout, "Ready", manager, ready.Name, resolved.Apps, false); err != nil {
+		if err := config.output.endpoints(stdout, "Ready", manager, dev.name, resolved.Apps, false); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(stdout, "Expires  %s\n", ready.ExpiresAt)
+		_, err = fmt.Fprintf(stdout, "Expires  %s\n", dev.session.ExpiresAt)
 		return err
 	}
 	err = dev.run(ctx, stdout)
-	data, _ := json.Marshal(sessionRecord{Session: dev.name, Inputs: options.types.inputs()})
+	data, _ := json.Marshal(sessionRecord{Session: dev.name})
 	_ = writePrivateFile(recordPath, data)
 	return err
 }
 
 type sessionRecord struct {
-	Session string            `json:"session"`
-	Inputs  map[string]string `json:"inputs"`
-}
-
-type keptImage struct {
-	inputs, image, overlay string
-}
-
-func keptImages(apps []protocol.App, inputs map[string]string) map[string]keptImage {
-	kept := map[string]keptImage{}
-	for _, app := range apps {
-		if inputs[app.Name] != "" {
-			kept[app.Name] = keptImage{inputs: inputs[app.Name], image: app.Image, overlay: app.Overlay}
-		}
-	}
-	return kept
+	Session string `json:"session"`
 }
 
 func (m *Client) sessionRecordPath(manifest manifestSpec, selection []string) string {
@@ -259,15 +248,15 @@ func (m *Client) sessionRecordPath(manifest manifestSpec, selection []string) st
 	return filepath.Join(filepath.Dir(m.statePath), digest.FromString(key).Encoded()+".session")
 }
 
-func previousSession(ctx context.Context, manager *Client, recordPath string) (protocol.SessionResponse, map[string]string) {
+func previousSession(ctx context.Context, manager *Client, recordPath string) protocol.SessionResponse {
 	var record sessionRecord
 	var session protocol.SessionResponse
 	data, err := readPrivateFile(recordPath)
 	if err != nil || json.Unmarshal(data, &record) != nil ||
 		manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: record.Session}, &session) != nil {
-		return protocol.SessionResponse{}, nil
+		return protocol.SessionResponse{}
 	}
-	return session, record.Inputs
+	return session
 }
 
 // sessionAudience is the origin that serves session name, and the mode the session runs in.

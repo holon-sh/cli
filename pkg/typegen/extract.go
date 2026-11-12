@@ -103,6 +103,12 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 		if s.language == "go" {
 			continue
 		}
+		if endpoint, served := o.Served[s.origin]; served {
+			if err := s.serve(ctx, endpoint, o); err != nil {
+				return err
+			}
+			continue
+		}
 		document, err := s.committedContract()
 		if err != nil {
 			return err
@@ -157,6 +163,19 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			}
 		}
 	}
+	return nil
+}
+
+func (s *preparedSource) serve(ctx context.Context, endpoint string, o Options) error {
+	var identity *mcpcontract.Identity
+	if s.metadata.Identity != (mcpcontract.Identity{}) {
+		identity = &s.metadata.Identity
+	}
+	document, err := liveContract(ctx, endpoint, identity, endpointClient(Source{Endpoint: endpoint}, o))
+	if err != nil {
+		return fmt.Errorf("%s: %w", s.origin, err)
+	}
+	s.metadata.Identity, s.metadata.Schema = document.Identity, document.Schema
 	return nil
 }
 

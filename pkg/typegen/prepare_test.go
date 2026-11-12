@@ -310,3 +310,30 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 		t.Fatalf("server that never answers: %v", err)
 	}
 }
+
+func TestAServedSourceAnswersForItself(t *testing.T) {
+	live := liveServer(t, "orders", "99", false)
+	t.Cleanup(live.Close)
+	for _, test := range []struct {
+		name, descriptor string
+		want             mcpcontract.Identity
+	}{
+		{"the running server names a source without a server.json", "", mcpcontract.Identity{Name: "orders", Version: "99"}},
+		{"a server.json keeps naming its source", `{"name":"example.com/orders","version":"1.0.0","description":"orders"}`, mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			orders := t.TempDir()
+			put(t, orders, "server.py", pythonProvider)
+			if test.descriptor != "" {
+				put(t, orders, "server.json", test.descriptor)
+			}
+			options := Options{Served: map[string]string{orders: live.URL}, Run: func(context.Context, string, string, []string, io.Writer) error {
+				return errors.New("ran the server")
+			}}
+			document, err := ResolveDocument(t.Context(), Source{Path: orders}, options)
+			if err != nil || document.Identity != test.want || len(document.Schema.Tools) != 1 || document.Schema.Tools[0].Name != "read" {
+				t.Fatalf("contract = %+v, %v", document, err)
+			}
+		})
+	}
+}

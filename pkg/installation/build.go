@@ -33,7 +33,7 @@ type buildOptions struct {
 	HTTPClient    *http.Client
 	output        *progressOutput
 	development   bool
-	kept          map[string]keptImage
+	served        *servedApps
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
@@ -69,9 +69,15 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 				apps[index] = declaration
 				return nil
 			}
+			if app.Path != "" && options.development {
+				declaration.Port = 0
+				declaration.Overlay, err = options.pushSource(ctx, app, app.resolved.types.root, upload, "")
+				apps[index] = declaration
+				return err
+			}
 			var image string
 			if app.resolved.Image == "" {
-				if image, declaration.Overlay, err = buildSource(ctx, app, upload, options); err != nil {
+				if image, err = buildSource(ctx, app, upload, options); err != nil {
 					return err
 				}
 			}

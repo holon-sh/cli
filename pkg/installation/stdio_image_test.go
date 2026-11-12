@@ -176,7 +176,7 @@ func TestStdioMultiArchitectureBuild(t *testing.T) {
 	attestation.Platform = &ocispec.Platform{OS: "unknown", Architecture: "unknown"}
 	attestation.Annotations = map[string]string{"vnd.docker.reference.type": "attestation-manifest"}
 	children = append(children, attestation)
-	descriptor := addTestIndex(registry, nil, children...)
+	descriptor := addTestIndex(registry, children...)
 	host := strings.TrimPrefix(server.URL, "https://")
 	grant := protocol.UploadGrant{Registry: host, Grant: "grant-secret", Repositories: map[string]string{"echo": "holon/upload/echo"}}
 	options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}

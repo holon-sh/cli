@@ -3,22 +3,17 @@ package installation
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/tonistiigi/fsutil"
-	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
@@ -42,33 +37,25 @@ type buildRequest struct {
 	output     *progressOutput
 }
 
-func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, string, error) {
+func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, error) {
 	if !protocol.ValidBuildArchitectures(options.architectures) {
-		return "", "", errors.New("invalid build architectures")
+		return "", errors.New("invalid build architectures")
 	}
-	p := app.resolved.types
-	request, err := options.planSource(ctx, app, p)
+	request, err := options.planSource(ctx, app, app.resolved.types)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	request.upload = upload
-	kept := options.kept[app.Name]
-	image := kept.image
-	if kept.inputs != p.inputs || image == "" {
-		options.output.status(app.Name, "building", progressWorking)
-		build := options.builder
-		if build == nil {
-			build = publishSource
-		}
-		if image, err = build(ctx, request, options.Stderr); err != nil {
-			return "", "", fmt.Errorf("build %s: %w", app.Name, err)
-		}
+	options.output.status(app.Name, "building", progressWorking)
+	build := options.builder
+	if build == nil {
+		build = publishSource
 	}
-	if !request.Development {
-		return image, "", nil
+	image, err := build(ctx, request, options.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("build %s: %w", app.Name, err)
 	}
-	overlay, err := request.pushOverlay(ctx, kept.overlay)
-	return image, overlay, err
+	return image, nil
 }
 
 func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *preparedTypes) (buildRequest, error) {
@@ -81,7 +68,7 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 		return buildRequest{}, err
 	}
 	request := buildRequest{
-		Request: kiln.Request{Source: p.root, Start: start, Development: o.development && start != nil},
+		Request: kiln.Request{Source: p.root, Start: start},
 		Env:     env, app: app, httpClient: o.HTTPClient, builders: o.builders, output: o.output,
 	}
 	architectures := o.architectures
@@ -94,64 +81,15 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 	planned := o.output.measure(app.Name, "plan")
 	request.dockerfile, err = kiln.Plan(ctx, request.Request)
 	planned()
-	if err != nil {
-		return buildRequest{}, err
-	}
-	if request.Development {
-		p.inputs, err = imageInputs(ctx, request.dockerfile, p.root)
-	}
 	return request, err
-}
-
-var contextCopy = regexp.MustCompile(`(?m)^COPY ((?:--exclude=\S+ )*)(\[.*\])$`)
-
-func imageInputs(ctx context.Context, dockerfile, root string) (string, error) {
-	source, err := fsutil.NewFS(root)
-	if err != nil {
-		return "", err
-	}
-	digester := digest.SHA256.Digester()
-	_, _ = io.WriteString(digester.Hash(), dockerfile)
-	for _, match := range contextCopy.FindAllStringSubmatch(dockerfile, -1) {
-		var paths []string
-		if err := json.Unmarshal([]byte(match[2]), &paths); err != nil {
-			return "", err
-		}
-		filter := &fsutil.FilterOpt{IncludePatterns: paths[:len(paths)-1], Map: func(path string, s *fstypes.Stat) fsutil.MapResult {
-			if s.IsDir() {
-				return fsutil.MapResultExclude
-			}
-			return stableStat(path, s)
-		}}
-		if slices.Contains(filter.IncludePatterns, ".") {
-			filter.IncludePatterns = nil
-		}
-		for exclusion := range strings.FieldsSeq(match[1]) {
-			filter.ExcludePatterns = append(filter.ExcludePatterns, strings.TrimPrefix(exclusion, "--exclude="))
-		}
-		copied, err := fsutil.NewFilterFS(source, filter)
-		if err != nil {
-			return "", err
-		}
-		if err := fsutil.WriteTar(ctx, copied, digester.Hash()); err != nil {
-			return "", err
-		}
-	}
-	return digester.Digest().Encoded(), nil
 }
 
 func stageSnapshot(app manifestApp, p *preparedTypes) ([]string, error) {
 	if err := stageTypes(p); err != nil {
 		return nil, err
 	}
-	if _, err := hookartifact.Discover(os.DirFS(p.root)); err != nil {
-		return nil, err
-	}
-	if app.resolved.stdio {
-		return nil, nil
-	}
-	entry, err := sourceEntry(p.root)
-	if err != nil || !slices.Contains([]string{".py", ".ts", ".js"}, filepath.Ext(entry)) {
+	entry, err := hostedEntry(app, p.root)
+	if err != nil || entry == "" {
 		return nil, err
 	}
 	hostDir := filepath.Join(p.root, ".holon")
@@ -174,6 +112,20 @@ func stageSnapshot(app manifestApp, p *preparedTypes) ([]string, error) {
 		return nil, err
 	}
 	return start, nil
+}
+
+func hostedEntry(app manifestApp, root string) (string, error) {
+	if _, err := hookartifact.Discover(os.DirFS(root)); err != nil {
+		return "", err
+	}
+	if app.resolved.stdio {
+		return "", nil
+	}
+	entry, err := sourceEntry(root)
+	if err != nil || !slices.Contains([]string{".py", ".ts", ".js"}, filepath.Ext(entry)) {
+		return "", err
+	}
+	return entry, nil
 }
 
 func sourceLabels(app manifestApp) map[string]string {

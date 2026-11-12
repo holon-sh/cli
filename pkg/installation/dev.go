@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -175,19 +174,17 @@ func (w *devWatcher) Close() error {
 }
 
 type devLoop struct {
-	manager                *Client
-	name                   string
-	manifest               manifestSpec
-	apps                   []string
-	clock                  clock.WithTicker
-	started                time.Time
-	options                buildOptions
-	session                protocol.SessionResponse
-	changedImages, pending sets.Set[string]
-	starting               sets.Set[string]
-	announce, unapplied    bool
-	preparing              chan preparation
-	cancelPreparation      context.CancelFunc
+	manager             *Client
+	name                string
+	manifest            manifestSpec
+	apps                []string
+	clock               clock.WithTicker
+	started             time.Time
+	options             buildOptions
+	session             protocol.SessionResponse
+	pending             sets.Set[string]
+	starting            sets.Set[string]
+	announce, unapplied bool
 }
 
 func (d *devLoop) renew(ctx context.Context) {
@@ -226,19 +223,17 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	defer func() {
 		cancel()
 		background.Wait()
-		d.stopPreparation()
 	}()
-	d.options.architectures = d.session.BuildArchitectures
 	for ctx.Err() == nil {
 		if err := d.manager.authorizeOperation(ctx, d.session); err != nil {
 			return err
 		}
-		if err := d.settle(stdout); err != nil {
+		if err := d.settle(ctx, stdout); err != nil {
 			return err
 		}
 		if d.pending.Len() > 0 {
 			reportSessionProgress(d.session, d.options.output, "Deploying apps", progressWorking)
-		} else if d.preparing == nil {
+		} else {
 			reportSessionProgress(d.session, d.options.output, watching, progressIdle)
 		}
 		changes := watcher.changes
@@ -250,11 +245,6 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		case <-ctx.Done():
 			stopRead()
 			return nil
-		case result := <-d.preparing:
-			stopRead()
-			if err := d.acceptPreparation(ctx, result); err != nil && ctx.Err() == nil {
-				d.options.output.problem("app rebuild", fmt.Errorf("%w; existing service remains available", err))
-			}
 		case result := <-read:
 			stopRead()
 			if err := d.poll(result.session, result.err); err != nil {
@@ -275,7 +265,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	return nil
 }
 
-func (d *devLoop) settle(stdout io.Writer) error {
+func (d *devLoop) settle(ctx context.Context, stdout io.Writer) error {
 	if d.pending.Len() == 0 {
 		return nil
 	}
@@ -284,6 +274,7 @@ func (d *devLoop) settle(stdout io.Writer) error {
 	if !ready {
 		return err
 	}
+	d.options.output.problem("MCP types", d.generate(ctx))
 	d.finishPending("ready", progressDone)
 	if !d.announce {
 		return nil
@@ -359,7 +350,6 @@ func (d *devLoop) finishPending(phase string, state progressState) {
 }
 
 func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
-	contexts := change.contexts.Union(d.stopPreparation())
 	if change.manifest || d.unapplied {
 		applied, err := d.apply(ctx)
 		if ctx.Err() != nil {
@@ -372,9 +362,6 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 		}
 	}
 	d.reload(ctx, change.contexts)
-	if contexts.Len() != 0 || d.changedImages.Len() != 0 {
-		d.prepare(ctx, contexts)
-	}
 	return false
 }
 
@@ -395,20 +382,15 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	if err := d.options.types.acquire(resolved); err != nil {
 		return false, err
 	}
-	options := d.options
-	options.kept = keptImages(d.session.Apps, d.options.types.inputs())
-	accepted := maps.Clone(d.options.types.accepted)
-	request, err := uploadManifest(ctx, d.manager, d.name, resolved, options)
+	request, err := uploadManifest(ctx, d.manager, d.name, resolved, d.options)
 	if err != nil {
 		return false, err
 	}
 	d.options.output.deploying(request.Apps)
 	if err := d.update(ctx, request, removedApps(d.session.Apps, request.Apps)...); err != nil {
-		d.options.types.accepted = accepted
 		return false, err
 	}
 	d.manifest, d.announce = resolved, true
-	d.changedImages.Clear()
 	return true, nil
 }
 
@@ -420,10 +402,13 @@ func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[pr
 	}
 	for _, app := range desired.Apps {
 		i := slices.IndexFunc(d.session.Apps, func(running protocol.App) bool { return running.Name == app.Name })
-		if i < 0 || d.session.Apps[i].Image != app.Image || d.session.Apps[i].Overlay == app.Overlay ||
-			d.restart(ctx, &d.session.Apps[i], app.Overlay) {
-			d.pending.Insert(app.Name)
+		if i >= 0 && d.session.Apps[i].Image == app.Image && d.session.Apps[i].Overlay != app.Overlay {
+			if err := d.restart(ctx, &d.session.Apps[i], app.Overlay); err != nil {
+				d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
+				continue
+			}
 		}
+		d.pending.Insert(app.Name)
 	}
 	for _, name := range remove {
 		d.options.output.status(name, "removed", progressDone)
@@ -440,54 +425,4 @@ func removedApps(running, desired []protocol.App) []string {
 		}
 	}
 	return removed
-}
-
-func (d *devLoop) acceptPreparation(ctx context.Context, result preparation) error {
-	d.cancelPreparation()
-	d.preparing = nil
-	if ctx.Err() != nil {
-		return nil
-	}
-	d.options.output.problem("MCP types", result.err)
-	if result.err != nil {
-		return nil
-	}
-	for _, app := range result.prepared.Apps {
-		if result.contexts.Has(app.Path) {
-			types := *app.resolved.types
-			types.inputs = d.options.types.accepted[app.Name].inputs
-			d.options.types.accepted[app.Name] = &types
-		}
-	}
-	if len(result.built.Apps) == 0 {
-		return nil
-	}
-	if result.buildErr != nil {
-		return fmt.Errorf("remote image preparation failed: %w", result.buildErr)
-	}
-	var desired []protocol.App
-	for _, app := range result.images {
-		i := slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })
-		if i < 0 {
-			return errors.New("application removed during rebuild")
-		}
-		current := d.session.Apps[i]
-		if current.Image != app.Image || current.Overlay != app.Overlay {
-			current.Image, current.Overlay = app.Image, app.Overlay
-			desired = append(desired, current)
-		} else if !d.pending.Has(app.Name) {
-			d.options.output.status(app.Name, "unchanged", progressDone)
-		}
-	}
-	if len(desired) != 0 {
-		d.options.output.deploying(desired)
-		if err := d.update(ctx, protocol.AppsRequestFor[protocol.App]{Apps: protocol.WritableApps(desired)}); err != nil {
-			return fmt.Errorf("remote update failed: %w", err)
-		}
-	}
-	for _, app := range result.images {
-		d.changedImages.Delete(app.Name)
-	}
-	d.options.types.accept(result.built)
-	return nil
 }

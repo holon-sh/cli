@@ -36,7 +36,8 @@ type Options struct {
 	// extract.py, with args (contract ROOT ENTRY), copying the runner's stdout to stdout. A failure the
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
 	// runs the server in its own directory and stops it after 30 seconds.
-	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
+	Run    func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
+	Served map[string]string
 }
 
 func (o Options) defaults() Options {

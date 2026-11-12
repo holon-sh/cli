@@ -76,18 +76,19 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ command, access, want, diagnostics, edit string }{
+	for _, tc := range []struct{ command, access, want, diagnostics, edit, pkg string }{
 		{
 			command: "deploy", access: "--public", want: "fixture build failed:\nnpm error missing: fixture-package",
 			diagnostics: "#7 0.311 npm notice noise\n------\n > [build 2/3] RUN npm ci:\n0.312 npm error missing: fixture-package\n------\n",
 		},
 		{command: "dev", access: "--oauth", want: "requires a configured identity provider"},
+		{command: "dev", access: "--public", want: "holon deploy still builds this app", pkg: `{"private":true,"main":"index.js"}`},
 		{command: "deploy", access: "--public", want: "source changed during preparation", edit: "logic.ts"},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			sourceFiles(t, root, map[string]string{"package.json": sourcePackage, "server.js": "export default {}"})
+			sourceFiles(t, root, map[string]string{"package.json": cmp.Or(tc.pkg, sourcePackage), "server.js": "export default {}"})
 			h := newRunHarness(t)
 			h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, protocol.Info{
@@ -216,42 +217,26 @@ func TestRunDevLifecycle(t *testing.T) {
 	for _, name := range []string{"alpha", "beta"} {
 		writeDescriptor(t, filepath.Join(root, name, "server.json"), descriptorDocument(name))
 	}
-	firstBuild, nextBuild := buildImage(t, "first"), buildImage(t, "next")
-	build := func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
-		if !slices.Equal(request.Platforms, []string{"linux/arm64"}) {
-			t.Errorf("session platforms = %v", request.Platforms)
-		}
-		switch edit, _ := os.ReadFile(filepath.Join(root, "alpha", "logic.txt")); string(edit) {
-		case "":
-			return firstBuild(ctx, request, progress)
-		case "broken":
-			return "", errors.New("rebuild failed")
-		case "superseded":
-			if err := os.WriteFile(filepath.Join(root, "alpha", "logic.txt"), []byte("fixed"), 0o644); err != nil {
-				return "", err
-			}
-		}
-		return nextBuild(ctx, request, progress)
-	}
 	var mu sync.Mutex
 	var ambiguous, unavailable bool
 	var waiting string
 	var creates int
 	var created, served []protocol.App
 	var updates [][]protocol.App
+	var reloads []string
 	outage := sets.New[string]()
 	h := newRunHarness(t)
 	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, protocol.Info{
 			Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"},
-			Version:      "test", BuildArchitectures: []string{"arm64"}, OAuth: &protocol.OAuthInfo{
+			Version:      "test", OAuth: &protocol.OAuthInfo{
 				Issuer: h.server.URL + "/", AdminAudience: installationtest.AdminAudience(h.server.URL), CLIClientID: "cli-test",
 			},
 		})
 	})
 	session := func() map[string]any {
 		response := apiSession("alpha", "beta")
-		response["apps"], response["buildArchitectures"] = served, []string{"arm64"}
+		response["apps"] = served
 		if waiting != "" {
 			response["conditions"] = []protocol.Condition{{
 				Type: protocol.ConditionReady, Status: "False", Reason: waiting, Message: "Configure API_KEY to start the session.",
@@ -287,6 +272,13 @@ func TestRunDevLifecycle(t *testing.T) {
 		_ = connection.Close()
 	})
 	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, r *http.Request) {
+		var input reloadAppRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		mu.Lock()
+		reloads = append(reloads, input.App)
+		mu.Unlock()
 		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 0.5})
 	})
 	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession},
@@ -325,7 +317,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			_, _ = io.WriteString(w, appOutput+callLine)
 		}
 	})
-	h.start(t, build)
+	h.start(t, nil)
 	t.Run("ambiguous creation is not retried or deleted", func(t *testing.T) {
 		mu.Lock()
 		ambiguous = true
@@ -339,7 +331,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			t.Fatalf("ambiguous creation: creates=%d error=%v", creates, err)
 		}
 	})
-	t.Run("session survives configuration, failed rebuilds, edits and outages", func(t *testing.T) {
+	t.Run("session survives configuration, edits and outages", func(t *testing.T) {
 		mu.Lock()
 		waiting = "WaitingForConfiguration"
 		mu.Unlock()
@@ -360,16 +352,14 @@ func TestRunDevLifecycle(t *testing.T) {
 		}
 		await(stderr, "Configure API_KEY to start the session.", "log stream stopped")
 		await(stdout, "alpha starting boom", traceback)
-		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "broken"})
-		await(stderr, "remote image preparation failed")
 		mu.Lock()
 		waiting = ""
 		mu.Unlock()
 		await(stderr, watching)
 		from := len(stderr.String())
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
-		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "superseded"})
-		stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[from:], "alpha ready") })
+		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "edited"})
+		stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[from:], "alpha reloaded in 0.5 s") })
 		mu.Lock()
 		unavailable = true
 		mu.Unlock()
@@ -386,8 +376,8 @@ func TestRunDevLifecycle(t *testing.T) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if len(updates) != 1 || len(updates[0]) != 1 || updates[0][0].Name != "alpha" || updates[0][0].Image == created[0].Image {
-			t.Fatalf("source edit updates = %#v", updates)
+		if len(updates) != 0 || !slices.Equal(reloads, []string{"alpha"}) || created[0].Image != "" || created[1].Image != "" {
+			t.Fatalf("source edit updates = %#v, reloads = %v, created = %#v", updates, reloads, created)
 		}
 		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") || strings.Contains(stdout.String(), "tools/call") {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
@@ -461,7 +451,7 @@ func TestDevShowsEachStartingAppReadyWhenItServes(t *testing.T) {
 			got := ""
 			for _, dev.session = range test.polls {
 				stream.Reset()
-				if err := dev.settle(io.Discard); err != nil {
+				if err := dev.settle(t.Context(), io.Discard); err != nil {
 					t.Fatal(err)
 				}
 				got += "|" + strings.TrimSpace(stream.String())
