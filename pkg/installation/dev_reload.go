@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -67,7 +68,11 @@ func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error
 	return served, nil
 }
 
-var errUnstarted = errors.New("an app did not start from its source")
+var (
+	errUnstarted        = errors.New("an app did not start from its source")
+	errSourceSuperseded = errors.New("superseded by a newer save")
+	errSourceUnrecorded = errors.New("was not recorded in the session within a minute")
+)
 
 func (d *devLoop) regenerate(ctx context.Context) bool {
 	err := d.generate(ctx)
@@ -186,10 +191,11 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 
 func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 	if cancel := d.recording[app]; cancel != nil {
-		cancel()
+		cancel(errSourceSuperseded)
 	}
-	ctx, cancel := context.WithTimeout(d.background, time.Minute)
+	ctx, cancel := context.WithCancelCause(d.background)
 	d.recording[app] = cancel
+	d.clock.AfterFunc(time.Minute, func() { cancel(errSourceUnrecorded) })
 	d.records.Go(func() {
 		defer cleanup()
 		err := packed.publish(ctx)
@@ -200,7 +206,10 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 			}
 			err = d.manager.Call(ctx, ControlPlane(d.name), toolRecordAppSource, request, nil)
 		}
-		if ctx.Err() == nil {
+		if err != nil {
+			err = cmp.Or(context.Cause(ctx), err)
+		}
+		if err != errSourceSuperseded {
 			d.options.output.problem(app+" source", err)
 		}
 	})

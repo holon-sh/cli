@@ -44,20 +44,21 @@ type reloadFixture struct {
 	start    func(args ...string)
 	stop     func() error
 
-	mu       sync.Mutex
-	ready    bool
-	failNext bool
-	failSave bool
-	unserved bool
-	creates  int
-	started  string
-	uploaded int
-	served   []protocol.App
-	revision int
-	changed  chan struct{}
-	reads    []string
-	reloads  []sentSource
-	recorded []string
+	mu         sync.Mutex
+	ready      bool
+	failNext   bool
+	failSave   bool
+	unserved   bool
+	unrecorded bool
+	creates    int
+	started    string
+	uploaded   int
+	served     []protocol.App
+	revision   int
+	changed    chan struct{}
+	reads      []string
+	reloads    []sentSource
+	recorded   []string
 }
 
 type sentSource struct {
@@ -189,6 +190,14 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			t.Error(err)
 		}
 		f.mu.Lock()
+		unrecorded := f.unrecorded
+		f.mu.Unlock()
+		if unrecorded {
+			<-r.Context().Done()
+			installationtest.WriteJSON(w, struct{}{})
+			return
+		}
+		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.served[slices.IndexFunc(f.served, func(app protocol.App) bool { return app.Name == input.App })].Overlay = input.Digest
 		f.recorded = append(f.recorded, input.Digest)
@@ -265,6 +274,7 @@ func TestDevSaves(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		failReload bool
+		unrecorded bool
 		saves      []map[string]string
 		lines      []string
 		reloads    int
@@ -284,16 +294,24 @@ func TestDevSaves(t *testing.T) {
 			saves: []map[string]string{{"alpha/tools.py": "second"}},
 			lines: []string{"alpha reload failed"}, reloads: 1,
 		},
+		{
+			name: "a source the session has not recorded within a minute is reported, and one a newer save replaced is not", unrecorded: true,
+			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "third"}},
+			lines: []string{"alpha reloaded in 1.2 s", "alpha source was not recorded in the session within a minute"}, reloads: 2,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true)
 			started := len(f.reloadRequests())
-			f.update(func() { f.failNext = test.failReload })
+			f.update(func() { f.failNext, f.unrecorded = test.failReload, test.unrecorded })
 			for i, files := range test.saves {
 				f.save(files, test.lines[i])
 			}
 			if reloads := len(f.reloadRequests()) - started; reloads != test.reloads {
 				t.Fatalf("reloads = %d, want %d", reloads, test.reloads)
+			}
+			if strings.Contains(f.stderr.String(), errSourceSuperseded.Error()) {
+				t.Fatalf("a replaced source was reported: %q", f.stderr.String())
 			}
 		})
 	}
