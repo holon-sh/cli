@@ -20,8 +20,7 @@ import (
 	"github.com/holon-sh/cli/pkg/typegen"
 )
 
-// NewInitCommand builds holon init, which creates an app.
-func NewInitCommand() *cobra.Command {
+func newInit() *cobra.Command {
 	var language, name string
 	cmd := &cobra.Command{
 		Use:   "init [DIR]",

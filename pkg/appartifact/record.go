@@ -20,41 +20,31 @@ const (
 	maxDocumentSize = 1 << 20
 )
 
-func push(ctx context.Context, target oras.Target, image ocispec.Descriptor, record protocol.BuildRecord) (ocispec.Descriptor, error) {
+func Publish(ctx context.Context, repository oras.Target, image ocispec.Descriptor, record protocol.BuildRecord, tag string) error {
 	if err := record.Validate(); err != nil {
-		return ocispec.Descriptor{}, err
+		return err
 	}
-	data, err := json.Marshal(record)
-	if err != nil {
-		return ocispec.Descriptor{}, err
-	}
+	data, _ := json.Marshal(record)
 	if len(data) > maxDocumentSize {
-		return ocispec.Descriptor{}, errors.New("app build metadata exceeds limit")
+		return errors.New("app build metadata exceeds limit")
 	}
-	layer, err := oras.PushBytes(ctx, target, mediaType, data)
+	layer, err := oras.PushBytes(ctx, repository, mediaType, data)
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return err
 	}
-	metadata, err := oras.PackManifest(ctx, target, oras.PackManifestVersion1_1, indexType, oras.PackManifestOptions{
+	metadata, err := oras.PackManifest(ctx, repository, oras.PackManifestVersion1_1, indexType, oras.PackManifestOptions{
 		Layers: []ocispec.Descriptor{layer}, ManifestAnnotations: map[string]string{ocispec.AnnotationCreated: "1970-01-01T00:00:00Z"},
 	})
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return err
 	}
-	index, err := json.Marshal(ocispec.Index{
+	index, _ := json.Marshal(ocispec.Index{
 		Versioned:    specs.Versioned{SchemaVersion: 2},
 		MediaType:    ocispec.MediaTypeImageIndex,
 		ArtifactType: indexType,
 		Manifests:    []ocispec.Descriptor{image, metadata},
 	})
-	if err != nil {
-		return ocispec.Descriptor{}, err
-	}
-	return oras.PushBytes(ctx, target, ocispec.MediaTypeImageIndex, index)
-}
-
-func Publish(ctx context.Context, repository oras.Target, image ocispec.Descriptor, record protocol.BuildRecord, tag string) error {
-	descriptor, err := push(ctx, repository, image, record)
+	descriptor, err := oras.PushBytes(ctx, repository, ocispec.MediaTypeImageIndex, index)
 	if err != nil {
 		return err
 	}
