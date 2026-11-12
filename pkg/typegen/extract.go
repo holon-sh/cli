@@ -234,7 +234,7 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdo
 		return err
 	}
 	if language == "python" {
-		if own := pythonEnvironment(args[1], ""); own != "" && exec.CommandContext(ctx, own, l.probe...).Run() == nil {
+		if own := pythonEnvironment(args[1]); own != "" && exec.CommandContext(ctx, own, l.probe...).Run() == nil {
 			if err := run(own); !lacksSchemaLibraries(err) {
 				return err
 			}

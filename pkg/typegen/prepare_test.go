@@ -183,11 +183,14 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 // Holon writes clients only through real directories inside the project.
 func TestGenerateRefusesASymlinkOutOfTheProject(t *testing.T) {
 	dir, outside := t.TempDir(), t.TempDir()
+	put(t, dir, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
+	installRuntime(t, dir, "testdata/holon-sh")
 	if err := os.Symlink(outside, filepath.Join(dir, "generated")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeSlot(dir, TargetTS, map[string][]byte{"index.mjs": []byte("// " + mcpcontract.Marker + " app=x\n")}); err == nil {
-		t.Fatal("wrote through a symlinked directory")
+	c := Consumer{Name: "caller", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil || !strings.Contains(err.Error(), "which is not a directory") {
+		t.Fatalf("generate through a symlinked directory = %v", err)
 	}
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 		t.Fatal("wrote outside the project")

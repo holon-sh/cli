@@ -75,7 +75,6 @@ export default createMcpHandler(() => {
 			t.Fatal(err)
 		}
 		sourceFiles(t, path, map[string]string{"package.json": packageJSON, lockName: string(lock), "tsconfig.json": config, "server.ts": code})
-		installRuntime(t, path)
 		app := manifestApp{Name: name, Path: path, resolved: resolvedApp{App: protocol.App{Name: name, Port: 3000}}}
 		if name == "checkout" {
 			app.resolved.descriptor = &mcpregistry.Descriptor{Name: "io.github.example/checkout", Version: "1.0.0", Requires: map[string]mcpregistry.Requirement{

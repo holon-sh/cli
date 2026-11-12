@@ -46,7 +46,6 @@ func LoadBridges(payloads fs.FS) (Bridges, error) {
 }
 
 type AdaptOptions struct {
-	Stdio         bool
 	Origin        string
 	Source        string
 	CheckedLayers *sync.Map
@@ -54,12 +53,12 @@ type AdaptOptions struct {
 }
 
 func AdaptImage(ctx context.Context, repository oras.Target, descriptor ocispec.Descriptor, options AdaptOptions) (ocispec.Descriptor, error) {
-	return Rewrite(ctx, repository, descriptor, func(image *Image) error {
-		return AdaptRuntime(ctx, repository, image, options)
+	return rewrite(ctx, repository, descriptor, nil, func(image *Image) error {
+		return adaptRuntime(ctx, repository, image, options)
 	})
 }
 
-func AdaptRuntime(ctx context.Context, repository oras.Target, image *Image, options AdaptOptions) error {
+func adaptRuntime(ctx context.Context, repository oras.Target, image *Image, options AdaptOptions) error {
 	if image.OS != "linux" || image.platform != nil && image.platform.Architecture != image.Architecture {
 		return errors.New("stdio image platform does not match Linux image configuration")
 	}
@@ -75,11 +74,7 @@ func AdaptRuntime(ctx context.Context, repository oras.Target, image *Image, opt
 	if image.Runtime == nil {
 		return errors.New("image has no runtime configuration")
 	}
-	launcher := []string{RuntimePath}
-	if !options.Stdio {
-		launcher = append(launcher, "--transport=streamable-http")
-	}
-	launcher = append(launcher, "--origin", options.Origin)
+	launcher := []string{RuntimePath, "--origin", options.Origin}
 	if child := slices.Concat(image.Config.Entrypoint, image.Config.Cmd); len(child) == 0 || child[0] == "" {
 		return errors.New("stdio image has no executable entrypoint or command")
 	}

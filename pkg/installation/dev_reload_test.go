@@ -43,7 +43,6 @@ type reloadFixture struct {
 	await    func(check func() bool)
 	start    func(args ...string)
 	stop     func() error
-	baseHost string
 
 	mu       sync.Mutex
 	ready    bool
@@ -189,7 +188,6 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 		f.mu.Unlock()
 		return "", ctx.Err()
 	})
-	f.baseHost = h.baseHost
 	fc := testingclock.NewFakeClock(time.Now())
 	h.run.Clock = fc
 	f.await = func(check func() bool) {

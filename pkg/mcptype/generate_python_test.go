@@ -39,6 +39,16 @@ func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
 	}
 }
 
+// orderContract has a tool, a tool named like a Promise method, a resource and an event.
+const orderContract = `{"tools": [
+        {"name": "get_order", "inputSchema": {"type": "object", "additionalProperties": false,
+            "properties": {"orderId": {"type": "string"}, "count": {"type": "integer"}}, "required": ["orderId"]},
+         "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}},
+        {"name": "then", "inputSchema": {"type": "object", "additionalProperties": false}}
+    ], "resources": [{"uri": "orders://summary", "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}}],
+    "events": [{"name": "order.shipped", "inputSchema": {"type": "object", "additionalProperties": false, "properties": {"orderId": {"type": "string"}}},
+        "payloadSchema": {"type": "object", "properties": {"orderId": {"type": "string"}, "carrier": {"type": "string"}}, "required": ["orderId"]}}]}`
+
 // pythonRuntime stands in for holon.client: like the runtime, it names each tool's method after the
 // tool. Its methods return the tool's name.
 const pythonRuntime = `from __future__ import annotations
@@ -73,14 +83,14 @@ func TestPythonMethodsCallToolsNamedOtherwise(t *testing.T) {
 	if exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
 		t.Skip("mypy is not installed")
 	}
-	var files map[string][]byte
-	for _, c := range generationCases(t) {
-		if c.name == "slot-python" {
-			var err error
-			if files, err = c.run(t); err != nil {
-				t.Fatal(err)
-			}
-		}
+	nested, err := os.ReadFile(filepath.Join("testdata", "nested-types.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := generationCase{input: `{"target": "python", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}},
+		"contracts": {"orders": ` + orderContract + `, "with-hyphen": ` + orderContract + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}, "schemas": ` + kitchenSink + `}}`}.run(t)
+	if err != nil {
+		t.Fatal(err)
 	}
 	files = map[string][]byte{"holon/apps/__init__.py": files["__init__.py"], "holon/client.py": []byte(pythonRuntime), "holon/ext/files.py": []byte("class File: ...\n"), "holon/ext/events.py": []byte("from typing import Generic, TypeVar\nD = TypeVar(\"D\")\nclass Subscription(Generic[D]): ...\n")}
 	files["typed.py"] = []byte(`from holon.apps import Inputs, Outputs, apps

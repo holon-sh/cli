@@ -35,10 +35,6 @@ func (image *Image) AppendLayer(layer ocispec.Descriptor, diffID digest.Digest, 
 	}
 }
 
-func Rewrite(ctx context.Context, repository oras.Target, descriptor ocispec.Descriptor, transform func(*Image) error) (ocispec.Descriptor, error) {
-	return rewrite(ctx, repository, descriptor, nil, transform)
-}
-
 func rewrite(
 	ctx context.Context, repository oras.Target, descriptor ocispec.Descriptor, platform *ocispec.Platform, transform func(*Image) error,
 ) (ocispec.Descriptor, error) {
