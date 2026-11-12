@@ -2,6 +2,7 @@
 package mcptype
 
 import (
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -10,7 +11,7 @@ import (
 // ParseMetadata decodes a contract document, or reports why data is not one.
 func ParseMetadata(data []byte) (*mcpcontract.Metadata, error) {
 	var document mcpcontract.Metadata
-	if err := jsonv2.Unmarshal(data, &document, jsonv2.RejectUnknownMembers(true)); err != nil {
+	if err := jsonv2.Unmarshal(data, &document, jsonv2.RejectUnknownMembers(true), jsontext.AllowInvalidUTF8(true)); err != nil {
 		return nil, err
 	}
 	if _, err := decodeMetadata(&document); err != nil {

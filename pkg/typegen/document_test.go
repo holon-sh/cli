@@ -25,6 +25,15 @@ func TestParseDocumentRejectsInvalidDocuments(t *testing.T) {
 	}
 }
 
+// TestParseDocumentKeepsSchemaTextAsServersWriteIt reads a schema whose text holds half an emoji, as
+// JSON.stringify writes a description a JavaScript server sliced through one.
+func TestParseDocumentKeepsSchemaTextAsServersWriteIt(t *testing.T) {
+	data := `{"identity":{"name":"a","version":"1"},"schema":{"tools":[{"name":"get","inputSchema":{"type":"object","description":"\ud83d"}}]}}`
+	if _, err := ParseDocument([]byte(data)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPrepareResolvesRegistryPackages(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
