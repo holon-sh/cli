@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -184,10 +185,10 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if config.devTTLSeconds == nil {
 		dev.session = previousSession(ctx, manager, recordPath)
 		dev.name = dev.session.Name
-		if first.served, err = dev.served(ctx); err != nil {
-			return err
-		}
 		first.overlays = recordedSources(dev.session.Apps)
+		if first.served, err = dev.served(ctx); err == nil {
+			dev.sent = maps.Clone(first.overlays)
+		}
 	}
 	if dev.name != "" {
 		if err := printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps); err != nil {

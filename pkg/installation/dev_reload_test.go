@@ -48,6 +48,7 @@ type reloadFixture struct {
 	ready    bool
 	failNext bool
 	failSave bool
+	unserved bool
 	creates  int
 	started  string
 	uploaded int
@@ -97,7 +98,16 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	var registry *httptest.Server
 	f.registry, registry = buildRegistry(t)
 	h := newRunHarness(t)
-	h.serveContract()
+	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		f.mu.Lock()
+		unserved := f.unserved
+		f.mu.Unlock()
+		if unserved {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		installationtest.WriteJSON(w, json.RawMessage(servedContract))
+	})
 	f.files = &h.files
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		grant := buildGrant(registry)
@@ -170,6 +180,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
+		f.unserved = false
 		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2})
 	})
 	h.control.Handle([]string{toolRecordAppSource}, nil, func(w http.ResponseWriter, r *http.Request) {
@@ -306,6 +317,10 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 		{
 			name: "a reload that fails is neither reported ready nor uploaded", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1,
 			between: func(_ *testing.T, f *reloadFixture) { f.failNext = true },
+		},
+		{
+			name: "an app that never started is sent its source", creates: 1, reloads: 1, uploads: 1,
+			between: func(_ *testing.T, f *reloadFixture) { f.unserved = true },
 		},
 		{
 			name: "an app added to the project since joins the session", edit: map[string]string{manifestFileName: alphaManifest + betaRemote},

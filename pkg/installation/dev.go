@@ -424,9 +424,6 @@ func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[pr
 		return err
 	}
 	for _, app := range desired.Apps {
-		if slices.ContainsFunc(d.session.Apps, func(running protocol.App) bool { return running.Name == app.Name }) {
-			d.sent[app.Name] = app.Overlay
-		}
 		d.pending.Insert(app.Name)
 	}
 	for _, name := range remove {
