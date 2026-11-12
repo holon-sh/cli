@@ -33,4 +33,4 @@ function createServer() {
   return server;
 }
 
-export default createMcpHandler(createServer, { legacy: "reject" });
+export default createMcpHandler(createServer);
