@@ -357,8 +357,9 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			if f.blob(recorded) == nil {
 				t.Fatalf("the session names source %s, which the registry does not hold", recorded)
 			}
-			if strings.Contains(f.stderr.String(), "alpha reload failed") == strings.Contains(f.stderr.String(), "alpha ready") {
-				t.Fatalf("stderr=%q", f.stderr.String())
+			failed := strings.Contains(f.stderr.String(), "alpha reload failed")
+			if failed == strings.Contains(f.stderr.String(), "alpha ready") || failed == strings.Contains(f.stdout.String(), "\nReady\n") {
+				t.Fatalf("stdout=%q stderr=%q", f.stdout.String(), f.stderr.String())
 			}
 		})
 	}
@@ -422,6 +423,9 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	}
 	if f.uploaded != 0 || strings.Contains(f.stderr.String(), "alpha uploaded") {
 		t.Fatalf("uploads before the session existed = %d; stderr=%q", f.uploaded, f.stderr.String())
+	}
+	if started := f.stderr.String(); strings.Index(started, "alpha ready") < strings.Index(started, "alpha reloaded") {
+		t.Fatalf("the app was reported ready before its source had started: %q", started)
 	}
 	from := len(f.stderr.String())
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reloaded")

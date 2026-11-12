@@ -200,7 +200,6 @@ type devLoop struct {
 	options             buildOptions
 	session             protocol.SessionResponse
 	pending             sets.Set[string]
-	starting            sets.Set[string]
 	announce, unapplied bool
 	sent                map[string]string
 	background          context.Context
@@ -290,14 +289,13 @@ func (d *devLoop) settle(ctx context.Context, stdout io.Writer) error {
 	if d.pending.Len() == 0 {
 		return nil
 	}
-	d.options.output.serving(d.session, d.starting)
 	ready, err := SessionReady(d.session)
 	if !ready {
 		return err
 	}
-	d.options.output.problem("MCP types", d.generate(ctx))
+	started := d.regenerate(ctx)
 	d.finishPending("ready", progressDone)
-	if !d.announce {
+	if !started || !d.announce {
 		return nil
 	}
 	d.announce = false
@@ -383,7 +381,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 		}
 	}
 	if change.contexts.Len() != 0 && d.reload(ctx, change.contexts) && d.pending.Len() == 0 {
-		d.options.output.problem("MCP types", d.generate(ctx))
+		d.regenerate(ctx)
 	}
 	return false
 }
@@ -434,7 +432,7 @@ func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[pr
 	for _, name := range remove {
 		d.options.output.status(name, "removed", progressDone)
 	}
-	d.session, d.starting = updated, startingApps(updated)
+	d.session = updated
 	return nil
 }
 
