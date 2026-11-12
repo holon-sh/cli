@@ -35,7 +35,7 @@ func checkIdentity(identity mcpcontract.Identity) error {
 }
 
 func decodeSchema(member string, raw json.RawMessage) (Object, error) {
-	if raw == nil {
+	if len(raw) == 0 {
 		return nil, fmt.Errorf("missing field `%s`", member)
 	}
 	value, err := decodeJSON(raw)
@@ -53,7 +53,7 @@ func decodeContract(source mcpcontract.Contract) (contract, error) {
 			return contract{}, err
 		}
 		decoded := contractTool{Input: input}
-		if tool.Output != nil {
+		if len(tool.Output) != 0 {
 			if decoded.Output, err = decodeSchema("outputSchema", tool.Output); err != nil {
 				return contract{}, err
 			}
