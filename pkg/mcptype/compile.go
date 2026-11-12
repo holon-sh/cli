@@ -2,7 +2,6 @@ package mcptype
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -310,16 +309,9 @@ func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
 	}
 }
 
-// compileCatalogs validates the binding names and compiles every contract's schemas.
 func compileCatalogs(ctx context.Context, contracts map[string]contract, files bool) (map[string]catalog, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	catalogs := make(map[string]catalog, len(contracts))
 	for _, name := range sortedKeys(contracts) {
-		if name == "" {
-			return nil, errors.New("binding names must be nonempty")
-		}
 		compiled, err := parseCatalog(ctx, contracts[name], files)
 		if err != nil {
 			return nil, err

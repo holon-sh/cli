@@ -158,29 +158,6 @@ func asObject(value Value) (Object, error) {
 	return nil, fmt.Errorf("invalid type: %s, expected a map", describe(value))
 }
 
-func asArray(value Value) ([]Value, error) {
-	if items, ok := value.([]Value); ok {
-		return items, nil
-	}
-	return nil, fmt.Errorf("invalid type: %s, expected a sequence", describe(value))
-}
-
-func asString(value Value) (string, error) {
-	if text, ok := value.(string); ok {
-		return text, nil
-	}
-	return "", fmt.Errorf("invalid type: %s, expected a string", describe(value))
-}
-
-// requiredField returns a required struct field.
-func requiredField(object Object, name string) (Value, error) {
-	value, ok := object[name]
-	if !ok {
-		return nil, fmt.Errorf("missing field `%s`", name)
-	}
-	return value, nil
-}
-
 // pointer resolves a JSON pointer as serde_json's Value::pointer does.
 func pointer(root Value, path string) (Value, bool) {
 	if path == "" {

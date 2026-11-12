@@ -9,8 +9,6 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
-// The v1 contract document. Decoding a value validates it; there is no separate validate step.
-
 // contractTool is one tool's schemas. Output is nil when the tool declares no outputSchema.
 type contractTool struct {
 	Input  Object
@@ -34,13 +32,6 @@ type contract struct {
 	Events    map[string]contractEvent
 }
 
-// metadata is the document an image publishes.
-type metadata struct {
-	Identity mcpcontract.Identity
-	Schema   *contract
-	Requires map[string]string
-}
-
 // checkIdentity requires what names a published app.
 func checkIdentity(identity mcpcontract.Identity) error {
 	if identity.Name == "" || identity.Version == "" {
@@ -49,191 +40,88 @@ func checkIdentity(identity mcpcontract.Identity) error {
 	return nil
 }
 
-func decodeIdentity(value Value) (mcpcontract.Identity, error) {
-	object, err := asObject(value)
+func decodeSchema(member string, raw json.RawMessage) (Object, error) {
+	if raw == nil {
+		return nil, fmt.Errorf("missing field `%s`", member)
+	}
+	value, err := decodeJSON(raw)
 	if err != nil {
-		return mcpcontract.Identity{}, err
+		return nil, err
 	}
-	var identity mcpcontract.Identity
-	for name, target := range map[string]*string{"name": &identity.Name, "version": &identity.Version} {
-		raw, err := requiredField(object, name)
-		if err != nil {
-			return mcpcontract.Identity{}, err
-		}
-		if *target, err = asString(raw); err != nil {
-			return mcpcontract.Identity{}, err
-		}
-	}
-	return identity, checkIdentity(identity)
+	return asObject(value)
 }
 
-func decodeContract(value Value) (contract, error) {
-	object, err := asObject(value)
-	if err != nil {
-		return contract{}, err
-	}
-	raw, err := requiredField(object, "tools")
-	if err != nil {
-		return contract{}, err
-	}
-	tools, err := asArray(raw)
-	if err != nil {
-		return contract{}, err
-	}
+func decodeContract(source mcpcontract.Contract) (contract, error) {
 	result := contract{Tools: map[string]contractTool{}, Resources: map[string]contractResource{}, Events: map[string]contractEvent{}}
-	for _, item := range tools {
-		entry, err := asObject(item)
+	for _, tool := range source.Tools {
+		input, err := decodeSchema("inputSchema", tool.Input)
 		if err != nil {
 			return contract{}, err
 		}
-		raw, err := requiredField(entry, "name")
-		if err != nil {
-			return contract{}, err
-		}
-		name, err := asString(raw)
-		if err != nil {
-			return contract{}, err
-		}
-		if raw, err = requiredField(entry, "inputSchema"); err != nil {
-			return contract{}, err
-		}
-		tool := contractTool{}
-		if tool.Input, err = asObject(raw); err != nil {
-			return contract{}, err
-		}
-		// "outputSchema": null is rejected rather than read as absent.
-		if raw, ok := entry["outputSchema"]; ok {
-			if tool.Output, err = asObject(raw); err != nil {
+		decoded := contractTool{Input: input}
+		if tool.Output != nil {
+			if decoded.Output, err = decodeSchema("outputSchema", tool.Output); err != nil {
 				return contract{}, err
 			}
 		}
-		if tool.Input["type"] != "object" {
-			return contract{}, fmt.Errorf("%s: inputSchema must have type object", name)
+		if input["type"] != "object" {
+			return contract{}, fmt.Errorf("%s: inputSchema must have type object", tool.Name)
 		}
-		if _, exists := result.Tools[name]; name == "" || exists {
+		if _, exists := result.Tools[tool.Name]; tool.Name == "" || exists {
 			return contract{}, errors.New("tool names must be nonempty and unique")
 		}
-		result.Tools[name] = tool
+		result.Tools[tool.Name] = decoded
 	}
-	if raw, ok := object["resources"]; ok {
-		resources, err := asArray(raw)
+	for _, resource := range source.Resources {
+		output, err := decodeSchema("outputSchema", resource.Output)
 		if err != nil {
 			return contract{}, err
 		}
-		for _, item := range resources {
-			entry, err := asObject(item)
-			if err != nil {
-				return contract{}, err
-			}
-			raw, err := requiredField(entry, "uri")
-			if err != nil {
-				return contract{}, err
-			}
-			uri, err := asString(raw)
-			if err != nil {
-				return contract{}, err
-			}
-			if raw, err = requiredField(entry, "outputSchema"); err != nil {
-				return contract{}, err
-			}
-			resource := contractResource{}
-			if resource.Output, err = asObject(raw); err != nil {
-				return contract{}, err
-			}
-			if _, exists := result.Resources[uri]; uri == "" || exists {
-				return contract{}, errors.New("resource URIs must be nonempty and unique")
-			}
-			result.Resources[uri] = resource
+		if _, exists := result.Resources[resource.URI]; resource.URI == "" || exists {
+			return contract{}, errors.New("resource URIs must be nonempty and unique")
 		}
+		result.Resources[resource.URI] = contractResource{Output: output}
 	}
-	if raw, ok := object["events"]; ok {
-		events, err := asArray(raw)
+	for _, event := range source.Events {
+		input, err := decodeSchema("inputSchema", event.Input)
 		if err != nil {
 			return contract{}, err
 		}
-		for _, item := range events {
-			entry, err := asObject(item)
-			if err != nil {
-				return contract{}, err
-			}
-			raw, err := requiredField(entry, "name")
-			if err != nil {
-				return contract{}, err
-			}
-			name, err := asString(raw)
-			if err != nil {
-				return contract{}, err
-			}
-			event := contractEvent{}
-			for _, field := range []struct {
-				name   string
-				target *Object
-			}{{"inputSchema", &event.Input}, {"payloadSchema", &event.Payload}} {
-				if raw, err = requiredField(entry, field.name); err != nil {
-					return contract{}, err
-				}
-				if *field.target, err = asObject(raw); err != nil {
-					return contract{}, err
-				}
-			}
-			if event.Input["type"] != "object" {
-				return contract{}, fmt.Errorf("event %s: inputSchema must have type object", name)
-			}
-			if _, exists := result.Events[name]; name == "" || exists {
-				return contract{}, errors.New("event names must be nonempty and unique")
-			}
-			result.Events[name] = event
+		payload, err := decodeSchema("payloadSchema", event.Payload)
+		if err != nil {
+			return contract{}, err
 		}
+		if input["type"] != "object" {
+			return contract{}, fmt.Errorf("event %s: inputSchema must have type object", event.Name)
+		}
+		if _, exists := result.Events[event.Name]; event.Name == "" || exists {
+			return contract{}, errors.New("event names must be nonempty and unique")
+		}
+		result.Events[event.Name] = contractEvent{Input: input, Payload: payload}
 	}
 	return result, nil
 }
 
-func decodeMetadata(value Value) (metadata, error) {
-	object, err := asObject(value)
+func decodeMetadata(document *mcpcontract.Metadata) (*contract, error) {
+	if err := checkIdentity(document.Identity); err != nil {
+		return nil, err
+	}
+	for alias, value := range document.Requires {
+		if alias == "" {
+			return nil, errors.New("dependency aliases must be nonempty")
+		}
+		if d, err := digest.Parse(value); err != nil || d.Algorithm() != digest.SHA256 {
+			return nil, fmt.Errorf("dependency %s requires a SHA-256 digest", alias)
+		}
+	}
+	if document.Schema == nil {
+		return nil, nil
+	}
+	decoded, err := decodeContract(*document.Schema)
 	if err != nil {
-		return metadata{}, err
+		return nil, err
 	}
-	for key := range object {
-		if key != "identity" && key != "schema" && key != "requires" {
-			return metadata{}, fmt.Errorf("unknown metadata field %q", key)
-		}
-	}
-	result := metadata{Requires: map[string]string{}}
-	raw, err := requiredField(object, "identity")
-	if err != nil {
-		return metadata{}, err
-	}
-	if result.Identity, err = decodeIdentity(raw); err != nil {
-		return metadata{}, err
-	}
-	if raw, ok := object["schema"]; ok {
-		contract, err := decodeContract(raw)
-		if err != nil {
-			return metadata{}, err
-		}
-		result.Schema = &contract
-	}
-	if raw, ok := object["requires"]; ok {
-		requires, err := asObject(raw)
-		if err != nil {
-			return metadata{}, err
-		}
-		for alias, item := range requires {
-			if alias == "" {
-				return metadata{}, errors.New("dependency aliases must be nonempty")
-			}
-			value, err := asString(item)
-			if err != nil {
-				return metadata{}, err
-			}
-			d, err := digest.Parse(value)
-			if err != nil || d.Algorithm() != digest.SHA256 {
-				return metadata{}, fmt.Errorf("dependency %s requires a SHA-256 digest", alias)
-			}
-			result.Requires[alias] = value
-		}
-	}
-	return result, nil
+	return &decoded, nil
 }
 
 // MarshalJSON writes the contract with tools, resources and events sorted by name or URI.
