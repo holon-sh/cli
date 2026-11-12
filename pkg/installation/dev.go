@@ -194,7 +194,7 @@ type devLoop struct {
 	name                string
 	manifest            manifestSpec
 	apps                []string
-	clock               clock.WithTicker
+	clock               clock.WithTickerAndDelayedExecution
 	watch               func() (fileWatcher, error)
 	started             time.Time
 	options             buildOptions
@@ -203,7 +203,7 @@ type devLoop struct {
 	announce, unapplied bool
 	sent                map[string]string
 	background          context.Context
-	recording           map[string]context.CancelFunc
+	recording           map[string]context.CancelCauseFunc
 	records             sync.WaitGroup
 }
 
