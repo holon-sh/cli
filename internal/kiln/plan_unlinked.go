@@ -6,6 +6,6 @@ import "context"
 
 const Linked = false
 
-func Plan(context.Context, Request) (Result, error) {
-	return Result{}, ErrNotLinked
+func Plan(context.Context, Request) (string, error) {
+	return "", ErrNotLinked
 }

@@ -19,7 +19,7 @@ func TestParseDocumentRejectsInvalidDocuments(t *testing.T) {
 		`{"identity":{"name":"a","version":"1"},"requires":{"orders":"sha256:abc"}}`,
 		`{"identity":{"name":"a","version":"1"},"schema":{"tools":[{"name":"get","inputSchema":{"type":"string"}}]}}`,
 	} {
-		if _, err := ParseDocument(t.Context(), []byte(invalid)); err == nil {
+		if _, err := ParseDocument([]byte(invalid)); err == nil {
 			t.Fatalf("accepted %s", invalid)
 		}
 	}
@@ -91,7 +91,7 @@ func TestLocalDependencyDocumentsAreComplete(t *testing.T) {
 	if document == nil || len(document.Requires) != 1 || document.Requires["inventory"] == "" {
 		t.Fatalf("provider's own dependencies lost: %+v", document)
 	}
-	own, err := NewDocument(t.Context(), prepared.Metadata()["orders"])
+	own, err := NewDocument(prepared.Metadata()["orders"])
 	if err != nil || own.Digest != reference {
 		t.Fatalf("consumer did not pin provider's published document: %v", err)
 	}

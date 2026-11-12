@@ -18,7 +18,7 @@ import (
 func pushTypeMetadata(
 	ctx context.Context, repository *remote.Repository, metadata *mcpcontract.Metadata, documents map[string]*typegen.Document,
 ) (ocispec.Descriptor, string, error) {
-	own, err := typegen.NewDocument(ctx, metadata)
+	own, err := typegen.NewDocument(metadata)
 	if err != nil {
 		return ocispec.Descriptor{}, "", err
 	}

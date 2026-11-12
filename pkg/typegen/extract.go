@@ -103,7 +103,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 		if s.language == "go" {
 			continue
 		}
-		document, err := s.committedContract(ctx)
+		document, err := s.committedContract()
 		if err != nil {
 			return err
 		}
@@ -147,7 +147,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			return err
 		}
 		if drift && document != nil {
-			same, err := mcptype.SameContract(ctx, s.metadata.Schema, document.Schema)
+			same, err := mcptype.SameContract(s.metadata.Schema, document.Schema)
 			if err != nil {
 				return err
 			}
@@ -161,7 +161,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 }
 
 // committedContract reads the source's ContractFile, or returns nil when it has none.
-func (s *preparedSource) committedContract(ctx context.Context) (*Document, error) {
+func (s *preparedSource) committedContract() (*Document, error) {
 	path := filepath.Join(s.origin, ContractFile)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -170,7 +170,7 @@ func (s *preparedSource) committedContract(ctx context.Context) (*Document, erro
 	if err != nil {
 		return nil, err
 	}
-	document, err := ParseDocument(ctx, data)
+	document, err := ParseDocument(data)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}

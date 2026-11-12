@@ -59,7 +59,7 @@ func (d *devLoop) prepare(ctx context.Context, contexts sets.Set[string]) {
 		defer cleanup()
 		next := preparation{contexts: contexts, prepared: prepared, built: prepared}
 		next.built.Apps = slices.DeleteFunc(slices.Clone(prepared.Apps), func(app manifestApp) bool {
-			return !changed.Has(app.Name) && !options.types.affected(ctx, app, prepared)
+			return !changed.Has(app.Name) && !options.types.affected(app, prepared)
 		})
 		if len(next.built.Apps) != 0 {
 			options.output.status("", "Preparing apps", progressWorking)

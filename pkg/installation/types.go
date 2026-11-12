@@ -60,7 +60,7 @@ func (w *typeWorkspace) accept(manifest manifestSpec) {
 
 // affected reports whether a dependency no longer satisfies the contract app was last built against.
 // A contract that cannot be compared counts as affected, so the app is rebuilt.
-func (w *typeWorkspace) affected(ctx context.Context, app manifestApp, manifest manifestSpec) bool {
+func (w *typeWorkspace) affected(app manifestApp, manifest manifestSpec) bool {
 	previous := w.accepted[app.Name]
 	return previous != nil && previous.metadata != nil && slices.ContainsFunc(manifest.Apps, func(dependency manifestApp) bool {
 		expectation, required := previous.metadata.Requires[dependency.Name]
@@ -69,7 +69,7 @@ func (w *typeWorkspace) affected(ctx context.Context, app manifestApp, manifest 
 			return false
 		}
 		expected := previous.documents[expectation]
-		changes, err := mcptype.Changes(ctx, expected.Metadata, p.metadata)
+		changes, err := mcptype.Changes(expected.Metadata, p.metadata)
 		return err != nil || len(changes) != 0
 	})
 }
@@ -227,18 +227,14 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			if err != nil {
 				return manifestSpec{}, nil, fmt.Errorf("%s: fetch expected %s contract %s: %w", app.Name, name, requires[name], err)
 			}
-			changes, err := mcptype.Changes(ctx, expected, metadata[name])
+			changes, err := mcptype.Changes(expected, metadata[name])
 			if err != nil {
 				return manifestSpec{}, nil, err
 			}
 			if len(changes) != 0 {
-				texts := make([]string, len(changes))
-				for i, change := range changes {
-					texts[i] = change.Text
-				}
 				return manifestSpec{}, nil, fmt.Errorf(
 					"%s has changed the typed contract expected by %s (%s); include both in holon deploy %s %s (or rebuild and publish the caller)",
-					name, app.Name, strings.Join(texts, ", "), name, app.Name)
+					name, app.Name, strings.Join(changes, ", "), name, app.Name)
 			}
 		}
 	}

@@ -38,8 +38,7 @@ func prepareStdioImage(ctx context.Context, image, token string, options buildOp
 		return "", err
 	}
 	prepared, err := ociimage.AdaptImage(ctx, repository, descriptor, ociimage.AdaptOptions{
-		Stdio: true, Origin: options.origin,
-		Source: image, CheckedLayers: &checkedLayers, Bridges: bridges,
+		Origin: options.origin, Source: image, CheckedLayers: &checkedLayers, Bridges: bridges,
 	})
 	if err != nil {
 		return "", err

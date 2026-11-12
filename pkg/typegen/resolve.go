@@ -48,13 +48,13 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 		if err := extractSources(ctx, root, []*preparedSource{prepared}, o, false); err != nil {
 			return nil, err
 		}
-		return NewDocument(ctx, prepared.metadata)
+		return NewDocument(prepared.metadata)
 	case source.Registry != nil:
 		return resolveRegistry(ctx, *source.Registry, o)
 	case source.Endpoint != "":
 		return liveContract(ctx, source.Endpoint, nil, endpointClient(source, o))
 	default:
-		return ParseDocument(ctx, source.Document.Data)
+		return ParseDocument(source.Document.Data)
 	}
 }
 
@@ -199,5 +199,5 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 	if err != nil {
 		return nil, err
 	}
-	return NewDocument(ctx, &mcpcontract.Metadata{Identity: *identity, Schema: contract})
+	return NewDocument(&mcpcontract.Metadata{Identity: *identity, Schema: contract})
 }

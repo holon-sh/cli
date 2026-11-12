@@ -97,16 +97,16 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	if err := mcpcontract.WriteStable(filepath.Join(directory, "railpack.json"), append(data, '\n'), 0o644); err != nil {
 		return err
 	}
-	plan, err := kiln.Plan(ctx, kiln.Request{
+	dockerfile, err := kiln.Plan(ctx, kiln.Request{
 		Source: source, ConfigFilePath: ".holon-types/railpack.json", Platforms: []string{"linux/" + runtime.GOARCH},
 	})
 	if err != nil {
 		return err
 	}
-	stages := finalStage.FindAllStringSubmatch(plan.Dockerfile, -1)
+	stages := finalStage.FindAllStringSubmatch(dockerfile, -1)
 	base, final := stages[len(stages)-1][1], stages[len(stages)-1][2]
 	args := []string{"--build-context", "tooling=" + toolingDir}
-	recipe, mounts := plan.Dockerfile, "--mount=type=bind,from=tooling,target=/holon-tooling,readonly"
+	recipe, mounts := dockerfile, "--mount=type=bind,from=tooling,target=/holon-tooling,readonly"
 	if checker {
 		command = slices.Concat([]string{"env", "PYTHONPATH=/opt/holon-check", "MYPY_CACHE_DIR=/dev/null"}, command)
 		recipe += "FROM " + base + " AS checker\nRUN " + checkerInstall + "\n"

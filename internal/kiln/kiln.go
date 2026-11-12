@@ -12,7 +12,3 @@ type Request struct {
 	Start          []string `json:"start,omitempty"`
 	Development    bool     `json:"development,omitempty"`
 }
-
-type Result struct {
-	Dockerfile string `json:"dockerfile"`
-}

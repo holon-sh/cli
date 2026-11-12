@@ -46,7 +46,6 @@ func LoadBridges(payloads fs.FS) (Bridges, error) {
 }
 
 type AdaptOptions struct {
-	Stdio         bool
 	Origin        string
 	Source        string
 	CheckedLayers *sync.Map
@@ -96,11 +95,7 @@ func adaptManifest(
 	if runtime == nil {
 		return errors.New("image has no runtime configuration")
 	}
-	launcher := []string{RuntimePath}
-	if !options.Stdio {
-		launcher = append(launcher, "--transport=streamable-http")
-	}
-	launcher = append(launcher, "--origin", options.Origin)
+	launcher := []string{RuntimePath, "--origin", options.Origin}
 	if child := slices.Concat(image.Config.Entrypoint, image.Config.Cmd); len(child) == 0 || child[0] == "" {
 		return errors.New("stdio image has no executable entrypoint or command")
 	}

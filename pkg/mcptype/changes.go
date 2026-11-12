@@ -1,7 +1,6 @@
 package mcptype
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -9,17 +8,9 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-// Change is one way a published contract breaks an expectation.
-type Change struct {
-	Text string
-}
-
-// Changes lists what breaks expected if published is deployed: identity first, then tools by name,
+// Changes describes each way published breaks expected if it is deployed: identity first, then tools by name,
 // then resources by URI. Empty means compatible.
-func Changes(ctx context.Context, expected, published *mcpcontract.Metadata) ([]Change, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 	want, err := decodeMetadata(expected)
 	if err != nil {
 		return nil, err
@@ -34,11 +25,11 @@ func Changes(ctx context.Context, expected, published *mcpcontract.Metadata) ([]
 		}
 	}
 	if have == nil {
-		return []Change{{Text: "no published contract"}}, nil
+		return []string{"no published contract"}, nil
 	}
-	var result []Change
+	var result []string
 	if expected.Identity != published.Identity {
-		result = append(result, Change{Text: fmt.Sprintf("identity %s@%s expected, %s@%s published", expected.Identity.Name, expected.Identity.Version, published.Identity.Name, published.Identity.Version)})
+		result = append(result, fmt.Sprintf("identity %s@%s expected, %s@%s published", expected.Identity.Name, expected.Identity.Version, published.Identity.Name, published.Identity.Version))
 	}
 	canonicalContract(*want)
 	canonicalContract(*have)
@@ -47,20 +38,20 @@ func Changes(ctx context.Context, expected, published *mcpcontract.Metadata) ([]
 		actual, ok := have.Tools[name]
 		switch {
 		case !ok:
-			result = append(result, Change{Text: fmt.Sprintf("tool %s removed", name)})
+			result = append(result, fmt.Sprintf("tool %s removed", name))
 		case !reflect.DeepEqual(actual.Input, tool.Input):
-			result = append(result, Change{Text: fmt.Sprintf("tool %s input changed", name)})
+			result = append(result, fmt.Sprintf("tool %s input changed", name))
 		case !reflect.DeepEqual(actual.Output, tool.Output):
-			result = append(result, Change{Text: fmt.Sprintf("tool %s output changed", name)})
+			result = append(result, fmt.Sprintf("tool %s output changed", name))
 		}
 	}
 	for _, uri := range sortedKeys(want.Resources) {
 		actual, ok := have.Resources[uri]
 		switch {
 		case !ok:
-			result = append(result, Change{Text: fmt.Sprintf("resource %s removed", uri)})
+			result = append(result, fmt.Sprintf("resource %s removed", uri))
 		case !reflect.DeepEqual(actual, want.Resources[uri]):
-			result = append(result, Change{Text: fmt.Sprintf("resource %s contents changed", uri)})
+			result = append(result, fmt.Sprintf("resource %s contents changed", uri))
 		}
 	}
 	return result, nil

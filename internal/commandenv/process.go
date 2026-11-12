@@ -1,16 +1,15 @@
 package commandenv
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 )
 
-func Run(ctx context.Context, executable string, args []string, stdin []byte, env []string) (string, error) {
+func Run(ctx context.Context, executable string, args, env []string) (string, error) {
 	var stdout, stderr strings.Builder
-	err := RunStreaming(ctx, "", executable, args, bytes.NewReader(stdin), env, &stdout, &stderr)
+	err := RunStreaming(ctx, "", executable, args, nil, env, &stdout, &stderr)
 	if err == nil || ctx.Err() != nil {
 		return stdout.String(), err
 	}
@@ -23,7 +22,7 @@ func Run(ctx context.Context, executable string, args []string, stdin []byte, en
 		message = message[:end] + "..."
 	}
 	if message != "" {
-		return "", fmt.Errorf("%s: %w: %s", executable, err, message)
+		return "", fmt.Errorf("%w: %s", err, message)
 	}
-	return "", fmt.Errorf("%s: %w", executable, err)
+	return "", err
 }

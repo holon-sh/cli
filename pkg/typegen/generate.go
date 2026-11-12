@@ -267,10 +267,10 @@ func (p *Prepared) resolve(ctx context.Context, source Source) (*Document, error
 			}
 			return consumer.document, nil
 		}
-		return NewDocument(ctx, dependency.metadata)
+		return NewDocument(dependency.metadata)
 	}
 	if source.Document != nil {
-		return ParseDocument(ctx, source.Document.Data)
+		return ParseDocument(source.Document.Data)
 	}
 	fetched := p.fetched[source.key()]
 	if fetched.err != nil {
@@ -343,7 +343,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 		}
 		c.packages[target] = files
 	}
-	document, err := NewDocument(ctx, c.metadata)
+	document, err := NewDocument(c.metadata)
 	if err != nil {
 		return err
 	}

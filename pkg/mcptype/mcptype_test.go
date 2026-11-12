@@ -32,20 +32,16 @@ func TestChanges(t *testing.T) {
 		{"no published contract", nil, []string{"no published contract"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			changes, err := Changes(t.Context(), expected, test.published)
+			got, err := Changes(expected, test.published)
 			if err != nil {
 				t.Fatal(err)
-			}
-			var got []string
-			for _, change := range changes {
-				got = append(got, change.Text)
 			}
 			if !slices.Equal(got, test.want) {
 				t.Fatalf("changes = %v, want %v", got, test.want)
 			}
 		})
 	}
-	if _, err := Changes(t.Context(), expected, published("", nil)); err == nil {
+	if _, err := Changes(expected, published("", nil)); err == nil {
 		t.Fatal("invalid published metadata accepted")
 	}
 }

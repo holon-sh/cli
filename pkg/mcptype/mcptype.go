@@ -2,31 +2,26 @@
 package mcptype
 
 import (
-	"context"
 	jsonv2 "encoding/json/v2"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-// ValidateMetadata reports why data is not a contract document, or nil when it is one.
-func ValidateMetadata(ctx context.Context, data []byte) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+// ParseMetadata decodes a contract document, or reports why data is not one.
+func ParseMetadata(data []byte) (*mcpcontract.Metadata, error) {
 	var document mcpcontract.Metadata
 	if err := jsonv2.Unmarshal(data, &document, jsonv2.RejectUnknownMembers(true)); err != nil {
-		return err
+		return nil, err
 	}
-	_, err := decodeMetadata(&document)
-	return err
+	if _, err := decodeMetadata(&document); err != nil {
+		return nil, err
+	}
+	return &document, nil
 }
 
 // SameContract reports whether two contracts are equal once annotations are removed and unordered
 // keywords sorted.
-func SameContract(ctx context.Context, a, b *mcpcontract.Contract) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
+func SameContract(a, b *mcpcontract.Contract) (bool, error) {
 	var forms [2]string
 	for i, side := range []*mcpcontract.Contract{a, b} {
 		decoded, err := decodeContract(*side)
