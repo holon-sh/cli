@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/holon-sh/cli/internal/selfupdate"
 	"github.com/holon-sh/cli/pkg/cli"
 	"github.com/holon-sh/cli/pkg/installation"
 )
@@ -22,6 +23,11 @@ func run() int {
 	defer stop()
 	command := cli.NewCommand(version, installation.ClientConfig{Output: os.Stderr}.AppToken)
 	command.AddCommand(installation.Commands()...)
+	update := selfupdate.Command(version)
+	command.AddCommand(update)
+	if cmd, _, err := command.Find(os.Args[1:]); err == nil && cmd != update {
+		selfupdate.Start()
+	}
 	command.SetIn(os.Stdin)
 	command.SetOut(os.Stdout)
 	command.SetErr(os.Stderr)
