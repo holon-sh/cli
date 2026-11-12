@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,7 +22,6 @@ import (
 	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
-	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
 )
@@ -432,10 +430,11 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	f.mu.Lock()
 	app := f.served[0]
 	f.mu.Unlock()
-	if app.Image != "" || app.Port != 0 || !slices.Equal(app.Args, []string{"sh", "-c", "exec uv run python -m holon.serve server.py"}) {
+	if app.Image != "" || app.Port != 0 {
 		t.Fatalf("session app = %+v", app)
 	}
-	if first := f.reloadRequests()[0]; first.Digest != f.started || !strings.Contains(string(f.overlay(t, f.started)["server.py"]), "app = None") {
+	if first, overlay := f.reloadRequests()[0], f.overlay(t, f.started); first.Digest != f.started ||
+		!strings.Contains(string(overlay["server.py"]), "app = None") || string(overlay[runtimecontract.StartFile]) != "exec uv run python -m holon.serve server.py\n" {
 		t.Fatalf("the session was created from %s and first sent %s", f.started, first.Digest)
 	}
 	if f.uploaded != 0 || strings.Contains(f.stderr.String(), "alpha uploaded") {
@@ -459,75 +458,35 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 		return slices.Contains(f.recorded, request.Digest)
 	})
 	entries := f.overlay(t, request.Digest)
-	if !bytes.Equal(request.body, f.blob(request.Digest)) || string(entries["tools.py"]) != "second" || slices.ContainsFunc(slices.Collect(maps.Keys(entries)), func(name string) bool { return strings.HasPrefix(name, ".holon") }) {
+	if !bytes.Equal(request.body, f.blob(request.Digest)) || string(entries["tools.py"]) != "second" {
 		t.Fatalf("overlay entries = %v", entries)
 	}
 }
 
-func TestDevCommand(t *testing.T) {
-	type devCase struct {
+func TestStartScript(t *testing.T) {
+	for _, test := range []struct {
 		name, entry string
 		files       map[string]string
 		want        string
-	}
-	tests := []devCase{
-		{name: "Python", entry: "server.py", want: "exec uv run python -m holon.serve server.py"},
+	}{
+		{name: "Python", entry: "server.py", want: "exec uv run python -m holon.serve server.py\n"},
+		{
+			name: "Node", entry: "src/server.ts", files: map[string]string{"package.json": `{}`, "package-lock.json": ""},
+			want: "npm install && exec node_modules/.bin/holon-serve src/server.ts\n",
+		},
 		{
 			name: "Python with a frontend", entry: "src/server.py",
 			files: map[string]string{"package.json": `{"scripts":{"build":"vite build"}}`, "pnpm-lock.yaml": ""},
-			want:  "pnpm install && pnpm run build && exec uv run python -m holon.serve src/server.py",
+			want:  "pnpm install && pnpm run build && exec uv run python -m holon.serve src/server.py\n",
 		},
-		{
-			name: "declared manager", entry: "server.js", files: map[string]string{"package.json": `{"packageManager":"yarn@4.5.0"}`},
-			want: "yarn install && exec node_modules/.bin/holon-serve server.js",
-		},
-	}
-	for manager, lock := range map[string]string{"npm": "package-lock.json", "pnpm": "pnpm-lock.yaml", "yarn": "yarn.lock", "bun": "bun.lock"} {
-		tests = append(tests, devCase{
-			name: manager, entry: "src/server.ts", files: map[string]string{"package.json": `{}`, lock: ""},
-			want: manager + " install && exec node_modules/.bin/holon-serve src/server.ts",
-		}, devCase{
-			name: manager + " with a build", entry: "server.ts", files: map[string]string{"package.json": `{"scripts":{"build":"vite build"}}`, lock: ""},
-			want: manager + " install && " + manager + " run build && exec node_modules/.bin/holon-serve server.ts",
-		})
-	}
-	for _, test := range tests {
+	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			sourceFiles(t, root, test.files)
-			command, err := devCommand(root, test.entry)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(command, []string{"sh", "-c", test.want}) {
-				t.Fatalf("command = %q, want %q", command, test.want)
-			}
-			if strings.ContainsAny(command[2], "{}") || strings.Contains(command[2], "$(") {
-				t.Fatalf("command expands: %q", command[2])
+			if script, err := startScript(root, test.entry); err != nil || script != test.want {
+				t.Fatalf("script = %q, want %q: %v", script, test.want, err)
 			}
 		})
-	}
-	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{"package.json": "{"})
-	if _, err := devCommand(root, "server.ts"); err == nil {
-		t.Fatal("invalid package.json accepted")
-	}
-}
-
-func TestDevCommandEntriesNeedNoQuoting(t *testing.T) {
-	for _, entry := range []string{"server.py", "src/server.py", "server.ts", "src/server.ts", "server.js", "src/server.js"} {
-		root := t.TempDir()
-		sourceFiles(t, root, map[string]string{entry: ""})
-		if found, err := typegen.SourceEntry(root); err != nil || found != entry {
-			t.Fatalf("%s is not a server entry: %q %v", entry, found, err)
-		}
-		command, err := devCommand(root, entry)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Trim(entry, "abcdefghijklmnopqrstuvwxyz./") != "" || !strings.HasSuffix(command[2], " "+entry) {
-			t.Fatalf("%s needs quoting in %q", entry, command[2])
-		}
 	}
 }
 

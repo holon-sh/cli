@@ -218,7 +218,7 @@ func (p Package) App(values map[string]Value, run RunConfig) (protocol.App, erro
 	if !protocol.ValidArgs(env, args) || !protocol.ValidEnvTemplates(env, templates) {
 		return protocol.App{}, errors.New("package args and environment templates must be single-line text naming declared inputs")
 	}
-	return protocol.App{Env: env, EnvTemplates: templates, Args: args, Imported: true}, nil
+	return protocol.App{Env: env, EnvTemplates: templates, Args: args}, nil
 }
 
 func argumentInput(id string) string {

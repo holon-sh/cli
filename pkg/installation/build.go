@@ -50,17 +50,9 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			continue
 		}
 		if app.Path != "" && options.development {
-			root := app.resolved.types.root
-			entry, err := developmentEntry(app, root)
-			if err != nil {
-				return nil, err
-			}
 			declaration.Port = 0
-			if declaration.Args, err = devCommand(root, entry); err != nil {
-				return nil, fmt.Errorf("%s: %w", app.Name, err)
-			}
 			if declaration.Overlay = options.overlays[app.Name]; declaration.Overlay == "" {
-				packed, err := options.packSource(ctx, app, root, upload)
+				packed, err := options.packSource(ctx, app, app.resolved.types.root, upload)
 				if err != nil {
 					return nil, err
 				}

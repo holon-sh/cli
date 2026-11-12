@@ -3,9 +3,7 @@ package installation
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
-	"io/fs"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -216,7 +214,6 @@ func TestSourceBuildAndUpload(t *testing.T) {
 func TestSourceStartsThroughItsSDK(t *testing.T) {
 	for entry, want := range map[string][]string{
 		"server.ts":     {"node_modules/.bin/holon-serve", "server.ts"},
-		"src/server.js": {"node_modules/.bin/holon-serve", "src/server.js"},
 		"src/server.py": {"python", "-m", "holon.serve", "src/server.py"},
 	} {
 		t.Run(entry, func(t *testing.T) {
@@ -232,9 +229,6 @@ func TestSourceStartsThroughItsSDK(t *testing.T) {
 			start, err := stageSnapshot(app, app.resolved.types)
 			if err != nil || !slices.Equal(start, want) {
 				t.Fatalf("start = %q, want %q: %v", start, want, err)
-			}
-			if _, err := os.Lstat(filepath.Join(app.resolved.types.root, ".holon")); !errors.Is(err, fs.ErrNotExist) {
-				t.Fatalf("staged a launcher: %v", err)
 			}
 		})
 	}

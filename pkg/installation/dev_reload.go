@@ -217,7 +217,21 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 			return packedSource{}, err
 		}
 	}
-	if _, err := developmentEntry(app, root); err != nil {
+	entry, err := hostedEntry(app, root)
+	if err != nil {
+		return packedSource{}, err
+	}
+	if entry == "" {
+		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
+	}
+	script, err := startScript(root, entry)
+	if err != nil {
+		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.StartFile)), 0o755); err != nil {
+		return packedSource{}, err
+	}
+	if err := os.WriteFile(filepath.Join(root, runtimecontract.StartFile), []byte(script), 0o644); err != nil {
 		return packedSource{}, err
 	}
 	source, err := fsutil.NewFS(root)
@@ -250,45 +264,29 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	return packed, err
 }
 
-// developmentEntry is the server entry holon dev runs an app from.
-func developmentEntry(app manifestApp, root string) (string, error) {
-	entry, err := hostedEntry(app, root)
-	if err == nil && entry == "" {
-		err = fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
-	}
-	return entry, err
-}
-
-// devCommand is what holon-mcp-runtime runs a development app with in its source directory. It installs and builds
-// before serving the entry, so the app accepts connections only once all it serves is ready. The script holds no
-// braces, which Args expand as inputs, and no $(, which the kubelet expands; entries come from a fixed list and need
-// no quoting.
-func devCommand(root, entry string) ([]string, error) {
+// startScript is the runtimecontract.StartFile the development image starts an app with. It installs and builds
+// what the app declares before serving entry, so the app accepts connections once all it serves is ready.
+func startScript(root, entry string) (string, error) {
 	var steps []string
 	var pkg typegen.PackageJSON
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
 	if err == nil {
-		err = json.Unmarshal(data, &pkg)
-	}
-	switch {
-	case err == nil:
-		manager, err := typegen.PackageManager(root)
-		if err != nil {
-			return nil, err
+		if err := json.Unmarshal(data, &pkg); err != nil {
+			return "", err
 		}
+		manager := pkg.Manager(root)
 		steps = append(steps, manager+" install")
 		if pkg.Scripts["build"] != "" {
 			steps = append(steps, manager+" run build")
 		}
-	case !errors.Is(err, fs.ErrNotExist):
-		return nil, err
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
 	}
-	start := serveCommand(entry)
+	serve := serveCommand(entry)
 	if filepath.Ext(entry) == ".py" {
-		start = append([]string{"uv", "run"}, start...)
+		serve = append([]string{"uv", "run"}, serve...)
 	}
-	steps = append(steps, "exec "+strings.Join(start, " "))
-	return []string{"sh", "-c", strings.Join(steps, " && ")}, nil
+	return strings.Join(append(steps, "exec "+strings.Join(serve, " ")), " && ") + "\n", nil
 }
 
 func (p packedSource) publish(ctx context.Context) error {
