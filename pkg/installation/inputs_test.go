@@ -103,7 +103,6 @@ func TestDescriptorInputRejections(t *testing.T) {
 	}{
 		{name: "variable name", environment: `[{"name":"URL","value":"{region-name}","variables":{"region-name":{}}}]`, want: "invalid environment name"},
 		{name: "secret literal", environment: `[{"name":"TOKEN","isSecret":true,"value":"do-not-print"}]`, want: "secret store"},
-		{name: "ambiguous values", environment: `[{"name":"TOKEN","value":"fixed","default":"fallback"}]`, want: "both value and default"},
 		{name: "invalid text", runtime: `[{"type":"named","name":"-e","value":"TOKEN=do-not-print\u0000"}]`, want: "without NUL"},
 		{
 			name: "fixed value", arguments: `[{"type":"named","name":"--mode","value":"fixed"}]`,

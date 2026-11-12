@@ -55,7 +55,6 @@ func resolveTypeMetadata(ctx context.Context, image string, options buildOptions
 	return repository.Reference.String() + "@" + descriptor.Digest.String(), metadata, err
 }
 
-// fetchTypeDocument caches the verified bytes for one preparation or comparison run.
 func fetchTypeDocument(
 	ctx context.Context, image, reference string, documents map[string]*typegen.Document, options buildOptions,
 ) (*mcpcontract.Metadata, error) {

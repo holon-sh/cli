@@ -32,8 +32,6 @@ const (
 	alphaLock     = "version = 1\n\n[[package]]\nname = \"alpha\"\nversion = \"1\"\nsource = { virtual = \".\" }\n"
 )
 
-// reloadFixture runs holon dev for one source app, alpha, against a fake control plane and registry.
-// Like the API, it holds a get_session that names the session's current revision until the session moves.
 type reloadFixture struct {
 	t        *testing.T
 	root     string
@@ -79,7 +77,6 @@ func (f *reloadFixture) reloadRequests() []reloadAppRequest {
 	return slices.Clone(f.reloads)
 }
 
-// startReloadFixture starts holon dev and, for a ready session, waits until it watches for changes.
 func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 	t.Helper()
 	f := &reloadFixture{t: t, root: t.TempDir(), ready: ready, changed: make(chan struct{})}
