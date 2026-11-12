@@ -198,7 +198,7 @@ for await (const { data } of await apps.orders.ext.events.subscribe("cells.edite
 		if err == nil {
 			err = os.Symlink(venv, filepath.Join(app, ".venv"))
 		}
-		if python := pythonEnvironment(app, ""); err != nil || exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
+		if python := pythonEnvironment(app); err != nil || exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
 			t.Skip("mypy is not installed in tooling/python/.venv")
 		}
 		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
@@ -319,7 +319,7 @@ export const owner: InputTypes["files"]["stat"]["Owner"] = { lgn: "a" };
 		if err == nil {
 			err = os.Symlink(venv, filepath.Join(app, ".venv"))
 		}
-		python := pythonEnvironment(app, "")
+		python := pythonEnvironment(app)
 		if err != nil || exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
 			t.Skip("mypy is not installed in tooling/python/.venv")
 		}

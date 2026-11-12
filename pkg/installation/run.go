@@ -45,7 +45,6 @@ type commandConfig struct {
 	builder            buildApplication
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
-	Env                []string
 	Clock              clock.WithTicker
 	verbose            bool
 	jsonOutput         bool
@@ -54,7 +53,7 @@ type commandConfig struct {
 
 func (c commandConfig) buildOptions(manager *Client, stderr io.Writer) buildOptions {
 	return buildOptions{
-		builder: c.builder, HTTPClient: c.RegistryHTTPClient, Stderr: stderr, Env: c.Env, output: c.output,
+		builder: c.builder, HTTPClient: c.RegistryHTTPClient, Stderr: stderr, Env: c.Auth.Env, output: c.output,
 		architectures: manager.info.BuildArchitectures, builders: new(builderConnections),
 	}
 }

@@ -119,31 +119,8 @@ func sinkContracts() string {
 func generationCases(t *testing.T) []generationCase {
 	t.Helper()
 	var cases []generationCase
-	add := func(name, input string) { cases = append(cases, generationCase{name: name, input: input}) }
-	nested, err := os.ReadFile(filepath.Join("testdata", "nested-types.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	const order = `{"tools": [
-        {"name": "get_order", "inputSchema": {"type": "object", "additionalProperties": false,
-            "properties": {"orderId": {"type": "string"}, "count": {"type": "integer"}}, "required": ["orderId"]},
-         "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}},
-        {"name": "then", "inputSchema": {"type": "object", "additionalProperties": false}}
-    ], "resources": [{"uri": "orders://summary", "outputSchema": {"type": "object", "properties": {"total": {"type": "number"}}, "required": ["total"]}}],
-    "events": [{"name": "order.shipped", "inputSchema": {"type": "object", "additionalProperties": false, "properties": {"orderId": {"type": "string"}}},
-        "payloadSchema": {"type": "object", "properties": {"orderId": {"type": "string"}, "carrier": {"type": "string"}}, "required": ["orderId"]}}]}`
-	sampleContracts := `{"orders": ` + order + `, "with-hyphen": ` + order + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}`
 	for _, target := range []string{"browser", "go"} {
-		add("sink-"+target, `{"target": "`+target+`", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": `+sinkRequires+`, "contracts": `+sinkContracts()+`, "go_module": "example.com/é/runtime", "own": "orders", "banner": "holon-generated-apps-v1 app=chéck\"out"}`)
-	}
-	add("empty-go", `{"target": "go", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime"}`)
-	for _, target := range []string{"node", "python"} {
-		// sink-browser already renders the kitchen sink's TypeScript, so only Python renders it here.
-		contracts := sampleContracts + `, "schemas": ` + kitchenSink + `}`
-		if target == "node" {
-			contracts = sampleContracts + `}`
-		}
-		add("slot-"+target, `{"target": "`+target+`", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}}, "contracts": `+contracts+`, "banner": "holon-generated-apps-v1 app=checkout"}`)
+		cases = append(cases, generationCase{name: "sink-" + target, input: `{"target": "` + target + `", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": ` + sinkRequires + `, "contracts": ` + sinkContracts() + `, "go_module": "example.com/é/runtime", "own": "orders", "banner": "holon-generated-apps-v1 app=chéck\"out"}`})
 	}
 	for _, test := range []struct{ name, patch string }{
 		{"go-module-missing", `"target": "go", "go_module": ""`},

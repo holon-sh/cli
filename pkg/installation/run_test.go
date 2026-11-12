@@ -161,6 +161,7 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 	auth := ClientConfig{
 		ConfigDir:  stateDir,
 		HTTPClient: installationtest.OriginClient(h.server), RequestTimeout: time.Second,
+		Env: []string{"DOCKER_HOST=unix:///tmp/holon-test.sock"},
 	}
 	manager := newManager(t, h.server, stateDir)
 	if manager.info.OAuth != nil {
@@ -193,7 +194,6 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 			return response, err
 		}),
 		Auth: auth,
-		Env:  []string{"DOCKER_HOST=unix:///tmp/holon-test.sock"},
 	}
 }
 

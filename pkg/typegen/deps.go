@@ -257,7 +257,7 @@ const PythonRuntime = "holon-sh"
 // ensurePythonRuntime installs a Python project's dependencies with uv sync, as holon init does, unless it
 // has an environment of its own.
 func ensurePythonRuntime(ctx context.Context, dir string, o Options) error {
-	if pythonEnvironment(dir, "") != "" {
+	if pythonEnvironment(dir) != "" {
 		return nil
 	}
 	declared, err := pythonDependencies(dir)

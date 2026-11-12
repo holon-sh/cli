@@ -52,7 +52,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 		l := typeLanguages[language]
 		var program string
 		if language == "python" {
-			program = pythonEnvironment(dir, "")
+			program = pythonEnvironment(dir)
 		}
 		if program == "" {
 			if program, err = l.localProgram(ctx); err != nil {
@@ -87,7 +87,7 @@ func (p *Prepared) CheckEntry(consumer string) (entry, language string, ok bool)
 	return filepath.ToSlash(entry), c.server.language, true
 }
 
-func pythonEnvironment(dir, fallback string) string {
+func pythonEnvironment(dir string) string {
 	for current := range ancestors(dir) {
 		for _, venv := range []string{".venv", "venv"} {
 			if python := filepath.Join(current, venv, "bin", "python"); isFile(python) {
@@ -98,5 +98,5 @@ func pythonEnvironment(dir, fallback string) string {
 	if active := os.Getenv("VIRTUAL_ENV"); active != "" && isFile(filepath.Join(active, "bin", "python")) {
 		return filepath.Join(active, "bin", "python")
 	}
-	return fallback
+	return ""
 }

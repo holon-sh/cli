@@ -373,12 +373,10 @@ func TestSavedCredentialMetadata(t *testing.T) {
 
 func machineTestConfig(t *testing.T, server *httptest.Server) commandConfig {
 	t.Helper()
-	return commandConfig{
-		Env: []string{"HOLON_ORIGIN=" + server.URL, "HOLON_CLIENT_ID=ci-deployer", "HOLON_CLIENT_SECRET=ci-secret"},
-		Auth: ClientConfig{
-			HTTPClient: installationtest.OriginClient(server), ConfigDir: t.TempDir(),
-		},
-	}
+	return commandConfig{Auth: ClientConfig{
+		Env:        []string{"HOLON_ORIGIN=" + server.URL, "HOLON_CLIENT_ID=ci-deployer", "HOLON_CLIENT_SECRET=ci-secret"},
+		HTTPClient: installationtest.OriginClient(server), ConfigDir: t.TempDir(),
+	}}
 }
 
 func TestMachineCredentials(t *testing.T) {
@@ -422,7 +420,7 @@ func TestMachineCredentials(t *testing.T) {
 		{"HOLON_CLIENT_SECRET=ci-secret"},
 		{"HOLON_CLIENT_ID=", "HOLON_CLIENT_SECRET="},
 	} {
-		config := commandConfig{Env: env, Auth: ClientConfig{Origin: "https://unused.example", ConfigDir: t.TempDir()}}
+		config := commandConfig{Auth: ClientConfig{Env: env, Origin: "https://unused.example", ConfigDir: t.TempDir()}}
 		if err := executeCommand(t.Context(), []string{"config", "delete", "chat", "REGION", "--env", "prod"}, nil, nil, config); err == nil ||
 			!strings.Contains(err.Error(), "requires HOLON_CLIENT_ID and HOLON_CLIENT_SECRET together") {
 			t.Fatalf("incomplete credentials fell back: %v", err)
@@ -586,7 +584,6 @@ func TestResourceTokenCacheIsPerAudience(t *testing.T) {
 		installationtest.WriteJSON(w, map[string]any{"access_token": fmt.Sprintf("token-%d", len(requests)), "token_type": "Bearer", "expires_in": 3600})
 	})
 	config := machineTestConfig(t, server)
-	config.Auth.Env = config.Env
 	manager, err := NewClient(t.Context(), config.Auth)
 	if err != nil {
 		t.Fatal(err)
