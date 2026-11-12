@@ -139,6 +139,20 @@ func TestEndpointToken(t *testing.T) {
 	}
 }
 
+func TestEndpointTokenFollowsEachAlias(t *testing.T) {
+	server := tokenServer(t, "good-value")
+	consumer := func(alias string) Consumer {
+		return Consumer{Name: alias, Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Alias: alias, Endpoint: server.URL}}}
+	}
+	prepared, err := Prepare(t.Context(), []Consumer{consumer("signed"), consumer("unsigned")}, Options{Env: []string{"SIGNED_MCP_TOKEN=good-value"}})
+	if prepared != nil {
+		prepared.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "set UNSIGNED_MCP_TOKEN") {
+		t.Fatalf("Prepare = %v, want the alias without a token refused", err)
+	}
+}
+
 func TestEndpointTokenStaysWithItsOrigin(t *testing.T) {
 	other := tokenlessServer(t)
 	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

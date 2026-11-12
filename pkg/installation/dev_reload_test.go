@@ -400,6 +400,20 @@ func TestDevDetachedStartsItsOwnSession(t *testing.T) {
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Expires") })
 }
 
+func TestDevSaveToAnAppRemovedFromTheSession(t *testing.T) {
+	f := startReloadFixture(t, true)
+	f.update(func() { f.served = nil })
+	f.await(func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return slices.Contains(f.reads, strconv.Itoa(f.revision))
+	})
+	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reload failed")
+	if requests := f.reloadRequests(); len(requests) != 0 {
+		t.Fatalf("reload_app %+v", requests)
+	}
+}
+
 func TestDevReloadPushesTheBuildSnapshot(t *testing.T) {
 	f := startReloadFixture(t, true)
 	f.mu.Lock()

@@ -95,6 +95,10 @@ func (d *devLoop) stopPreparation() sets.Set[string] {
 
 func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	defer d.options.output.measure(app.Name, "reload")()
+	i := slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })
+	if i < 0 {
+		return errors.New("application removed from the session")
+	}
 	directory, err := os.MkdirTemp("", "holon-overlay-")
 	if err != nil {
 		return err
@@ -114,7 +118,7 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 		d.changedImages.Insert(app.Name)
 		return nil
 	}
-	running := &d.session.Apps[slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })]
+	running := &d.session.Apps[i]
 	plan.upload = newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
 	overlay, err := plan.pushOverlay(ctx, running.Overlay)
 	if err != nil {

@@ -86,13 +86,13 @@ func ParseSource(arg string) (Source, error) {
 	return source, err
 }
 
-// key identifies a fetched source (registry or endpoint) independently of its alias, so
-// it resolves once per Prepare; path and document sources never reach it.
+// key identifies a fetched source (a registry version, or an endpoint with the alias that names its
+// token), so it resolves once per Prepare; path and document sources never reach it.
 func (s Source) key() string {
 	if s.Registry != nil {
 		return "registry:" + s.Registry.RegistryURL() + "#" + s.Registry.Name + "@" + s.Registry.Version
 	}
-	return "endpoint:" + s.Endpoint
+	return "endpoint:" + s.Alias + "=" + s.Endpoint
 }
 
 func (s Source) String() string {
@@ -190,7 +190,10 @@ func (c Consumer) validate() error {
 	}
 	for _, source := range c.Sources {
 		if err := source.validate(); err != nil {
-			return fmt.Errorf("%s: %s: %w", c.Name, source, err)
+			if source.String() != "" {
+				err = fmt.Errorf("%s: %w", source, err)
+			}
+			return fmt.Errorf("%s: %w", c.Name, err)
 		}
 	}
 	return nil

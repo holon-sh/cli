@@ -234,7 +234,11 @@ func DeclaredTargets(dir string) ([]string, error) {
 			targets = append(targets, target)
 		}
 	}
-	if declared, err := pythonDependencies(dir); err == nil && declared[PythonRuntime] {
+	declared, err := pythonDependencies(dir)
+	if err != nil {
+		return nil, err
+	}
+	if declared[PythonRuntime] {
 		targets = append(targets, TargetPy)
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil && requiresGoRuntime(data) {
