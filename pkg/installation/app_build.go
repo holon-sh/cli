@@ -22,5 +22,6 @@ func publishAppBuild(ctx context.Context, app manifestApp, image string, grant p
 	if err != nil {
 		return err
 	}
-	return appartifact.Publish(ctx, repository, executable, record, options.catalogTag)
+	_, err = appartifact.Publish(ctx, repository, executable, record, options.plane)
+	return err
 }

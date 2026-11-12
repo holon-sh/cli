@@ -86,7 +86,7 @@ export default createMcpHandler(() => {
 	}
 	manifest = typedManifest(t, manifest.Apps...)
 	grant, options := sourceRegistry(t)
-	options.catalogTag = appartifact.DevelopmentTag
+	options.plane = protocol.DevPlane
 	var diagnostics strings.Builder
 	options.Stderr = &buildLog{writer: &diagnostics}
 	grant.Repositories = map[string]string{"orders": "apps/orders", "checkout": "apps/checkout"}

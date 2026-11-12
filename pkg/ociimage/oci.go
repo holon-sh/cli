@@ -43,6 +43,6 @@ func Parse(image string) (reference.Named, error) {
 	return named, nil
 }
 
-func supportedPlatform(platform ocispec.Platform) bool {
+func SupportedPlatform(platform ocispec.Platform) bool {
 	return platform.OS == "linux" && slices.Contains([]string{"amd64", "arm64"}, platform.Architecture)
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/containerd/containerd/v2/core/images"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -14,7 +15,9 @@ import (
 	"oras.land/oras-go/v2/content"
 )
 
-func Copy(ctx context.Context, source oras.ReadOnlyTarget, destination oras.Target, image string) (ocispec.Descriptor, error) {
+func Copy(
+	ctx context.Context, source oras.ReadOnlyTarget, destination oras.Target, image string, required ...string,
+) (ocispec.Descriptor, error) {
 	descriptor, err := source.Resolve(ctx, image)
 	if err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("resolve source image: %w", err)
@@ -45,11 +48,14 @@ func Copy(ctx context.Context, source oras.ReadOnlyTarget, destination oras.Targ
 	for _, child := range children {
 		switch {
 		case child.ArtifactType == mcpcontract.MediaType:
-		case child.ArtifactType == "" && child.Platform != nil && supportedPlatform(*child.Platform):
+		case child.ArtifactType == "" && child.Platform != nil && SupportedPlatform(*child.Platform):
 			if architectures[child.Platform.Architecture] {
 				return ocispec.Descriptor{}, errors.New("duplicate image architecture")
 			}
 			architectures[child.Platform.Architecture] = true
+			if len(required) != 0 && !slices.Contains(required, child.Platform.Architecture) {
+				continue
+			}
 		default:
 			continue
 		}
@@ -57,6 +63,11 @@ func Copy(ctx context.Context, source oras.ReadOnlyTarget, destination oras.Targ
 	}
 	if len(architectures) == 0 {
 		return ocispec.Descriptor{}, errors.New("unsupported image architecture; requires Linux amd64 or arm64")
+	}
+	for _, architecture := range required {
+		if !architectures[architecture] {
+			return ocispec.Descriptor{}, fmt.Errorf("image does not provide the installation's linux/%s architecture", architecture)
+		}
 	}
 	if len(selected) == len(children) {
 		return descriptor, copyGraph(ctx, source, destination, descriptor)
