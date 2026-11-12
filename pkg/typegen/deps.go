@@ -69,23 +69,38 @@ func PackageManager(dir string) (string, error) {
 // #holon-sh and #holon-ui to the clients in package.json. Call it before snapshotting sources: both
 // can change the project's package files.
 func Install(ctx context.Context, consumers []Consumer, options Options) error {
+	if err := MapClients(consumers, options); err != nil {
+		return err
+	}
+	o := options.defaults()
+	for _, c := range consumers {
+		for _, target := range c.Targets {
+			var err error
+			switch target {
+			case TargetTS, TargetUI:
+				err = ensureNodeRuntime(ctx, c.Dir, NodePackages[target], o)
+			case TargetPy:
+				err = ensurePythonRuntime(ctx, c.Dir, o)
+			}
+			if err != nil {
+				return fmt.Errorf("%s: %w", c.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func MapClients(consumers []Consumer, options Options) error {
 	o := options.defaults()
 	for _, c := range consumers {
 		if err := c.validate(); err != nil {
 			return err
 		}
 		for _, target := range c.Targets {
-			var err error
-			switch target {
-			case TargetTS, TargetUI:
-				if err = ensureNodeRuntime(ctx, c.Dir, NodePackages[target], o); err == nil {
-					err = mapClients(c.Dir, target, o)
+			if _, ok := NodePackages[target]; ok {
+				if err := mapClients(c.Dir, target, o); err != nil {
+					return fmt.Errorf("%s: %w", c.Name, err)
 				}
-			case TargetPy:
-				err = ensurePythonRuntime(ctx, c.Dir, o)
-			}
-			if err != nil {
-				return fmt.Errorf("%s: %w", c.Name, err)
 			}
 		}
 	}

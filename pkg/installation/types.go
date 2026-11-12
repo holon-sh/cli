@@ -183,8 +183,8 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		}
 	}
 	if options.types != nil {
-		if err := typegen.Install(ctx, consumers, typeOptions); err != nil {
-			return manifestSpec{}, nil, logs.explain(err)
+		if err := typegen.MapClients(consumers, typeOptions); err != nil {
+			return manifestSpec{}, nil, err
 		}
 	}
 	for _, app := range pathApps {
