@@ -185,4 +185,6 @@ export { registerPageTools } from "holon-ui/runtime";
 export declare function exposeTools(app: Apps[keyof Apps], options?: import("holon-ui/runtime").ExposeOptions): Promise<boolean>;
 import { App as HostApp } from "@modelcontextprotocol/ext-apps";
 type OwnAppKey = "orders";
-export declare class App extends HostApp { readonly tools: Apps[OwnAppKey]["tools"]; readonly resources: Apps[OwnAppKey]["resources"]; readonly callTool: Apps[OwnAppKey]["callTool"] }
+export declare class App extends HostApp { constructor(info?: ConstructorParameters<typeof HostApp>[0], ...rest: ConstructorParameters<typeof HostApp> extends [unknown, ...infer Rest] ? Rest : never); readonly tools: Apps[OwnAppKey]["tools"]; readonly resources: Apps[OwnAppKey]["resources"]; readonly callTool: Apps[OwnAppKey]["callTool"] }
+/** The MCP endpoint of this app, as a path on the origin that serves the page. */
+export declare const endpoint: string;
