@@ -21,6 +21,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
 	"golang.org/x/oauth2"
 
@@ -129,11 +130,45 @@ func stepUntil(t *testing.T, fc *testingclock.FakeClock, step time.Duration, obs
 	}
 }
 
+type fakeWatcher chan fsnotify.Event
+
+func (fakeWatcher) Add(string) error { return nil }
+
+func (w fakeWatcher) Close() error {
+	close(w)
+	return nil
+}
+
+func (w fakeWatcher) events() (<-chan fsnotify.Event, <-chan error) { return w, nil }
+
+type fakeFiles struct {
+	mu      sync.Mutex
+	watcher fakeWatcher
+}
+
+func (f *fakeFiles) watch() (fileWatcher, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.watcher = make(fakeWatcher)
+	return f.watcher, nil
+}
+
+func (f *fakeFiles) save(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	sourceFiles(t, root, files)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for name := range files {
+		f.watcher <- fsnotify.Event{Name: filepath.Join(root, name), Op: fsnotify.Write}
+	}
+}
+
 type runHarness struct {
 	mux      *http.ServeMux
 	control  *installationtest.ControlFixtures
 	server   *httptest.Server
 	baseHost string
+	files    fakeFiles
 	run      commandConfig
 }
 
@@ -166,7 +201,7 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 	stateDir := t.TempDir()
 	auth := ClientConfig{
 		Env: []string{"DOCKER_HOST=unix:///tmp/holon-test.sock"}, ConfigDir: stateDir,
-		HTTPClient: installationtest.OriginClient(h.server), RequestTimeout: time.Second,
+		HTTPClient: installationtest.OriginClient(h.server),
 	}
 	manager := newManager(t, h.server, stateDir)
 	if manager.info.OAuth != nil {
@@ -198,7 +233,8 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 			}
 			return response, err
 		}),
-		Auth: auth,
+		Auth:  auth,
+		watch: h.files.watch,
 	}
 }
 
@@ -365,7 +401,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		await(stderr, watching)
 		from := len(stderr.String())
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
-		sourceFiles(t, root, map[string]string{"alpha/logic.txt": "edited"})
+		h.files.save(t, root, map[string]string{"alpha/logic.txt": "edited"})
 		stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[from:], "alpha reloaded in 0.5 s") })
 		mu.Lock()
 		unavailable = true
