@@ -202,6 +202,7 @@ type devLoop struct {
 	pending             sets.Set[string]
 	announce, unapplied bool
 	sent                map[string]string
+	unbuilt             sets.Set[string]
 	background          context.Context
 	recording           map[string]context.CancelCauseFunc
 	records             sync.WaitGroup

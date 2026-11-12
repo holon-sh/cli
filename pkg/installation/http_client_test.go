@@ -36,6 +36,18 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 			name: "policy error", status: http.StatusBadRequest, body: `{"error":{"code":"invalid_request","message":"OAuth support is disabled"}}`,
 			httpError: &httpError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Message: "OAuth support is disabled"},
 		},
+		{
+			name: "what the failed step printed", status: http.StatusBadRequest,
+			body: `{"error":{"code":"invalid_request","message":"npm install: exit status 1"},"output":"npm error 404\n"}`,
+			httpError: &httpError{
+				StatusCode: http.StatusBadRequest, Code: "invalid_request", Message: "npm install: exit status 1", Output: "npm error 404\n",
+			},
+		},
+		{
+			name: "token redacted from what was printed", status: http.StatusBadRequest,
+			body:      `{"error":{"code":"invalid_request","message":"npm install: exit status 1"},"output":"` + token + `"}`,
+			httpError: &httpError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Message: "npm install: exit status 1"},
+		},
 		{name: "redirect", status: http.StatusTemporaryRedirect, httpError: &httpError{StatusCode: http.StatusTemporaryRedirect}},
 		{name: "unexpected streamed JSON", status: http.StatusOK, stream: true, mediaType: protocol.MIMEApplicationJSON, body: `{}`, want: errMalformedResponse},
 	} {
@@ -67,7 +79,7 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 			err := client.send(t.Context(), "/request", request, &body)
 			if tc.httpError != nil {
 				got, ok := errors.AsType[*httpError](err)
-				if !ok || *got != *tc.httpError || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), tc.httpError.Message) {
+				if !ok || *got != *tc.httpError || strings.Contains(err.Error()+got.Output, token) || !strings.Contains(err.Error(), tc.httpError.Message) {
 					t.Fatalf("HTTP error = %v, want %#v", err, tc.httpError)
 				}
 			} else if !errors.Is(err, tc.want) {
