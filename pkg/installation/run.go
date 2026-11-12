@@ -203,7 +203,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if dev.name != "" {
 		err = dev.update(ctx, request, removedApps(dev.session.Apps, request.Apps)...)
 	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &dev.session); err == nil {
-		dev.name, dev.starting = dev.session.Name, startingApps(dev.session)
+		dev.name = dev.session.Name
 		for _, app := range request.Apps {
 			dev.pending.Insert(app.Name)
 		}

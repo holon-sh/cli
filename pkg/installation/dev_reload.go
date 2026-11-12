@@ -67,7 +67,16 @@ func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error
 	return served, nil
 }
 
-var errUnstarted = errors.New("skipped: an app did not start from its source")
+var errUnstarted = errors.New("an app did not start from its source")
+
+func (d *devLoop) regenerate(ctx context.Context) bool {
+	err := d.generate(ctx)
+	if errors.Is(err, errUnstarted) {
+		return false
+	}
+	d.options.output.problem("MCP types", err)
+	return true
+}
 
 func (d *devLoop) generate(ctx context.Context) error {
 	if !d.reload(ctx, d.paths(true)) {
