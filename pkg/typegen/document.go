@@ -24,27 +24,24 @@ type Document struct {
 }
 
 // ParseDocument validates a document and retains its exact bytes.
-func ParseDocument(ctx context.Context, data []byte) (*Document, error) {
+func ParseDocument(data []byte) (*Document, error) {
 	if len(data) > maxContractBytes {
 		return nil, fmt.Errorf("contract document exceeds %d bytes", maxContractBytes)
 	}
-	if err := mcptype.ValidateMetadata(ctx, data); err != nil {
+	metadata, err := mcptype.ParseMetadata(data)
+	if err != nil {
 		return nil, err
 	}
-	var metadata mcpcontract.Metadata
-	if err := json.Unmarshal(data, &metadata); err != nil {
-		return nil, err
-	}
-	return &Document{Metadata: &metadata, Data: bytes.Clone(data), Digest: digest.FromBytes(data).String()}, nil
+	return &Document{Metadata: metadata, Data: bytes.Clone(data), Digest: digest.FromBytes(data).String()}, nil
 }
 
 // NewDocument serializes a newly observed contract. Schema numbers retain their precision.
-func NewDocument(ctx context.Context, metadata *mcpcontract.Metadata) (*Document, error) {
+func NewDocument(metadata *mcpcontract.Metadata) (*Document, error) {
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, err
 	}
-	return ParseDocument(ctx, data)
+	return ParseDocument(data)
 }
 
 // FetchDocument reads a blob by digest, bounds its size and verifies its bytes.
@@ -68,5 +65,5 @@ func FetchDocument(ctx context.Context, blobs registry.BlobStore, reference stri
 	if err != nil {
 		return nil, fmt.Errorf("contract blob %s failed verification: %w", reference, err)
 	}
-	return ParseDocument(ctx, data)
+	return ParseDocument(data)
 }

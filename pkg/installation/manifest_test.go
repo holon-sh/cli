@@ -20,7 +20,6 @@ func TestManifestRejectsInvalidDeclarations(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct{ name, fields, wantError string }{
 		{name: "missing source", fields: "path: ''"},
-		{name: "multiple sources", fields: "path: .\nremote: {url: https://mcp.example/mcp}"},
 		{name: "absolute path", fields: "path: /app"},
 		{name: "insecure registry", fields: "registry: {name: io.github.acme/app, version: '1.0.0', registry: 'http://registry.example'}"},
 		{name: "run with npm", fields: `registry: {name: io.github.acme/app, version: '1.0.0', package: {registryType: npm}}

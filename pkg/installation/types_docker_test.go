@@ -169,7 +169,7 @@ export default createMcpHandler(() => {
 	}
 	defer cleanupChanged()
 	index := slices.IndexFunc(changed.Apps, func(app manifestApp) bool { return app.Name == "checkout" })
-	if !workspace.affected(t.Context(), changed.Apps[index], changed) {
+	if !workspace.affected(changed.Apps[index], changed) {
 		t.Fatal("signature edit did not include caller")
 	}
 	sourceFiles(t, root, map[string]string{"orders/server.ts": strings.Replace(provider, "total:5", "total:6", 1), "checkout/server.ts": caller})
@@ -178,7 +178,7 @@ export default createMcpHandler(() => {
 		t.Fatal(err)
 	}
 	defer cleanupFixed()
-	if workspace.affected(t.Context(), fixed.Apps[index], fixed) {
+	if workspace.affected(fixed.Apps[index], fixed) {
 		t.Fatal("handler-only edits changed the dependency signature")
 	}
 }

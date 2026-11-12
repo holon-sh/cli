@@ -23,8 +23,8 @@ import (
 // is extracted by running its server, a registry or endpoint source is fetched, and a supplied
 // document is validated and returned with its bytes.
 func ResolveDocument(ctx context.Context, source Source, options Options) (*Document, error) {
-	o, err := source.prepare(options)
-	if err != nil {
+	o := options.defaults()
+	if err := source.validate(); err != nil {
 		return nil, err
 	}
 	switch {
@@ -48,23 +48,18 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 		if err := extractSources(ctx, root, []*preparedSource{prepared}, o, false); err != nil {
 			return nil, err
 		}
-		return NewDocument(ctx, prepared.metadata)
+		return NewDocument(prepared.metadata)
 	case source.Registry != nil:
 		return resolveRegistry(ctx, *source.Registry, o)
 	case source.Endpoint != "":
 		return liveContract(ctx, source.Endpoint, nil, endpointClient(source, o))
 	default:
-		return ParseDocument(ctx, source.Document.Data)
+		return ParseDocument(source.Document.Data)
 	}
 }
 
-// endpointClient reads an endpoint source's token from <ALIAS>_MCP_TOKEN and explains a refusal.
-// A registry record's remote never reaches here, so a token only goes to a URL its owner named.
 func endpointClient(source Source, o Options) *http.Client {
-	endpoint, err := url.Parse(source.Endpoint)
-	if err != nil {
-		return o.HTTPClient // liveContract reports the invalid URL.
-	}
+	endpoint, _ := url.Parse(source.Endpoint)
 	transport := &endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: endpoint.Scheme + "://" + endpoint.Host, signIn: o.SignIn}
 	if source.Alias != "" {
 		transport.variable = strings.TrimSuffix(protocol.DependencyEnvName(source.Alias), "_URL") + "_TOKEN"
@@ -204,5 +199,5 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 	if err != nil {
 		return nil, err
 	}
-	return NewDocument(ctx, &mcpcontract.Metadata{Identity: *identity, Schema: contract})
+	return NewDocument(&mcpcontract.Metadata{Identity: *identity, Schema: contract})
 }

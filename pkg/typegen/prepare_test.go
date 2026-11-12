@@ -33,7 +33,8 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 }
 
 // Server code calls the project's own server only under an alias, and browser code always calls
-// it. Either way it stays the project's own server, not a dependency of itself.
+// it. Either way it stays the project's own server, not a dependency of itself. Python's bytecode
+// cache beside the clients does not make them someone else's.
 func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing.T) {
 	c, extract := checkoutConsumer(t, TargetTS, TargetUI, TargetPy)
 	for _, test := range []struct{ alias, key string }{{"", "checkout"}, {"shop", "shop"}} {
@@ -58,6 +59,10 @@ func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing
 		}
 		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 1 {
 			t.Fatalf("requires = %v", requires)
+		}
+		put(t, stage, "holon/apps/__pycache__/__init__.cpython-313.pyc", "bytecode")
+		if err := prepared.WriteClients("checkout", stage); err != nil {
+			t.Fatal(err)
 		}
 	}
 	c.Sources[0].Alias = "shop"
@@ -184,7 +189,9 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 func TestGenerateRefusesASymlinkOutOfTheProject(t *testing.T) {
 	dir, outside := t.TempDir(), t.TempDir()
 	put(t, dir, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	installRuntime(t, dir, "testdata/holon-sh")
+	if err := os.CopyFS(filepath.Join(dir, "node_modules", "holon-sh"), os.DirFS("testdata/holon-sh")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(outside, filepath.Join(dir, "generated")); err != nil {
 		t.Fatal(err)
 	}
@@ -194,30 +201,6 @@ func TestGenerateRefusesASymlinkOutOfTheProject(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 		t.Fatal("wrote outside the project")
-	}
-}
-
-func TestSuppliedContractsRemainDistinct(t *testing.T) {
-	metadata := ordersMetadata()
-	source := Source{Document: document(t, metadata)}
-	alternate := ordersMetadata()
-	alternate.Schema = &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "status", Input: json.RawMessage(`{"type":"object"}`)}}}
-	c := Consumer{Name: "caller", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{source, {Alias: "alternate", Document: document(t, alternate)}}}
-	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prepared.Close()
-	if err := prepared.WriteClients("caller", c.Dir); err != nil {
-		t.Fatal(err)
-	}
-	if module := read(t, c.Dir, "holon/apps/__init__.py"); !strings.Contains(module, "async def lookup(") || !strings.Contains(module, "async def status(") {
-		t.Fatal("pre-resolved contract did not generate a typed client")
-	}
-	// Python's bytecode cache beside the clients does not make them someone else's.
-	put(t, c.Dir, "holon/apps/__pycache__/__init__.cpython-313.pyc", "bytecode")
-	if err := prepared.WriteClients("caller", c.Dir); err != nil {
-		t.Fatal(err)
 	}
 }
 

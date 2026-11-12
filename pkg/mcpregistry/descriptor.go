@@ -27,11 +27,15 @@ type Descriptor struct {
 	Repository  struct {
 		URL string `json:"url"`
 	} `json:"repository"`
-	Remotes  []Transport                `json:"remotes"`
-	Packages []Package                  `json:"packages"`
-	Meta     map[string]json.RawMessage `json:"_meta"`
-	Requires map[string]Requirement     `json:"-"`
-	Egress   wire.Egress                `json:"-"`
+	Remotes  []Transport `json:"remotes"`
+	Packages []Package   `json:"packages"`
+	Meta     struct {
+		Publisher struct {
+			Holon json.RawMessage `json:"sh.holon"`
+		} `json:"io.modelcontextprotocol.registry/publisher-provided"`
+	} `json:"_meta"`
+	Requires map[string]Requirement `json:"-"`
+	Egress   wire.Egress            `json:"-"`
 }
 
 type HolonMetadata struct {
@@ -120,19 +124,12 @@ func parseDescriptor(data []byte, decode func([]byte, any) error) (*Descriptor, 
 	if err := (wire.RegistryRef{Name: descriptor.Name, Version: descriptor.Version}).Validate(); err != nil {
 		return &descriptor, err
 	}
-	if value := descriptor.Meta[PublisherMetadata]; value != nil {
-		var publisher map[string]json.RawMessage
-		if err := json.Unmarshal(value, &publisher); err != nil {
-			return &descriptor, err
+	if extension := descriptor.Meta.Publisher.Holon; extension != nil {
+		var holon HolonMetadata
+		if err := decode(extension, &holon); err != nil {
+			return &descriptor, fmt.Errorf("sh.holon metadata: %w", err)
 		}
-		if extension := publisher["sh.holon"]; extension != nil {
-			var holon HolonMetadata
-			if err := decode(extension, &holon); err != nil {
-				return &descriptor, fmt.Errorf("sh.holon metadata: %w", err)
-			}
-			descriptor.Requires = holon.Requires
-			descriptor.Egress = holon.Egress
-		}
+		descriptor.Requires, descriptor.Egress = holon.Requires, holon.Egress
 	}
 	for name, ref := range descriptor.Requires {
 		if !wire.ValidAppName(name) {

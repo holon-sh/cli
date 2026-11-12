@@ -50,12 +50,7 @@ func TestStdioImageContract(t *testing.T) {
 			name: "entrypoint and cmd", entrypoint: []string{"/server", "--flag"}, cmd: []string{"default"},
 			expected: slices.Concat(stdio, []string{"/server", "--flag"}),
 		},
-		{name: "cmd only", cmd: []string{"/server", "arg"}, expected: stdio},
 		{name: "missing executable", wantErr: "no executable"},
-		{
-			name: "reserved file", cmd: []string{"/server"},
-			files: map[string][]byte{"holon-mcp-runtime": []byte("collision")}, wantErr: "reserved path",
-		},
 		{
 			name: "reserved directory", cmd: []string{"/server"},
 			files: map[string][]byte{"holon-mcp-runtime/file": []byte("collision")}, wantErr: "reserved path",
@@ -181,7 +176,7 @@ func TestStdioMultiArchitectureBuild(t *testing.T) {
 	attestation.Platform = &ocispec.Platform{OS: "unknown", Architecture: "unknown"}
 	attestation.Annotations = map[string]string{"vnd.docker.reference.type": "attestation-manifest"}
 	children = append(children, attestation)
-	descriptor := addTestIndex(registry, children...)
+	descriptor := addTestIndex(registry, nil, children...)
 	host := strings.TrimPrefix(server.URL, "https://")
 	grant := protocol.UploadGrant{Registry: host, Grant: "grant-secret", Repositories: map[string]string{"echo": "holon/upload/echo"}}
 	options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}

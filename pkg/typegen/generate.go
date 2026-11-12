@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -40,15 +39,6 @@ type Options struct {
 	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
 }
 
-func validateEnv(env []string) error {
-	for _, entry := range env {
-		if !strings.Contains(entry, "=") {
-			return fmt.Errorf("environment entry %q must be KEY=VALUE", entry)
-		}
-	}
-	return nil
-}
-
 func (o Options) defaults() Options {
 	o.HTTPClient = cmp.Or(o.HTTPClient, &http.Client{Timeout: 30 * time.Second})
 	o.Stdout = cmp.Or(o.Stdout, io.Discard)
@@ -69,7 +59,7 @@ func (s *preparedSource) extract(result *extraction) error {
 	}
 	s.metadata.Schema = contract
 	if s.metadata.Identity == (mcpcontract.Identity{}) {
-		descriptor, err := ParseDescriptor(result.ServerInfo)
+		descriptor, err := parseDescriptor(result.ServerInfo)
 		if err != nil {
 			return fmt.Errorf("%s: %w; declare the server's name, version and description in its MCP constructor, or add a server.json", s.origin, err)
 		}
@@ -260,13 +250,10 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 	return p, nil
 }
 
-// resolve returns a source's contract document: a snapshot's extraction for a path source, the
-// validated document itself for a contract source, or its fetch.
 func (p *Prepared) resolve(ctx context.Context, source Source) (*Document, error) {
 	if source.Path != "" {
 		absolute, _ := filepath.Abs(source.Path)
 		dependency := p.paths[absolute]
-		// When the source is another consumer, reference its complete document.
 		for _, consumer := range p.consumers {
 			if consumer.Server == nil {
 				continue
@@ -280,10 +267,10 @@ func (p *Prepared) resolve(ctx context.Context, source Source) (*Document, error
 			}
 			return consumer.document, nil
 		}
-		return NewDocument(ctx, dependency.metadata)
+		return NewDocument(dependency.metadata)
 	}
 	if source.Document != nil {
-		return ResolveDocument(ctx, source, p.options)
+		return ParseDocument(source.Document.Data)
 	}
 	fetched := p.fetched[source.key()]
 	if fetched.err != nil {
@@ -356,7 +343,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 		}
 		c.packages[target] = files
 	}
-	document, err := NewDocument(ctx, c.metadata)
+	document, err := NewDocument(c.metadata)
 	if err != nil {
 		return err
 	}
@@ -404,15 +391,30 @@ func (p *Prepared) currentSources() error {
 	return nil
 }
 
-// Generate installs declared runtimes, prepares clients, and writes the project slots.
+// Generate maps #holon-sh and #holon-ui to the clients in package.json, installs missing declared
+// SDK runtimes with the project's package manager, prepares clients, and writes the project slots.
 func Generate(ctx context.Context, consumers []Consumer, options Options) error {
 	release, err := AcquireLocks(consumers)
 	if err != nil {
 		return err
 	}
 	defer release()
-	if err := Install(ctx, consumers, options); err != nil {
+	if err := MapClients(consumers, options); err != nil {
 		return err
+	}
+	o := options.defaults()
+	for _, c := range consumers {
+		for _, target := range c.Targets {
+			switch target {
+			case TargetTS, TargetUI:
+				err = ensureNodeRuntime(ctx, c.Dir, NodePackages[target], o)
+			case TargetPy:
+				err = ensurePythonRuntime(ctx, c.Dir, o)
+			}
+			if err != nil {
+				return fmt.Errorf("%s: %w", c.Name, err)
+			}
+		}
 	}
 	prepared, err := Prepare(ctx, consumers, options)
 	if err != nil {
@@ -423,7 +425,7 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 }
 
 // Write validates all consumer slots before writing any of them. Callers hold AcquireLocks and
-// Install dependencies before Prepare.
+// install dependencies before Prepare.
 func (p *Prepared) Write() error {
 	for _, c := range p.consumers {
 		for _, target := range c.Targets {
@@ -473,38 +475,37 @@ func (c *preparedConsumer) write(dir string) error {
 // AcquireLocks locks each consumer directory until the returned release function is called. A
 // failure releases every acquired lock.
 func AcquireLocks(consumers []Consumer) (func(), error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	directory := filepath.Join(cache, "holon", "type-locks")
+	if err = os.MkdirAll(directory, 0o700); err != nil {
+		return nil, err
+	}
+	paths := map[string]bool{}
+	for _, c := range consumers {
+		real, err := filepath.EvalSymlinks(c.Dir)
+		if err != nil {
+			return nil, err
+		}
+		paths[real] = true
+	}
 	var locks []*flock.Flock
 	release := func() {
 		for _, lock := range locks {
 			_ = lock.Unlock()
 		}
 	}
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return release, err
-	}
-	directory := filepath.Join(cache, "holon", "type-locks")
-	if err = os.MkdirAll(directory, 0o700); err != nil {
-		return release, err
-	}
-	paths := map[string]bool{}
-	for _, c := range consumers {
-		real, err := filepath.EvalSymlinks(c.Dir)
-		if err != nil {
-			release()
-			return release, err
-		}
-		paths[real] = true
-	}
 	for _, path := range slices.Sorted(maps.Keys(paths)) {
 		lock := flock.New(filepath.Join(directory, digest.FromString(path).Encoded()+".lock"))
 		ok, err := lock.TryLock()
-		if err != nil || !ok {
+		if err == nil && !ok {
+			err = fmt.Errorf("%s is already managed by another holon command; stop it before changing dependency bindings", path)
+		}
+		if err != nil {
 			release()
-			if err == nil {
-				err = fmt.Errorf("%s is already managed by another holon command; stop it before changing dependency bindings", path)
-			}
-			return release, err
+			return nil, err
 		}
 		locks = append(locks, lock)
 	}

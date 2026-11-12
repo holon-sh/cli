@@ -131,16 +131,15 @@ func objectType(fields map[string]field, extra extra) typ {
 	return typ{kind: kindObject, fields: fields, extra: extra}
 }
 
-func parseShape(ctx context.Context, schema Value, files bool) (shape, error) {
+func parseShape(ctx context.Context, schema Object, files bool) (shape, error) {
 	parser := &parser{ctx: ctx, root: schema, files: files, references: map[string]*declaration{}}
 	value, err := parser.reference("#", schema, 0)
 	if err != nil {
 		return shape{}, err
 	}
 	result := shape{value: value, named: map[string]typ{}}
-	root, _ := schema.(Object)
 	for _, section := range []string{"definitions", "$defs"} {
-		definitions, _ := root[section].(Object)
+		definitions, _ := schema[section].(Object)
 		for _, name := range sortedKeys(definitions) {
 			pointer := "#/" + section + "/" + strings.NewReplacer("~", "~0", "/", "~1").Replace(name)
 			if result.named[name], err = parser.reference(pointer, definitions[name], 0); err != nil {

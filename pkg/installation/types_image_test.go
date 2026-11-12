@@ -28,7 +28,7 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	raw := []byte(` { "schema":{"tools":[{"name":"lookup",
 "inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}]},
 "identity":{"version":"1","name":"example/orders"} } `)
-	expected, err := typegen.ParseDocument(t.Context(), raw)
+	expected, err := typegen.ParseDocument(raw)
 	if err != nil {
 		t.Fatal(err)
 	}

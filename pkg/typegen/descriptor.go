@@ -31,9 +31,7 @@ func validRegistryRef(r protocol.RegistryRef) error {
 	return r.Validate()
 }
 
-// ParseDescriptor reads a server.json or serverInfo, which must also have a name, an exact version
-// and a description that the MCP Registry accepts.
-func ParseDescriptor(data []byte) (*mcpregistry.Descriptor, error) {
+func parseDescriptor(data []byte) (*mcpregistry.Descriptor, error) {
 	if len(data) > mcpregistry.MaxDescriptorBytes {
 		return nil, errors.New("server descriptor exceeds 1 MiB")
 	}
@@ -60,7 +58,7 @@ func readDescriptor(dir string) (*mcpregistry.Descriptor, error) {
 	if err != nil {
 		return nil, err
 	}
-	d, err := ParseDescriptor(data)
+	d, err := parseDescriptor(data)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}

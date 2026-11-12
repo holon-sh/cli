@@ -20,20 +20,19 @@ type generateRequest struct {
 
 // Generate returns the generated sources by relative path.
 func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, error) {
-	// Only schemas need JSON decoding; the remaining options are already typed.
-	value, err := marshal(ctx, options.Contracts)
-	if err != nil {
+	if err := options.validate(); err != nil {
 		return nil, err
 	}
-	request := generateRequest{GenerateRequest: options, contracts: map[string]contract{}}
-	contracts, _ := value.(Object) // A nil Contracts map encodes as null.
-	for alias, raw := range contracts {
-		if request.contracts[alias], err = decodeContract(raw); err != nil {
+	request := generateRequest{GenerateRequest: options, contracts: make(map[string]contract, len(options.Contracts))}
+	for alias, source := range options.Contracts {
+		if source == nil {
+			return nil, fmt.Errorf("contract %s must be an object", alias)
+		}
+		decoded, err := decodeContract(*source)
+		if err != nil {
 			return nil, err
 		}
-	}
-	if err := request.validate(); err != nil {
-		return nil, err
+		request.contracts[alias] = decoded
 	}
 	catalogs, err := compileCatalogs(ctx, request.contracts, request.Target != "go")
 	if err != nil {
@@ -77,7 +76,7 @@ func eventContracts(contracts map[string]contract) map[string]contract {
 	return result
 }
 
-func (r generateRequest) validate() error {
+func (r GenerateRequest) validate() error {
 	if !slices.Contains([]string{"node", "browser", "python", "go"}, r.Target) {
 		return fmt.Errorf("unknown target %q", r.Target)
 	}
@@ -91,6 +90,9 @@ func (r generateRequest) validate() error {
 	}
 	if r.Target == "go" && r.GoModule == "" {
 		return errors.New("go_module is required for the go target")
+	}
+	if _, empty := r.Contracts[""]; empty {
+		return errors.New("binding names must be nonempty")
 	}
 	return nil
 }

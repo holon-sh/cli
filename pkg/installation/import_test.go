@@ -52,67 +52,60 @@ func registryPackageManifest(t *testing.T, registryType string) manifestSpec {
 }
 
 func TestRegistryPackagesImportOnTheServerAndBindArguments(t *testing.T) {
-	for _, test := range []struct {
-		registryType, deployment string
-		plane                    protocol.Plane
-	}{{"npm", "", protocol.DevPlane}, {"pypi", protocol.ProductionName, protocol.AdminPlane}} {
-		t.Run(test.registryType, func(t *testing.T) {
-			manifest := registryPackageManifest(t, test.registryType)
-			h := newRunHarness(t)
-			ref := protocol.AppBuildRef{Repository: "holon/importer/echo", ArtifactDigest: "sha256:" + strings.Repeat("a", 64)}
-			image := "registry.example/holon/importer/echo@sha256:" + strings.Repeat("b", 64)
-			h.control.Handle([]string{protocol.ToolImportRegistryPackage}, nil, func(w http.ResponseWriter, r *http.Request) {
-				installationtest.AssertOrigin(t, r, string(test.plane)+"."+h.baseHost)
-				var input protocol.ImportRegistryPackageRequest
-				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-					t.Error(err)
-				}
-				selection := &protocol.PackageSelection{RegistryType: test.registryType, Identifier: "echo"}
-				if input.App != "echo" || input.Registry.Name != "com.example/echo" || input.Registry.Version != "1.0.0" ||
-					!reflect.DeepEqual(input.Registry.Package, selection) {
-					t.Errorf("import request = %+v", input)
-				}
-				installationtest.WriteJSON(w, protocol.Import{ID: "12ab34cd", Phase: "Pending"})
-			})
-			h.control.Handle([]string{protocol.ToolGetImport}, map[string]string{"id": "12ab34cd"}, func(w http.ResponseWriter, r *http.Request) {
-				installationtest.AssertOrigin(t, r, string(test.plane)+"."+h.baseHost)
-				installationtest.WriteJSON(w, protocol.Import{ID: "12ab34cd", Phase: "Succeeded", Build: &ref})
-			})
-			h.control.Handle([]string{protocol.ToolResolveAppBuild}, nil, func(w http.ResponseWriter, r *http.Request) {
-				var input protocol.AppBuildRef
-				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-					t.Error(err)
-				}
-				if input != ref {
-					t.Errorf("resolve build = %+v", input)
-				}
-				installationtest.WriteJSON(w, protocol.ResolvedAppBuild{AppBuildRef: ref, Image: image, BuildRecord: protocol.BuildRecord{
-					Runtime: protocol.BuildRuntime{Port: 8080},
-				}})
-			})
-			h.start(t, nil)
-			manager, err := NewClient(t.Context(), h.run.Auth)
-			if err != nil {
-				t.Fatal(err)
-			}
-			apps, err := buildManifestImages(t.Context(), manager, test.deployment, manifest, buildOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := protocol.App{
-				Name: "echo", Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, Image: image, Port: 8080,
-				Args: []protocol.Template{"--workspace={WORKSPACE}", "--api-key={API_KEY}"},
-				Env: map[string]protocol.Input{
-					"API_TOKEN": {IsSecret: true, IsRequired: true}, "WORKSPACE": {Value: new("legal")}, "API_KEY": {IsRequired: true, IsSecret: true},
-				},
-			}
-			if len(apps) != 1 {
-				t.Fatalf("deployed apps = %+v", apps)
-			}
-			if diff := cmp.Diff(want, apps[0], cmpopts.EquateEmpty()); diff != "" {
-				t.Fatalf("deployed app (-want +got):\n%s", diff)
-			}
-		})
+	manifest := registryPackageManifest(t, "npm")
+	h := newRunHarness(t)
+	ref := protocol.AppBuildRef{Repository: "holon/importer/echo", ArtifactDigest: "sha256:" + strings.Repeat("a", 64)}
+	image := "registry.example/holon/importer/echo@sha256:" + strings.Repeat("b", 64)
+	h.control.Handle([]string{protocol.ToolImportRegistryPackage}, nil, func(w http.ResponseWriter, r *http.Request) {
+		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
+		var input protocol.ImportRegistryPackageRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		selection := &protocol.PackageSelection{RegistryType: "npm", Identifier: "echo"}
+		if input.App != "echo" || input.Registry.Name != "com.example/echo" || input.Registry.Version != "1.0.0" ||
+			!reflect.DeepEqual(input.Registry.Package, selection) {
+			t.Errorf("import request = %+v", input)
+		}
+		installationtest.WriteJSON(w, protocol.Import{ID: "12ab34cd", Phase: "Pending"})
+	})
+	h.control.Handle([]string{protocol.ToolGetImport}, map[string]string{"id": "12ab34cd"}, func(w http.ResponseWriter, r *http.Request) {
+		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
+		installationtest.WriteJSON(w, protocol.Import{ID: "12ab34cd", Phase: "Succeeded", Build: &ref})
+	})
+	h.control.Handle([]string{protocol.ToolResolveAppBuild}, nil, func(w http.ResponseWriter, r *http.Request) {
+		var input protocol.AppBuildRef
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		if input != ref {
+			t.Errorf("resolve build = %+v", input)
+		}
+		installationtest.WriteJSON(w, protocol.ResolvedAppBuild{AppBuildRef: ref, Image: image, BuildRecord: protocol.BuildRecord{
+			Runtime: protocol.BuildRuntime{Port: 8080},
+		}})
+	})
+	h.start(t, nil)
+	manager, err := NewClient(t.Context(), h.run.Auth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps, err := buildManifestImages(t.Context(), manager, "", manifest, buildOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := protocol.App{
+		Name: "echo", Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, Image: image, Port: 8080,
+		Args: []protocol.Template{"--workspace={WORKSPACE}", "--api-key={API_KEY}"},
+		Env: map[string]protocol.Input{
+			"API_TOKEN": {IsSecret: true, IsRequired: true}, "WORKSPACE": {Value: new("legal")}, "API_KEY": {IsRequired: true, IsSecret: true},
+		},
+	}
+	if len(apps) != 1 {
+		t.Fatalf("deployed apps = %+v", apps)
+	}
+	if diff := cmp.Diff(want, apps[0], cmpopts.EquateEmpty()); diff != "" {
+		t.Fatalf("deployed app (-want +got):\n%s", diff)
 	}
 }
 

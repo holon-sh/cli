@@ -79,22 +79,13 @@ type ClientConfig struct {
 }
 
 type authState struct {
-	OAuth   *credentialTarget        `json:"oauth"`
+	OAuth   protocol.OAuthInfo       `json:"oauth"`
 	Version string                   `json:"version"`
 	Tokens  map[string]*oauth2.Token `json:"tokens,omitempty"`
 }
 
-type credentialTarget struct {
-	Issuer        string `json:"issuer"`
-	AdminAudience string `json:"adminAudience"`
-	CLIClientID   string `json:"cliClientID"`
-}
-
-func targetForOAuth(info *protocol.OAuthInfo) *credentialTarget {
-	if info == nil {
-		return nil
-	}
-	return &credentialTarget{Issuer: info.Issuer, AdminAudience: info.AdminAudience, CLIClientID: info.CLIClientID}
+func credentialTarget(info *protocol.OAuthInfo) protocol.OAuthInfo {
+	return protocol.OAuthInfo{Issuer: info.Issuer, AdminAudience: info.AdminAudience, CLIClientID: info.CLIClientID}
 }
 
 type Client struct {
@@ -163,20 +154,21 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 	return manager, nil
 }
 
-// loginInteractive waits for the device sign-in without the credentials lock, so other commands never wait on a person.
-// It saves nothing if another command signed in or out meanwhile.
 func (m *Client) loginInteractive(ctx context.Context) error {
 	if m.machine != nil {
 		return errors.New("service-account credentials are supplied by the environment")
 	}
+	if m.info.OAuth == nil {
+		_, err := fmt.Fprintln(m.output, "Connected to "+m.client.baseURL+" (authentication disabled)")
+		return err
+	}
 	before, _ := m.readState()
-	state := authState{OAuth: targetForOAuth(m.info.OAuth), Version: rand.Text(), Tokens: map[string]*oauth2.Token{}}
-	if m.info.OAuth != nil {
-		tokens, err := m.deviceToken(ctx, m.info.OAuth.AdminAudience)
-		if err != nil {
-			return err
-		}
-		state.Tokens[m.info.OAuth.AdminAudience] = tokens
+	tokens, err := m.deviceToken(ctx, m.info.OAuth.AdminAudience)
+	if err != nil {
+		return err
+	}
+	state := authState{
+		OAuth: credentialTarget(m.info.OAuth), Version: rand.Text(), Tokens: map[string]*oauth2.Token{m.info.OAuth.AdminAudience: tokens},
 	}
 	return m.withLock(ctx, func() error {
 		if saved, _ := m.readState(); saved.Version != before.Version {
@@ -186,10 +178,6 @@ func (m *Client) loginInteractive(ctx context.Context) error {
 			return err
 		}
 		m.state = state
-		if m.info.OAuth == nil {
-			_, err := fmt.Fprintln(m.output, "Connected to "+m.client.baseURL+" (authentication disabled)")
-			return err
-		}
 		return nil
 	})
 }
@@ -232,12 +220,8 @@ func (m *Client) readState() (authState, error) {
 	if state.Version == "" || len(state.Version) > maxInfoField {
 		return authState{}, errCredentialUnavailable
 	}
-	if state.OAuth != nil {
-		if err := validateInfo(protocol.Info{OAuth: &protocol.OAuthInfo{
-			Issuer: state.OAuth.Issuer, AdminAudience: state.OAuth.AdminAudience, CLIClientID: state.OAuth.CLIClientID,
-		}}); err != nil {
-			return authState{}, errReauthenticationRequired
-		}
+	if err := validateInfo(protocol.Info{OAuth: &state.OAuth}); err != nil {
+		return authState{}, errReauthenticationRequired
 	}
 	return state, nil
 }
@@ -250,7 +234,7 @@ func (m *Client) loadCredentials() error {
 	if m.state.Version != "" && m.state.Version != state.Version {
 		return errCredentialChanged
 	}
-	if !ptr.Equal(state.OAuth, targetForOAuth(m.info.OAuth)) {
+	if state.OAuth != credentialTarget(m.info.OAuth) {
 		return errEndpointChanged
 	}
 	if len(state.Tokens) == 0 {
@@ -308,11 +292,11 @@ func (m *Client) logout(ctx context.Context) error {
 // [RFC 7009 §2.1]: https://www.rfc-editor.org/rfc/rfc7009.html#section-2.1
 func (m *Client) revokeRefreshTokens(ctx context.Context) error {
 	state, err := m.readState()
-	if err != nil && !errors.Is(err, errNotAuthenticated) {
-		return err
-	}
-	if state.OAuth == nil {
+	if errors.Is(err, errNotAuthenticated) {
 		return nil
+	}
+	if err != nil {
+		return err
 	}
 	_, revocation, err := m.discover(ctx, state.OAuth.Issuer, state.OAuth.CLIClientID)
 	if err != nil {

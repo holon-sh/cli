@@ -88,8 +88,8 @@ func undeclaredDependency(requirer *manifestApp, name string) error {
 	if pin.URL != "" {
 		source, value = "remote", map[string]string{"url": pin.URL}
 	}
-	data, err := json.Marshal(value)
-	return cmp.Or(err, fmt.Errorf("%w:\n  - name: %s\n    %s: %s\n    access: {server: {oauth: {}}}", missing, name, source, data))
+	data, _ := json.Marshal(value)
+	return fmt.Errorf("%w:\n  - name: %s\n    %s: %s\n    access: {server: {oauth: {}}}", missing, name, source, data)
 }
 
 func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...string) (manifestSpec, error) {

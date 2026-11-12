@@ -393,7 +393,7 @@ func sourceBuilder(ctx context.Context, env []string) (string, error) {
 		return name, nil
 	}
 	run := func(args ...string) (string, error) {
-		output, err := commandenv.Run(ctx, "docker", args, nil, env)
+		output, err := commandenv.Run(ctx, "docker", args, env)
 		return strings.TrimSpace(output), err
 	}
 	endpoint, driver, prefix := commandenv.Value(env, "BUILDKIT_HOST"), "remote", "kiln-remote-"

@@ -12,21 +12,18 @@ var (
 	schemaValues = []string{"additionalProperties", "unevaluatedProperties", "propertyNames", "contains", "items", "prefixItems", "additionalItems", "unevaluatedItems", "not", "if", "then", "else", "contentSchema"}
 )
 
-// canonicalContract normalizes the private JSON tree decoded by each public entrypoint.
-// Caller-owned input never reaches this tree.
-func canonicalContract(contract contract) contract {
+func canonicalContract(contract contract) {
 	for _, tool := range contract.Tools {
 		normalizeObject(tool.Input)
 		normalizeObject(tool.Output)
 	}
 	for _, resource := range contract.Resources {
-		normalizeObject(resource.Output)
+		normalizeObject(resource)
 	}
 	for _, event := range contract.Events {
 		normalizeObject(event.Input)
 		normalizeObject(event.Payload)
 	}
-	return contract
 }
 
 func normalize(value Value) {

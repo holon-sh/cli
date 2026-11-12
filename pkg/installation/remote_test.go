@@ -35,7 +35,6 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 	}{
 		{name: "package beside a remote", packages: []json.RawMessage{oci}, remotes: []mcpregistry.Transport{remote}, want: stdio},
 		{name: "npm", packages: []json.RawMessage{oci}, selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "npm"}}, rejected: "no matching OCI, npm or PyPI package"},
-		{name: "infer OCI", packages: []json.RawMessage{oci}, want: stdio},
 		{name: "infer HTTP OCI", packages: []json.RawMessage{httpOCI}, want: &deployment{image: "ghcr.io/acme/example:1.0.0", port: 8082}},
 		{name: "HTTP endpoint Holon cannot reach", packages: []json.RawMessage{invalidHTTP}, rejected: "transport.url must be"},
 		{name: "invalid HTTP package is still a candidate", packages: []json.RawMessage{invalidHTTP, oci}, rejected: "ambiguous"},

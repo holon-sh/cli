@@ -18,14 +18,14 @@ import (
 
 const Linked = true
 
-func Plan(ctx context.Context, request Request) (Result, error) {
+func Plan(ctx context.Context, request Request) (string, error) {
 	input, err := json.Marshal(request)
 	if err != nil {
-		return Result{}, err
+		return "", err
 	}
 	native := C.kiln_request_create((*C.char)(unsafe.Pointer(unsafe.SliceData(input))), C.size_t(len(input)))
 	if native == nil {
-		return Result{}, errors.New("cannot allocate Kiln request")
+		return "", errors.New("cannot allocate Kiln request")
 	}
 	defer C.kiln_request_free(native)
 	canceled := make(chan struct{})
@@ -38,13 +38,15 @@ func Plan(ctx context.Context, request Request) (Result, error) {
 		<-canceled
 	}
 	if err := ctx.Err(); err != nil {
-		return Result{}, err
+		return "", err
 	}
 	output := C.GoBytes(unsafe.Pointer(response.data), C.int(response.len))
 	if response.status == C.KILN_OK {
-		var result Result
+		var result struct {
+			Dockerfile string `json:"dockerfile"`
+		}
 		err = json.Unmarshal(output, &result)
-		return result, err
+		return result.Dockerfile, err
 	}
 	var diagnostic struct {
 		Logs []struct {
@@ -52,7 +54,7 @@ func Plan(ctx context.Context, request Request) (Result, error) {
 		} `json:"logs"`
 	}
 	if json.Unmarshal(output, &diagnostic) == nil && len(diagnostic.Logs) > 0 {
-		return Result{}, errors.New(diagnostic.Logs[0].Msg)
+		return "", errors.New(diagnostic.Logs[0].Msg)
 	}
-	return Result{}, fmt.Errorf("kiln FFI: %s", output)
+	return "", fmt.Errorf("kiln FFI: %s", output)
 }

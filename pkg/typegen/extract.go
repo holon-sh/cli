@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -102,7 +103,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 		if s.language == "go" {
 			continue
 		}
-		document, err := s.committedContract(ctx)
+		document, err := s.committedContract()
 		if err != nil {
 			return err
 		}
@@ -146,7 +147,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			return err
 		}
 		if drift && document != nil {
-			same, err := mcptype.SameContract(ctx, s.metadata.Schema, document.Schema)
+			same, err := mcptype.SameContract(s.metadata.Schema, document.Schema)
 			if err != nil {
 				return err
 			}
@@ -160,7 +161,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 }
 
 // committedContract reads the source's ContractFile, or returns nil when it has none.
-func (s *preparedSource) committedContract(ctx context.Context) (*Document, error) {
+func (s *preparedSource) committedContract() (*Document, error) {
 	path := filepath.Join(s.origin, ContractFile)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -169,7 +170,7 @@ func (s *preparedSource) committedContract(ctx context.Context) (*Document, erro
 	if err != nil {
 		return nil, err
 	}
-	document, err := ParseDocument(ctx, data)
+	document, err := ParseDocument(data)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -209,11 +210,9 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	return result, nil
 }
 
-// runLocal runs a contract runner on the host. A Python server (args[1]) runs in its own environment; the
-// host's interpreter, whose mcp and pydantic serve a server that needs nothing else, runs one with no
-// environment or one whose environment is too old or lacks them.
 func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
-	if err := validateEnv(env); err != nil {
+	env, err := commandenv.Environ(env)
+	if err != nil {
 		return err
 	}
 	l := typeLanguages[language]
@@ -221,7 +220,7 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdo
 		limited, cancel := context.WithTimeout(ctx, serverTimeout)
 		defer cancel()
 		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
-		command.Env = append(command.Environ(), env...)
+		command.Env = env
 		var stderr bytes.Buffer
 		command.Stdout, command.Stderr = stdout, &stderr
 		err := command.Run()

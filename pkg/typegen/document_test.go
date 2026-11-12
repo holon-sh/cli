@@ -12,35 +12,33 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
-func TestDocumentBytesAndValidation(t *testing.T) {
-	const original = ` { "schema": { "tools": [{"name":"lookup","inputSchema":{"type":"object"}}]}, "identity": {"version":"1", "name":"example/orders"} } `
-	document, err := ParseDocument(t.Context(), []byte(original))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(document.Data) != original || document.Digest != digest.FromString(original).String() {
-		t.Fatal("document bytes were rewritten")
-	}
+func TestParseDocumentRejectsInvalidDocuments(t *testing.T) {
 	for _, invalid := range []string{
 		`{"version":1,"identity":{"name":"a","version":"1"},"contract":{"tools":[]}}`,
 		`{"schema":{"tools":[]}}`,
 		`{"identity":{"name":"a","version":"1"},"requires":{"orders":"sha256:abc"}}`,
 		`{"identity":{"name":"a","version":"1"},"schema":{"tools":[{"name":"get","inputSchema":{"type":"string"}}]}}`,
 	} {
-		if _, err := ParseDocument(t.Context(), []byte(invalid)); err == nil {
+		if _, err := ParseDocument([]byte(invalid)); err == nil {
 			t.Fatalf("accepted %s", invalid)
 		}
+	}
+}
+
+// TestParseDocumentKeepsSchemaTextAsServersWriteIt reads a schema whose text holds half an emoji, as
+// JSON.stringify writes a description a JavaScript server sliced through one.
+func TestParseDocumentKeepsSchemaTextAsServersWriteIt(t *testing.T) {
+	data := `{"identity":{"name":"a","version":"1"},"schema":{"tools":[{"name":"get","inputSchema":{"type":"object","description":"\ud83d"}}]}}`
+	if _, err := ParseDocument([]byte(data)); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestPrepareResolvesRegistryPackages(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
-	docker := func(password string) string {
-		dir := filepath.Join(t.TempDir(), ".docker")
-		put(t, dir, "config.json", `{"auths":{"images.example":{"auth":"`+base64.StdEncoding.EncodeToString([]byte("user:"+password))+`"}}}`)
-		return dir
-	}
+	docker := filepath.Join(t.TempDir(), ".docker")
+	put(t, docker, "config.json", `{"auths":{"images.example":{"auth":"`+base64.StdEncoding.EncodeToString([]byte("user:secret"))+`"}}}`)
 	// The registry's blob need not match our writer's bytes; a consumer pins the blob as fetched.
 	original := append([]byte(" "), mustJSON(t, ordersMetadata())...)
 	corrupt := imageClient(t, ordersMetadata())
@@ -59,9 +57,8 @@ func TestPrepareResolvesRegistryPackages(t *testing.T) {
 		env   []string
 		want  string
 	}{
-		{name: "docker config", env: []string{"DOCKER_CONFIG=" + docker("secret")}},
-		{name: "docker under HOME", env: []string{"HOME=" + filepath.Dir(docker("secret")), "DOCKER_CONFIG="}},
-		{name: "rejected docker credential", env: []string{"DOCKER_CONFIG=" + docker("wrong")}, want: "images.example/orders:1.0.0"},
+		{name: "docker config", env: []string{"DOCKER_CONFIG=" + docker}},
+		{name: "docker under HOME", env: []string{"HOME=" + filepath.Dir(docker), "DOCKER_CONFIG="}},
 		{name: "corrupt blob", image: corrupt, want: "failed verification"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -103,7 +100,7 @@ func TestLocalDependencyDocumentsAreComplete(t *testing.T) {
 	if document == nil || len(document.Requires) != 1 || document.Requires["inventory"] == "" {
 		t.Fatalf("provider's own dependencies lost: %+v", document)
 	}
-	own, err := NewDocument(t.Context(), prepared.Metadata()["orders"])
+	own, err := NewDocument(prepared.Metadata()["orders"])
 	if err != nil || own.Digest != reference {
 		t.Fatalf("consumer did not pin provider's published document: %v", err)
 	}

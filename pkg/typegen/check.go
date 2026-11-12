@@ -39,14 +39,15 @@ func Check(ctx context.Context, dir string, options Options) error {
 	if len(languages) == 0 {
 		return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
 	}
+	env, err := commandenv.Environ(o.Env)
+	if err != nil {
+		return err
+	}
 	root, err := os.MkdirTemp("", "holon-types-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(root)
-	if err := validateEnv(o.Env); err != nil {
-		return err
-	}
 	slices.Sort(languages)
 	for _, language := range slices.Compact(languages) {
 		l := typeLanguages[language]
@@ -67,7 +68,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 		if err = os.WriteFile(path, checker, 0o600); err != nil {
 			return err
 		}
-		if err = commandenv.RunStreaming(ctx, dir, program, []string{path, "check", ""}, nil, append(append(os.Environ(), o.Env...), "PYTHONDONTWRITEBYTECODE=1"), o.Stdout, o.Stderr); err != nil {
+		if err = commandenv.RunStreaming(ctx, dir, program, []string{path, "check", ""}, nil, append(env, "PYTHONDONTWRITEBYTECODE=1"), o.Stdout, o.Stderr); err != nil {
 			return fmt.Errorf("%s does not type-check against its typed contracts: %w", filepath.Base(dir), err)
 		}
 	}

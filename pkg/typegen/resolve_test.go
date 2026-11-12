@@ -25,12 +25,7 @@ func (h hostTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return transport.RoundTrip(r)
 }
 
-func liveServer(t *testing.T, name string) *httptest.Server {
-	t.Helper()
-	return versionedServer(t, name, "99", true)
-}
-
-func versionedServer(t *testing.T, name, version string, events bool) *httptest.Server {
+func liveServer(t *testing.T, name, version string, events bool) *httptest.Server {
 	t.Helper()
 	var options *mcp.ServerOptions
 	if events {
@@ -66,7 +61,7 @@ func versionedServer(t *testing.T, name, version string, events bool) *httptest.
 // liveServerBehind serves a live MCP server to requests whose Authorization header check accepts.
 func liveServerBehind(t *testing.T, check func(authorization string) bool) *httptest.Server {
 	t.Helper()
-	live := liveServer(t, "orders")
+	live := liveServer(t, "orders", "99", true)
 	t.Cleanup(live.Close)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch authorization := r.Header.Get("Authorization"); {
@@ -87,11 +82,6 @@ func liveServerBehind(t *testing.T, check func(authorization string) bool) *http
 	return server
 }
 
-func tokenServer(t *testing.T, token string) *httptest.Server {
-	t.Helper()
-	return liveServerBehind(t, func(authorization string) bool { return authorization == "Bearer "+token })
-}
-
 // tokenlessServer fails the test if a request reaches it with a token.
 func tokenlessServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -104,7 +94,7 @@ func tokenlessServer(t *testing.T) *httptest.Server {
 }
 
 func TestEndpointToken(t *testing.T) {
-	server := tokenServer(t, "good-value")
+	server := liveServerBehind(t, func(authorization string) bool { return authorization == "Bearer good-value" })
 	for _, test := range []struct {
 		name, alias, env, signedIn, want string
 		signInErr                        error
@@ -227,7 +217,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 }
 
 func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
-	live := liveServer(t, "Orders Live")
+	live := liveServer(t, "Orders Live", "99", true)
 	defer live.Close()
 	metadata, err := ResolveDocument(t.Context(), Source{Endpoint: live.URL}, Options{HTTPClient: live.Client()})
 	if err != nil {
@@ -236,7 +226,7 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	if metadata.Identity != (mcpcontract.Identity{Name: "Orders Live", Version: "99"}) {
 		t.Fatalf("live contract = %+v", metadata)
 	}
-	bareServer := versionedServer(t, "bare", "", false)
+	bareServer := liveServer(t, "bare", "", false)
 	defer bareServer.Close()
 	bare, err := ResolveDocument(t.Context(), Source{Endpoint: bareServer.URL}, Options{HTTPClient: bareServer.Client()})
 	if err != nil || bare.Identity != (mcpcontract.Identity{Name: "bare", Version: "0.0.0"}) {

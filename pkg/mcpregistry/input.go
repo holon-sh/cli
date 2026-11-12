@@ -2,7 +2,6 @@ package mcpregistry
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,39 +9,6 @@ import (
 
 	"github.com/holon-sh/protocol"
 )
-
-type inputBinding struct {
-	value *string
-	env   string
-}
-
-func bindInput(input protocol.Input, value Value, env map[string]protocol.Input) (inputBinding, error) {
-	argument := inputBinding{value: cmp.Or(input.Value, input.Default)}
-	if value == (Value{}) {
-		return argument, nil
-	}
-	if input.Value != nil {
-		return argument, errors.New("fixed input cannot be overridden")
-	}
-	if value.Value != nil {
-		if input.IsSecret {
-			return argument, errors.New("input requires a secret reference, not a literal")
-		}
-		if !protocol.ValidInputValue(*value.Value) {
-			return argument, errors.New("input must be single-line text without NUL characters")
-		}
-		argument.value = value.Value
-		return argument, nil
-	}
-	if !input.IsSecret {
-		return argument, errors.New("secret references require isSecret in their declaration")
-	}
-	if err := mergeInput(env, value.Secret, input); err != nil {
-		return argument, err
-	}
-	argument.value, argument.env = nil, value.Secret
-	return argument, nil
-}
 
 func validEnvironmentName(name string) error {
 	if !protocol.ValidEnvName(name) {

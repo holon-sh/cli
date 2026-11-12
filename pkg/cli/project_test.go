@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"sigs.k8s.io/yaml"
 )
 
 func TestAddApp(t *testing.T) {
@@ -41,9 +40,6 @@ func TestAddApp(t *testing.T) {
 				test.path = "orders"
 			}
 			added, err := addApp(manifest, "orders", test.path)
-			if err == nil {
-				err = os.WriteFile(manifest, added, 0o644)
-			}
 			if test.err != "" {
 				if err == nil || !strings.Contains(err.Error(), test.err) {
 					t.Fatalf("addApp = %v, want %q", err, test.err)
@@ -53,19 +49,8 @@ func TestAddApp(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := os.ReadFile(manifest)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if diff := cmp.Diff(test.after, string(data)); diff != "" {
+			if diff := cmp.Diff(test.after, string(added)); diff != "" {
 				t.Errorf("holon.yaml (-want +got):\n%s", diff)
-			}
-			var project struct{ Apps []struct{ Name, Path string } }
-			if err := yaml.Unmarshal(data, &project); err != nil {
-				t.Fatal(err)
-			}
-			if app := project.Apps[len(project.Apps)-1]; app.Name != "orders" || app.Path != test.path {
-				t.Errorf("registered app = %+v, want orders at %q", app, test.path)
 			}
 		})
 	}

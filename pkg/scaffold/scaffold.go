@@ -155,9 +155,6 @@ func Relative(path string) string {
 // the app needs in its package.json and the app's lines in its .gitignore; notes say what the
 // project may still need.
 func (p Project) Write() (created, changed, notes []string, err error) {
-	if err := p.Check(); err != nil {
-		return nil, nil, nil, err
-	}
 	existing := isFile(filepath.Join(p.Dir, typegen.Manifests[p.Language]))
 	files, err := p.render()
 	if err != nil {
@@ -265,13 +262,11 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 		return nil, "", err
 	}
 	dependencies := map[string]string{"@modelcontextprotocol/ext-apps": "^2.0.4", typegen.NodePackages[typegen.TargetUI]: p.Versions.HolonUI}
+	dev := map[string]string{"@types/node": "^26.6.6", "typescript": "^7.0.2", "vite": "^8.3.7", "vite-plugin-singlefile": "^2.3.4"}
 	if p.Language == typegen.TargetTS {
 		dependencies["@modelcontextprotocol/server"] = "^2.4.0"
 		dependencies[typegen.NodePackages[typegen.TargetTS]] = p.Versions.HolonSH
 		dependencies["zod"] = "^4.6.7"
-	}
-	dev := map[string]string{"@types/node": "^26.6.6", "typescript": "^7.0.2", "vite": "^8.3.7", "vite-plugin-singlefile": "^2.3.4"}
-	if p.Language == typegen.TargetTS {
 		dev[cliPackage] = p.Versions.HolonTypes
 	}
 	for _, section := range []struct {

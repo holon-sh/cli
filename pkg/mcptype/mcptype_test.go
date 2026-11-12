@@ -3,7 +3,6 @@ package mcptype
 import (
 	"encoding/json"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -26,28 +25,23 @@ func TestChanges(t *testing.T) {
 		want      []string
 	}{
 		{"equivalent schemas and additions", published("1", []mcpcontract.Tool{{Name: get.Name, Input: json.RawMessage(equivalent), Output: get.Output}, {Name: "new", Input: get.Input}}, summary, mcpcontract.Resource{URI: "orders://new", Output: summary.Output}), nil},
-		{"identity, then tools, then resources", published("2", nil, mcpcontract.Resource{URI: summary.URI, Output: json.RawMessage(`{"type":"array"}`)}), []string{"identity", "tool_removed get", "resource_output_changed orders://summary"}},
-		{"tool input", published("1", []mcpcontract.Tool{{Name: get.Name, Input: json.RawMessage(`{"type":"object"}`), Output: get.Output}}, summary), []string{"tool_input_changed get"}},
-		{"tool output removed", published("1", []mcpcontract.Tool{{Name: get.Name, Input: get.Input}}, summary), []string{"tool_output_changed get"}},
-		{"tool output changed", published("1", []mcpcontract.Tool{{Name: get.Name, Input: get.Input, Output: json.RawMessage(`{"type":"string"}`)}}, summary), []string{"tool_output_changed get"}},
-		{"resource removed", published("1", []mcpcontract.Tool{get}), []string{"resource_removed orders://summary"}},
-		{"no published contract", nil, []string{"no_contract"}},
+		{"identity, then tools, then resources", published("2", nil, mcpcontract.Resource{URI: summary.URI, Output: json.RawMessage(`{"type":"array"}`)}), []string{"identity example/orders@1 expected, example/orders@2 published", "tool get removed", "resource orders://summary contents changed"}},
+		{"tool input", published("1", []mcpcontract.Tool{{Name: get.Name, Input: json.RawMessage(`{"type":"object"}`), Output: get.Output}}, summary), []string{"tool get input changed"}},
+		{"tool output removed", published("1", []mcpcontract.Tool{{Name: get.Name, Input: get.Input}}, summary), []string{"tool get output changed"}},
+		{"resource removed", published("1", []mcpcontract.Tool{get}), []string{"resource orders://summary removed"}},
+		{"no published contract", nil, []string{"no published contract"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			changes, err := Changes(t.Context(), expected, test.published)
+			got, err := Changes(expected, test.published)
 			if err != nil {
 				t.Fatal(err)
-			}
-			var got []string
-			for _, change := range changes {
-				got = append(got, strings.TrimSpace(change.Kind+" "+change.Name))
 			}
 			if !slices.Equal(got, test.want) {
 				t.Fatalf("changes = %v, want %v", got, test.want)
 			}
 		})
 	}
-	if _, err := Changes(t.Context(), expected, published("", nil)); err == nil {
+	if _, err := Changes(expected, published("", nil)); err == nil {
 		t.Fatal("invalid published metadata accepted")
 	}
 }

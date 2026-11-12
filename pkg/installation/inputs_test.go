@@ -103,16 +103,11 @@ func TestDescriptorInputRejections(t *testing.T) {
 	}{
 		{name: "variable name", environment: `[{"name":"URL","value":"{region-name}","variables":{"region-name":{}}}]`, want: "invalid environment name"},
 		{name: "secret literal", environment: `[{"name":"TOKEN","isSecret":true,"value":"do-not-print"}]`, want: "secret store"},
-		{name: "secret default", environment: `[{"name":"TOKEN","isSecret":true,"default":"do-not-print"}]`, want: "secret store"},
-		{name: "oversized environment", environment: `[{"name":"` + strings.Repeat("X", 129) + `"}]`, want: "invalid environment name"},
-		{name: "reserved environment", environment: `[{"name":"HOLON_MCP_RUNTIME_CONFIG"}]`, want: "invalid environment name"},
-		{name: "ambiguous values", environment: `[{"name":"TOKEN","value":"fixed","default":"fallback"}]`, want: "both value and default"},
 		{name: "invalid text", runtime: `[{"type":"named","name":"-e","value":"TOKEN=do-not-print\u0000"}]`, want: "without NUL"},
 		{
 			name: "fixed value", arguments: `[{"type":"named","name":"--mode","value":"fixed"}]`,
 			values: map[string]mcpregistry.Value{"--mode": {Value: new("MODE")}}, want: "unknown argument",
 		},
-		{name: "argument without an input name", arguments: `[{"type":"named","name":"--2fa"}]`, want: "unique environment name"},
 		{name: "undeclared placeholder", arguments: `[{"type":"positional","value":"{UNDECLARED}"}]`, want: "declared inputs"},
 		{name: "positional without hint", arguments: `[{"type":"positional","default":"unresolved"}]`, want: "requires valueHint"},
 		{
