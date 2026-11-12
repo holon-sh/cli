@@ -71,7 +71,7 @@ func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error
 var (
 	errUnstarted        = errors.New("an app did not start from its source")
 	errSourceSuperseded = errors.New("superseded by a newer save")
-	errSourceUnrecorded = errors.New("was not recorded in the session within a minute")
+	errSourceUnrecorded = errors.New("no answer within a minute")
 )
 
 func (d *devLoop) regenerate(ctx context.Context) bool {
@@ -206,11 +206,8 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 			}
 			err = d.manager.Call(ctx, ControlPlane(d.name), toolRecordAppSource, request, nil)
 		}
-		if err != nil {
-			err = cmp.Or(context.Cause(ctx), err)
-		}
-		if err != errSourceSuperseded {
-			d.options.output.problem(app+" source", err)
+		if cause := cmp.Or(context.Cause(ctx), err); err != nil && cause != errSourceSuperseded {
+			d.options.output.status(app, "reloaded, but not recorded in the session: "+cause.Error(), progressError)
 		}
 	})
 }

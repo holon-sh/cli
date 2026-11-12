@@ -297,7 +297,7 @@ func TestDevSaves(t *testing.T) {
 		{
 			name: "a source the session has not recorded within a minute is reported, and one a newer save replaced is not", unrecorded: true,
 			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "third"}},
-			lines: []string{"alpha reloaded in 1.2 s", "alpha source was not recorded in the session within a minute"}, reloads: 2,
+			lines: []string{"alpha reloaded in 1.2 s", "alpha reloaded, but not recorded in the session: no answer within a minute"}, reloads: 2,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
