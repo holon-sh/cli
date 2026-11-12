@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -89,10 +90,6 @@ func (w *typeWorkspace) acquire(manifest manifestSpec) error {
 	return err
 }
 
-// prepareManifestTypes snapshots each path app for its image build and prepares its typed contract and
-// clients with typegen: extraction in each app's image, dependency contract resolution and generation.
-// With a workspace it also writes the clients into the apps for their editors. Last, it type-checks each
-// app against its clients in the image its contract was extracted in.
 func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options buildOptions) (_ manifestSpec, _ func(), err error) {
 	finish := options.output.measure("apps", "prepare contracts")
 	defer finish()
@@ -211,9 +208,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		p.prepared = prepared
 		p.documents = documents
 		p.metadata = metadata[app.Name]
-		if s, ok := servers[app.Name]; ok && app.resolved.descriptor == nil {
-			app.resolved.descriptor = s
-		}
+		app.resolved.descriptor = cmp.Or(app.resolved.descriptor, servers[app.Name])
 		if d := app.resolved.descriptor; d != nil && p.metadata == nil {
 			p.metadata = &mcpcontract.Metadata{Identity: d.Identity()}
 		}

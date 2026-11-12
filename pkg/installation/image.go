@@ -4,15 +4,13 @@ import (
 	"context"
 	"net/http"
 
+	"oras.land/oras-go/v2/registry/remote"
+
 	"github.com/holon-sh/cli/pkg/ociimage"
 )
 
 func importImage(ctx context.Context, image, registryHost, repository, grant string, client *http.Client) (string, error) {
-	named, err := ociimage.Parse(image)
-	if err != nil {
-		return "", err
-	}
-	source, err := imageRepository(named.Name(), "", client)
+	source, err := sourceRepository(image, client)
 	if err != nil {
 		return "", err
 	}
@@ -25,4 +23,12 @@ func importImage(ctx context.Context, image, registryHost, repository, grant str
 		return "", err
 	}
 	return registryHost + "/" + repository + "@" + descriptor.Digest.String(), nil
+}
+
+func sourceRepository(image string, client *http.Client) (*remote.Repository, error) {
+	named, err := ociimage.Parse(image)
+	if err != nil {
+		return nil, err
+	}
+	return imageRepository(named.Name(), "", client)
 }

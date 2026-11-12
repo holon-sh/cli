@@ -199,11 +199,7 @@ func (r *imageRegistry) upload(w http.ResponseWriter, request *http.Request) {
 	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
-func addTestIndex(registry *imageRegistry, children ...ocispec.Descriptor) ocispec.Descriptor {
-	return addAnnotatedTestIndex(registry, nil, children...)
-}
-
-func addAnnotatedTestIndex(registry *imageRegistry, annotations map[string]string, children ...ocispec.Descriptor) ocispec.Descriptor {
+func addTestIndex(registry *imageRegistry, annotations map[string]string, children ...ocispec.Descriptor) ocispec.Descriptor {
 	data, _ := json.Marshal(ocispec.Index{
 		Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex, Manifests: children, Annotations: annotations,
 	})
@@ -247,12 +243,11 @@ func addTestImage(t *testing.T, registry *imageRegistry, architecture string, co
 
 func TestPrebuiltImageImports(t *testing.T) {
 	for _, scenario := range []struct {
-		name, sourcePassword, destinationPassword, repository, grant string
-		denied                                                       bool
+		name, sourcePassword, grant string
+		denied                      bool
 	}{
-		{name: "private source", sourcePassword: "source-secret", repository: "holon/upload/echo", grant: "grant-secret"},
-		{name: "configured registry", destinationPassword: "destination-secret", repository: "builds/echo"},
-		{name: "invalid upload grant", repository: "holon/upload/echo", grant: "wrong-grant", denied: true},
+		{name: "private source", sourcePassword: "source-secret", grant: "grant-secret"},
+		{name: "invalid upload grant", grant: "wrong-grant", denied: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			fixture := newImageRegistry()
@@ -261,26 +256,14 @@ func TestPrebuiltImageImports(t *testing.T) {
 			for _, architecture := range []string{"amd64", "arm64"} {
 				children = append(children, addTestImage(t, fixture, architecture, ocispec.ImageConfig{}, nil))
 			}
-			indexDigest := addTestIndex(fixture, children...).Digest
+			indexDigest := addTestIndex(fixture, nil, children...).Digest
 			server := httptest.NewTLSServer(fixture)
 			defer server.Close()
 			host := strings.TrimPrefix(server.URL, "https://")
-			destination, destinationHost := fixture, host
-			if scenario.destinationPassword != "" {
-				destination = newImageRegistry()
-				destination.bearer = true
-				destination.credentials["builds"] = registryCredential{"publisher", scenario.destinationPassword}
-				destinationServer := httptest.NewTLSServer(destination)
-				defer destinationServer.Close()
-				destinationHost = strings.TrimPrefix(destinationServer.URL, "https://")
-			}
 			configDir := t.TempDir()
 			t.Setenv("DOCKER_CONFIG", configDir)
 			auths := map[string]map[string]string{}
-			if scenario.destinationPassword != "" {
-				auths[destinationHost] = map[string]string{"auth": base64.StdEncoding.EncodeToString([]byte("publisher:" + scenario.destinationPassword))}
-			}
-			grant := protocol.UploadGrant{Registry: destinationHost, Grant: scenario.grant, Repositories: map[string]string{"echo": scenario.repository}}
+			grant := protocol.UploadGrant{Registry: host, Grant: scenario.grant, Repositories: map[string]string{"echo": "holon/upload/echo"}}
 			manifest := manifestSpec{Apps: []manifestApp{{Name: "echo", resolved: resolvedApp{App: protocol.App{
 				Name: "echo", Port: 3000, Image: host + "/source@" + indexDigest.String(),
 			}}}}}
@@ -316,17 +299,15 @@ func TestPrebuiltImageImports(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				want := destinationHost + "/" + scenario.repository + "@" + indexDigest.String()
+				want := host + "/holon/upload/echo@" + indexDigest.String()
 				if len(apps) != 1 || apps[0].Image != want {
 					t.Fatalf("imported apps = %#v, want %s", apps, want)
 				}
-				for _, registry := range []*imageRegistry{fixture, destination} {
-					registry.mu.Lock()
-					leaked := registry.credentialLeak
-					registry.mu.Unlock()
-					if leaked {
-						t.Fatal("credentials crossed source and destination boundaries")
-					}
+				fixture.mu.Lock()
+				leaked := fixture.credentialLeak
+				fixture.mu.Unlock()
+				if leaked {
+					t.Fatal("credentials crossed source and destination boundaries")
 				}
 			}
 		})

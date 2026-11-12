@@ -78,11 +78,6 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 	return err
 }
 
-// runInImage builds source's image for this machine with Kiln, without the app's build step, which may need
-// the clients being prepared, and runs command there without network access, with the tooling at
-// /holon-tooling. It copies what the command printed to stdout. With generated, it first copies those
-// clients into the app, in a layer of their own so the source's layers stay cached; with checker, the
-// command can import the Python type checker.
 func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdout io.Writer) error {
 	env, err := commandenv.Environ(o.Env)
 	if err != nil {
@@ -98,7 +93,8 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 		return fmt.Errorf(".holon-types is reserved: %w", err)
 	}
 	defer os.RemoveAll(directory)
-	if err := writeTypeJSON(filepath.Join(directory, "railpack.json"), config); err != nil {
+	data, _ := json.MarshalIndent(config, "", "  ")
+	if err := mcpcontract.WriteStable(filepath.Join(directory, "railpack.json"), append(data, '\n'), 0o644); err != nil {
 		return err
 	}
 	plan, err := kiln.Plan(ctx, kiln.Request{
@@ -200,9 +196,4 @@ func objectField(parent map[string]any, name string) map[string]any {
 		parent[name] = value
 	}
 	return value
-}
-
-func writeTypeJSON(path string, value any) error {
-	data, _ := json.MarshalIndent(value, "", "  ")
-	return mcpcontract.WriteStable(path, append(data, '\n'), 0o644)
 }

@@ -84,7 +84,11 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 		Request: kiln.Request{Source: p.root, Start: start, Development: o.development && start != nil},
 		Env:     env, app: app, httpClient: o.HTTPClient, builders: o.builders, output: o.output,
 	}
-	for _, arch := range buildArchitectures(o.architectures) {
+	architectures := o.architectures
+	if len(architectures) == 0 {
+		architectures = []string{"amd64", "arm64"}
+	}
+	for _, arch := range architectures {
 		request.Platforms = append(request.Platforms, "linux/"+arch)
 	}
 	planned := o.output.measure(app.Name, "plan")
@@ -137,16 +141,6 @@ func imageInputs(ctx context.Context, dockerfile, root string) (string, error) {
 	return digester.Digest().Encoded(), nil
 }
 
-// buildArchitectures are the architectures images are built for: the installation's, or both by default.
-func buildArchitectures(configured []string) []string {
-	if len(configured) == 0 {
-		return []string{"amd64", "arm64"}
-	}
-	return configured
-}
-
-// stageSnapshot fills p's snapshot as an image build or a source overlay reads it: the generated clients,
-// then the SDK launcher for a hosted entry. It returns the start command, which may be empty.
 func stageSnapshot(app manifestApp, p *preparedTypes) ([]string, error) {
 	if err := stageTypes(p); err != nil {
 		return nil, err
@@ -154,27 +148,14 @@ func stageSnapshot(app manifestApp, p *preparedTypes) ([]string, error) {
 	if _, err := hookartifact.Discover(os.DirFS(p.root)); err != nil {
 		return nil, err
 	}
-	var entry string
-	if !app.resolved.stdio {
-		var err error
-		if entry, err = sourceEntry(p.root); err != nil {
-			return nil, err
-		}
-	}
-	return stageLauncher(p.root, entry)
-}
-
-func hostedEntry(entry string) bool {
-	return slices.Contains([]string{".py", ".ts", ".js"}, filepath.Ext(entry))
-}
-
-// stageLauncher writes the SDK launcher for a hosted server entry into snapshot and returns its start
-// command, or nothing for an entry that Holon does not host.
-func stageLauncher(snapshot, entry string) ([]string, error) {
-	if !hostedEntry(entry) {
+	if app.resolved.stdio {
 		return nil, nil
 	}
-	hostDir := filepath.Join(snapshot, ".holon")
+	entry, err := sourceEntry(p.root)
+	if err != nil || !slices.Contains([]string{".py", ".ts", ".js"}, filepath.Ext(entry)) {
+		return nil, err
+	}
+	hostDir := filepath.Join(p.root, ".holon")
 	if err := os.Mkdir(hostDir, 0o755); err != nil {
 		return nil, fmt.Errorf("prepare SDK launcher (.holon is reserved): %w", err)
 	}

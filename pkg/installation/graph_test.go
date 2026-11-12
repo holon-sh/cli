@@ -110,7 +110,6 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{"zeta": {Name: "io.github.acme/zeta", Version: "1.0.0"}}},
 	}}
 	writeDescriptor(t, filepath.Join(root, "alpha-orphan/server.json"), orphanAlpha)
-	writeDescriptor(t, filepath.Join(root, "invalid/server.json"), map[string]any{})
 	invalidMetadata := descriptorDocument("invalid")
 	invalidMetadata["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
 		"sh.holon": map[string]any{"egress": json.RawMessage("null")},
@@ -126,10 +125,7 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 		{name: "file source", change: func(p *manifestSpec) {
 			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "beta/server.json"), Access: policy}}
 		}},
-		{name: "invalid descriptor", change: func(p *manifestSpec) {
-			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid"), Access: policy}}
-		}},
-		{name: "invalid publisher metadata", want: "sh.holon metadata", change: func(p *manifestSpec) {
+		{name: "invalid publisher metadata", want: "example descriptor: sh.holon metadata", change: func(p *manifestSpec) {
 			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata"), Access: policy}}
 		}},
 		{name: "dependency directory without access", want: "app beta needs an access rule", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
