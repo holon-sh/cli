@@ -9,6 +9,9 @@ import (
 // bindingTypes declares the generated factory over the runtime's own binding and option types, so a
 // consumer's object literals are checked against the installed runtime rather than a copy of it.
 // The runtime's binding requires an endpoint; a session hook serves the app without dialing it.
+// endpointType declares the page's own endpoint.
+const endpointType = "/** The MCP endpoint of this app, as a path on the origin that serves the page. */\nexport declare const endpoint: string;\n"
+
 const bindingTypes = `export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 `
@@ -68,7 +71,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 			// Holon serves an app's MCP endpoint at /mcp/<app> on the origin that serves its page.
 			own, endpoint := quoted(request.Own), quoted("/mcp/"+url.PathEscape(request.Own))
 			files[TypeScriptModule] += fmt.Sprintf("export const App = /* @__PURE__ */ appClass(identity, contracts, %s);\nexport const endpoint = %s;\n", own, endpoint)
-			files["index.d.mts"] += fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\ntype OwnAppKey = %s;\nexport declare class App extends HostApp { constructor(info?: ConstructorParameters<typeof HostApp>[0], ...rest: ConstructorParameters<typeof HostApp> extends [unknown, ...infer Rest] ? Rest : never); readonly tools: Apps[OwnAppKey][\"tools\"]; readonly resources: Apps[OwnAppKey][\"resources\"]; readonly callTool: Apps[OwnAppKey][\"callTool\"] }\n/** The app's own MCP endpoint, a path on the origin that serves its page. */\nexport declare const endpoint: string;\n", own)
+			files["index.d.mts"] += fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\ntype OwnAppKey = %s;\nexport declare class App extends HostApp { constructor(info?: ConstructorParameters<typeof HostApp>[0], ...rest: ConstructorParameters<typeof HostApp> extends [unknown, ...infer Rest] ? Rest : never); readonly tools: Apps[OwnAppKey][\"tools\"]; readonly resources: Apps[OwnAppKey][\"resources\"]; readonly callTool: Apps[OwnAppKey][\"callTool\"] }\n", own) + endpointType
 		}
 		return files, nil
 	}

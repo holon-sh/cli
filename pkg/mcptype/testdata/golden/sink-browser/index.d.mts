@@ -186,5 +186,5 @@ export declare function exposeTools(app: Apps[keyof Apps], options?: import("hol
 import { App as HostApp } from "@modelcontextprotocol/ext-apps";
 type OwnAppKey = "orders";
 export declare class App extends HostApp { constructor(info?: ConstructorParameters<typeof HostApp>[0], ...rest: ConstructorParameters<typeof HostApp> extends [unknown, ...infer Rest] ? Rest : never); readonly tools: Apps[OwnAppKey]["tools"]; readonly resources: Apps[OwnAppKey]["resources"]; readonly callTool: Apps[OwnAppKey]["callTool"] }
-/** The app's own MCP endpoint, a path on the origin that serves its page. */
+/** The MCP endpoint of this app, as a path on the origin that serves the page. */
 export declare const endpoint: string;
