@@ -17,13 +17,12 @@ import (
 
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
-	"github.com/holon-sh/cli/pkg/appartifact"
 	"github.com/holon-sh/protocol"
 )
 
 type buildOptions struct {
 	importPackage func(context.Context, manifestApp) (protocol.ResolvedAppBuild, error)
-	catalogTag    string
+	plane         protocol.Plane
 	types         *typeWorkspace
 	architectures []string
 	builder       buildApplication
@@ -92,7 +91,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 					}
 					image = prepared
 				}
-				if options.catalogTag != "" && grant.Grant != "" {
+				if options.plane != "" && grant.Grant != "" {
 					return publishAppBuild(ctx, app, image, grant, options)
 				}
 				return nil
@@ -148,10 +147,7 @@ func buildManifestImages(
 		return importRegistryBuild(ctx, manager, ControlPlane(name), app, options.output)
 	}
 	options.origin = manager.client.baseURL
-	options.catalogTag = appartifact.DevelopmentTag
-	if name == protocol.ProductionName {
-		options.catalogTag = appartifact.ReleasePrefix
-	}
+	options.plane = ControlPlane(name)
 	return buildAndPush(ctx, manifest, upload, options)
 }
 

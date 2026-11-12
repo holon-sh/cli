@@ -46,6 +46,7 @@ func LoadBridges(payloads fs.FS) (Bridges, error) {
 }
 
 type AdaptOptions struct {
+	HTTP          bool
 	Origin        string
 	Source        string
 	CheckedLayers *sync.Map
@@ -53,85 +54,50 @@ type AdaptOptions struct {
 }
 
 func AdaptImage(ctx context.Context, repository oras.Target, descriptor ocispec.Descriptor, options AdaptOptions) (ocispec.Descriptor, error) {
-	return adapt(ctx, repository, descriptor, nil, options)
+	return Rewrite(ctx, repository, descriptor, func(image *Image) error {
+		return AdaptRuntime(ctx, repository, image, options)
+	})
 }
 
-func adaptManifest(
-	ctx context.Context, repository oras.Target, document map[string]json.RawMessage, mediaType string, platform *ocispec.Platform, options AdaptOptions,
-) error {
-	var configDescriptor ocispec.Descriptor
-	var layers []ocispec.Descriptor
-	if err := json.Unmarshal(document["config"], &configDescriptor); err != nil {
-		return err
-	}
-	if err := json.Unmarshal(document["layers"], &layers); err != nil {
-		return err
-	}
-	var data json.RawMessage
-	if err := FetchJSON(ctx, repository, configDescriptor, &data); err != nil {
-		return err
-	}
-	var config, runtime map[string]json.RawMessage
-	var image configuration
-	if err := json.Unmarshal(data, &config); err != nil {
-		return err
-	}
-	if err := json.Unmarshal(data, &image); err != nil {
-		return err
-	}
-	_ = json.Unmarshal(config["config"], &runtime)
-	if image.OS != "linux" || platform != nil && platform.Architecture != image.Architecture {
+func AdaptRuntime(ctx context.Context, repository oras.Target, image *Image, options AdaptOptions) error {
+	if image.OS != "linux" || image.platform != nil && image.platform.Architecture != image.Architecture {
 		return errors.New("stdio image platform does not match Linux image configuration")
 	}
 	payload, ok := options.Bridges[image.Architecture]
 	if !ok {
 		return fmt.Errorf("unsupported bridge architecture %q", image.Architecture)
 	}
-	for _, layer := range layers {
+	for _, layer := range image.Layers {
 		if err := checkLayer(ctx, repository, options.CheckedLayers, layer); err != nil {
 			return err
 		}
 	}
-	if runtime == nil {
+	if image.Runtime == nil {
 		return errors.New("image has no runtime configuration")
 	}
-	launcher := []string{RuntimePath, "--origin", options.Origin}
+	launcher := []string{RuntimePath}
+	if options.HTTP {
+		launcher = append(launcher, "--transport=streamable-http")
+	}
+	launcher = append(launcher, "--origin", options.Origin)
 	if child := slices.Concat(image.Config.Entrypoint, image.Config.Cmd); len(child) == 0 || child[0] == "" {
 		return errors.New("stdio image has no executable entrypoint or command")
 	}
-	runtime["Entrypoint"], _ = json.Marshal(append(append(launcher, "--"), image.Config.Entrypoint...))
-	runtime["Cmd"], _ = json.Marshal(image.Config.Cmd)
-	runtime["StopSignal"] = json.RawMessage(`"SIGTERM"`)
+	image.Runtime["Entrypoint"], _ = json.Marshal(append(append(launcher, "--"), image.Config.Entrypoint...))
+	image.Runtime["Cmd"], _ = json.Marshal(image.Config.Cmd)
+	image.Runtime["StopSignal"] = json.RawMessage(`"SIGTERM"`)
 	labels := map[string]string{}
 	maps.Copy(labels, image.Config.Labels)
 	labels["sh.holon.bridge.runtime"], labels["sh.holon.bridge.source"] = payload.binary.String(), options.Source
-	runtime["Labels"], _ = json.Marshal(labels)
-	layerMediaType := ocispec.MediaTypeImageLayerGzip
-	if mediaType == images.MediaTypeDockerSchema2Manifest {
-		layerMediaType = images.MediaTypeDockerSchema2LayerGzip
-	}
-	layer, err := oras.PushBytes(ctx, repository, layerMediaType, payload.layer)
+	image.Runtime["Labels"], _ = json.Marshal(labels)
+	layer, err := oras.PushBytes(ctx, repository, image.layerMediaType, payload.layer)
 	if err != nil {
 		return err
 	}
-	if image.RootFS.Type != "layers" || len(image.RootFS.DiffIDs) != len(layers) {
+	if image.RootFS.Type != "layers" || len(image.RootFS.DiffIDs) != len(image.Layers)+len(image.appended) {
 		return errors.New("image rootfs does not match its layers")
 	}
-	image.RootFS.DiffIDs = append(image.RootFS.DiffIDs, payload.diffID)
-	config["config"], _ = json.Marshal(runtime)
-	config["rootfs"], _ = json.Marshal(image.RootFS)
-	if len(image.History) != 0 {
-		config["history"], _ = json.Marshal(append(image.History, ocispec.History{CreatedBy: "holon stdio runtime"}))
-	}
-	preparedConfig, _ := json.Marshal(config)
-	newConfig, err := oras.PushBytes(ctx, repository, configDescriptor.MediaType, preparedConfig)
-	if err != nil {
-		return err
-	}
-	configDescriptor.Digest, configDescriptor.Size = newConfig.Digest, newConfig.Size
-	configDescriptor.Data, configDescriptor.URLs = nil, nil
-	document["config"], _ = json.Marshal(configDescriptor)
-	document["layers"], _ = json.Marshal(append(layers, layer))
+	image.AppendLayer(layer, payload.diffID, "holon stdio runtime")
 	return nil
 }
 

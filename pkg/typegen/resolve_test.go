@@ -130,7 +130,7 @@ func TestEndpointToken(t *testing.T) {
 }
 
 func TestEndpointTokenFollowsEachAlias(t *testing.T) {
-	server := tokenServer(t, "good-value")
+	server := liveServerBehind(t, func(authorization string) bool { return authorization == "Bearer good-value" })
 	consumer := func(alias string) Consumer {
 		return Consumer{Name: alias, Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Alias: alias, Endpoint: server.URL}}}
 	}

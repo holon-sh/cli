@@ -126,8 +126,10 @@ func (r *imageRegistry) ServeHTTP(w http.ResponseWriter, request *http.Request) 
 			return
 		}
 		digest := digest.FromBytes(body).String()
+		repository, _, _ := strings.Cut(path, "/manifests/")
+		item := registryItem{mediaType: request.Header.Get("Content-Type"), data: body}
 		r.mu.Lock()
-		r.items[path] = registryItem{mediaType: request.Header.Get("Content-Type"), data: body}
+		r.items[path], r.items[repository+"/manifests/"+digest] = item, item
 		r.mu.Unlock()
 		w.Header().Set("Docker-Content-Digest", digest)
 		w.WriteHeader(http.StatusCreated)

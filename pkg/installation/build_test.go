@@ -132,7 +132,7 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	}
 	_, server := buildRegistry(t)
 	build := buildImage(t, "source")
-	options := buildOptions{HTTPClient: server.Client(), catalogTag: appartifact.DevelopmentTag}
+	options := buildOptions{HTTPClient: server.Client(), plane: protocol.DevPlane}
 	options.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
 		snapshot := request.Source
 		if err := os.WriteFile(filepath.Join(root, "main.mjs"), []byte("console.log(2)"), 0o600); err != nil {
@@ -192,13 +192,10 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var index ocispec.Index
-	publishedJSON(t, repository, descriptor, &index)
-	executable := index.Manifests[0]
-	var metadata ocispec.Manifest
-	publishedJSON(t, repository, index.Manifests[1], &metadata)
-	var record protocol.BuildRecord
-	publishedJSON(t, repository, metadata.Layers[0], &record)
+	record, executable, err := appartifact.Read(t.Context(), repository, descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if record.AppName != "alpha" || record.ServerName != "io.github.acme/alpha" || !strings.HasSuffix(apps[0].Image, "@"+executable.Digest.String()) {
 		t.Fatalf("published build: %+v", record)
 	}
