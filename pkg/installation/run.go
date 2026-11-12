@@ -198,7 +198,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if dev.name != "" {
 		err = dev.update(ctx, request, removedApps(dev.session.Apps, request.Apps)...)
 	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &dev.session); err == nil {
-		dev.name = dev.session.Name
+		dev.name, dev.starting = dev.session.Name, startingApps(dev.session)
 		for _, app := range request.Apps {
 			dev.pending.Insert(app.Name)
 		}
@@ -386,6 +386,7 @@ func waitSessionReady(
 	finish := output.measure(name, "rollout")
 	defer finish()
 	result := accepted
+	starting := startingApps(accepted)
 	err := wait.PollUntilContextCancel(ctx, workflowPoll, true, func(ctx context.Context) (bool, error) {
 		session, err := manager.awaitSession(ctx, name, result.Revision)
 		if err != nil {
@@ -395,6 +396,7 @@ func waitSessionReady(
 		if session.UID != accepted.UID || len(protocol.ChangedApps(session.Apps, accepted.Apps)) != 0 || session.Generation < accepted.Generation {
 			return false, errors.New("deployment was superseded")
 		}
+		output.serving(session, starting)
 		reportSessionProgress(session, output, "Deploying apps", progressWorking)
 		if err := manager.authorizeOperation(ctx, session); err != nil {
 			return false, err
@@ -412,6 +414,28 @@ func (o *progressOutput) deploying(apps []protocol.App) {
 func (o *progressOutput) apps(apps []protocol.App, phase string, state progressState) {
 	for _, app := range apps {
 		o.status(app.Name, phase, state)
+	}
+}
+
+func startingApps(accepted protocol.SessionResponse) sets.Set[string] {
+	starting := sets.New[string]()
+	for _, app := range accepted.Apps {
+		starting.Insert(app.Name)
+	}
+	for _, endpoint := range accepted.Endpoints {
+		starting.Delete(endpoint.Name)
+	}
+	return starting
+}
+
+func (o *progressOutput) serving(session protocol.SessionResponse, starting sets.Set[string]) {
+	if lifecyclePending(session) {
+		return
+	}
+	for _, endpoint := range session.Endpoints {
+		if starting.Has(endpoint.Name) {
+			o.status(endpoint.Name, "ready", progressDone)
+		}
 	}
 }
 
