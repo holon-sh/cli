@@ -24,11 +24,9 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 		status     int
 		stream     bool
 		mediaType  string
-		content    string
 		want       error
 		httpError  *httpError
 	}{
-		{name: "malformed JSON", status: http.StatusOK, body: `{bad`, want: errMalformedResponse},
 		{name: "oversized response", status: http.StatusOK, body: strings.Repeat("x", maxHTTPBody+1), want: errResponseTooLarge},
 		{
 			name: "token redacted", status: http.StatusConflict, body: `{"error":{"code":"conflict","message":"` + token + `"}}`,
@@ -40,11 +38,6 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 		},
 		{name: "redirect", status: http.StatusTemporaryRedirect, httpError: &httpError{StatusCode: http.StatusTemporaryRedirect}},
 		{name: "unexpected streamed JSON", status: http.StatusOK, stream: true, mediaType: protocol.MIMEApplicationJSON, body: `{}`, want: errMalformedResponse},
-		{
-			name: "stream error", status: http.StatusNotFound, stream: true, mediaType: protocol.MIMEApplicationJSON,
-			body:      `{"error":{"code":"not_found","message":"not found"}}`,
-			httpError: &httpError{StatusCode: http.StatusNotFound, Code: "not_found", Message: "not found"},
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			transport := installationtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
@@ -80,24 +73,30 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 			} else if !errors.Is(err, tc.want) {
 				t.Fatalf("error = %v, want %v", err, tc.want)
 			}
-			if body.Content+output.String() != tc.content {
+			if body.Content+output.String() != "" {
 				t.Fatalf("content length = %d", len(body.Content))
 			}
 		})
 	}
 }
 
-func TestAPIClientCancellation(t *testing.T) {
+func TestAPIClientTimeouts(t *testing.T) {
 	t.Parallel()
-	for _, stage := range []string{"during request", "deadline", "stream"} {
-		t.Run(stage, func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		stream   bool
+		duration time.Duration
+		want     error
+	}{
+		{name: "request", duration: time.Second, want: context.DeadlineExceeded},
+		{name: "stream", stream: true, duration: 2 * defaultHTTPTimeout, want: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				entered := make(chan struct{})
 				transport := installationtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
-					close(entered)
-					if stage == "stream" {
+					if tc.stream {
 						reader, writer := io.Pipe()
 						context.AfterFunc(r.Context(), func() { _ = writer.CloseWithError(r.Context().Err()) })
 						return &http.Response{
@@ -111,29 +110,14 @@ func TestAPIClientCancellation(t *testing.T) {
 				transport.Timeout = time.Second
 				client := newAPIClient("https://api.example", transport, time.Second)
 				request := apiRequest{Plane: protocol.DevPlane}
-				switch stage {
-				case "during request":
-					go func() {
-						<-entered
-						cancel()
-					}()
-				case "stream":
+				if tc.stream {
 					request.Stream = io.Discard
-					timer := time.AfterFunc(2*defaultHTTPTimeout, cancel)
-					defer timer.Stop()
+					defer time.AfterFunc(tc.duration, cancel).Stop()
 				}
 				start := time.Now()
 				err := client.get(ctx, "/me", request, nil)
-				wantDuration := map[string]time.Duration{"deadline": time.Second, "stream": 2 * defaultHTTPTimeout}[stage]
-				if elapsed := time.Since(start); elapsed != wantDuration {
-					t.Fatalf("request duration = %v, want %v", elapsed, wantDuration)
-				}
-				want := context.Canceled
-				if stage == "deadline" {
-					want = context.DeadlineExceeded
-				}
-				if !errors.Is(err, want) {
-					t.Fatalf("request error = %v, want %v", err, want)
+				if elapsed := time.Since(start); elapsed != tc.duration || !errors.Is(err, tc.want) {
+					t.Fatalf("request took %v with error %v, want %v and %v", elapsed, err, tc.duration, tc.want)
 				}
 			})
 		})

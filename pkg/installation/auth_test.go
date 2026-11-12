@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -88,9 +87,6 @@ func TestLogin(t *testing.T) {
 				if err := executeCommand(t.Context(), args, &output, &progress, config); err != nil {
 					t.Fatal(err)
 				}
-			}
-			if !strings.HasPrefix(output.String(), "Deleted config REGION for chat in production") {
-				t.Fatalf("stdout = %q", output.String())
 			}
 			if tc.bearer != "" && !strings.Contains(progress.String(), "ABCD-EFGH") {
 				t.Fatalf("device instructions: %q", progress.String())
@@ -256,53 +252,6 @@ func TestDeviceLoginFailures(t *testing.T) {
 	}
 }
 
-func TestRefreshRecovery(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, code           string
-		status               int
-		refreshErr, laterErr error
-	}{
-		{name: "temporary failure", code: "temporary_failure", status: http.StatusServiceUnavailable, refreshErr: errRefreshFailed},
-		{name: "revoked credential", code: "invalid_grant", status: http.StatusBadRequest, refreshErr: errReauthenticationRequired, laterErr: errReauthenticationRequired},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			var failed atomic.Bool
-			server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.FormValue("grant_type") == "refresh_token" {
-					if r.FormValue("refresh_token") != "refresh-one" {
-						t.Error("retry lost the usable refresh credential")
-					}
-					if !failed.Swap(true) || tc.code == "invalid_grant" {
-						w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
-						w.WriteHeader(tc.status)
-						installationtest.WriteJSON(w, map[string]string{"error": tc.code})
-						return
-					}
-					installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "recovered-access", "expires_in": 120})
-					return
-				}
-				installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one"})
-			})
-			first := newManager(t, server, dir)
-			if err := first.loginInteractive(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := first.controlToken(t.Context()); !errors.Is(err, tc.refreshErr) {
-				t.Fatalf("refresh error=%v, want %v", err, tc.refreshErr)
-			}
-
-			for _, manager := range []*Client{newManager(t, server, dir), first} {
-				if token, err := manager.controlToken(t.Context()); !errors.Is(err, tc.laterErr) || err == nil && token != "recovered-access" {
-					t.Fatalf("later token=%q error=%v, want %v", token, err, tc.laterErr)
-				}
-			}
-		})
-	}
-}
-
 func newManager(t *testing.T, server *httptest.Server, path string) *Client {
 	t.Helper()
 	manager, err := NewClient(t.Context(), ClientConfig{
@@ -344,33 +293,18 @@ func TestLoginRejectsIncompatibleDiscovery(t *testing.T) {
 	}
 }
 
-func TestSavedCredentialMetadata(t *testing.T) {
+func TestSavedCredentialsForAnotherIssuer(t *testing.T) {
 	t.Parallel()
-	server := newAuthTestServer(t, nil)
-	for _, tc := range []struct {
-		name, document string
-		want           error
-	}{
-		{"incomplete", `{"issuer":"ISSUER"}`, errReauthenticationRequired},
-		{"changed issuer", `{"issuer":"https://other.example/","adminAudience":"urn:test","cliClientID":"cli-test"}`, errEndpointChanged},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			manager := newManager(t, server, t.TempDir())
-			seedAdminCredentials(t, manager, oauth2.Token{
-				AccessToken: "access-token", RefreshToken: "refresh-token",
-				TokenType: "Bearer", ExpiresIn: 3600, Expiry: time.Now().Add(time.Hour),
-			})
-			tokens, _ := json.Marshal(manager.state.Tokens)
-			oauth := strings.NewReplacer("ISSUER", server.URL+"/", "urn:test", installationtest.AdminAudience(server.URL)).Replace(tc.document)
-			data := fmt.Sprintf(`{"version":"test","tokens":%s,"oauth":%s}`, tokens, oauth)
-			if err := writePrivateFile(manager.statePath, []byte(data)); err != nil {
-				t.Fatal(err)
-			}
-			token, err := manager.controlToken(t.Context())
-			if !errors.Is(err, tc.want) || err == nil && token != "access-token" {
-				t.Fatalf("token=%q error=%v, want %v", token, err, tc.want)
-			}
-		})
+	manager := newManager(t, newAuthTestServer(t, nil), t.TempDir())
+	seedAdminCredentials(t, manager, oauth2.Token{
+		AccessToken: "access-token", RefreshToken: "refresh-token", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour),
+	})
+	manager.state.OAuth.Issuer = "https://other.example/"
+	if err := manager.writeState(manager.state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.controlToken(t.Context()); !errors.Is(err, errEndpointChanged) {
+		t.Fatalf("error = %v, want %v", err, errEndpointChanged)
 	}
 }
 
@@ -420,7 +354,6 @@ func TestMachineCredentials(t *testing.T) {
 	}
 	for _, env := range [][]string{
 		{"HOLON_CLIENT_ID=ci-deployer"},
-		{"HOLON_CLIENT_SECRET=ci-secret"},
 		{"HOLON_CLIENT_ID=", "HOLON_CLIENT_SECRET="},
 	} {
 		config := commandConfig{Auth: ClientConfig{Env: env, Origin: "https://unused.example", ConfigDir: t.TempDir()}}

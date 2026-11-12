@@ -189,11 +189,9 @@ func MachineAuthServer(t *testing.T, tokenHandler http.HandlerFunc) *httptest.Se
 	mux := http.NewServeMux()
 	mux.HandleFunc(protocol.APIPathInfo, func(w http.ResponseWriter, r *http.Request) {
 		AssertOrigin(t, r, strings.TrimPrefix(server.URL, "https://"))
-		WriteJSON(w, map[string]any{
-			"installation": protocol.InstallationReference{Origin: server.URL, UID: "test-installation"},
-			"version":      "test", "oauth": map[string]any{
-				"issuer": "https://identity.example/realm", "adminAudience": AdminAudience(server.URL), "cliClientID": "human-cli",
-			},
+		WriteJSON(w, protocol.Info{
+			Installation: protocol.InstallationReference{Origin: server.URL, UID: "test-installation"}, Version: "test",
+			OAuth: &protocol.OAuthInfo{Issuer: "https://identity.example/realm", AdminAudience: AdminAudience(server.URL), CLIClientID: "human-cli"},
 		})
 	})
 	mux.HandleFunc("/realm/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -243,16 +241,15 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, pla
 	check func(*http.Request), expiresIn, interval int64, tokenHandler http.HandlerFunc,
 ) {
 	t.Helper()
+	if check == nil {
+		check = func(*http.Request) {}
+	}
 	mux.HandleFunc(protocol.APIPathInfo, func(w http.ResponseWriter, r *http.Request) {
-		if check != nil {
-			check(r)
-		}
-		WriteJSON(
-			w,
-			map[string]any{"installation": protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}, "oauth": map[string]any{
-				"issuer": issuer(), "adminAudience": AdminAudience(strings.TrimSuffix(issuer(), "/")), "cliClientID": "cli-test",
-			}, "version": "test"},
-		)
+		check(r)
+		WriteJSON(w, protocol.Info{
+			Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}, Version: "test",
+			OAuth: &protocol.OAuthInfo{Issuer: issuer(), AdminAudience: AdminAudience(strings.TrimSuffix(issuer(), "/")), CLIClientID: "cli-test"},
+		})
 	})
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(
@@ -266,17 +263,13 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, pla
 		)
 	})
 	mux.HandleFunc("/revoke", func(w http.ResponseWriter, r *http.Request) {
-		if check != nil {
-			check(r)
-		}
+		check(r)
 		if r.FormValue("client_id") != "cli-test" || r.FormValue("token_type_hint") != "refresh_token" || r.FormValue("token") == "" {
 			t.Errorf("unexpected revocation form: %s", r.Form.Encode())
 		}
 	})
 	mux.HandleFunc("/device-authorization", func(w http.ResponseWriter, r *http.Request) {
-		if check != nil {
-			check(r)
-		}
+		check(r)
 		origin, resource := strings.TrimSuffix(issuer(), "/"), r.FormValue("resource")
 		target, _ := protocol.PlaneOrigin(origin, plane, "")
 		_, _, session := protocol.ParseSessionAudience(origin, resource)
@@ -295,9 +288,7 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, pla
 		)
 	})
 	mux.HandleFunc("/token-exchange", func(w http.ResponseWriter, r *http.Request) {
-		if check != nil {
-			check(r)
-		}
+		check(r)
 		origin, resource := strings.TrimSuffix(issuer(), "/"), r.FormValue("resource")
 		_, control := protocol.ParseControlAudience(origin, resource)
 		_, _, session := protocol.ParseSessionAudience(origin, resource)
