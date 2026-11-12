@@ -15,8 +15,8 @@ import (
 // generation does. The client's timeout bounds the registry fetch and the handshake; later requests,
 // such as a tool call that runs for minutes, are bounded by ctx alone. The caller closes the session.
 func Connect(ctx context.Context, source Source, options Options) (*mcp.ClientSession, error) {
-	o, err := source.prepare(options)
-	if err != nil {
+	o := options.defaults()
+	if err := source.validate(); err != nil {
 		return nil, err
 	}
 	location, client := source.Endpoint, o.HTTPClient

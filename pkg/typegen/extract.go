@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -209,11 +210,9 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	return result, nil
 }
 
-// runLocal runs a contract runner on the host. A Python server (args[1]) runs in its own environment; the
-// host's interpreter, whose mcp and pydantic serve a server that needs nothing else, runs one with no
-// environment or one whose environment is too old or lacks them.
 func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
-	if err := validateEnv(env); err != nil {
+	env, err := commandenv.Environ(env)
+	if err != nil {
 		return err
 	}
 	l := typeLanguages[language]
@@ -221,7 +220,7 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdo
 		limited, cancel := context.WithTimeout(ctx, serverTimeout)
 		defer cancel()
 		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
-		command.Env = append(command.Environ(), env...)
+		command.Env = env
 		var stderr bytes.Buffer
 		command.Stdout, command.Stderr = stdout, &stderr
 		err := command.Run()
@@ -234,7 +233,7 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdo
 		return err
 	}
 	if language == "python" {
-		if own := pythonEnvironment(args[1], ""); own != "" && exec.CommandContext(ctx, own, l.probe...).Run() == nil {
+		if own := pythonEnvironment(args[1]); own != "" && exec.CommandContext(ctx, own, l.probe...).Run() == nil {
 			if err := run(own); !lacksSchemaLibraries(err) {
 				return err
 			}

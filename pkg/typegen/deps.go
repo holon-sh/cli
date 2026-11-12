@@ -65,31 +65,6 @@ func PackageManager(dir string) (string, error) {
 	return packageManager(dir, manifest), nil
 }
 
-// Install installs missing declared SDK runtimes with the project's package manager, and maps
-// #holon-sh and #holon-ui to the clients in package.json. Call it before snapshotting sources: both
-// can change the project's package files.
-func Install(ctx context.Context, consumers []Consumer, options Options) error {
-	if err := MapClients(consumers, options); err != nil {
-		return err
-	}
-	o := options.defaults()
-	for _, c := range consumers {
-		for _, target := range c.Targets {
-			var err error
-			switch target {
-			case TargetTS, TargetUI:
-				err = ensureNodeRuntime(ctx, c.Dir, NodePackages[target], o)
-			case TargetPy:
-				err = ensurePythonRuntime(ctx, c.Dir, o)
-			}
-			if err != nil {
-				return fmt.Errorf("%s: %w", c.Name, err)
-			}
-		}
-	}
-	return nil
-}
-
 func MapClients(consumers []Consumer, options Options) error {
 	o := options.defaults()
 	for _, c := range consumers {
@@ -108,7 +83,6 @@ func MapClients(consumers []Consumer, options Options) error {
 }
 
 func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
-	const installCommand = "install"
 	if installedRuntime(dir, pkg) == nil {
 		return nil
 	}
@@ -123,16 +97,17 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 	if !manifest.Declares(pkg) {
 		verb := "add"
 		if manager == "npm" {
-			verb = installCommand
+			verb = "install"
 		}
 		return fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, pkg, manager, verb, pkg)
 	}
-	fmt.Fprintf(o.Stderr, "%s: %s %s\n", filepath.Base(dir), manager, installCommand)
-	if err := validateEnv(o.Env); err != nil {
+	fmt.Fprintf(o.Stderr, "%s: %s install\n", filepath.Base(dir), manager)
+	env, err := commandenv.Environ(o.Env)
+	if err != nil {
 		return err
 	}
-	if err := commandenv.RunStreaming(ctx, dir, manager, []string{installCommand}, nil, append(os.Environ(), o.Env...), o.Stderr, o.Stderr); err != nil {
-		return fmt.Errorf("%s %s in %s: %w", manager, installCommand, dir, err)
+	if err := commandenv.RunStreaming(ctx, dir, manager, []string{"install"}, nil, env, o.Stderr, o.Stderr); err != nil {
+		return fmt.Errorf("%s install in %s: %w", manager, dir, err)
 	}
 	return installedRuntime(dir, pkg)
 }
@@ -254,10 +229,8 @@ func requiresGoRuntime(data []byte) bool {
 // PythonRuntime is the Python package that generated Python clients import.
 const PythonRuntime = "holon-sh"
 
-// ensurePythonRuntime installs a Python project's dependencies with uv sync, as holon init does, unless it
-// has an environment of its own.
 func ensurePythonRuntime(ctx context.Context, dir string, o Options) error {
-	if pythonEnvironment(dir, "") != "" {
+	if pythonEnvironment(dir) != "" {
 		return nil
 	}
 	declared, err := pythonDependencies(dir)
@@ -268,38 +241,26 @@ func ensurePythonRuntime(ctx context.Context, dir string, o Options) error {
 		return fmt.Errorf("%s does not depend on holon-sh; run uv add holon-sh (or add it to requirements.txt)", dir)
 	}
 	fmt.Fprintf(o.Stderr, "%s: uv sync\n", filepath.Base(dir))
-	if err := validateEnv(o.Env); err != nil {
+	env, err := commandenv.Environ(o.Env)
+	if err != nil {
 		return err
 	}
-	if err := commandenv.RunStreaming(ctx, dir, "uv", []string{"sync"}, nil, append(os.Environ(), o.Env...), o.Stderr, o.Stderr); err != nil {
+	if err := commandenv.RunStreaming(ctx, dir, "uv", []string{"sync"}, nil, env, o.Stderr, o.Stderr); err != nil {
 		return fmt.Errorf("uv sync in %s: %w", dir, err)
 	}
 	return nil
 }
 
-// requirementName captures the project name a Python requirement starts with.
 var requirementName = regexp.MustCompile(`^\s*([A-Za-z0-9][A-Za-z0-9._-]*)`)
 
 var nameSeparators = regexp.MustCompile(`[-_.]+`)
 
-// PythonName is a Python requirement's project name, normalized as PEP 503 compares names.
-func PythonName(requirement string) string {
-	match := requirementName.FindStringSubmatch(requirement)
-	if match == nil {
-		return ""
-	}
-	return strings.ToLower(nameSeparators.ReplaceAllString(match[1], "-"))
-}
-
-// pythonDependencies are the projects a Python project in dir declares in any scope, by PythonName:
-// pyproject.toml's dependencies, optional dependencies, dependency groups, and uv's, Poetry's and
-// PDM's tables, and requirements files.
 func pythonDependencies(dir string) (map[string]bool, error) {
 	declared := map[string]bool{}
 	note := func(requirements ...string) {
 		for _, requirement := range requirements {
-			if name := PythonName(requirement); name != "" {
-				declared[name] = true
+			if match := requirementName.FindStringSubmatch(requirement); match != nil {
+				declared[strings.ToLower(nameSeparators.ReplaceAllString(match[1], "-"))] = true
 			}
 		}
 	}
