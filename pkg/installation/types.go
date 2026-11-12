@@ -3,6 +3,7 @@ package installation
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -25,7 +26,6 @@ type preparedTypes struct {
 	name        string
 	root        string
 	fingerprint string
-	inputs      string
 	metadata    *mcpcontract.Metadata
 	documents   map[string]*typegen.Document
 }
@@ -42,36 +42,12 @@ func (w *typeWorkspace) close() {
 	}
 }
 
-func (w *typeWorkspace) inputs() map[string]string {
-	inputs := map[string]string{}
-	for name, types := range w.accepted {
-		inputs[name] = types.inputs
-	}
-	return inputs
-}
-
 func (w *typeWorkspace) accept(manifest manifestSpec) {
 	for _, app := range manifest.Apps {
 		if p := app.resolved.types; p != nil {
 			w.accepted[app.Name] = p
 		}
 	}
-}
-
-// affected reports whether a dependency no longer satisfies the contract app was last built against.
-// A contract that cannot be compared counts as affected, so the app is rebuilt.
-func (w *typeWorkspace) affected(app manifestApp, manifest manifestSpec) bool {
-	previous := w.accepted[app.Name]
-	return previous != nil && previous.metadata != nil && slices.ContainsFunc(manifest.Apps, func(dependency manifestApp) bool {
-		expectation, required := previous.metadata.Requires[dependency.Name]
-		p := dependency.resolved.types
-		if !required || p == nil {
-			return false
-		}
-		expected := previous.documents[expectation]
-		changes, err := mcptype.Changes(expected.Metadata, p.metadata)
-		return err != nil || len(changes) != 0
-	})
 }
 
 func (w *typeWorkspace) acquire(manifest manifestSpec) error {
@@ -114,8 +90,11 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	var consumers []typegen.Consumer
 	needed := map[string]bool{}
 	logs := options.output.logs(options.Stderr)
-	typeOptions := typegen.Options{
-		Env: options.Env, HTTPClient: options.HTTPClient, Stderr: logs, Run: options.extractTypes,
+	typeOptions := typegen.Options{Env: options.Env, HTTPClient: options.HTTPClient, Stderr: logs}
+	prepareOptions := typeOptions
+	prepareOptions.Run = options.extractTypes
+	if options.served != nil {
+		prepareOptions.Run, prepareOptions.Served = nil, map[string]json.RawMessage{}
 	}
 	var pathApps []*manifestApp
 	for i := range manifest.Apps {
@@ -133,6 +112,9 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			}
 			pathApps = append(pathApps, app)
 			byApp[app.Name] = typegen.Source{Path: app.Path}
+			if options.served != nil {
+				prepareOptions.Served[app.Path] = options.served[app.Name]
+			}
 			if consumer != nil {
 				for _, name := range app.resolved.Requires {
 					needed[name] = true
@@ -190,7 +172,10 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			return manifestSpec{}, nil, err
 		}
 	}
-	prepared, err = typegen.Prepare(ctx, consumers, typeOptions)
+	if options.development && options.served == nil {
+		consumers = nil
+	}
+	prepared, err = typegen.Prepare(ctx, consumers, prepareOptions)
 	if err != nil {
 		return manifestSpec{}, nil, err
 	}
@@ -238,8 +223,10 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			}
 		}
 	}
-	if err := options.checkTypes(ctx, pathApps); err != nil {
-		return manifestSpec{}, nil, err
+	if !options.development {
+		if err := options.checkTypes(ctx, pathApps); err != nil {
+			return manifestSpec{}, nil, err
+		}
 	}
 	return manifest, remove, nil
 }

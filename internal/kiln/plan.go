@@ -16,8 +16,6 @@ import (
 	"unsafe"
 )
 
-const Linked = true
-
 func Plan(ctx context.Context, request Request) (string, error) {
 	input, err := json.Marshal(request)
 	if err != nil {

@@ -103,6 +103,16 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 		if s.language == "go" {
 			continue
 		}
+		if answers, served := o.Served[s.origin]; served {
+			result := &extraction{}
+			if err := json.Unmarshal(answers, result); err != nil {
+				return fmt.Errorf("%s: %w", s.origin, err)
+			}
+			if err := s.extract(result); err != nil {
+				return err
+			}
+			continue
+		}
 		document, err := s.committedContract()
 		if err != nil {
 			return err

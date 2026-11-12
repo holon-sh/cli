@@ -2,6 +2,7 @@ package installation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,12 +18,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"oras.land/oras-go/v2/registry/remote"
 
+	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/protocol"
 )
 
 const (
-	toolReloadApp    = "reload_app"
-	overlayMediaType = "application/vnd.holon.source-overlay.v0.tar+zstd"
+	toolReloadApp      = "reload_app"
+	toolGetAppContract = "get_app_contract"
+	overlayMediaType   = "application/vnd.holon.source-overlay.v0.tar+zstd"
 )
 
 type reloadAppRequest struct {
@@ -35,62 +38,65 @@ type reloadAppResult struct {
 	ElapsedSeconds float64 `json:"elapsedSeconds"`
 }
 
-type preparation struct {
-	contexts sets.Set[string]
-	prepared manifestSpec
-	built    manifestSpec
-	images   []protocol.App
-	err      error
-	buildErr error
+func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
+	var served map[string]json.RawMessage
+	for _, app := range d.manifest.Apps {
+		if app.Path == "" {
+			continue
+		}
+		if !slices.ContainsFunc(d.session.Endpoints, func(endpoint protocol.SessionEndpoint) bool { return endpoint.Name == app.Name }) {
+			return nil, nil
+		}
+		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name}
+		var contract json.RawMessage
+		if err := d.manager.Call(ctx, ControlPlane(d.name), toolGetAppContract, request, &contract); err != nil {
+			return nil, fmt.Errorf("%s: %w", app.Name, err)
+		}
+		if served == nil {
+			served = map[string]json.RawMessage{}
+		}
+		served[app.Name] = contract
+	}
+	return served, nil
 }
 
-func (d *devLoop) prepare(ctx context.Context, contexts sets.Set[string]) {
-	ctx, cancel := context.WithCancel(ctx)
-	result := make(chan preparation, 1)
-	d.preparing, d.cancelPreparation = result, cancel
-	manifest, options, changed := d.manifest, d.options, d.changedImages.Clone()
-	options.kept = keptImages(d.session.Apps, d.options.types.inputs())
-	go func() {
-		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, options)
-		if err != nil {
-			result <- preparation{contexts: contexts, err: err}
-			return
+func (d *devLoop) generate(ctx context.Context) error {
+	options := d.options
+	var err error
+	if options.served, err = d.served(ctx); options.served == nil {
+		return err
+	}
+	prepared, cleanup, err := prepareManifestTypes(ctx, d.manifest, options)
+	if err != nil {
+		return err
+	}
+	cleanup()
+	d.options.types.accept(prepared)
+	for _, app := range d.manifest.Apps {
+		if app.Path == "" {
+			continue
 		}
-		defer cleanup()
-		next := preparation{contexts: contexts, prepared: prepared, built: prepared}
-		next.built.Apps = slices.DeleteFunc(slices.Clone(prepared.Apps), func(app manifestApp) bool {
-			return !changed.Has(app.Name) && !options.types.affected(app, prepared)
-		})
-		if len(next.built.Apps) != 0 {
-			options.output.status("", "Preparing apps", progressWorking)
-			next.images, next.buildErr = buildManifestImages(ctx, d.manager, d.name, next.built, options)
-			if next.buildErr == nil {
-				next.buildErr = currentTypeSources(prepared)
-			}
+		if err := d.reloadApp(ctx, app); err != nil {
+			return fmt.Errorf("%s: %w", app.Name, err)
 		}
-		result <- next
-	}()
+	}
+	return nil
 }
 
 func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) {
+	reloaded := contexts.Len() != 0
 	for _, app := range d.manifest.Apps {
 		if !contexts.Has(app.Path) {
 			continue
 		}
 		if err := d.reloadApp(ctx, app); err != nil {
 			d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
+			reloaded = false
 		}
 	}
-}
-
-func (d *devLoop) stopPreparation() sets.Set[string] {
-	if d.preparing == nil {
-		return sets.New[string]()
+	if reloaded && d.pending.Len() == 0 {
+		d.options.output.problem("MCP types", d.generate(ctx))
 	}
-	d.cancelPreparation()
-	stopped := <-d.preparing
-	d.preparing = nil
-	return stopped.contexts
 }
 
 func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
@@ -104,35 +110,42 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
-	accepted := d.options.types.accepted[app.Name]
-	types := *accepted
-	types.root = filepath.Join(directory, "source")
-	if _, err := snapshotSource(app, types.root); err != nil {
+	root := filepath.Join(directory, "source")
+	if _, err := snapshotSource(app, root); err != nil {
 		return err
-	}
-	plan, err := d.options.planSource(ctx, app, &types)
-	if err != nil {
-		return err
-	}
-	if !plan.Development || types.inputs != accepted.inputs {
-		d.changedImages.Insert(app.Name)
-		return nil
 	}
 	running := &d.session.Apps[i]
-	plan.upload = newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
-	overlay, err := plan.pushOverlay(ctx, running.Overlay)
+	upload := newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
+	overlay, err := d.options.pushSource(ctx, app, root, upload, running.Overlay)
 	if err != nil {
 		return err
 	}
-	if overlay == running.Overlay {
-		d.options.output.status(app.Name, "unchanged", progressDone)
-		return nil
+	if overlay != running.Overlay {
+		return d.restart(ctx, running, overlay)
 	}
-	d.restart(ctx, running, overlay)
 	return nil
 }
 
-func (d *devLoop) restart(ctx context.Context, running *protocol.App, overlay string) bool {
+func (o buildOptions) pushSource(ctx context.Context, app manifestApp, root string, upload *imageUpload, unless string) (string, error) {
+	if accepted := o.types.accepted[app.Name]; accepted != nil {
+		staged := *accepted
+		staged.root = root
+		if err := stageTypes(&staged); err != nil {
+			return "", err
+		}
+	}
+	entry, err := hostedEntry(app, root)
+	if err != nil {
+		return "", err
+	}
+	if entry == "" {
+		return "", fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
+	}
+	request := buildRequest{Request: kiln.Request{Source: root}, app: app, upload: upload, httpClient: o.HTTPClient}
+	return request.pushOverlay(ctx, unless)
+}
+
+func (d *devLoop) restart(ctx context.Context, running *protocol.App, overlay string) error {
 	app := running.Name
 	d.options.output.status(app, "reloading", progressWorking)
 	var result reloadAppResult
@@ -141,12 +154,11 @@ func (d *devLoop) restart(ctx context.Context, running *protocol.App, overlay st
 		Digest:     overlay,
 	}
 	if err := d.manager.Call(ctx, ControlPlane(d.name), toolReloadApp, request, &result); err != nil {
-		d.options.output.status(app, fmt.Sprintf("reload failed: %v", err), progressError)
-		return false
+		return err
 	}
 	running.Overlay = overlay
 	d.options.output.status(app, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
-	return true
+	return nil
 }
 
 func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
