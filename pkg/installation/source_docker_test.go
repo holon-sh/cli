@@ -55,7 +55,6 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 		if !slices.Contains(config.Config.Env, "RECIPE="+value) {
 			t.Fatalf("stale Dockerfile: %v", config.Config.Env)
 		}
-		// The app serves itself through its SDK, from the command the Dockerfile sets.
 		if len(manifest.Layers) != 1 || config.Config.Entrypoint != nil || !slices.Equal(config.Config.Cmd, []string{"/serve"}) {
 			t.Fatalf("image wraps the app: %d layers, %q %q", len(manifest.Layers), config.Config.Entrypoint, config.Config.Cmd)
 		}

@@ -502,7 +502,6 @@ func TestDevCommand(t *testing.T) {
 			if !slices.Equal(command, []string{"sh", "-c", test.want}) {
 				t.Fatalf("command = %q, want %q", command, test.want)
 			}
-			// Args expand {NAME} as an input, and the kubelet expands $(NAME).
 			if strings.ContainsAny(command[2], "{}") || strings.Contains(command[2], "$(") {
 				t.Fatalf("command expands: %q", command[2])
 			}

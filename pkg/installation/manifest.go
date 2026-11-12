@@ -94,7 +94,6 @@ func resolveAppMetadata(app *manifestApp, pkg mcpregistry.Package) error {
 		return err
 	}
 	app.resolved.Env, app.resolved.EnvTemplates, app.resolved.Args = declared.Env, declared.EnvTemplates, declared.Args
-	// A source app's own server.json may name packages too, but only a registry app runs one.
 	app.resolved.Imported = app.Registry != nil && declared.Imported
 	if app.resolved.stdio && app.OAuth != nil {
 		return errors.New("oauth requires an HTTP MCP server")
