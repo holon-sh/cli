@@ -81,7 +81,7 @@ func TestServerDescribesItself(t *testing.T) {
 	}
 }
 
-func TestOwnServer(t *testing.T) {
+func TestAppConsumerFindsTheOwnServer(t *testing.T) {
 	const node = `import { McpServer } from "@modelcontextprotocol/server";`
 	for _, test := range []struct {
 		name  string
@@ -99,16 +99,16 @@ func TestOwnServer(t *testing.T) {
 			for name, content := range test.files {
 				put(t, dir, name, content)
 			}
-			own, err := OwnServer(dir)
+			c, err := AppConsumer("app", dir)
 			if (err != nil) != test.fails {
-				t.Fatalf("OwnServer error = %v, want failure %t", err, test.fails)
+				t.Fatalf("AppConsumer error = %v, want failure %t", err, test.fails)
 			}
 			var got string
-			if own != nil {
-				got, _ = filepath.Rel(dir, own.Path)
+			if c != nil {
+				got, _ = filepath.Rel(dir, c.Server.Path)
 			}
 			if got != test.want {
-				t.Fatalf("OwnServer = %q, want %q", got, test.want)
+				t.Fatalf("own server = %q, want %q", got, test.want)
 			}
 		})
 	}
