@@ -35,9 +35,11 @@ var (
 )
 
 type apiRequest struct {
-	Plane  protocol.Plane
-	Token  string
-	Stream io.Writer
+	Plane       protocol.Plane
+	Token       string
+	Stream      io.Writer
+	Body        io.Reader
+	ContentType string
 }
 
 type httpError struct {
@@ -72,20 +74,31 @@ func newAPIClient(origin string, transport *http.Client, timeout time.Duration) 
 	return &apiClient{baseURL: origin, client: &client, timeout: cmp.Or(timeout, defaultHTTPTimeout)}
 }
 
-func (c *apiClient) get(ctx context.Context, path string, request apiRequest, result any) error {
+func (c *apiClient) send(ctx context.Context, path string, request apiRequest, result any) error {
 	client := *c.client
 	reqCtx := ctx
-	if request.Stream == nil {
+	method := http.MethodGet
+	switch {
+	case request.Body != nil:
+		method = http.MethodPost
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, max(c.timeout, 5*time.Minute))
+		defer cancel()
+		client.Timeout = 0
+	case request.Stream == nil:
 		var cancel context.CancelFunc
 		reqCtx, cancel = context.WithTimeout(ctx, c.timeout)
 		defer cancel()
-	} else {
+	default:
 		client.Timeout = 0
 	}
 	origin, _ := protocol.PlaneOrigin(c.baseURL, request.Plane, "")
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, origin+path, nil)
+	req, err := http.NewRequestWithContext(reqCtx, method, origin+path, request.Body)
 	if err != nil {
 		return err
+	}
+	if request.ContentType != "" {
+		req.Header.Set(protocol.HeaderContentType, request.ContentType)
 	}
 	if c.installationUID != "" {
 		req.Header.Set(protocol.HeaderInstallationUID, c.installationUID)
@@ -177,7 +190,7 @@ func responseError(data []byte, token string, status int) (string, string) {
 
 func (c *apiClient) Info(ctx context.Context) (protocol.Info, error) {
 	var info protocol.Info
-	if err := c.get(ctx, protocol.APIPathInfo, apiRequest{Plane: protocol.BasePlane}, &info); err != nil {
+	if err := c.send(ctx, protocol.APIPathInfo, apiRequest{Plane: protocol.BasePlane}, &info); err != nil {
 		if failure, ok := errors.AsType[*httpError](err); ok && failure.MovedTo != "" {
 			return protocol.Info{}, fmt.Errorf("this installation moved to %s; run holon login %s", failure.MovedTo, failure.MovedTo)
 		}

@@ -29,7 +29,7 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 	}
 	timeout := c.timeout
 	switch tool {
-	case protocol.ToolCreateSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession, toolReloadApp:
+	case protocol.ToolCreateSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession:
 		timeout = max(timeout, 5*time.Minute)
 	}
 	if _, waiting := input.(sessionWaitRequest); waiting {

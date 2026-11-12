@@ -278,15 +278,15 @@ func TestRunDevLifecycle(t *testing.T) {
 		_ = connection.Close()
 	})
 	h.serveContract()
-	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, r *http.Request) {
-		var input reloadAppRequest
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
-		}
+	h.mux.HandleFunc("POST /sessions/gentle-otter-482/apps/{app}/source", func(w http.ResponseWriter, r *http.Request) {
+		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 		mu.Lock()
-		reloads = append(reloads, input.App)
+		reloads = append(reloads, r.PathValue("app"))
 		mu.Unlock()
 		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 0.5})
+	})
+	h.control.Handle([]string{toolRecordAppSource}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, struct{}{})
 	})
 	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession},
 		map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {

@@ -64,7 +64,7 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 			if tc.stream {
 				request.Stream = &output
 			}
-			err := client.get(t.Context(), "/request", request, &body)
+			err := client.send(t.Context(), "/request", request, &body)
 			if tc.httpError != nil {
 				got, ok := errors.AsType[*httpError](err)
 				if !ok || *got != *tc.httpError || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), tc.httpError.Message) {
@@ -115,7 +115,7 @@ func TestAPIClientTimeouts(t *testing.T) {
 					defer time.AfterFunc(tc.duration, cancel).Stop()
 				}
 				start := time.Now()
-				err := client.get(ctx, "/me", request, nil)
+				err := client.send(ctx, "/me", request, nil)
 				if elapsed := time.Since(start); elapsed != tc.duration || !errors.Is(err, tc.want) {
 					t.Fatalf("request took %v with error %v, want %v and %v", elapsed, err, tc.duration, tc.want)
 				}

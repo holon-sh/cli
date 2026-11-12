@@ -185,6 +185,10 @@ type devLoop struct {
 	pending             sets.Set[string]
 	starting            sets.Set[string]
 	announce, unapplied bool
+	sent                map[string]string
+	background          context.Context
+	recording           map[string]context.CancelFunc
+	records             sync.WaitGroup
 }
 
 func (d *devLoop) renew(ctx context.Context) {
@@ -387,14 +391,14 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	d.options.output.deploying(request.Apps)
-	if err := d.update(ctx, request, removedApps(d.session.Apps, request.Apps)...); err != nil {
+	if err := d.update(ctx, resolved, request, removedApps(d.session.Apps, request.Apps)...); err != nil {
 		return false, err
 	}
 	d.manifest, d.announce = resolved, true
 	return true, nil
 }
 
-func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[protocol.App], remove ...string) error {
+func (d *devLoop) update(ctx context.Context, manifest manifestSpec, desired protocol.AppsRequestFor[protocol.App], remove ...string) error {
 	updated, err := replaceExecution(ctx, d.manager, d.name, d.session, desired, remove...)
 	if err != nil {
 		d.options.output.apps(desired.Apps, "deployment failed", progressError)
@@ -402,11 +406,11 @@ func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[pr
 	}
 	for _, app := range desired.Apps {
 		i := slices.IndexFunc(d.session.Apps, func(running protocol.App) bool { return running.Name == app.Name })
-		if i >= 0 && d.session.Apps[i].Image == app.Image && d.session.Apps[i].Overlay != app.Overlay {
-			if err := d.restart(ctx, &d.session.Apps[i], app.Overlay); err != nil {
-				d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
-				continue
-			}
+		if i < 0 || d.session.Apps[i].Image != app.Image || d.session.Apps[i].Overlay == app.Overlay {
+			d.sent[app.Name] = app.Overlay
+		} else if err := d.resend(ctx, manifest, app.Name); err != nil {
+			d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
+			continue
 		}
 		d.pending.Insert(app.Name)
 	}

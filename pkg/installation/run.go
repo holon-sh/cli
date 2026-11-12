@@ -176,13 +176,19 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	dev := &devLoop{
 		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), started: config.clock().Now(), options: options,
 		pending: sets.New[string](), announce: true,
+		sent: map[string]string{}, background: context.WithoutCancel(ctx), recording: map[string]context.CancelFunc{},
 	}
+	defer dev.records.Wait()
 	first := options
 	if config.devTTLSeconds == nil {
 		dev.session = previousSession(ctx, manager, recordPath)
 		dev.name = dev.session.Name
 		if first.served, err = dev.served(ctx); err != nil {
 			return err
+		}
+		first.overlays = map[string]string{}
+		for _, app := range dev.session.Apps {
+			first.overlays[app.Name] = app.Overlay
 		}
 	}
 	if dev.name != "" {
@@ -197,11 +203,12 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	request.TTLSeconds = config.devTTLSeconds
 	config.output.deploying(request.Apps)
 	if dev.name != "" {
-		err = dev.update(ctx, request, removedApps(dev.session.Apps, request.Apps)...)
+		err = dev.update(ctx, resolved, request, removedApps(dev.session.Apps, request.Apps)...)
 	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &dev.session); err == nil {
 		dev.name, dev.starting = dev.session.Name, startingApps(dev.session)
 		for _, app := range request.Apps {
 			dev.pending.Insert(app.Name)
+			dev.sent[app.Name] = app.Overlay
 		}
 		err = printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps)
 	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
@@ -490,7 +497,7 @@ func (m *Client) streamLogs(ctx context.Context, input protocol.SessionLogsReque
 		token, err := m.controlToken(ctx)
 		if err == nil {
 			logPath := (&url.URL{Path: path.Join(protocol.APIPathSessions, input.Session, "logs"), RawQuery: query.Encode()}).String()
-			err = m.client.get(ctx, logPath, apiRequest{Plane: ControlPlane(input.Session), Token: token, Stream: records}, nil)
+			err = m.client.send(ctx, logPath, apiRequest{Plane: ControlPlane(input.Session), Token: token, Stream: records}, nil)
 		} else if !errors.Is(err, errRefreshFailed) {
 			return err
 		}
