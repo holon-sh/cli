@@ -68,6 +68,7 @@ func TestPrepareRejectsInvalidConsumers(t *testing.T) {
 		{"bad alias", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Alias: "Bad_Alias", Registry: ref}}}, "must be a DNS label"},
 		{"bad version", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Registry: &protocol.RegistryRef{Name: "example.com/orders", Version: "latest"}}}}, "exact"},
 		{"bad endpoint", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Endpoint: "https://user:secret@x.example/mcp"}}}, "without credentials"},
+		{"alias alone", Consumer{Name: "app", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Alias: "docs"}}}, "app: dependency docs"},
 	} {
 		prepared, err := Prepare(t.Context(), []Consumer{test.c}, Options{})
 		if prepared != nil {
@@ -129,6 +130,11 @@ dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetP
 				t.Fatalf("targets = %v, %v; want %v", got, err, test.want)
 			}
 		})
+	}
+	dir := t.TempDir()
+	put(t, dir, "pyproject.toml", "[project\n")
+	if _, err := DeclaredTargets(dir); err == nil || errors.Is(err, ErrNoRuntime) {
+		t.Fatalf("malformed pyproject.toml: %v, want its parse error", err)
 	}
 }
 
