@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/opencontainers/go-digest"
 	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
@@ -53,7 +54,13 @@ type reloadFixture struct {
 	revision int
 	changed  chan struct{}
 	reads    []string
-	reloads  []reloadAppRequest
+	reloads  []sentSource
+	recorded []string
+}
+
+type sentSource struct {
+	Session, App, Digest string
+	body                 []byte
 }
 
 // update changes the session and moves it past its revision, which releases a held read.
@@ -70,7 +77,7 @@ func (f *reloadFixture) moved() {
 	f.changed = make(chan struct{})
 }
 
-func (f *reloadFixture) reloadRequests() []reloadAppRequest {
+func (f *reloadFixture) reloadRequests() []sentSource {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.reloads)
@@ -149,22 +156,32 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			}
 			installationtest.WriteJSON(w, session())
 		})
-	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, r *http.Request) {
-		var input reloadAppRequest
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
+	h.mux.HandleFunc("POST /sessions/{id}/apps/{app}/source", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil || r.Header.Get(protocol.HeaderContentType) != overlayMediaType {
+			t.Errorf("source request: %v %q", err, r.Header.Get(protocol.HeaderContentType))
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.reloads = append(f.reloads, input)
+		f.reloads = append(f.reloads, sentSource{r.PathValue("id"), r.PathValue("app"), digest.FromBytes(body).String(), body})
 		if f.failNext {
 			f.failNext = false
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
-		f.served[slices.IndexFunc(f.served, func(app protocol.App) bool { return app.Name == input.App })].Overlay = input.Digest
-		f.moved()
 		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2})
+	})
+	h.control.Handle([]string{toolRecordAppSource}, nil, func(w http.ResponseWriter, r *http.Request) {
+		var input recordAppSourceRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.served[slices.IndexFunc(f.served, func(app protocol.App) bool { return app.Name == input.App })].Overlay = input.Digest
+		f.recorded = append(f.recorded, input.Digest)
+		f.moved()
+		installationtest.WriteJSON(w, struct{}{})
 	})
 	h.start(t, nil)
 	fc := testingclock.NewFakeClock(time.Now())
@@ -276,11 +293,16 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 		edit    map[string]string
 		creates int
 		reloads int
+		uploads int
 		apps    []string
 	}{
-		{name: "server source edited since reloads into the session", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1},
+		{name: "unchanged source is neither uploaded nor reloaded", creates: 1},
 		{
-			name: "a reload that fails is not reported ready", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1,
+			name: "server source edited since reloads into the session", edit: map[string]string{"alpha/tools.py": "second"},
+			creates: 1, reloads: 1, uploads: 1,
+		},
+		{
+			name: "a reload that fails is not reported ready", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1, uploads: 1,
 			between: func(_ *testing.T, f *reloadFixture) { f.failNext = true },
 		},
 		{
@@ -288,7 +310,7 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			creates: 1, apps: []string{"beta"},
 		},
 		{
-			name: "the same apps from another directory start their own session", creates: 2,
+			name: "the same apps from another directory start their own session", creates: 2, uploads: 1,
 			between: func(t *testing.T, f *reloadFixture) {
 				moved := filepath.Join(t.TempDir(), "elsewhere")
 				if err := os.Rename(f.root, moved); err != nil {
@@ -309,8 +331,12 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 				}
 			})
 			sourceFiles(t, f.root, test.edit)
+			uploaded := f.uploads()
 			f.start()
 			f.watching()
+			if uploads := f.uploads() - uploaded; uploads != test.uploads {
+				t.Fatalf("uploads = %d, want %d", uploads, test.uploads)
+			}
 			if f.created() != test.creates {
 				t.Fatalf("creates = %d, want %d; stderr=%q", f.created(), test.creates, f.stderr.String())
 			}
@@ -367,7 +393,7 @@ func TestDevSaveToAnAppRemovedFromTheSession(t *testing.T) {
 	f.update(func() { f.served = nil })
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reload failed")
 	if requests := f.reloadRequests(); len(requests) != 0 {
-		t.Fatalf("reload_app %+v", requests)
+		t.Fatalf("sources sent = %d", len(requests))
 	}
 }
 
@@ -382,22 +408,42 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reloaded")
 	request := f.reloadRequests()[0]
 	if request.Session != "gentle-otter-482" || request.App != "alpha" {
-		t.Fatalf("reload_app %+v", request)
+		t.Fatalf("source sent to %s %s", request.Session, request.App)
 	}
 	if !strings.Contains(string(f.overlay(t, f.started)["server.py"]), "app = None") {
 		t.Fatal("the overlay a session starts from lacks the server source")
 	}
+	f.await(func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return slices.Contains(f.recorded, request.Digest)
+	})
 	entries := f.overlay(t, request.Digest)
-	if string(entries["tools.py"]) != "second" || slices.ContainsFunc(slices.Collect(maps.Keys(entries)), func(name string) bool { return strings.HasPrefix(name, ".holon") }) {
+	if !bytes.Equal(request.body, f.blob(request.Digest)) || string(entries["tools.py"]) != "second" || slices.ContainsFunc(slices.Collect(maps.Keys(entries)), func(name string) bool { return strings.HasPrefix(name, ".holon") }) {
 		t.Fatalf("overlay entries = %v", entries)
 	}
 }
 
+func (f *reloadFixture) uploads() int {
+	f.registry.mu.Lock()
+	defer f.registry.mu.Unlock()
+	return len(f.registry.uploads)
+}
+
+func (f *reloadFixture) blob(digest string) []byte {
+	f.registry.mu.Lock()
+	defer f.registry.mu.Unlock()
+	return f.registry.items["holon/upload/alpha/blobs/"+digest].data
+}
+
 func (f *reloadFixture) overlay(t *testing.T, digest string) map[string][]byte {
 	t.Helper()
-	f.registry.mu.Lock()
-	blob := f.registry.items["holon/upload/alpha/blobs/"+digest].data
-	f.registry.mu.Unlock()
+	blob := f.blob(digest)
+	for _, sent := range f.reloadRequests() {
+		if sent.Digest == digest {
+			blob = sent.body
+		}
+	}
 	decoder, err := zstd.NewReader(bytes.NewReader(blob))
 	if err != nil {
 		t.Fatal(err)
@@ -432,7 +478,7 @@ func TestDevGeneratesClientsFromTheRunningApp(t *testing.T) {
 	}
 	reloads := f.reloadRequests()
 	if len(reloads) != 1 || generated(f.overlay(t, f.started)) != "" || !strings.Contains(generated(f.overlay(t, reloads[0].Digest)), "lookup") {
-		t.Fatalf("reloads = %+v; stderr=%q", reloads, f.stderr.String())
+		t.Fatalf("reloads = %d; stderr=%q", len(reloads), f.stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(f.root, "alpha", "generated", "holon-ui")); err != nil {
 		t.Fatal(err)

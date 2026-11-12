@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/opencontainers/go-digest"
@@ -23,12 +25,12 @@ import (
 )
 
 const (
-	toolReloadApp      = "reload_app"
-	toolGetAppContract = "get_app_contract"
-	overlayMediaType   = "application/vnd.holon.source-overlay.v0.tar+zstd"
+	toolRecordAppSource = "record_app_source"
+	toolGetAppContract  = "get_app_contract"
+	overlayMediaType    = "application/vnd.holon.source-overlay.v0.tar+zstd"
 )
 
-type reloadAppRequest struct {
+type recordAppSourceRequest struct {
 	protocol.AppRequest
 
 	Digest string `json:"digest"`
@@ -36,6 +38,12 @@ type reloadAppRequest struct {
 
 type reloadAppResult struct {
 	ElapsedSeconds float64 `json:"elapsedSeconds"`
+}
+
+type packedSource struct {
+	overlay ocispec.Descriptor
+	file    string
+	request buildRequest
 }
 
 func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
@@ -99,110 +107,165 @@ func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) {
 	}
 }
 
-func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
-	defer d.options.output.measure(app.Name, "reload")()
-	i := slices.IndexFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name })
-	if i < 0 {
-		return errors.New("application removed from the session")
-	}
+func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func(), error) {
 	directory, err := os.MkdirTemp("", "holon-overlay-")
 	if err != nil {
-		return err
+		return packedSource{}, func() {}, err
 	}
-	defer func() { _ = os.RemoveAll(directory) }()
+	cleanup := func() { _ = os.RemoveAll(directory) }
 	root := filepath.Join(directory, "source")
 	if _, err := snapshotSource(app, root); err != nil {
-		return err
+		return packedSource{}, cleanup, err
 	}
-	running := &d.session.Apps[i]
 	upload := newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
-	overlay, err := d.options.pushSource(ctx, app, root, upload, running.Overlay)
+	packed, err := d.options.packSource(ctx, app, root, upload)
+	return packed, cleanup, err
+}
+
+func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
+	defer d.options.output.measure(app.Name, "reload")()
+	if !slices.ContainsFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name }) {
+		return errors.New("application removed from the session")
+	}
+	packed, cleanup, err := d.pack(ctx, app)
+	if err == nil && packed.overlay.Digest.String() != d.sent[app.Name] {
+		if err = d.send(ctx, app.Name, packed); err == nil {
+			d.record(app.Name, packed, cleanup)
+			return nil
+		}
+	}
+	cleanup()
+	return err
+}
+
+func (d *devLoop) resend(ctx context.Context, manifest manifestSpec, name string) error {
+	i := slices.IndexFunc(manifest.Apps, func(app manifestApp) bool { return app.Name == name })
+	packed, cleanup, err := d.pack(ctx, manifest.Apps[i])
+	defer cleanup()
 	if err != nil {
 		return err
 	}
-	if overlay != running.Overlay {
-		return d.restart(ctx, running, overlay)
+	return d.send(ctx, name, packed)
+}
+
+func (d *devLoop) send(ctx context.Context, app string, packed packedSource) error {
+	d.options.output.status(app, "reloading", progressWorking)
+	file, err := os.Open(packed.file)
+	if err != nil {
+		return err
 	}
+	defer func() { _ = file.Close() }()
+	token, err := d.manager.controlToken(ctx)
+	if err != nil {
+		return err
+	}
+	var result reloadAppResult
+	request := apiRequest{Plane: ControlPlane(d.name), Token: token, Body: file, ContentType: overlayMediaType}
+	if err := d.manager.client.send(ctx, path.Join(protocol.APIPathSessions, d.name, "apps", app, "source"), request, &result); err != nil {
+		return err
+	}
+	d.sent[app] = packed.overlay.Digest.String()
+	d.options.output.status(app, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
 	return nil
 }
 
+func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
+	if cancel := d.recording[app]; cancel != nil {
+		cancel()
+	}
+	ctx, cancel := context.WithTimeout(d.background, time.Minute)
+	d.recording[app] = cancel
+	d.records.Go(func() {
+		defer cleanup()
+		err := packed.publish(ctx)
+		if err == nil {
+			request := recordAppSourceRequest{
+				AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app},
+				Digest:     packed.overlay.Digest.String(),
+			}
+			err = d.manager.Call(ctx, ControlPlane(d.name), toolRecordAppSource, request, nil)
+		}
+		if ctx.Err() == nil {
+			d.options.output.problem(app+" source", err)
+		}
+	})
+}
+
 func (o buildOptions) pushSource(ctx context.Context, app manifestApp, root string, upload *imageUpload, unless string) (string, error) {
+	packed, err := o.packSource(ctx, app, root, upload)
+	if err != nil {
+		return "", err
+	}
+	if packed.overlay.Digest.String() != unless {
+		err = packed.publish(ctx)
+	}
+	return packed.overlay.Digest.String(), err
+}
+
+func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string, upload *imageUpload) (packedSource, error) {
 	if accepted := o.types.accepted[app.Name]; accepted != nil {
 		staged := *accepted
 		staged.root = root
 		if err := stageTypes(&staged); err != nil {
-			return "", err
+			return packedSource{}, err
 		}
 	}
 	entry, err := hostedEntry(app, root)
 	if err != nil {
-		return "", err
+		return packedSource{}, err
 	}
 	if entry == "" {
-		return "", fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
+		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
-	request := buildRequest{Request: kiln.Request{Source: root}, app: app, upload: upload, httpClient: o.HTTPClient}
-	return request.pushOverlay(ctx, unless)
+	source, err := fsutil.NewFS(root)
+	if err != nil {
+		return packedSource{}, err
+	}
+	stable, err := fsutil.NewFilterFS(source, &fsutil.FilterOpt{Map: stableStat})
+	if err != nil {
+		return packedSource{}, err
+	}
+	packed := packedSource{
+		file:    root + ".tar.zst",
+		request: buildRequest{Request: kiln.Request{Source: root}, app: app, upload: upload, httpClient: o.HTTPClient},
+	}
+	file, err := os.Create(packed.file)
+	if err != nil {
+		return packedSource{}, err
+	}
+	defer func() { _ = file.Close() }()
+	digester := digest.SHA256.Digester()
+	compressed, err := zstd.NewWriter(io.MultiWriter(file, digester.Hash()), zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		return packedSource{}, err
+	}
+	if err := errors.Join(fsutil.WriteTar(ctx, stable, compressed), compressed.Close()); err != nil {
+		return packedSource{}, err
+	}
+	packed.overlay = ocispec.Descriptor{MediaType: overlayMediaType, Digest: digester.Digest()}
+	packed.overlay.Size, err = file.Seek(0, io.SeekCurrent)
+	return packed, err
 }
 
-func (d *devLoop) restart(ctx context.Context, running *protocol.App, overlay string) error {
-	app := running.Name
-	d.options.output.status(app, "reloading", progressWorking)
-	var result reloadAppResult
-	request := reloadAppRequest{
-		AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app},
-		Digest:     overlay,
-	}
-	if err := d.manager.Call(ctx, ControlPlane(d.name), toolReloadApp, request, &result); err != nil {
+func (p packedSource) publish(ctx context.Context) error {
+	file, err := os.Open(p.file)
+	if err != nil {
 		return err
 	}
-	running.Overlay = overlay
-	d.options.output.status(app, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
+	defer func() { _ = file.Close() }()
+	err = p.request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		return repository.Blobs().Push(ctx, p.overlay, file)
+	})
+	if err != nil {
+		return fmt.Errorf("upload source: %w", err)
+	}
 	return nil
 }
 
 func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
 	s.ModTime, s.Uid, s.Gid, s.Xattrs = 0, 0, 0, nil
 	return fsutil.MapResultKeep
-}
-
-func (r buildRequest) pushOverlay(ctx context.Context, unless string) (string, error) {
-	source, err := fsutil.NewFS(r.Source)
-	if err != nil {
-		return "", err
-	}
-	stable, err := fsutil.NewFilterFS(source, &fsutil.FilterOpt{Map: stableStat})
-	if err != nil {
-		return "", err
-	}
-	file, err := os.Create(r.Source + ".tar.zst")
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = file.Close() }()
-	digester := digest.SHA256.Digester()
-	compressed, err := zstd.NewWriter(io.MultiWriter(file, digester.Hash()), zstd.WithEncoderConcurrency(1))
-	if err != nil {
-		return "", err
-	}
-	if err := errors.Join(fsutil.WriteTar(ctx, stable, compressed), compressed.Close()); err != nil {
-		return "", err
-	}
-	overlay := ocispec.Descriptor{MediaType: overlayMediaType, Digest: digester.Digest()}
-	if overlay.Digest.String() == unless {
-		return unless, nil
-	}
-	if overlay.Size, err = file.Seek(0, io.SeekCurrent); err != nil {
-		return "", err
-	}
-	err = r.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-		return repository.Blobs().Push(ctx, overlay, file)
-	})
-	if err != nil {
-		return "", fmt.Errorf("upload source: %w", err)
-	}
-	return overlay.Digest.String(), nil
 }
