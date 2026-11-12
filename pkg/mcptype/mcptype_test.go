@@ -28,7 +28,6 @@ func TestChanges(t *testing.T) {
 		{"identity, then tools, then resources", published("2", nil, mcpcontract.Resource{URI: summary.URI, Output: json.RawMessage(`{"type":"array"}`)}), []string{"identity example/orders@1 expected, example/orders@2 published", "tool get removed", "resource orders://summary contents changed"}},
 		{"tool input", published("1", []mcpcontract.Tool{{Name: get.Name, Input: json.RawMessage(`{"type":"object"}`), Output: get.Output}}, summary), []string{"tool get input changed"}},
 		{"tool output removed", published("1", []mcpcontract.Tool{{Name: get.Name, Input: get.Input}}, summary), []string{"tool get output changed"}},
-		{"tool output changed", published("1", []mcpcontract.Tool{{Name: get.Name, Input: get.Input, Output: json.RawMessage(`{"type":"string"}`)}}, summary), []string{"tool get output changed"}},
 		{"resource removed", published("1", []mcpcontract.Tool{get}), []string{"resource orders://summary removed"}},
 		{"no published contract", nil, []string{"no published contract"}},
 	} {

@@ -26,7 +26,7 @@ type RunConfig struct {
 func SelectPackage(d *Descriptor, selection protocol.PackageSelection) (int, error) {
 	index, count := -1, 0
 	for i, pkg := range d.Packages {
-		if supportedRegistryType(pkg.RegistryType) && (selection.RegistryType == "" || selection.RegistryType == pkg.RegistryType) &&
+		if slices.Contains([]string{"oci", "npm", "pypi"}, pkg.RegistryType) && (selection.RegistryType == "" || selection.RegistryType == pkg.RegistryType) &&
 			(selection.Identifier == "" || selection.Identifier == pkg.Identifier) {
 			index = i
 			count++
@@ -173,15 +173,20 @@ func (p Package) App(values map[string]Value, run RunConfig) (protocol.App, erro
 				return protocol.App{}, fmt.Errorf("argument %s: %w", id, err)
 			}
 			if bound, supplied := values[id]; supplied {
-				binding, err := bindInput(input, bound, env)
-				if err == nil && binding.env != "" && binding.env != key {
+				switch {
+				case bound.Value != nil && input.IsSecret:
+					err = errors.New("input requires a secret reference, not a literal")
+				case bound.Value != nil && !protocol.ValidInputValue(*bound.Value):
+					err = errors.New("input must be single-line text without NUL characters")
+				case bound.Value != nil:
+					env[key] = protocol.Input{Value: bound.Value}
+				case !input.IsSecret:
+					err = errors.New("secret references require isSecret in their declaration")
+				case bound.Secret != key:
 					err = fmt.Errorf("secret reference must name the input %s", key)
 				}
 				if err != nil {
 					return protocol.App{}, fmt.Errorf("argument %s: %w", id, err)
-				}
-				if binding.value != nil {
-					env[key] = protocol.Input{Value: binding.value}
 				}
 			}
 			value = "{" + key + "}"
@@ -224,7 +229,3 @@ var (
 	camelBoundary   = regexp.MustCompile(`([a-z0-9])([A-Z])`)
 	nonAlphanumeric = regexp.MustCompile(`[^A-Z0-9]+`)
 )
-
-func supportedRegistryType(registryType string) bool {
-	return slices.Contains([]string{"oci", "npm", "pypi"}, registryType)
-}
