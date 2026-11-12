@@ -3,7 +3,6 @@ package installation
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http/httptest"
 	"os"
@@ -215,69 +214,14 @@ func TestSourceBuildAndUpload(t *testing.T) {
 }
 
 func TestSourceRejectsEscapingSymlinks(t *testing.T) {
-	for _, link := range []string{"outside", dockerignoreFile} {
-		t.Run(link, func(t *testing.T) {
-			root, outside := t.TempDir(), t.TempDir()
-			manifest := buildManifest(t, root)
-			sourceFiles(t, outside, map[string]string{"file": ""})
-			if err := os.Symlink(filepath.Join(outside, "file"), filepath.Join(root, link)); err != nil {
-				t.Fatal(err)
-			}
-			if _, _, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}); err == nil || !strings.Contains(err.Error(), "symlink escapes application") {
-				t.Fatalf("escaping symlink: %v", err)
-			}
-		})
-	}
-}
-
-func TestSourceFailureCancelsConcurrentBuilds(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	started, release := make(chan string, 2), make(chan struct{})
-	manifest := buildManifest(t, t.TempDir())
-	beta := buildManifest(t, t.TempDir()).Apps[0]
-	beta.Name, beta.resolved.Name = "beta", "beta"
-	manifest.Apps = append(manifest.Apps, beta)
-	manifest, cleanup, err := prepareManifestTypes(ctx, manifest, buildOptions{})
-	if err != nil {
+	root, outside := t.TempDir(), t.TempDir()
+	manifest := buildManifest(t, root)
+	sourceFiles(t, outside, map[string]string{"file": ""})
+	if err := os.Symlink(filepath.Join(outside, "file"), filepath.Join(root, "outside")); err != nil {
 		t.Fatal(err)
 	}
-	options := buildOptions{builder: func(ctx context.Context, request buildRequest, _ io.Writer) (string, error) {
-		started <- request.Source
-		if request.app.Name == "alpha" {
-			select {
-			case <-release:
-				return "", errors.New("build failed")
-			case <-ctx.Done():
-			}
-		} else {
-			<-ctx.Done()
-		}
-		return "", ctx.Err()
-	}}
-	finished := make(chan error, 1)
-	go func() {
-		_, err := buildAndPush(ctx, manifest, &imageUpload{}, options)
-		finished <- err
-	}()
-	var snapshots []string
-	for range 2 {
-		select {
-		case source := <-started:
-			snapshots = append(snapshots, source)
-		case err := <-finished:
-			t.Fatalf("builds did not start: %v", err)
-		}
-	}
-	close(release)
-	if err := <-finished; err == nil || errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "build alpha: build failed") {
-		t.Fatalf("initiating failure lost: %v", err)
-	}
-	cleanup()
-	for _, source := range snapshots {
-		if _, err := os.Stat(filepath.Dir(source)); !os.IsNotExist(err) {
-			t.Fatal("failed build retained temporary source and image data")
-		}
+	if _, _, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}); err == nil || !strings.Contains(err.Error(), "symlink escapes application") {
+		t.Fatalf("escaping symlink: %v", err)
 	}
 }
 

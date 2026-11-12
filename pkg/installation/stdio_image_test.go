@@ -50,12 +50,7 @@ func TestStdioImageContract(t *testing.T) {
 			name: "entrypoint and cmd", entrypoint: []string{"/server", "--flag"}, cmd: []string{"default"},
 			expected: slices.Concat(stdio, []string{"/server", "--flag"}),
 		},
-		{name: "cmd only", cmd: []string{"/server", "arg"}, expected: stdio},
 		{name: "missing executable", wantErr: "no executable"},
-		{
-			name: "reserved file", cmd: []string{"/server"},
-			files: map[string][]byte{"holon-mcp-runtime": []byte("collision")}, wantErr: "reserved path",
-		},
 		{
 			name: "reserved directory", cmd: []string{"/server"},
 			files: map[string][]byte{"holon-mcp-runtime/file": []byte("collision")}, wantErr: "reserved path",

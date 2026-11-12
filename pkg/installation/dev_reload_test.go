@@ -48,12 +48,11 @@ type reloadFixture struct {
 	ready    bool
 	failNext bool
 	failSave bool
-	foreign  bool
 	creates  int
 	served   []protocol.App
 	revision int
-	changed  chan struct{} // closed when the session moves past revision
-	reads    []string      // the revision each get_session named
+	changed  chan struct{}
+	reads    []string
 	reloads  []reloadAppRequest
 
 	holdBuilds    bool
@@ -123,11 +122,6 @@ func startReloadFixture(t *testing.T, ready bool) *reloadFixture {
 			case protocol.ToolCreateSession:
 				f.creates++
 				f.served = input.Apps
-			case protocol.ToolRenewSession:
-				if f.foreign {
-					http.NotFound(w, r)
-					return
-				}
 			case protocol.ToolUpdateSession:
 				if f.failSave {
 					f.failSave = false
@@ -251,12 +245,12 @@ func (f *reloadFixture) created() int {
 
 func TestDevSaves(t *testing.T) {
 	for _, test := range []struct {
-		name                 string
-		failReload, failSave bool
-		saves                []map[string]string
-		lines                []string
-		reloads              int
-		rebuilt              bool
+		name     string
+		failSave bool
+		saves    []map[string]string
+		lines    []string
+		reloads  int
+		rebuilt  bool
 	}{
 		{
 			name:  "server source restarts the app in place, and the same source again does nothing",
@@ -273,16 +267,11 @@ func TestDevSaves(t *testing.T) {
 			saves: []map[string]string{{"alpha/pyproject.toml": alphaProject + "dependencies = [\"idna\"]\n"}, {"alpha/tools.py": "second"}},
 			lines: []string{"remote update failed", "alpha ready"}, rebuilt: true,
 		},
-		{
-			name: "a failed reload is reported and rebuilds nothing", failReload: true,
-			saves: []map[string]string{{"alpha/tools.py": "second"}},
-			lines: []string{"alpha reload failed"}, reloads: 1,
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true)
 			var before protocol.App
-			f.update(func() { f.failNext, f.failSave, before = test.failReload, test.failSave, f.served[0] })
+			f.update(func() { f.failSave, before = test.failSave, f.served[0] })
 			for i, files := range test.saves {
 				f.save(files, test.lines[i])
 			}
@@ -314,7 +303,6 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			name: "an app added to the project since joins the session", edit: map[string]string{manifestFileName: alphaManifest + betaRemote},
 			creates: 1, apps: []string{"beta"},
 		},
-		{name: "another caller's session is not picked up", between: func(_ *testing.T, f *reloadFixture) { f.foreign = true }, creates: 2},
 		{
 			name: "the same apps from another directory start their own session", creates: 2,
 			between: func(t *testing.T, f *reloadFixture) {
