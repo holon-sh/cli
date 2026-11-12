@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"slices"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
@@ -97,4 +98,26 @@ func sessionPages(ctx context.Context, session *mcp.ClientSession) func(method s
 			cursor = next.NextCursor
 		}
 	}
+}
+
+// ServedContract lists what the server at endpoint serves, in the form Options.Served takes: its serverInfo,
+// capabilities and every page of each catalog it declares.
+func ServedContract(ctx context.Context, endpoint string, client *http.Client) (json.RawMessage, error) {
+	session, err := dial(ctx, endpoint, client)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = session.Close() }()
+	initialized := session.InitializeResult()
+	info, _ := json.Marshal(initialized.ServerInfo)
+	served := extraction{ServerInfo: info, Capabilities: initialized.Capabilities, Lists: map[string]listed{}}
+	pages := sessionPages(ctx, session)
+	if _, err := listCatalog(initialized.Capabilities, func(method string) ([]json.RawMessage, error) {
+		list, err := pages(method)
+		served.Lists[method] = listed{Pages: list}
+		return list, err
+	}); err != nil {
+		return nil, err
+	}
+	return json.Marshal(served)
 }
