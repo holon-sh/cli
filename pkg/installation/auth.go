@@ -154,8 +154,6 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 	return manager, nil
 }
 
-// loginInteractive waits for the device sign-in without the credentials lock, so other commands never wait on a person.
-// It saves nothing if another command signed in or out meanwhile.
 func (m *Client) loginInteractive(ctx context.Context) error {
 	if m.machine != nil {
 		return errors.New("service-account credentials are supplied by the environment")

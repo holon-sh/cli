@@ -152,8 +152,6 @@ func HTTPStatus(err error) int {
 	return ptr.Deref(failure, httpError{}).StatusCode
 }
 
-// resumable reports whether a log stream failure is transient: the stream ended, its transport failed or the server
-// returned a 5xx. A rejected or malformed response, including an installation mismatch, is final.
 func resumable(err error) bool {
 	if status := HTTPStatus(err); status != 0 {
 		return status >= http.StatusInternalServerError

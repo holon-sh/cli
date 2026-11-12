@@ -496,7 +496,6 @@ func (m *Client) streamLogs(ctx context.Context, input protocol.SessionLogsReque
 	}
 	for delay := time.Second; ; delay = min(2*delay, 30*time.Second) {
 		received := records.last
-		// A token refresh that failed in transit is retried like a dropped stream; lost credentials stay final.
 		token, err := m.controlToken(ctx)
 		if err == nil {
 			logPath := (&url.URL{Path: path.Join(protocol.APIPathSessions, input.Session, "logs"), RawQuery: query.Encode()}).String()
