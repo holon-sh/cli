@@ -77,10 +77,8 @@ func TestInstallationCommandErrorsBeforeNetwork(t *testing.T) {
 			name: "empty flag", args: []string{"config", "delete", "chat", "REGION", "--env", "prod", "--origin="},
 			saved: `{"origin":"https://saved.example"}`, want: `origin "" is invalid`,
 		},
-		{
-			name: "plain HTTP login target", args: []string{"login", "http://acme.example"},
-			want: `origin "http://acme.example" is invalid: expected HOST[:PORT] or https://HOST[:PORT]`,
-		},
+		{name: "invalid login target", args: []string{"login", "acme.example/console"}, want: `origin "acme.example/console" is invalid`},
+		{name: "insecure login target", args: []string{"login", "http://acme.example"}, want: `origin "http://acme.example" is invalid: expected HOST[:PORT] or https://HOST[:PORT]`},
 		{name: "invalid saved selection", saved: `{"origin":"acme.example/console"}`, want: `origin "acme.example/console" is invalid`},
 		{name: "malformed saved configuration", saved: `{`, want: "read Holon configuration"},
 		{name: "no selection", want: "no Holon installation selected"},

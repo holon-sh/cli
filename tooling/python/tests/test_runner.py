@@ -3,7 +3,6 @@
 import json
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 from textwrap import dedent
 
@@ -162,9 +161,3 @@ def test_effects_and_missing_packages_fail_naming_them(tmp_path):
         assert f"contract evaluation has no {capability}" in diagnostic, diagnostic
     assert result["missing"]["missing"] == "requests"
     assert result["typed"]["tools"] == []
-
-
-def test_requirements_list_the_project_dependencies():
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
-    requirements = (ROOT / "requirements.txt").read_text().splitlines()
-    assert requirements == project["dependencies"]

@@ -3,7 +3,7 @@ package python
 
 import "embed"
 
-// Files holds the runner and the dependencies it needs, as listed in pyproject.toml.
+// Files holds the contract extractor and runner.
 //
-//go:embed extract.py runner.py requirements.txt
+//go:embed extract.py runner.py
 var Files embed.FS
