@@ -26,21 +26,17 @@ func snapshotSource(app manifestApp, destination string) (string, error) {
 	return typegen.SnapshotSource(app.Name, app.Path, destination)
 }
 
-func readTypeJSON(path string, value any) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, value)
-}
-
 func sourceEntry(root string) (string, error) {
 	entry, err := typegen.SourceEntry(root)
 	if err != nil || !slices.Contains([]string{".ts", ".js"}, filepath.Ext(entry)) {
 		return entry, err
 	}
 	var pkg typegen.PackageJSON
-	if err := readTypeJSON(filepath.Join(root, "package.json"), &pkg); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err == nil {
+		err = json.Unmarshal(data, &pkg)
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
 	if pkg.Launches() {

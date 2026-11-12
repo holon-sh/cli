@@ -98,7 +98,8 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 		return fmt.Errorf(".holon-types is reserved: %w", err)
 	}
 	defer os.RemoveAll(directory)
-	if err := writeTypeJSON(filepath.Join(directory, "railpack.json"), config); err != nil {
+	data, _ := json.MarshalIndent(config, "", "  ")
+	if err := mcpcontract.WriteStable(filepath.Join(directory, "railpack.json"), append(data, '\n'), 0o644); err != nil {
 		return err
 	}
 	plan, err := kiln.Plan(ctx, kiln.Request{
@@ -200,9 +201,4 @@ func objectField(parent map[string]any, name string) map[string]any {
 		parent[name] = value
 	}
 	return value
-}
-
-func writeTypeJSON(path string, value any) error {
-	data, _ := json.MarshalIndent(value, "", "  ")
-	return mcpcontract.WriteStable(path, append(data, '\n'), 0o644)
 }

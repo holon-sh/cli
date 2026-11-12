@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -211,9 +212,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		p.prepared = prepared
 		p.documents = documents
 		p.metadata = metadata[app.Name]
-		if s, ok := servers[app.Name]; ok && app.resolved.descriptor == nil {
-			app.resolved.descriptor = s
-		}
+		app.resolved.descriptor = cmp.Or(app.resolved.descriptor, servers[app.Name])
 		if d := app.resolved.descriptor; d != nil && p.metadata == nil {
 			p.metadata = &mcpcontract.Metadata{Identity: d.Identity()}
 		}

@@ -11,8 +11,6 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
-
-	"github.com/holon-sh/cli/pkg/ociimage"
 )
 
 // pushTypeMetadata keeps every direct dependency blob alive in this repository.
@@ -44,16 +42,8 @@ func pushTypeMetadata(
 	return descriptor, own.Digest, err
 }
 
-func contractRepository(image string, options buildOptions) (*remote.Repository, error) {
-	named, err := ociimage.Parse(image)
-	if err != nil {
-		return nil, err
-	}
-	return imageRepository(named.Name(), "", options.HTTPClient)
-}
-
 func resolveTypeMetadata(ctx context.Context, image string, options buildOptions) (string, *typegen.Document, error) {
-	repository, err := contractRepository(image, options)
+	repository, err := sourceRepository(image, options.HTTPClient)
 	if err != nil {
 		return "", nil, err
 	}
@@ -72,7 +62,7 @@ func fetchTypeDocument(
 	if document := documents[reference]; document != nil {
 		return document.Metadata, nil
 	}
-	repository, err := contractRepository(image, options)
+	repository, err := sourceRepository(image, options.HTTPClient)
 	if err != nil {
 		return nil, err
 	}
