@@ -17,15 +17,7 @@ import (
 const egressAllApps = "*"
 
 func newEgressCommand(config *commandConfig) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "egress",
-		Short: "Manage the installation's egress ceiling",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
-		},
-	}
-	cmd.AddCommand(
+	return commandGroup("egress", "Manage the installation's egress ceiling",
 		&cobra.Command{
 			Use:   "get APP|'*'",
 			Short: "Show an app's egress ceiling, or the installation-wide one",
@@ -73,7 +65,6 @@ func newEgressCommand(config *commandConfig) *cobra.Command {
 			},
 		},
 	)
-	return cmd
 }
 
 func validEgressApp(app string) error {

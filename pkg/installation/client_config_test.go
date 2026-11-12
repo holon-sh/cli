@@ -67,10 +67,10 @@ func TestClientOriginPrecedence(t *testing.T) {
 			installationtest.NewControlFixtures(t, mux).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, struct{}{})
 			})
-			config := commandConfig{
-				Env:  []string{"HOLON_ORIGIN=" + strings.ReplaceAll(tc.environment, "SELECTED", server.URL)},
-				Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)},
-			}
+			config := commandConfig{Auth: ClientConfig{
+				Env:       []string{"HOLON_ORIGIN=" + strings.ReplaceAll(tc.environment, "SELECTED", server.URL)},
+				ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server),
+			}}
 			sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": "invalid"})
 			args := []string{"config", "delete", "chat", "REGION", "--env", "prod"}
 			if tc.flag {

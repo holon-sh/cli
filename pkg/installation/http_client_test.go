@@ -71,7 +71,7 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 			if tc.stream {
 				request.Stream = &output
 			}
-			err := client.Do(t.Context(), http.MethodGet, "/request", request, &body)
+			err := client.get(t.Context(), "/request", request, &body)
 			if tc.httpError != nil {
 				got, ok := errors.AsType[*httpError](err)
 				if !ok || *got != *tc.httpError || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), tc.httpError.Message) {
@@ -123,7 +123,7 @@ func TestAPIClientCancellation(t *testing.T) {
 					defer timer.Stop()
 				}
 				start := time.Now()
-				err := client.Do(ctx, http.MethodGet, "/me", request, nil)
+				err := client.get(ctx, "/me", request, nil)
 				wantDuration := map[string]time.Duration{"deadline": time.Second, "stream": 2 * defaultHTTPTimeout}[stage]
 				if elapsed := time.Since(start); elapsed != wantDuration {
 					t.Fatalf("request duration = %v, want %v", elapsed, wantDuration)

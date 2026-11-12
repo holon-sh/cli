@@ -45,7 +45,6 @@ type commandConfig struct {
 	builder            buildApplication
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
-	Env                []string
 	Clock              clock.WithTicker
 	verbose            bool
 	jsonOutput         bool
@@ -54,7 +53,7 @@ type commandConfig struct {
 
 func (c commandConfig) buildOptions(manager *Client, stderr io.Writer) buildOptions {
 	return buildOptions{
-		builder: c.builder, HTTPClient: c.RegistryHTTPClient, Stderr: stderr, Env: c.Env, output: c.output,
+		builder: c.builder, HTTPClient: c.RegistryHTTPClient, Stderr: stderr, Env: c.Auth.Env, output: c.output,
 		architectures: manager.info.BuildArchitectures, builders: new(builderConnections),
 	}
 }
@@ -213,7 +212,9 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if request.TTLSeconds != nil {
 		ready, err := waitSessionReady(ctx, manager, dev.name, dev.session, config.output)
 		if err != nil {
-			return errors.Join(err, deleteWithFreshContext(manager, dev.name, dev.session.UID))
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
+			defer cancel()
+			return errors.Join(err, manager.DeleteSession(cleanup, dev.name, dev.session.UID, true))
 		}
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(ready)
@@ -267,10 +268,6 @@ func previousSession(ctx context.Context, manager *Client, recordPath string) (p
 		return protocol.SessionResponse{}, nil
 	}
 	return session, record.Inputs
-}
-
-func sessionPath(name, suffix string) string {
-	return path.Join(protocol.APIPathSessions, name, suffix)
 }
 
 // sessionAudience is the origin that serves session name, and the mode the session runs in.
@@ -332,12 +329,6 @@ func terminalCondition(condition protocol.Condition) bool {
 		protocol.ReasonInvalidIdentity, protocol.ReasonInvalidExpiry, protocol.ReasonInvalidSpec,
 		protocol.ReasonLeaseExpired, protocol.ReasonDeleting, protocol.ReasonProgressDeadline,
 	}, condition.Reason)
-}
-
-func deleteWithFreshContext(manager *Client, name, uid string) error {
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-	return manager.DeleteSession(cleanupCtx, name, uid, true)
 }
 
 func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer, config commandConfig) error {
@@ -508,8 +499,8 @@ func (m *Client) streamLogs(ctx context.Context, input protocol.SessionLogsReque
 		// A token refresh that failed in transit is retried like a dropped stream; lost credentials stay final.
 		token, err := m.controlToken(ctx)
 		if err == nil {
-			logPath := (&url.URL{Path: sessionPath(input.Session, "logs"), RawQuery: query.Encode()}).String()
-			err = m.client.Do(ctx, http.MethodGet, logPath, apiRequest{Plane: ControlPlane(input.Session), Token: token, Stream: records}, nil)
+			logPath := (&url.URL{Path: path.Join(protocol.APIPathSessions, input.Session, "logs"), RawQuery: query.Encode()}).String()
+			err = m.client.get(ctx, logPath, apiRequest{Plane: ControlPlane(input.Session), Token: token, Stream: records}, nil)
 		} else if !errors.Is(err, errRefreshFailed) {
 			return err
 		}
