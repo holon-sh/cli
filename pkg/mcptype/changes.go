@@ -59,7 +59,7 @@ func Changes(ctx context.Context, expected, published *mcpcontract.Metadata) ([]
 		switch {
 		case !ok:
 			result = append(result, Change{Text: fmt.Sprintf("resource %s removed", uri)})
-		case !reflect.DeepEqual(actual.Output, want.Resources[uri].Output):
+		case !reflect.DeepEqual(actual, want.Resources[uri]):
 			result = append(result, Change{Text: fmt.Sprintf("resource %s contents changed", uri)})
 		}
 	}

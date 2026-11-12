@@ -28,7 +28,7 @@ func resourceContracts(contracts map[string]contract) map[string]contract {
 	for alias, source := range contracts {
 		tools := make(map[string]contractTool, len(source.Resources))
 		for uri, resource := range source.Resources {
-			tools[uri] = contractTool{Input: Object{"type": "object", "additionalProperties": false}, Output: resource.Output}
+			tools[uri] = contractTool{Input: Object{"type": "object", "additionalProperties": false}, Output: resource}
 		}
 		result[alias] = contract{Tools: tools}
 	}

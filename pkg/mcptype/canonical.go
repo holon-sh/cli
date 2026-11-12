@@ -18,7 +18,7 @@ func canonicalContract(contract contract) {
 		normalizeObject(tool.Output)
 	}
 	for _, resource := range contract.Resources {
-		normalizeObject(resource.Output)
+		normalizeObject(resource)
 	}
 	for _, event := range contract.Events {
 		normalizeObject(event.Input)

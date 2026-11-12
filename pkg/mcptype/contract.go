@@ -15,20 +15,14 @@ type contractTool struct {
 	Output Object
 }
 
-// contractResource is one resource's contents schema.
-type contractResource struct {
-	Output Object
-}
-
 type contractEvent struct {
 	Input   Object
 	Payload Object
 }
 
-// contract holds tools keyed by name, resources keyed by URI and events keyed by name. The wire format is v1's arrays, written in key order.
 type contract struct {
 	Tools     map[string]contractTool
-	Resources map[string]contractResource
+	Resources map[string]Object
 	Events    map[string]contractEvent
 }
 
@@ -52,7 +46,7 @@ func decodeSchema(member string, raw json.RawMessage) (Object, error) {
 }
 
 func decodeContract(source mcpcontract.Contract) (contract, error) {
-	result := contract{Tools: map[string]contractTool{}, Resources: map[string]contractResource{}, Events: map[string]contractEvent{}}
+	result := contract{Tools: map[string]contractTool{}, Resources: map[string]Object{}, Events: map[string]contractEvent{}}
 	for _, tool := range source.Tools {
 		input, err := decodeSchema("inputSchema", tool.Input)
 		if err != nil {
@@ -80,7 +74,7 @@ func decodeContract(source mcpcontract.Contract) (contract, error) {
 		if _, exists := result.Resources[resource.URI]; resource.URI == "" || exists {
 			return contract{}, errors.New("resource URIs must be nonempty and unique")
 		}
-		result.Resources[resource.URI] = contractResource{Output: output}
+		result.Resources[resource.URI] = output
 	}
 	for _, event := range source.Events {
 		input, err := decodeSchema("inputSchema", event.Input)
@@ -139,7 +133,7 @@ func (c contract) MarshalJSON() ([]byte, error) {
 	if len(c.Resources) > 0 {
 		resources := make([]Value, 0, len(c.Resources))
 		for _, uri := range sortedKeys(c.Resources) {
-			resources = append(resources, Object{"uri": uri, "outputSchema": c.Resources[uri].Output})
+			resources = append(resources, Object{"uri": uri, "outputSchema": c.Resources[uri]})
 		}
 		wire["resources"] = resources
 	}
