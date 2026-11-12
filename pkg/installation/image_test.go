@@ -199,11 +199,7 @@ func (r *imageRegistry) upload(w http.ResponseWriter, request *http.Request) {
 	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
-func addTestIndex(registry *imageRegistry, children ...ocispec.Descriptor) ocispec.Descriptor {
-	return addAnnotatedTestIndex(registry, nil, children...)
-}
-
-func addAnnotatedTestIndex(registry *imageRegistry, annotations map[string]string, children ...ocispec.Descriptor) ocispec.Descriptor {
+func addTestIndex(registry *imageRegistry, annotations map[string]string, children ...ocispec.Descriptor) ocispec.Descriptor {
 	data, _ := json.Marshal(ocispec.Index{
 		Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex, Manifests: children, Annotations: annotations,
 	})
@@ -261,7 +257,7 @@ func TestPrebuiltImageImports(t *testing.T) {
 			for _, architecture := range []string{"amd64", "arm64"} {
 				children = append(children, addTestImage(t, fixture, architecture, ocispec.ImageConfig{}, nil))
 			}
-			indexDigest := addTestIndex(fixture, children...).Digest
+			indexDigest := addTestIndex(fixture, nil, children...).Digest
 			server := httptest.NewTLSServer(fixture)
 			defer server.Close()
 			host := strings.TrimPrefix(server.URL, "https://")
