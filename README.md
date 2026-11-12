@@ -14,8 +14,6 @@
 curl -fsSL https://holonlabs.ai/install.sh | sh
 ```
 
-`holon` then updates itself to each new release in the background. `holon update` updates it now.
-
 ## Example
 
 ### Create an app
