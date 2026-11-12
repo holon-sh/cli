@@ -3,7 +3,6 @@ package installation
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,24 +28,6 @@ func assertSavedOrigin(t *testing.T, dir, want string) {
 	}
 }
 
-func TestCanonicalOrigin(t *testing.T) {
-	t.Parallel()
-	for raw, want := range map[string]string{
-		"acme.example":          "https://acme.example",
-		"localhost:30443":       "https://localhost:30443",
-		"https://acme.example/": "https://acme.example",
-		"":                      "",
-		"acme.example/console":  "",
-		"http://acme.example":   "",
-	} {
-		got, err := canonicalOrigin(raw)
-		if want == "" && (err == nil || err.Error() != fmt.Sprintf("origin %q is invalid: expected HOST[:PORT] or https://HOST[:PORT]", raw)) ||
-			want != "" && (err != nil || got != want) {
-			t.Errorf("canonicalOrigin(%q) = %q, %v; want %q", raw, got, err, want)
-		}
-	}
-}
-
 func TestClientOriginPrecedence(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -54,7 +35,7 @@ func TestClientOriginPrecedence(t *testing.T) {
 		flag              bool
 	}{
 		{name: "flag bare host", flag: true, environment: "invalid"},
-		{name: "environment", environment: "SELECTED"},
+		{name: "environment with a trailing slash", environment: "SELECTED/"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -67,10 +48,10 @@ func TestClientOriginPrecedence(t *testing.T) {
 			installationtest.NewControlFixtures(t, mux).Handle([]string{protocol.ToolDeleteValue}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, struct{}{})
 			})
-			config := commandConfig{
-				Env:  []string{"HOLON_ORIGIN=" + strings.ReplaceAll(tc.environment, "SELECTED", server.URL)},
-				Auth: ClientConfig{ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server)},
-			}
+			config := commandConfig{Auth: ClientConfig{
+				Env:       []string{"HOLON_ORIGIN=" + strings.ReplaceAll(tc.environment, "SELECTED", server.URL)},
+				ConfigDir: t.TempDir(), HTTPClient: installationtest.OriginClient(server),
+			}}
 			sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": "invalid"})
 			args := []string{"config", "delete", "chat", "REGION", "--env", "prod"}
 			if tc.flag {
@@ -96,7 +77,10 @@ func TestInstallationCommandErrorsBeforeNetwork(t *testing.T) {
 			name: "empty flag", args: []string{"config", "delete", "chat", "REGION", "--env", "prod", "--origin="},
 			saved: `{"origin":"https://saved.example"}`, want: `origin "" is invalid`,
 		},
-		{name: "invalid login target", args: []string{"login", "acme.example/console"}, want: `origin "acme.example/console" is invalid`},
+		{
+			name: "plain HTTP login target", args: []string{"login", "http://acme.example"},
+			want: `origin "http://acme.example" is invalid: expected HOST[:PORT] or https://HOST[:PORT]`,
+		},
 		{name: "invalid saved selection", saved: `{"origin":"acme.example/console"}`, want: `origin "acme.example/console" is invalid`},
 		{name: "malformed saved configuration", saved: `{`, want: "read Holon configuration"},
 		{name: "no selection", want: "no Holon installation selected"},

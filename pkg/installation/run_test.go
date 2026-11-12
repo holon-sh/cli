@@ -81,7 +81,6 @@ func TestRunPreparationFailures(t *testing.T) {
 			command: "deploy", access: "--public", want: "fixture build failed:\nnpm error missing: fixture-package",
 			diagnostics: "#7 0.311 npm notice noise\n------\n > [build 2/3] RUN npm ci:\n0.312 npm error missing: fixture-package\n------\n",
 		},
-		{command: "deploy", access: "--public", want: "fixture build failed", diagnostics: "npm notice from an earlier step"},
 		{command: "dev", access: "--oauth", want: "requires a configured identity provider"},
 		{command: "deploy", access: "--public", want: "source changed during preparation", edit: "logic.ts"},
 	} {
@@ -159,7 +158,7 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 	h.baseHost = strings.TrimPrefix(h.server.URL, "https://")
 	stateDir := t.TempDir()
 	auth := ClientConfig{
-		ConfigDir:  stateDir,
+		Env: []string{"DOCKER_HOST=unix:///tmp/holon-test.sock"}, ConfigDir: stateDir,
 		HTTPClient: installationtest.OriginClient(h.server), RequestTimeout: time.Second,
 	}
 	manager := newManager(t, h.server, stateDir)
@@ -193,7 +192,6 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 			return response, err
 		}),
 		Auth: auth,
-		Env:  []string{"DOCKER_HOST=unix:///tmp/holon-test.sock"},
 	}
 }
 

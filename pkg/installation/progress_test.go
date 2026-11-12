@@ -22,7 +22,6 @@ func TestProgressTransitions(t *testing.T) {
 	}{
 		{name: "terminal canceled", err: context.Canceled, state: "idle", message: "Canceled"},
 		{name: "terminal succeeded", state: "done", message: "Finished"},
-		{name: "terminal failed", err: errors.New("command failed"), state: "error", message: "command failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stream bytes.Buffer

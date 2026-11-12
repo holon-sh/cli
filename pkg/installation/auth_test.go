@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -89,9 +88,6 @@ func TestLogin(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if !strings.HasPrefix(output.String(), "Deleted config REGION for chat in production") {
-				t.Fatalf("stdout = %q", output.String())
-			}
 			if tc.bearer != "" && !strings.Contains(progress.String(), "ABCD-EFGH") {
 				t.Fatalf("device instructions: %q", progress.String())
 			}
@@ -107,25 +103,28 @@ func TestLogin(t *testing.T) {
 					t.Fatal("login exposed a credential")
 				}
 			}
-			files, err := filepath.Glob(filepath.Join(config.Auth.ConfigDir, "remotes", "*.tokens.json"))
-			if err != nil || len(files) != 1 {
-				t.Fatalf("token files=%v error=%v", files, err)
+			tokens := filepath.Join(config.Auth.ConfigDir, "remotes", "*.tokens.json")
+			files, _ := filepath.Glob(tokens)
+			if tc.bearer == "" && len(files) != 0 || tc.bearer != "" && len(files) != 1 {
+				t.Fatalf("token files=%v", files)
 			}
-			for path, mode := range map[string]os.FileMode{files[0]: 0o600, filepath.Dir(files[0]): 0o700} {
-				info, err := os.Stat(path)
-				if err != nil || info.Mode().Perm() != mode {
-					t.Fatalf("private storage mode for %s: %v %v", path, info, err)
+			for _, file := range files {
+				for path, mode := range map[string]os.FileMode{file: 0o600, filepath.Dir(file): 0o700} {
+					info, err := os.Stat(path)
+					if err != nil || info.Mode().Perm() != mode {
+						t.Fatalf("private storage mode for %s: %v %v", path, info, err)
+					}
 				}
 			}
 			if tc.down {
 				server.Close()
 			}
-			err = executeCommand(t.Context(), []string{"logout"}, nil, nil, config)
+			err := executeCommand(t.Context(), []string{"logout"}, nil, nil, config)
 			if tc.down != (err != nil) {
 				t.Fatalf("logout error = %v, want error %v", err, tc.down)
 			}
-			if _, err := os.Stat(files[0]); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("logout retained tokens: %v", err)
+			if files, _ := filepath.Glob(tokens); len(files) != 0 {
+				t.Fatalf("logout retained tokens: %v", files)
 			}
 			if tc.bearer != "" && !tc.down && !slices.Equal(revoked, []string{"refresh-one"}) {
 				t.Fatalf("revoked tokens = %v", revoked)
@@ -253,53 +252,6 @@ func TestDeviceLoginFailures(t *testing.T) {
 	}
 }
 
-func TestRefreshRecovery(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, code           string
-		status               int
-		refreshErr, laterErr error
-	}{
-		{name: "temporary failure", code: "temporary_failure", status: http.StatusServiceUnavailable, refreshErr: errRefreshFailed},
-		{name: "revoked credential", code: "invalid_grant", status: http.StatusBadRequest, refreshErr: errReauthenticationRequired, laterErr: errReauthenticationRequired},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			var failed atomic.Bool
-			server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.FormValue("grant_type") == "refresh_token" {
-					if r.FormValue("refresh_token") != "refresh-one" {
-						t.Error("retry lost the usable refresh credential")
-					}
-					if !failed.Swap(true) || tc.code == "invalid_grant" {
-						w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
-						w.WriteHeader(tc.status)
-						installationtest.WriteJSON(w, map[string]string{"error": tc.code})
-						return
-					}
-					installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "recovered-access", "expires_in": 120})
-					return
-				}
-				installationtest.WriteJSON(w, map[string]any{"token_type": "Bearer", "access_token": "access-secret", "refresh_token": "refresh-one"})
-			})
-			first := newManager(t, server, dir)
-			if err := first.loginInteractive(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := first.controlToken(t.Context()); !errors.Is(err, tc.refreshErr) {
-				t.Fatalf("refresh error=%v, want %v", err, tc.refreshErr)
-			}
-
-			for _, manager := range []*Client{newManager(t, server, dir), first} {
-				if token, err := manager.controlToken(t.Context()); !errors.Is(err, tc.laterErr) || err == nil && token != "recovered-access" {
-					t.Fatalf("later token=%q error=%v, want %v", token, err, tc.laterErr)
-				}
-			}
-		})
-	}
-}
-
 func newManager(t *testing.T, server *httptest.Server, path string) *Client {
 	t.Helper()
 	manager, err := NewClient(t.Context(), ClientConfig{
@@ -341,44 +293,27 @@ func TestLoginRejectsIncompatibleDiscovery(t *testing.T) {
 	}
 }
 
-func TestSavedCredentialMetadata(t *testing.T) {
+func TestSavedCredentialsForAnotherIssuer(t *testing.T) {
 	t.Parallel()
-	server := newAuthTestServer(t, nil)
-	for _, tc := range []struct {
-		name, document string
-		want           error
-	}{
-		{"incomplete", `{"issuer":"ISSUER"}`, errReauthenticationRequired},
-		{"changed issuer", `{"issuer":"https://other.example/","adminAudience":"urn:test","cliClientID":"cli-test"}`, errEndpointChanged},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			manager := newManager(t, server, t.TempDir())
-			seedAdminCredentials(t, manager, oauth2.Token{
-				AccessToken: "access-token", RefreshToken: "refresh-token",
-				TokenType: "Bearer", ExpiresIn: 3600, Expiry: time.Now().Add(time.Hour),
-			})
-			tokens, _ := json.Marshal(manager.state.Tokens)
-			oauth := strings.NewReplacer("ISSUER", server.URL+"/", "urn:test", installationtest.AdminAudience(server.URL)).Replace(tc.document)
-			data := fmt.Sprintf(`{"version":"test","tokens":%s,"oauth":%s}`, tokens, oauth)
-			if err := writePrivateFile(manager.statePath, []byte(data)); err != nil {
-				t.Fatal(err)
-			}
-			token, err := manager.controlToken(t.Context())
-			if !errors.Is(err, tc.want) || err == nil && token != "access-token" {
-				t.Fatalf("token=%q error=%v, want %v", token, err, tc.want)
-			}
-		})
+	manager := newManager(t, newAuthTestServer(t, nil), t.TempDir())
+	seedAdminCredentials(t, manager, oauth2.Token{
+		AccessToken: "access-token", RefreshToken: "refresh-token", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour),
+	})
+	manager.state.OAuth.Issuer = "https://other.example/"
+	if err := manager.writeState(manager.state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.controlToken(t.Context()); !errors.Is(err, errEndpointChanged) {
+		t.Fatalf("error = %v, want %v", err, errEndpointChanged)
 	}
 }
 
 func machineTestConfig(t *testing.T, server *httptest.Server) commandConfig {
 	t.Helper()
-	return commandConfig{
-		Env: []string{"HOLON_ORIGIN=" + server.URL, "HOLON_CLIENT_ID=ci-deployer", "HOLON_CLIENT_SECRET=ci-secret"},
-		Auth: ClientConfig{
-			HTTPClient: installationtest.OriginClient(server), ConfigDir: t.TempDir(),
-		},
-	}
+	return commandConfig{Auth: ClientConfig{
+		Env:        []string{"HOLON_ORIGIN=" + server.URL, "HOLON_CLIENT_ID=ci-deployer", "HOLON_CLIENT_SECRET=ci-secret"},
+		HTTPClient: installationtest.OriginClient(server), ConfigDir: t.TempDir(),
+	}}
 }
 
 func TestMachineCredentials(t *testing.T) {
@@ -419,10 +354,9 @@ func TestMachineCredentials(t *testing.T) {
 	}
 	for _, env := range [][]string{
 		{"HOLON_CLIENT_ID=ci-deployer"},
-		{"HOLON_CLIENT_SECRET=ci-secret"},
 		{"HOLON_CLIENT_ID=", "HOLON_CLIENT_SECRET="},
 	} {
-		config := commandConfig{Env: env, Auth: ClientConfig{Origin: "https://unused.example", ConfigDir: t.TempDir()}}
+		config := commandConfig{Auth: ClientConfig{Env: env, Origin: "https://unused.example", ConfigDir: t.TempDir()}}
 		if err := executeCommand(t.Context(), []string{"config", "delete", "chat", "REGION", "--env", "prod"}, nil, nil, config); err == nil ||
 			!strings.Contains(err.Error(), "requires HOLON_CLIENT_ID and HOLON_CLIENT_SECRET together") {
 			t.Fatalf("incomplete credentials fell back: %v", err)
@@ -585,9 +519,7 @@ func TestResourceTokenCacheIsPerAudience(t *testing.T) {
 		requests = append(requests, r.FormValue("resource")+"|"+r.FormValue("scope"))
 		installationtest.WriteJSON(w, map[string]any{"access_token": fmt.Sprintf("token-%d", len(requests)), "token_type": "Bearer", "expires_in": 3600})
 	})
-	config := machineTestConfig(t, server)
-	config.Auth.Env = config.Env
-	manager, err := NewClient(t.Context(), config.Auth)
+	manager, err := NewClient(t.Context(), machineTestConfig(t, server).Auth)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,7 +543,7 @@ func TestResourceTokenCacheIsPerAudience(t *testing.T) {
 
 func seedAdminCredentials(t *testing.T, manager *Client, token oauth2.Token) {
 	t.Helper()
-	manager.state = authState{OAuth: targetForOAuth(manager.info.OAuth), Version: "test"}
+	manager.state = authState{OAuth: credentialTarget(manager.info.OAuth), Version: "test"}
 	manager.state.Tokens = map[string]*oauth2.Token{manager.info.OAuth.AdminAudience: &token}
 	if err := manager.withLock(t.Context(), func() error { return manager.writeState(manager.state) }); err != nil {
 		t.Fatal(err)

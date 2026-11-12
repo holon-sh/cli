@@ -23,7 +23,6 @@ func Commands() []*cobra.Command {
 }
 
 func newCommands(config commandConfig) []*cobra.Command {
-	config.Auth.Env = append(config.Auth.Env, config.Env...)
 	installationCommands := []*cobra.Command{
 		{
 			Use:   "login [ORIGIN]",

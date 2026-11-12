@@ -10,7 +10,6 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	pathpkg "path"
 	"strings"
 	"time"
 	"unicode"
@@ -30,10 +29,9 @@ const (
 )
 
 var (
-	errInvalidIssuer      = errors.New("invalid issuer")
-	errMalformedResponse  = errors.New("malformed response")
-	errResponseTooLarge   = errors.New("response too large")
-	errInvalidRequestPath = errors.New("invalid request path")
+	errInvalidIssuer     = errors.New("invalid issuer")
+	errMalformedResponse = errors.New("malformed response")
+	errResponseTooLarge  = errors.New("response too large")
 )
 
 type apiRequest struct {
@@ -74,14 +72,7 @@ func newAPIClient(origin string, transport *http.Client, timeout time.Duration) 
 	return &apiClient{baseURL: origin, client: &client, timeout: cmp.Or(timeout, defaultHTTPTimeout)}
 }
 
-func (c *apiClient) Do(ctx context.Context, method, path string, request apiRequest, result any) error {
-	parsed, err := url.Parse(path)
-	if err != nil || !strings.HasPrefix(path, "/") || parsed.Fragment != "" || strings.HasPrefix(path, "//") ||
-		parsed.RawPath != "" ||
-		parsed.EscapedPath() != parsed.Path ||
-		parsed.Path != pathpkg.Clean(parsed.Path) {
-		return errInvalidRequestPath
-	}
+func (c *apiClient) get(ctx context.Context, path string, request apiRequest, result any) error {
 	client := *c.client
 	reqCtx := ctx
 	if request.Stream == nil {
@@ -92,9 +83,9 @@ func (c *apiClient) Do(ctx context.Context, method, path string, request apiRequ
 		client.Timeout = 0
 	}
 	origin, _ := protocol.PlaneOrigin(c.baseURL, request.Plane, "")
-	req, err := http.NewRequestWithContext(reqCtx, method, origin+path, nil)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, origin+path, nil)
 	if err != nil {
-		return errInvalidRequestPath
+		return err
 	}
 	if c.installationUID != "" {
 		req.Header.Set(protocol.HeaderInstallationUID, c.installationUID)
@@ -161,13 +152,11 @@ func HTTPStatus(err error) int {
 	return ptr.Deref(failure, httpError{}).StatusCode
 }
 
-// resumable reports whether a log stream failure is transient: the stream ended, its transport failed or the server
-// returned a 5xx. A rejected or malformed response, including an installation mismatch, is final.
 func resumable(err error) bool {
 	if status := HTTPStatus(err); status != 0 {
 		return status >= http.StatusInternalServerError
 	}
-	return !errors.Is(err, errMalformedResponse) && !errors.Is(err, errResponseTooLarge) && !errors.Is(err, errInvalidRequestPath)
+	return !errors.Is(err, errMalformedResponse) && !errors.Is(err, errResponseTooLarge)
 }
 
 func responseError(data []byte, token string, status int) (string, string) {
@@ -188,7 +177,7 @@ func responseError(data []byte, token string, status int) (string, string) {
 
 func (c *apiClient) Info(ctx context.Context) (protocol.Info, error) {
 	var info protocol.Info
-	if err := c.Do(ctx, http.MethodGet, protocol.APIPathInfo, apiRequest{Plane: protocol.BasePlane}, &info); err != nil {
+	if err := c.get(ctx, protocol.APIPathInfo, apiRequest{Plane: protocol.BasePlane}, &info); err != nil {
 		if failure, ok := errors.AsType[*httpError](err); ok && failure.MovedTo != "" {
 			return protocol.Info{}, fmt.Errorf("this installation moved to %s; run holon login %s", failure.MovedTo, failure.MovedTo)
 		}
