@@ -198,13 +198,17 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 	d.clock.AfterFunc(time.Minute, func() { cancel(errSourceUnrecorded) })
 	d.records.Go(func() {
 		defer cleanup()
+		uploaded := d.options.output.measure(app, "source upload")
 		err := packed.publish(ctx)
+		uploaded()
 		if err == nil {
 			request := recordAppSourceRequest{
 				AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app},
 				Digest:     packed.overlay.Digest.String(),
 			}
+			recorded := d.options.output.measure(app, "source record")
 			err = d.manager.Call(ctx, ControlPlane(d.name), toolRecordAppSource, request, nil)
+			recorded()
 		}
 		if cause := cmp.Or(context.Cause(ctx), err); err != nil && cause != errSourceSuperseded {
 			d.options.output.status(app, "reloaded, but not recorded in the session: "+cause.Error(), progressError)
