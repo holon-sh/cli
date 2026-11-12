@@ -154,7 +154,9 @@ func buildManifestImages(
 		return importRegistryBuild(ctx, manager, ControlPlane(name), app, options.output)
 	}
 	options.origin = manager.client.baseURL
-	options.plane = ControlPlane(name)
+	if name == protocol.ProductionName {
+		options.plane = ControlPlane(name)
+	}
 	return buildAndPush(ctx, manifest, upload, options)
 }
 
