@@ -184,13 +184,11 @@ func NewCommand(version string, signIn typegen.SignIn) *cobra.Command {
 	root := &cobra.Command{Use: "holon", Short: "MCP developer client", Version: version, SilenceUsage: true, SilenceErrors: true}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetVersionTemplate("holon {{.Version}}\n")
-	root.AddCommand(NewInitCommand(), NewTypesCommand(), newCheck("Shortcut for holon types check"), newList(signIn), newCall(signIn))
+	root.AddCommand(newInit(), newTypes(), newCheck("Shortcut for holon types check"), newList(signIn), newCall(signIn))
 	return root
 }
 
-// NewTypesCommand builds an independent types command tree that can be added to a host CLI.
-// It has no installation, project, or control-plane dependencies.
-func NewTypesCommand() *cobra.Command {
+func newTypes() *cobra.Command {
 	// NoArgs makes removed subcommands such as "types contract" fail instead of printing help.
 	types := &cobra.Command{Use: "types", Short: "Generate and check typed MCP clients and print MCP contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	var verbose bool

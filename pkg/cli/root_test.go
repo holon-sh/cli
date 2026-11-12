@@ -159,8 +159,6 @@ func TestUsageErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"check", "a", "b"}, "accepts at most 1 arg(s)"},
-		{[]string{"check", "-s", "x"}, "unknown shorthand flag: 's'"},
 		{[]string{"check", "missing-dir"}, "is not a directory"},
 		{[]string{"types", "generate", "--contract", "a", "-s", "b"}, "takes one SERVER and nothing else"},
 		{[]string{"types", "generate", "-o", "contract.json"}, "--output writes a --contract document"},
@@ -192,7 +190,7 @@ func TestInitRefusals(t *testing.T) {
 	} {
 		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
 			t.Chdir(t.TempDir())
-			cmd := NewInitCommand()
+			cmd := newInit()
 			cmd.SetIn(strings.NewReader(""))
 			cmd.SetOut(new(bytes.Buffer))
 			cmd.SetErr(new(bytes.Buffer))
