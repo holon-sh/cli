@@ -16,7 +16,6 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/holon-sh/mcp-bridge v0.0.4
 	github.com/holon-sh/protocol v0.0.1-dev.12.0.20261110195824-21a918f12f36
-	github.com/holon-sh/runtime v0.0.1-dev.5
 	github.com/klauspost/compress v1.19.2
 	github.com/moby/buildkit v0.33.1
 	github.com/moby/patternmatcher v0.6.1
@@ -118,4 +117,4 @@ require (
 	k8s.io/klog/v2 v2.140.0 // indirect
 )
 
-tool github.com/holon-sh/runtime/cmd/holon-mcp-runtime
+tool github.com/holon-sh/mcp-bridge/cmd/mcp-bridge

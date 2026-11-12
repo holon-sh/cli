@@ -30,7 +30,7 @@ func TestPackageTemplates(t *testing.T) {
 	}
 	app, err := pkg.App(nil, RunConfig{})
 	env := app.Env
-	if err != nil || !env["tenant"].IsRequired || !env["token"].IsSecret || *env["region"].Default != "us-east-1" || *env["PORT"].Default != "9001" {
+	if err != nil || !app.Imported || !env["tenant"].IsRequired || !env["token"].IsSecret || *env["region"].Default != "us-east-1" || *env["PORT"].Default != "9001" {
 		t.Fatalf("variables = %v, %v", env, err)
 	}
 	if !reflect.DeepEqual(app.EnvTemplates, map[string]protocol.Template{"API_URL": "https://{tenant}.example.com", "TOKEN": "{token}"}) ||

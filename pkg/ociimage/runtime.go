@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/containerd/containerd/v2/core/images"
+	mcpbridge "github.com/holon-sh/mcp-bridge/http"
 	"github.com/klauspost/compress/zstd"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -24,12 +25,12 @@ import (
 	"oras.land/oras-go/v2/content"
 )
 
-type runtimePayload struct {
+type bridgePayload struct {
 	layer          []byte
 	diffID, binary digest.Digest
 }
 
-type Bridges map[string]runtimePayload
+type Bridges map[string]bridgePayload
 
 func LoadBridges(payloads fs.FS) (Bridges, error) {
 	bridges := Bridges{}
@@ -38,7 +39,7 @@ func LoadBridges(payloads fs.FS) (Bridges, error) {
 		if err != nil {
 			return nil, err
 		}
-		if bridges[architecture], err = runtimeLayer(binary); err != nil {
+		if bridges[architecture], err = bridgeLayer(binary); err != nil {
 			return nil, err
 		}
 	}
@@ -46,7 +47,6 @@ func LoadBridges(payloads fs.FS) (Bridges, error) {
 }
 
 type AdaptOptions struct {
-	HTTP          bool
 	Origin        string
 	Source        string
 	CheckedLayers *sync.Map
@@ -59,6 +59,7 @@ func AdaptImage(ctx context.Context, repository oras.Target, descriptor ocispec.
 	})
 }
 
+// AdaptRuntime starts a stdio image's entrypoint and command under mcp-bridge, which serves them over HTTP on port 3000.
 func AdaptRuntime(ctx context.Context, repository oras.Target, image *Image, options AdaptOptions) error {
 	if image.OS != "linux" || image.platform != nil && image.platform.Architecture != image.Architecture {
 		return errors.New("stdio image platform does not match Linux image configuration")
@@ -75,15 +76,13 @@ func AdaptRuntime(ctx context.Context, repository oras.Target, image *Image, opt
 	if image.Runtime == nil {
 		return errors.New("image has no runtime configuration")
 	}
-	launcher := []string{RuntimePath}
-	if options.HTTP {
-		launcher = append(launcher, "--transport=streamable-http")
+	launcher := []string{
+		BridgePath, "serve", "--listen", ":3000", "--protocol-version", mcpbridge.ProtocolVersion, "--allow-origin", options.Origin, "--",
 	}
-	launcher = append(launcher, "--origin", options.Origin)
 	if child := slices.Concat(image.Config.Entrypoint, image.Config.Cmd); len(child) == 0 || child[0] == "" {
 		return errors.New("stdio image has no executable entrypoint or command")
 	}
-	image.Runtime["Entrypoint"], _ = json.Marshal(append(append(launcher, "--"), image.Config.Entrypoint...))
+	image.Runtime["Entrypoint"], _ = json.Marshal(append(launcher, image.Config.Entrypoint...))
 	image.Runtime["Cmd"], _ = json.Marshal(image.Config.Cmd)
 	image.Runtime["StopSignal"] = json.RawMessage(`"SIGTERM"`)
 	labels := map[string]string{}
@@ -97,25 +96,25 @@ func AdaptRuntime(ctx context.Context, repository oras.Target, image *Image, opt
 	if image.RootFS.Type != "layers" || len(image.RootFS.DiffIDs) != len(image.Layers)+len(image.appended) {
 		return errors.New("image rootfs does not match its layers")
 	}
-	image.AppendLayer(layer, payload.diffID, "holon stdio runtime")
+	image.AppendLayer(layer, payload.diffID, "holon stdio bridge")
 	return nil
 }
 
-func runtimeLayer(binary []byte) (runtimePayload, error) {
+func bridgeLayer(binary []byte) (bridgePayload, error) {
 	if len(binary) == 0 {
-		return runtimePayload{}, errors.New("stdio runtime is not bundled")
+		return bridgePayload{}, errors.New("stdio bridge is not bundled")
 	}
 
 	var compressed bytes.Buffer
 	zipper := gzip.NewWriter(&compressed)
 	diffID := digest.Canonical.Digester()
 	writer := tar.NewWriter(io.MultiWriter(zipper, diffID.Hash()))
-	header := &tar.Header{Name: strings.TrimPrefix(RuntimePath, "/"), Mode: 0o755, Size: int64(len(binary)), Typeflag: tar.TypeReg}
+	header := &tar.Header{Name: strings.TrimPrefix(BridgePath, "/"), Mode: 0o755, Size: int64(len(binary)), Typeflag: tar.TypeReg}
 	_ = writer.WriteHeader(header)
 	_, _ = writer.Write(binary)
 	_ = writer.Close()
 	_ = zipper.Close()
-	return runtimePayload{layer: compressed.Bytes(), diffID: diffID.Digest(), binary: digest.FromBytes(binary)}, nil
+	return bridgePayload{layer: compressed.Bytes(), diffID: diffID.Digest(), binary: digest.FromBytes(binary)}, nil
 }
 
 func checkLayer(ctx context.Context, repository oras.Target, checkedLayers *sync.Map, descriptor ocispec.Descriptor) error {
@@ -154,7 +153,7 @@ func checkLayer(ctx context.Context, repository oras.Target, checkedLayers *sync
 		return fmt.Errorf("unsupported stdio image layer %q", descriptor.MediaType)
 	}
 	archive := tar.NewReader(reader)
-	reserved := strings.TrimPrefix(RuntimePath, "/")
+	reserved := strings.TrimPrefix(BridgePath, "/")
 	for {
 		header, err := archive.Next()
 		if errors.Is(err, io.EOF) {
@@ -165,7 +164,7 @@ func checkLayer(ctx context.Context, repository oras.Target, checkedLayers *sync
 		}
 		name := strings.TrimPrefix(path.Clean("/"+header.Name), "/")
 		if first, _, _ := strings.Cut(name, "/"); first == reserved || name == ".wh."+reserved {
-			return fmt.Errorf("image uses reserved path %s", RuntimePath)
+			return fmt.Errorf("image uses reserved path %s", BridgePath)
 		}
 	}
 	if _, err := io.Copy(io.Discard, io.MultiReader(reader, verified)); err != nil {

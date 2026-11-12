@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -20,13 +22,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"oras.land/oras-go/v2/registry/remote"
 
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
+	"github.com/holon-sh/protocol/runtimecontract"
 )
 
 const (
 	toolRecordAppSource = "record_app_source"
 	toolGetAppContract  = "get_app_contract"
-	overlayMediaType    = "application/vnd.holon.source-overlay.v0.tar+zstd"
 )
 
 type recordAppSourceRequest struct {
@@ -175,7 +178,7 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 		return err
 	}
 	var result reloadAppResult
-	request := apiRequest{Plane: ControlPlane(d.name), Token: token, Body: file, ContentType: overlayMediaType}
+	request := apiRequest{Plane: ControlPlane(d.name), Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
 	if err := d.manager.client.send(ctx, path.Join(protocol.APIPathSessions, d.name, "apps", app, "source"), request, &result); err != nil {
 		return err
 	}
@@ -214,12 +217,8 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 			return packedSource{}, err
 		}
 	}
-	entry, err := hostedEntry(app, root)
-	if err != nil {
+	if _, err := developmentEntry(app, root); err != nil {
 		return packedSource{}, err
-	}
-	if entry == "" {
-		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
 	source, err := fsutil.NewFS(root)
 	if err != nil {
@@ -246,9 +245,50 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	if err := errors.Join(fsutil.WriteTar(ctx, stable, compressed), compressed.Close()); err != nil {
 		return packedSource{}, err
 	}
-	packed.overlay = ocispec.Descriptor{MediaType: overlayMediaType, Digest: digester.Digest()}
+	packed.overlay = ocispec.Descriptor{MediaType: runtimecontract.OverlayMediaType, Digest: digester.Digest()}
 	packed.overlay.Size, err = file.Seek(0, io.SeekCurrent)
 	return packed, err
+}
+
+// developmentEntry is the server entry holon dev runs an app from.
+func developmentEntry(app manifestApp, root string) (string, error) {
+	entry, err := hostedEntry(app, root)
+	if err == nil && entry == "" {
+		err = fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
+	}
+	return entry, err
+}
+
+// devCommand is what holon-mcp-runtime runs a development app with in its source directory. It installs and builds
+// before serving the entry, so the app accepts connections only once all it serves is ready. The script holds no
+// braces, which Args expand as inputs, and no $(, which the kubelet expands; entries come from a fixed list and need
+// no quoting.
+func devCommand(root, entry string) ([]string, error) {
+	var steps []string
+	var pkg typegen.PackageJSON
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err == nil {
+		err = json.Unmarshal(data, &pkg)
+	}
+	switch {
+	case err == nil:
+		manager, err := typegen.PackageManager(root)
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, manager+" install")
+		if pkg.Scripts["build"] != "" {
+			steps = append(steps, manager+" run build")
+		}
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, err
+	}
+	start := serveCommand(entry)
+	if filepath.Ext(entry) == ".py" {
+		start = append([]string{"uv", "run"}, start...)
+	}
+	steps = append(steps, "exec "+strings.Join(start, " "))
+	return []string{"sh", "-c", strings.Join(steps, " && ")}, nil
 }
 
 func (p packedSource) publish(ctx context.Context) error {

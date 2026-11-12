@@ -10,17 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/hookartifact"
-	"github.com/holon-sh/runtime/host/javascript"
-	"github.com/holon-sh/runtime/host/python"
 )
 
 type buildApplication func(context.Context, buildRequest, io.Writer) (string, error)
@@ -92,26 +88,15 @@ func stageSnapshot(app manifestApp, p *preparedTypes) ([]string, error) {
 	if err != nil || entry == "" {
 		return nil, err
 	}
-	hostDir := filepath.Join(p.root, ".holon")
-	if err := os.Mkdir(hostDir, 0o755); err != nil {
-		return nil, fmt.Errorf("prepare SDK launcher (.holon is reserved): %w", err)
-	}
-	adapter, launcher, contents := "adapter.mjs", "main.mjs", javascript.Bundle
-	bootstrap := "import { start } from './adapter.mjs';\nawait start(() => import('../" + entry + "'));\n"
-	start := []string{"node", "./.holon/main.mjs"}
+	return serveCommand(entry), nil
+}
+
+// serveCommand starts an app from its entry through the SDK, which serves the app itself.
+func serveCommand(entry string) []string {
 	if filepath.Ext(entry) == ".py" {
-		adapter, launcher, contents = "holon_host.py", "main.py", python.Adapter
-		module := strings.TrimSuffix(strings.ReplaceAll(entry, "/", "."), ".py")
-		bootstrap = fmt.Sprintf("import asyncio\nfrom holon_host import start\nasyncio.run(start(%q))\n", module)
-		start = []string{"python", "./.holon/main.py"}
+		return []string{"python", "-m", "holon.serve", entry}
 	}
-	if err := mcpcontract.WriteStable(filepath.Join(hostDir, adapter), []byte(contents), 0o644); err != nil {
-		return nil, err
-	}
-	if err := mcpcontract.WriteStable(filepath.Join(hostDir, launcher), []byte(bootstrap), 0o644); err != nil {
-		return nil, err
-	}
-	return start, nil
+	return []string{"node_modules/.bin/holon-serve", entry}
 }
 
 func hostedEntry(app manifestApp, root string) (string, error) {
