@@ -57,12 +57,12 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 		want string
 		args []string
 	}{
-		{`unknown app "missing"`, []string{"dev", "alpha", "missing", "--project", project}},
-		{"--ttl requires --detach", []string{"dev", "--ttl", "24h", "--project", project}},
-		{"--json requires --detach", []string{"dev", "--json", "--project", project}},
-		{"whole seconds", []string{"dev", "--detach", "--ttl", "0s", "--project", project}},
-		{"whole seconds", []string{"dev", "--detach", "--ttl", "1.5s", "--project", project}},
-		{"whole seconds", []string{"dev", "--detach", "--ttl", "25h", "--project", project}},
+		{`unknown app "missing"`, []string{"dev", "alpha", "missing", "--file", project}},
+		{"--ttl requires --detach", []string{"dev", "--ttl", "24h", "--file", project}},
+		{"--json requires --detach", []string{"dev", "--json", "--file", project}},
+		{"whole seconds", []string{"dev", "--detach", "--ttl", "0s", "--file", project}},
+		{"whole seconds", []string{"dev", "--detach", "--ttl", "1.5s", "--file", project}},
+		{"whole seconds", []string{"dev", "--detach", "--ttl", "25h", "--file", project}},
 		{"--env must be dev or prod", []string{"config", "set", "--env", "staging", "chat", "API_URL", "value"}},
 		{"--session requires a development session", []string{"config", "set", "--session", "production", "chat", "API_URL", "value"}},
 		{`invalid variable name "not-valid"`, []string{"config", "set", "chat", "not-valid", "value"}},
@@ -730,7 +730,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	runConfig := h.run
 	runConfig.Clock = buildClock
 	var output, diagnostics bytes.Buffer
-	if err := executeCommand(t.Context(), []string{"deploy", "--project", manifestPath}, &output, &diagnostics, runConfig); err != nil {
+	if err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath}, &output, &diagnostics, runConfig); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -755,7 +755,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	mu.Lock()
 	desired.Apps[1].Image = strings.Replace(initial[1].Image, "registry.example/holon/upload/prod", "old-registry.example/prod", 1)
 	mu.Unlock()
-	if err := executeCommand(t.Context(), []string{"deploy", "--project", manifestPath, "--verbose"}, &output, &diagnostics, runConfig); err != nil {
+	if err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath, "--verbose"}, &output, &diagnostics, runConfig); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(diagnostics.String(), "fixture build output") ||
@@ -769,7 +769,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	}
 	forceConflict = true
 	mu.Unlock()
-	err := executeCommand(t.Context(), []string{"deploy", "--project", manifestPath}, &output, nil, runConfig)
+	err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath}, &output, nil, runConfig)
 	if err == nil || !strings.Contains(err.Error(), "concurrently") {
 		t.Fatalf("conditional conflict = %v", err)
 	}
@@ -782,7 +782,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 			forceConflict, rolloutFailure = false, scenario.name
 			mu.Unlock()
 			output.Reset()
-			err := executeCommand(t.Context(), []string{"deploy", "--project", manifestPath}, &output, nil, runConfig)
+			err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath}, &output, nil, runConfig)
 			if err == nil || !strings.Contains(err.Error(), scenario.message) {
 				t.Fatalf("rollout result: %v", err)
 			}
