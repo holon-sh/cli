@@ -3,7 +3,6 @@ package installation
 import (
 	"archive/tar"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,8 +19,6 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"golang.org/x/oauth2"
 	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
@@ -91,19 +88,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	var registry *httptest.Server
 	f.registry, registry = buildRegistry(t)
 	h := newRunHarness(t)
-	running := mcp.NewServer(&mcp.Implementation{Name: "alpha", Version: "1"}, nil)
-	running.AddTool(&mcp.Tool{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return &mcp.CallToolResult{}, nil
-	})
-	serve := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return running }, &mcp.StreamableHTTPOptions{DisableLocalhostProtection: true})
-	h.mux.HandleFunc("/mcp/alpha", func(w http.ResponseWriter, r *http.Request) {
-		installationtest.AssertOrigin(t, r, "gentle-otter-482."+h.baseHost)
-		if r.Header.Get("Authorization") != "Bearer session-token" {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		serve.ServeHTTP(w, r)
-	})
+	h.serveContract()
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		grant := buildGrant(registry)
 		grant.Repositories["beta"] = "holon/upload/beta"
@@ -180,21 +165,6 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2})
 	})
 	h.start(t, nil)
-	manager := newManager(t, h.server, h.run.Auth.ConfigDir)
-	audience, _, err := manager.sessionAudience("gentle-otter-482")
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = manager.withLock(t.Context(), func() error {
-		if err := manager.loadCredentials(); err != nil {
-			return err
-		}
-		manager.state.Tokens[audience] = &oauth2.Token{AccessToken: "session-token", RefreshToken: "refresh-token", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)}
-		return manager.writeState(manager.state)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	fc := testingclock.NewFakeClock(time.Now())
 	h.run.Clock = fc
 	f.await = func(check func() bool) {

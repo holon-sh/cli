@@ -146,6 +146,12 @@ func newRunHarness(t *testing.T) *runHarness {
 	return h
 }
 
+func (h *runHarness) serveContract() {
+	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, json.RawMessage(`{"serverInfo":{"name":"example.com/alpha","version":"1","description":"alpha"},"capabilities":{"tools":{}},"lists":{"tools/list":{"pages":[{"tools":[{"name":"lookup","inputSchema":{"type":"object"}}]}]}}}`))
+	})
+}
+
 func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
 	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
@@ -271,6 +277,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		}
 		_ = connection.Close()
 	})
+	h.serveContract()
 	h.control.Handle([]string{toolReloadApp}, nil, func(w http.ResponseWriter, r *http.Request) {
 		var input reloadAppRequest
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

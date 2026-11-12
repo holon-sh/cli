@@ -3,6 +3,7 @@ package typegen
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -37,7 +38,7 @@ type Options struct {
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
 	// runs the server in its own directory and stops it after 30 seconds.
 	Run    func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
-	Served map[string]string
+	Served map[string]json.RawMessage
 }
 
 func (o Options) defaults() Options {

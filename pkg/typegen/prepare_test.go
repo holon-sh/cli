@@ -312,13 +312,12 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 }
 
 func TestAServedSourceAnswersForItself(t *testing.T) {
-	live := liveServer(t, "orders", "99", false)
-	t.Cleanup(live.Close)
+	answers := json.RawMessage(`{"serverInfo":{"name":"example.com/live","version":"99","description":"orders"},"capabilities":{"tools":{}},"lists":{"tools/list":{"pages":[{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}]}}}`)
 	for _, test := range []struct {
 		name, descriptor string
 		want             mcpcontract.Identity
 	}{
-		{"the running server names a source without a server.json", "", mcpcontract.Identity{Name: "orders", Version: "99"}},
+		{"the running server names a source without a server.json", "", mcpcontract.Identity{Name: "example.com/live", Version: "99"}},
 		{"a server.json keeps naming its source", `{"name":"example.com/orders","version":"1.0.0","description":"orders"}`, mcpcontract.Identity{Name: "example.com/orders", Version: "1.0.0"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -327,7 +326,7 @@ func TestAServedSourceAnswersForItself(t *testing.T) {
 			if test.descriptor != "" {
 				put(t, orders, "server.json", test.descriptor)
 			}
-			options := Options{Served: map[string]string{orders: live.URL}, Run: func(context.Context, string, string, []string, io.Writer) error {
+			options := Options{Served: map[string]json.RawMessage{orders: answers}, Run: func(context.Context, string, string, []string, io.Writer) error {
 				return errors.New("ran the server")
 			}}
 			document, err := ResolveDocument(t.Context(), Source{Path: orders}, options)

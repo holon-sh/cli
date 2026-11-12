@@ -3,6 +3,7 @@ package installation
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,7 +34,7 @@ type buildOptions struct {
 	HTTPClient    *http.Client
 	output        *progressOutput
 	development   bool
-	served        *servedApps
+	served        map[string]json.RawMessage
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {

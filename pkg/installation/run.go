@@ -181,7 +181,9 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if config.devTTLSeconds == nil {
 		dev.session = previousSession(ctx, manager, recordPath)
 		dev.name = dev.session.Name
-		first.served = dev.served()
+		if first.served, err = dev.served(ctx); err != nil {
+			return err
+		}
 	}
 	if dev.name != "" {
 		if err := printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps); err != nil {
@@ -245,7 +247,7 @@ func (m *Client) sessionRecordPath(manifest manifestSpec, selection []string) st
 		key += "\x00" + app.Name + "\x00" + app.Path
 	}
 	key += "\x00" + strings.Join(selection, "\x00")
-	return filepath.Join(filepath.Dir(m.statePath), digest.FromString(key).Encoded()+".session")
+	return filepath.Join(filepath.Dir(m.statePath), digest.FromString(key).Encoded()+".dev-session")
 }
 
 func previousSession(ctx context.Context, manager *Client, recordPath string) protocol.SessionResponse {

@@ -2,10 +2,10 @@ package installation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,13 +19,13 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/internal/kiln"
-	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
 
 const (
-	toolReloadApp    = "reload_app"
-	overlayMediaType = "application/vnd.holon.source-overlay.v0.tar+zstd"
+	toolReloadApp      = "reload_app"
+	toolGetAppContract = "get_app_contract"
+	overlayMediaType   = "application/vnd.holon.source-overlay.v0.tar+zstd"
 )
 
 type reloadAppRequest struct {
@@ -38,48 +38,33 @@ type reloadAppResult struct {
 	ElapsedSeconds float64 `json:"elapsedSeconds"`
 }
 
-type servedApps struct {
-	endpoints map[string]string
-	client    *http.Client
-	signIn    typegen.SignIn
-}
-
-func (d *devLoop) served() *servedApps {
-	endpoints := map[string]string{}
+func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
+	var served map[string]json.RawMessage
 	for _, app := range d.manifest.Apps {
 		if app.Path == "" {
 			continue
 		}
 		if !slices.ContainsFunc(d.session.Endpoints, func(endpoint protocol.SessionEndpoint) bool { return endpoint.Name == app.Name }) {
-			return nil
+			return nil, nil
 		}
-		endpoints[app.Name] = protocol.AppPath(app.Name)
-	}
-	if len(endpoints) == 0 {
-		return nil
-	}
-	audience, _, err := d.manager.sessionAudience(d.name)
-	if err != nil {
-		return nil
-	}
-	for name, path := range endpoints {
-		endpoints[name] = audience + path
-	}
-	client := *d.manager.client.client
-	client.Timeout = d.manager.client.timeout
-	return &servedApps{endpoints: endpoints, client: &client, signIn: func(ctx context.Context, origin string) (string, error) {
-		token, err := d.manager.resourceToken(ctx, origin)
-		if err != nil {
-			return "", err
+		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name}
+		var contract json.RawMessage
+		if err := d.manager.Call(ctx, ControlPlane(d.name), toolGetAppContract, request, &contract); err != nil {
+			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
-		return token.AccessToken, nil
-	}}
+		if served == nil {
+			served = map[string]json.RawMessage{}
+		}
+		served[app.Name] = contract
+	}
+	return served, nil
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
 	options := d.options
-	if options.served = d.served(); options.served == nil {
-		return nil
+	var err error
+	if options.served, err = d.served(ctx); options.served == nil {
+		return err
 	}
 	prepared, cleanup, err := prepareManifestTypes(ctx, d.manifest, options)
 	if err != nil {

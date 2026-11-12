@@ -3,6 +3,7 @@ package installation
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -93,8 +94,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	prepareOptions := typeOptions
 	prepareOptions.Run = options.extractTypes
 	if options.served != nil {
-		prepareOptions.Run, prepareOptions.HTTPClient, prepareOptions.SignIn = nil, options.served.client, options.served.signIn
-		prepareOptions.Served = map[string]string{}
+		prepareOptions.Run, prepareOptions.Served = nil, map[string]json.RawMessage{}
 	}
 	var pathApps []*manifestApp
 	for i := range manifest.Apps {
@@ -113,7 +113,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			pathApps = append(pathApps, app)
 			byApp[app.Name] = typegen.Source{Path: app.Path}
 			if options.served != nil {
-				prepareOptions.Served[app.Path] = options.served.endpoints[app.Name]
+				prepareOptions.Served[app.Path] = options.served[app.Name]
 			}
 			if consumer != nil {
 				for _, name := range app.resolved.Requires {
