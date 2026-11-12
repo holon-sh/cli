@@ -29,8 +29,23 @@ type devChange struct {
 	manifest bool
 }
 
+type fileWatcher interface {
+	Add(name string) error
+	Close() error
+	events() (<-chan fsnotify.Event, <-chan error)
+}
+
+type fsnotifyWatcher struct{ *fsnotify.Watcher }
+
+func (w fsnotifyWatcher) events() (<-chan fsnotify.Event, <-chan error) { return w.Events, w.Errors }
+
+func watchFiles() (fileWatcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	return fsnotifyWatcher{watcher}, err
+}
+
 type devWatcher struct {
-	watcher  *fsnotify.Watcher
+	watcher  fileWatcher
 	metadata sets.Set[string]
 	contexts sets.Set[string]
 	changes  chan devChange
@@ -39,8 +54,8 @@ type devWatcher struct {
 	clock    clock.WithTicker
 }
 
-func newDevWatcher(manifest manifestSpec, clk clock.WithTicker, output *progressOutput) (*devWatcher, error) {
-	watcher, err := fsnotify.NewWatcher()
+func newDevWatcher(manifest manifestSpec, watch func() (fileWatcher, error), clk clock.WithTicker, output *progressOutput) (*devWatcher, error) {
+	watcher, err := watch()
 	if err != nil {
 		return nil, err
 	}
@@ -124,9 +139,10 @@ func (w *devWatcher) run() {
 	pending := devChange{contexts: sets.New[string]()}
 	var debounce <-chan time.Time
 	var output chan<- devChange
+	events, errs := w.watcher.events()
 	for {
 		select {
-		case event, ok := <-w.watcher.Events:
+		case event, ok := <-events:
 			if !ok {
 				return
 			}
@@ -158,7 +174,7 @@ func (w *devWatcher) run() {
 		case output <- pending:
 			pending = devChange{contexts: sets.New[string]()}
 			output = nil
-		case err, ok := <-w.watcher.Errors:
+		case err, ok := <-errs:
 			if !ok {
 				return
 			}
@@ -179,6 +195,7 @@ type devLoop struct {
 	manifest            manifestSpec
 	apps                []string
 	clock               clock.WithTicker
+	watch               func() (fileWatcher, error)
 	started             time.Time
 	options             buildOptions
 	session             protocol.SessionResponse
@@ -204,7 +221,7 @@ func (d *devLoop) renew(ctx context.Context) {
 const watching = "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev."
 
 func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
-	watcher, err := newDevWatcher(d.manifest, d.clock, d.options.output)
+	watcher, err := newDevWatcher(d.manifest, d.watch, d.clock, d.options.output)
 	if err != nil {
 		return fmt.Errorf("watch build contexts: %w", err)
 	}
@@ -253,7 +270,7 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		case change := <-changes:
 			stopRead()
 			if d.rebuild(ctx, change) {
-				next, err := newDevWatcher(d.manifest, d.clock, d.options.output)
+				next, err := newDevWatcher(d.manifest, d.watch, d.clock, d.options.output)
 				if err != nil {
 					return fmt.Errorf("watch build contexts: %w", err)
 				}

@@ -36,6 +36,7 @@ type reloadFixture struct {
 	t        *testing.T
 	root     string
 	registry *imageRegistry
+	files    *fakeFiles
 	stdout   *installationtest.ObservedOutput
 	stderr   *installationtest.ObservedOutput
 	await    func(check func() bool)
@@ -89,6 +90,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	f.registry, registry = buildRegistry(t)
 	h := newRunHarness(t)
 	h.serveContract()
+	f.files = &h.files
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		grant := buildGrant(registry)
 		grant.Repositories["beta"] = "holon/upload/beta"
@@ -197,11 +199,15 @@ func (f *reloadFixture) watching() {
 
 func (f *reloadFixture) save(files map[string]string, line string) {
 	f.t.Helper()
+	var reads int
+	f.await(func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		reads = len(f.reads)
+		return reads > 0 && f.reads[reads-1] == strconv.Itoa(f.revision)
+	})
 	from := len(f.stderr.String())
-	f.mu.Lock()
-	reads := len(f.reads)
-	f.mu.Unlock()
-	sourceFiles(f.t, f.root, files)
+	f.files.save(f.t, f.root, files)
 	f.await(func() bool {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -359,11 +365,6 @@ func TestDevDetachedStartsItsOwnSession(t *testing.T) {
 func TestDevSaveToAnAppRemovedFromTheSession(t *testing.T) {
 	f := startReloadFixture(t, true)
 	f.update(func() { f.served = nil })
-	f.await(func() bool {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		return slices.Contains(f.reads, strconv.Itoa(f.revision))
-	})
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reload failed")
 	if requests := f.reloadRequests(); len(requests) != 0 {
 		t.Fatalf("reload_app %+v", requests)
@@ -458,7 +459,7 @@ func TestDevStartup(t *testing.T) {
 func TestDevInstallsNothingOnThisMachine(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	f := startReloadFixture(t, true)
-	sourceFiles(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
+	f.files.save(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
 	f.await(func() bool {
 		data, _ := os.ReadFile(filepath.Join(f.root, "alpha", "package.json"))
 		return strings.Contains(string(data), `"#holon-sh"`)

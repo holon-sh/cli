@@ -46,6 +46,7 @@ type commandConfig struct {
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
 	Clock              clock.WithTicker
+	watch              func() (fileWatcher, error)
 	verbose            bool
 	jsonOutput         bool
 	output             *progressOutput
@@ -174,7 +175,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	}
 	recordPath := manager.sessionRecordPath(config.manifest, apps)
 	dev := &devLoop{
-		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), started: config.clock().Now(), options: options,
+		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), watch: config.watch, started: config.clock().Now(), options: options,
 		pending: sets.New[string](), announce: true,
 	}
 	first := options

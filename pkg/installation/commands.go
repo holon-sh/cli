@@ -18,7 +18,7 @@ const appsHelp = "APP is an app in holon.yaml (or -p FILE), else the directory .
 	"Apps outside holon.yaml take --public or --oauth; one already in production keeps its access rules without them."
 
 func Commands() []*cobra.Command {
-	return newCommands(commandConfig{})
+	return newCommands(commandConfig{watch: watchFiles})
 }
 
 func newCommands(config commandConfig) []*cobra.Command {
