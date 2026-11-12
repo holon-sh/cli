@@ -433,6 +433,48 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 	}
 }
 
+func TestDevShowsEachStartingAppReadyWhenItServes(t *testing.T) {
+	progressing := []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Progressing"}}
+	serving := []protocol.Condition{{Type: protocol.ConditionReady, Status: "True"}}
+	chat := []protocol.SessionEndpoint{{Name: "chat"}}
+	both := []protocol.SessionEndpoint{{Name: "agent"}, {Name: "chat"}}
+	apps := []protocol.App{{Name: "agent"}, {Name: "chat"}}
+	for _, test := range []struct {
+		name     string
+		accepted protocol.SessionResponse
+		polls    []protocol.SessionResponse
+		want     string
+	}{
+		{"a new session", protocol.SessionResponse{Apps: apps}, []protocol.SessionResponse{
+			{Conditions: progressing, Endpoints: chat, Operation: &protocol.LifecycleOperation{ID: "1"}},
+			{Conditions: progressing, Endpoints: chat}, {Conditions: serving, Endpoints: both},
+		}, "||chat ready|agent ready"},
+		{"an update to served apps", protocol.SessionResponse{Apps: apps, Endpoints: both}, []protocol.SessionResponse{
+			{Conditions: progressing, Endpoints: both}, {Conditions: serving, Endpoints: both},
+		}, "||agent ready\nchat ready"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stream bytes.Buffer
+			output, _, _ := newProgressOutput(io.Discard, &stream, false, commandConfig{}.clock())
+			dev := devLoop{
+				options: buildOptions{output: output},
+				pending: sets.New("agent", "chat"), starting: startingApps(test.accepted),
+			}
+			got := ""
+			for _, dev.session = range test.polls {
+				stream.Reset()
+				if err := dev.settle(io.Discard); err != nil {
+					t.Fatal(err)
+				}
+				got += "|" + strings.TrimSpace(stream.String())
+			}
+			if got != test.want {
+				t.Fatalf("rows after each poll = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestDevStopsWhenReauthenticationIsRequired(t *testing.T) {
 	t.Parallel()
 	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {

@@ -184,6 +184,7 @@ type devLoop struct {
 	options                buildOptions
 	session                protocol.SessionResponse
 	changedImages, pending sets.Set[string]
+	starting               sets.Set[string]
 	announce, unapplied    bool
 	preparing              chan preparation
 	cancelPreparation      context.CancelFunc
@@ -278,6 +279,7 @@ func (d *devLoop) settle(stdout io.Writer) error {
 	if d.pending.Len() == 0 {
 		return nil
 	}
+	d.options.output.serving(d.session, d.starting)
 	ready, err := SessionReady(d.session)
 	if !ready {
 		return err
@@ -426,7 +428,7 @@ func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[pr
 	for _, name := range remove {
 		d.options.output.status(name, "removed", progressDone)
 	}
-	d.session = updated
+	d.session, d.starting = updated, startingApps(updated)
 	return nil
 }
 
