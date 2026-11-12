@@ -84,29 +84,6 @@ func runtimePackage(t *testing.T, app, pkg string) string {
 	return dir
 }
 
-func installRuntime(t *testing.T, app, fixture string) {
-	t.Helper()
-	dir := filepath.Join(app, "node_modules", "holon-sh")
-	if err := os.RemoveAll(dir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.CopyFS(dir, os.DirFS(fixture)); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// linkTypeScript makes the tooling's compiler available to app, whose node_modules must exist.
-func linkTypeScript(t *testing.T, app string) {
-	t.Helper()
-	compiler, err := filepath.Abs("../../tooling/typescript/node_modules/typescript")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(compiler, filepath.Join(app, "node_modules/typescript")); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // typeScriptApp makes a project with a stand-in holon-sh and the tooling's compiler.
 func typeScriptApp(t *testing.T) string {
 	t.Helper()
@@ -115,17 +92,21 @@ func typeScriptApp(t *testing.T) string {
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
 	put(t, app, "tsconfig.json", `{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true,"allowJs":true,"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext","allowImportingTsExtensions":true}}`)
 	put(t, runtimePackage(t, app, "holon-sh"), "runtime.d.ts", "export type ToolClient<I, O, R, E> = unknown;\nexport declare class ToolCallError {}\nexport type EndpointBinding = unknown;\nexport type CreateOptions = unknown;\n")
-	linkTypeScript(t, app)
+	compiler, err := filepath.Abs("../../tooling/typescript/node_modules/typescript")
+	if err == nil {
+		err = os.Symlink(compiler, filepath.Join(app, "node_modules/typescript"))
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
 	return app
 }
 
-func needPython(t *testing.T) string {
+func needPython(t *testing.T) {
 	t.Helper()
-	program, err := typeLanguages["python"].localProgram(context.Background())
-	if err != nil {
+	if _, err := typeLanguages["python"].localProgram(context.Background()); err != nil {
 		t.Skip(err)
 	}
-	return program
 }
 func needNode(t *testing.T) {
 	t.Helper()
