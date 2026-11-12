@@ -49,6 +49,18 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			apps[index] = declaration
 			continue
 		}
+		if app.Path != "" && options.development {
+			declaration.Port = 0
+			if declaration.Overlay = options.overlays[app.Name]; declaration.Overlay == "" {
+				packed, err := options.packSource(ctx, app, app.resolved.types.root, upload)
+				if err != nil {
+					return nil, err
+				}
+				declaration.Overlay = packed.overlay.Digest.String()
+			}
+			apps[index] = declaration
+			continue
+		}
 		group.Go(func() (err error) {
 			finish := options.output.measure(app.Name, "build and upload")
 			defer finish()
@@ -70,12 +82,6 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 				declaration.Image, declaration.Port = build.Image, build.Runtime.Port
 				apps[index] = declaration
 				return nil
-			}
-			if app.Path != "" && options.development {
-				declaration.Port = 0
-				declaration.Overlay, err = options.pushSource(ctx, app, app.resolved.types.root, upload, options.overlays[app.Name])
-				apps[index] = declaration
-				return err
 			}
 			var image string
 			if app.resolved.Image == "" {

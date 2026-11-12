@@ -382,7 +382,9 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 			return true
 		}
 	}
-	d.reload(ctx, change.contexts)
+	if change.contexts.Len() != 0 && d.reload(ctx, change.contexts) && d.pending.Len() == 0 {
+		d.options.output.problem("MCP types", d.generate(ctx))
+	}
 	return false
 }
 
@@ -403,31 +405,29 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	if err := d.options.types.acquire(resolved); err != nil {
 		return false, err
 	}
-	request, err := uploadManifest(ctx, d.manager, d.name, resolved, d.options)
+	options := d.options
+	options.overlays = recordedSources(d.session.Apps)
+	request, err := uploadManifest(ctx, d.manager, d.name, resolved, options)
 	if err != nil {
 		return false, err
 	}
 	d.options.output.deploying(request.Apps)
-	if err := d.update(ctx, resolved, request, removedApps(d.session.Apps, request.Apps)...); err != nil {
+	if err := d.update(ctx, request, removedApps(d.session.Apps, request.Apps)...); err != nil {
 		return false, err
 	}
 	d.manifest, d.announce = resolved, true
 	return true, nil
 }
 
-func (d *devLoop) update(ctx context.Context, manifest manifestSpec, desired protocol.AppsRequestFor[protocol.App], remove ...string) error {
+func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[protocol.App], remove ...string) error {
 	updated, err := replaceExecution(ctx, d.manager, d.name, d.session, desired, remove...)
 	if err != nil {
 		d.options.output.apps(desired.Apps, "deployment failed", progressError)
 		return err
 	}
 	for _, app := range desired.Apps {
-		i := slices.IndexFunc(d.session.Apps, func(running protocol.App) bool { return running.Name == app.Name })
-		if i < 0 || d.session.Apps[i].Image != app.Image || d.session.Apps[i].Overlay == app.Overlay {
+		if slices.ContainsFunc(d.session.Apps, func(running protocol.App) bool { return running.Name == app.Name }) {
 			d.sent[app.Name] = app.Overlay
-		} else if err := d.resend(ctx, manifest, app.Name); err != nil {
-			d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
-			continue
 		}
 		d.pending.Insert(app.Name)
 	}

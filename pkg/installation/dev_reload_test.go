@@ -50,6 +50,7 @@ type reloadFixture struct {
 	failSave bool
 	creates  int
 	started  string
+	uploaded int
 	served   []protocol.App
 	revision int
 	changed  chan struct{}
@@ -129,7 +130,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			switch installationtest.ToolName(r) {
 			case protocol.ToolCreateSession:
 				f.creates++
-				f.served, f.started = input.Apps, input.Apps[0].Overlay
+				f.served, f.started, f.uploaded = input.Apps, input.Apps[0].Overlay, f.uploads()
 			case protocol.ToolUpdateSession:
 				if f.failSave {
 					f.failSave = false
@@ -275,11 +276,12 @@ func TestDevSaves(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true)
+			started := len(f.reloadRequests())
 			f.update(func() { f.failNext = test.failReload })
 			for i, files := range test.saves {
 				f.save(files, test.lines[i])
 			}
-			if reloads := len(f.reloadRequests()); reloads != test.reloads {
+			if reloads := len(f.reloadRequests()) - started; reloads != test.reloads {
 				t.Fatalf("reloads = %d, want %d", reloads, test.reloads)
 			}
 		})
@@ -296,13 +298,13 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 		uploads int
 		apps    []string
 	}{
-		{name: "unchanged source is neither uploaded nor reloaded", creates: 1},
+		{name: "unchanged source is neither sent nor uploaded", creates: 1},
 		{
 			name: "server source edited since reloads into the session", edit: map[string]string{"alpha/tools.py": "second"},
 			creates: 1, reloads: 1, uploads: 1,
 		},
 		{
-			name: "a reload that fails is not reported ready", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1, uploads: 1,
+			name: "a reload that fails is neither reported ready nor uploaded", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1,
 			between: func(_ *testing.T, f *reloadFixture) { f.failNext = true },
 		},
 		{
@@ -310,7 +312,7 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			creates: 1, apps: []string{"beta"},
 		},
 		{
-			name: "the same apps from another directory start their own session", creates: 2, uploads: 1,
+			name: "the same apps from another directory start their own session", creates: 2, reloads: 1, uploads: 1,
 			between: func(t *testing.T, f *reloadFixture) {
 				moved := filepath.Join(t.TempDir(), "elsewhere")
 				if err := os.Rename(f.root, moved); err != nil {
@@ -331,20 +333,29 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 				}
 			})
 			sourceFiles(t, f.root, test.edit)
-			uploaded := f.uploads()
+			uploaded, reloaded := f.uploads(), len(f.reloadRequests())
 			f.start()
 			f.watching()
+			if err := f.stop(); err != nil {
+				t.Fatalf("second run: %v stderr=%q", err, f.stderr.String())
+			}
 			if uploads := f.uploads() - uploaded; uploads != test.uploads {
 				t.Fatalf("uploads = %d, want %d", uploads, test.uploads)
 			}
 			if f.created() != test.creates {
 				t.Fatalf("creates = %d, want %d; stderr=%q", f.created(), test.creates, f.stderr.String())
 			}
-			if len(f.reloadRequests()) != test.reloads {
-				t.Fatalf("reloads = %d, want %d", len(f.reloadRequests()), test.reloads)
+			if reloads := len(f.reloadRequests()) - reloaded; reloads != test.reloads {
+				t.Fatalf("reloads = %d, want %d", reloads, test.reloads)
 			}
 			if names := f.apps(); !slices.Equal(names, append([]string{"alpha"}, test.apps...)) {
 				t.Fatalf("session apps = %v", names)
+			}
+			f.mu.Lock()
+			recorded := f.served[slices.IndexFunc(f.served, func(app protocol.App) bool { return app.Name == "alpha" })].Overlay
+			f.mu.Unlock()
+			if f.blob(recorded) == nil {
+				t.Fatalf("the session names source %s, which the registry does not hold", recorded)
 			}
 			if strings.Contains(f.stderr.String(), "alpha reload failed") == strings.Contains(f.stderr.String(), "alpha ready") {
 				t.Fatalf("stderr=%q", f.stderr.String())
@@ -390,10 +401,11 @@ func TestDevDetachedStartsItsOwnSession(t *testing.T) {
 
 func TestDevSaveToAnAppRemovedFromTheSession(t *testing.T) {
 	f := startReloadFixture(t, true)
+	started := len(f.reloadRequests())
 	f.update(func() { f.served = nil })
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reload failed")
-	if requests := f.reloadRequests(); len(requests) != 0 {
-		t.Fatalf("sources sent = %d", len(requests))
+	if sent := len(f.reloadRequests()) - started; sent != 0 {
+		t.Fatalf("sources sent = %d", sent)
 	}
 }
 
@@ -405,13 +417,20 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	if app.Image != "" || app.Port != 0 {
 		t.Fatalf("session app = %+v", app)
 	}
+	if first := f.reloadRequests()[0]; first.Digest != f.started || !strings.Contains(string(f.overlay(t, f.started)["server.py"]), "app = None") {
+		t.Fatalf("the session was created from %s and first sent %s", f.started, first.Digest)
+	}
+	if f.uploaded != 0 || strings.Contains(f.stderr.String(), "alpha uploaded") {
+		t.Fatalf("uploads before the session existed = %d; stderr=%q", f.uploaded, f.stderr.String())
+	}
+	from := len(f.stderr.String())
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reloaded")
-	request := f.reloadRequests()[0]
+	if !strings.Contains(f.stderr.String()[from:], "alpha reloaded") {
+		t.Fatalf("stderr=%q", f.stderr.String())
+	}
+	request := f.reloadRequests()[1]
 	if request.Session != "gentle-otter-482" || request.App != "alpha" {
 		t.Fatalf("source sent to %s %s", request.Session, request.App)
-	}
-	if !strings.Contains(string(f.overlay(t, f.started)["server.py"]), "app = None") {
-		t.Fatal("the overlay a session starts from lacks the server source")
 	}
 	f.await(func() bool {
 		f.mu.Lock()
@@ -477,7 +496,7 @@ func TestDevGeneratesClientsFromTheRunningApp(t *testing.T) {
 		return clients
 	}
 	reloads := f.reloadRequests()
-	if len(reloads) != 1 || generated(f.overlay(t, f.started)) != "" || !strings.Contains(generated(f.overlay(t, reloads[0].Digest)), "lookup") {
+	if len(reloads) != 2 || reloads[0].Digest != f.started || generated(f.overlay(t, f.started)) != "" || !strings.Contains(generated(f.overlay(t, reloads[1].Digest)), "lookup") {
 		t.Fatalf("reloads = %d; stderr=%q", len(reloads), f.stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(f.root, "alpha", "generated", "holon-ui")); err != nil {
@@ -498,7 +517,7 @@ func TestDevStartup(t *testing.T) {
 	f.await(func() bool {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		return slices.Equal(f.reads, []string{"0", "1"})
+		return slices.Equal(f.reads, []string{"0", "1", "2"})
 	})
 }
 
