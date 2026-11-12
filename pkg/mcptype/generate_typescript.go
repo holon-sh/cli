@@ -3,6 +3,7 @@ package mcptype
 import (
 	"context"
 	"fmt"
+	"net/url"
 )
 
 // bindingTypes declares the generated factory over the runtime's own binding and option types, so a
@@ -64,9 +65,10 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 			"index.d.mts":    types + bindingTypes + fmt.Sprintf(exposeTypes, runtime),
 		}
 		if request.Own != "" {
-			own := quoted(request.Own)
-			files[TypeScriptModule] += fmt.Sprintf("export const App = /* @__PURE__ */ appClass(identity, contracts, %s);\n", own)
-			files["index.d.mts"] += fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\ntype OwnAppKey = %s;\nexport declare class App extends HostApp { readonly tools: Apps[OwnAppKey][\"tools\"]; readonly resources: Apps[OwnAppKey][\"resources\"]; readonly callTool: Apps[OwnAppKey][\"callTool\"] }\n", own)
+			// Holon serves an app's MCP endpoint at /mcp/<app> on the origin that serves its page.
+			own, endpoint := quoted(request.Own), quoted("/mcp/"+url.PathEscape(request.Own))
+			files[TypeScriptModule] += fmt.Sprintf("export const App = /* @__PURE__ */ appClass(identity, contracts, %s);\nexport const endpoint = %s;\n", own, endpoint)
+			files["index.d.mts"] += fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\ntype OwnAppKey = %s;\nexport declare class App extends HostApp { constructor(info?: ConstructorParameters<typeof HostApp>[0], ...rest: ConstructorParameters<typeof HostApp> extends [unknown, ...infer Rest] ? Rest : never); readonly tools: Apps[OwnAppKey][\"tools\"]; readonly resources: Apps[OwnAppKey][\"resources\"]; readonly callTool: Apps[OwnAppKey][\"callTool\"] }\n/** The app's own MCP endpoint, a path on the origin that serves its page. */\nexport declare const endpoint: string;\n", own)
 		}
 		return files, nil
 	}
