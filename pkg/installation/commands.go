@@ -174,10 +174,6 @@ func withProject(cmd *cobra.Command, config *commandConfig) *cobra.Command {
 	var public bool
 	var oauth *protocol.OAuthRequirement
 	cmd.Flags().StringVarP(&config.file, "file", "f", config.file, "App manifest file (default holon.yaml or holon.yml)")
-	// The flag's old name, hidden and silent so existing scripts and their
-	// output keep working.
-	cmd.Flags().StringVarP(&config.file, "project", "p", config.file, "")
-	_ = cmd.Flags().MarkHidden("project")
 	cmd.Flags().BoolVar(&public, "public", false, "Let anyone call the apps outside holon.yaml")
 	cmd.Flags().BoolFunc("oauth", "Require sign-in for the apps outside holon.yaml; --oauth=SCOPE,... also requires the scopes", func(value string) error {
 		oauth = &protocol.OAuthRequirement{}
