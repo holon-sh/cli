@@ -193,7 +193,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	f.start = func(args ...string) {
 		t.Helper()
 		var stop func() error
-		f.stdout, f.stderr, stop = startDev(t, h.run, append([]string{"--project", filepath.Join(f.root, manifestFileName)}, args...)...)
+		f.stdout, f.stderr, stop = startDev(t, h.run, append([]string{"--file", filepath.Join(f.root, manifestFileName)}, args...)...)
 		stopOnce := sync.OnceValue(stop)
 		f.stop = stopOnce
 		t.Cleanup(func() { _ = stopOnce() })
@@ -360,7 +360,7 @@ func TestDevAppliesProjectChanges(t *testing.T) {
 		fail         bool
 		line, served string
 	}{
-		{files: map[string]string{manifestFileName: alphaManifest + betaRemote}, fail: true, line: "project replacement outcome conflicts", served: "alpha"},
+		{files: map[string]string{manifestFileName: alphaManifest + betaRemote}, fail: true, line: "manifest replacement outcome conflicts", served: "alpha"},
 		{files: map[string]string{"alpha/tools.py": "second"}, line: "beta ready", served: "alpha beta"},
 		{files: map[string]string{manifestFileName: alphaManifest}, line: "beta removed", served: "alpha"},
 	} {

@@ -12,7 +12,7 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-const appsHelp = "APP is an app in holon.yaml (or -p FILE), else the directory ./APP with a server.json. " +
+const appsHelp = "APP is an app in holon.yaml (or -f FILE), else the directory ./APP with a server.json. " +
 	"APP=SOURCE names an app's source: a directory, an MCP Registry server version URL, or an https MCP endpoint. " +
 	"Without APP arguments, every app in holon.yaml runs, or without one every ./*/server.json directory.\n\n" +
 	"Apps outside holon.yaml take --public or --oauth; one already in production keeps its access rules without them."
@@ -173,7 +173,11 @@ func newDeployCommand(config *commandConfig) *cobra.Command {
 func withProject(cmd *cobra.Command, config *commandConfig) *cobra.Command {
 	var public bool
 	var oauth *protocol.OAuthRequirement
-	cmd.Flags().StringVarP(&config.file, "project", "p", config.file, "Project config file (default holon.yaml or holon.yml)")
+	cmd.Flags().StringVarP(&config.file, "file", "f", config.file, "App manifest file (default holon.yaml or holon.yml)")
+	// The flag's old name, hidden and silent so existing scripts and their
+	// output keep working.
+	cmd.Flags().StringVarP(&config.file, "project", "p", config.file, "")
+	_ = cmd.Flags().MarkHidden("project")
 	cmd.Flags().BoolVar(&public, "public", false, "Let anyone call the apps outside holon.yaml")
 	cmd.Flags().BoolFunc("oauth", "Require sign-in for the apps outside holon.yaml; --oauth=SCOPE,... also requires the scopes", func(value string) error {
 		oauth = &protocol.OAuthRequirement{}

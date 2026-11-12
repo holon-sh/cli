@@ -74,7 +74,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
 			})
 			h.start(t, nil)
-			args := []string{"dev", "-p", filepath.Join(root, manifestFileName), "--detach"}
+			args := []string{"dev", "-f", filepath.Join(root, manifestFileName), "--detach"}
 			args = append(args, tc.flags...)
 			var output bytes.Buffer
 			err := executeCommand(ctx, args, &output, nil, h.run)

@@ -377,7 +377,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 			return false
 		}
 		d.unapplied = err != nil
-		d.options.output.problem("project", err)
+		d.options.output.problem("manifest", err)
 		if applied {
 			return true
 		}
