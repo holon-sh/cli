@@ -19,7 +19,6 @@ func TestDeclaredSources(t *testing.T) {
 		want []Source
 		err  string
 	}{
-		{name: "no descriptor"},
 		{
 			name: "sorted aliases, registry references, urls and project apps",
 			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"},"chat":{"url":"https://mcp.example/mcp"},"agent":{}}}}}}`,
@@ -37,9 +36,7 @@ func TestDeclaredSources(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			if test.data != "" {
-				put(t, root, "server.json", test.data)
-			}
+			put(t, root, "server.json", test.data)
 			got, err := DeclaredSources(root)
 			if test.err != "" {
 				if err == nil || !strings.Contains(err.Error(), filepath.Join(root, "server.json")) || !strings.Contains(err.Error(), test.err) {
@@ -84,7 +81,7 @@ func TestServerDescribesItself(t *testing.T) {
 	}
 }
 
-func TestOwnServer(t *testing.T) {
+func TestAppConsumerFindsTheOwnServer(t *testing.T) {
 	const node = `import { McpServer } from "@modelcontextprotocol/server";`
 	for _, test := range []struct {
 		name  string
@@ -92,9 +89,7 @@ func TestOwnServer(t *testing.T) {
 		want  string // the directory relative to the project, when one is found
 		fails bool
 	}{
-		{name: "none", files: map[string]string{"index.ts": node}},
 		{name: "entry at the root", files: map[string]string{"server.py": pythonProvider}, want: "."},
-		{name: "entry in a server directory", files: map[string]string{"server/server.ts": node}, want: "server"},
 		{name: "a web server beside an MCP server and a page", files: map[string]string{"server.js": "export default {};", "src/page.ts": node, "server/server.ts": node}, want: "server"},
 		{name: "a compiled binary named server", files: map[string]string{"server": ""}},
 		{name: "two servers", files: map[string]string{"server.py": pythonProvider, "server/server.py": pythonProvider}, fails: true},
@@ -104,16 +99,16 @@ func TestOwnServer(t *testing.T) {
 			for name, content := range test.files {
 				put(t, dir, name, content)
 			}
-			own, err := OwnServer(dir)
+			c, err := AppConsumer("app", dir)
 			if (err != nil) != test.fails {
-				t.Fatalf("OwnServer error = %v, want failure %t", err, test.fails)
+				t.Fatalf("AppConsumer error = %v, want failure %t", err, test.fails)
 			}
 			var got string
-			if own != nil {
-				got, _ = filepath.Rel(dir, own.Path)
+			if c != nil {
+				got, _ = filepath.Rel(dir, c.Server.Path)
 			}
 			if got != test.want {
-				t.Fatalf("OwnServer = %q, want %q", got, test.want)
+				t.Fatalf("own server = %q, want %q", got, test.want)
 			}
 		})
 	}

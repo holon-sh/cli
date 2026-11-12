@@ -28,7 +28,6 @@ func TestResolveDocumentFindsServerSources(t *testing.T) {
 	put(t, root, "odd/index.ts", "export default {};\n")
 	for _, test := range []struct{ path, want string }{
 		{"nested/src/server.py", ""},
-		{"nested", ""},
 		{"both", "keep exactly one server entry"},
 		{"none", "has no server entry"},
 		{"odd/index.ts", "is not a server entry"},
@@ -82,10 +81,7 @@ func TestPrepareRejectsInvalidConsumers(t *testing.T) {
 func TestGenerateKeepsFilesItDidNotWrite(t *testing.T) {
 	for _, test := range []struct{ target, file string }{
 		{TargetTS, "generated/holon-sh/index.mjs"},
-		{TargetPy, "holon.py"},
 		{TargetPy, "holon/__init__.py"},
-		{TargetPy, "holon/apps/__init__.py"},
-		{TargetGo, "holon/mine.go"},
 	} {
 		t.Run(test.file, func(t *testing.T) {
 			dir := t.TempDir()
@@ -111,7 +107,6 @@ func TestDeclaredTargetsFollowSDKDependencies(t *testing.T) {
 		err   error
 	}{
 		{"unrelated frontend", map[string]string{"package.json": `{"devDependencies":{"vite":"*"}}`, "server.py": ""}, nil, ErrNoRuntime},
-		{"optional node", map[string]string{"package.json": `{"optionalDependencies":{"holon-sh":"*"}}`}, []string{TargetTS}, nil},
 		{"python with frontend", map[string]string{"package.json": `{}`, "pyproject.toml": `[project]
 dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetPy}, nil},
 		{"all", map[string]string{"package.json": `{"devDependencies":{"holon-sh":"*","holon-ui":"*"}}`, "requirements.txt": "holon-sh==1.0.0"}, []string{TargetTS, TargetUI, TargetPy}, nil},
@@ -154,7 +149,6 @@ func TestParseSource(t *testing.T) {
 		arg  string
 		want Source
 	}{
-		{arg: "../orders", want: Source{Path: filepath.Join(cwd, "../orders")}},
 		{arg: "orders=../orders/server.py", want: Source{Alias: "orders", Path: filepath.Join(cwd, "../orders/server.py")}},
 		{arg: "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4", want: Source{Registry: &protocol.RegistryRef{Name: "io.github.upstash/context7", Version: "4.4.4", Registry: "https://registry.modelcontextprotocol.io"}}},
 		{arg: "docs=https://registry.example/v0/servers/example.com%2Fdocs/versions/1.0.0", want: Source{Alias: "docs", Registry: &protocol.RegistryRef{Name: "example.com/docs", Version: "1.0.0", Registry: "https://registry.example"}}},

@@ -134,14 +134,6 @@ func (s Source) validate() error {
 	return mcpregistry.ValidateEndpoint(s.Endpoint)
 }
 
-func (s Source) prepare(options Options) (Options, error) {
-	o := options.defaults()
-	if err := s.validate(); err != nil {
-		return o, err
-	}
-	return o, nil
-}
-
 // Consumer is a project directory that receives typed clients.
 type Consumer struct {
 	// Name signs the generated files' banners and labels output.
@@ -251,16 +243,6 @@ func ServerKey(serverName string) string {
 	return strings.TrimRight(key[:min(len(key), 49)], "-")
 }
 
-func regularNoSymlink(path, kind string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s must be a regular file: %s", kind, path)
-	}
-	return nil
-}
 func readTypeJSON(path string, out any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {

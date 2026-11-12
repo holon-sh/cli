@@ -161,10 +161,16 @@ var entryFiles = []string{"server.py", "src/server.py", "server.ts", "src/server
 func SourceEntry(root string) (string, error) {
 	var entry string
 	for _, name := range entryFiles {
-		if err := regularNoSymlink(filepath.Join(root, name), "server entry"); errors.Is(err, fs.ErrNotExist) {
+		path := filepath.Join(root, name)
+		info, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
-		} else if err != nil {
+		}
+		if err != nil {
 			return "", err
+		}
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("server entry must be a regular file: %s", path)
 		}
 		if entry != "" {
 			return "", fmt.Errorf("keep exactly one server entry (found %s and %s)", entry, name)

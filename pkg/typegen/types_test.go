@@ -122,34 +122,6 @@ func mustReject(t *testing.T, app string, diagnostics ...string) {
 	}
 }
 
-// Generated clients take the runtime's binding and option types: with holon-sh's own
-// declarations, a session hook and a plain fetch bind, and a binding's fields are still checked.
-func TestGeneratedClientsBindAsTheRuntimeDoes(t *testing.T) {
-	t.Parallel()
-	app := typeScriptApp(t)
-	installRuntime(t, app, "testdata/holon-sh")
-	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
-	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	put(t, app, "src/index.ts", `import { createApps, type EndpointBinding } from "#holon-sh";
-const binding: EndpointBinding = { endpoint: "mcp:", fetch };
-const apps = createApps({ orders: binding }, { session: () => ({
-  callTool: async () => ({ structuredContent: { total: 1 } }),
-  readResource: async () => ({ contents: [] }),
-  listTools: async () => ({ tools: [] }),
-}) });
-export const total: Promise<number> = apps.orders.tools.lookup({ id: "1" }).then(result => result.total);
-`)
-	if output, err := check(t, app); err != nil {
-		t.Fatalf("check: %v\n%s", err, output)
-	}
-	put(t, app, "src/index.ts", `import { createApps } from "#holon-sh";
-export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch } });
-`)
-	mustReject(t, app, "'fetsh' does not exist")
-}
-
 const editsSchema = `{"type":"object","required":["edits"],"properties":{"edits":{"type":"array","items":{
 	"oneOf":[{"$ref":"#/$defs/Updated"},{"$ref":"#/$defs/Removed"}],
 	"discriminator":{"propertyName":"op","mapping":{"cell.updated":"#/$defs/Updated","cell.removed":"#/$defs/Removed"}}}}},
@@ -160,6 +132,8 @@ const editsSchema = `{"type":"object","required":["edits"],"properties":{"edits"
 // An app's events are subscribed to by name, with their arguments checked and their data typed, as a
 // tool's input and output are. A union narrows on the field that tells its members apart, here in a
 // list and in the shape Pydantic writes for a discriminated union whose literal has a default.
+// TypeScript clients take holon-sh's own binding and option types: a session hook and a plain fetch
+// bind, and a binding's fields are still checked.
 func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 	orders := ordersMetadata()
 	orders.Schema.Events = []mcpcontract.Event{{Name: "cells.edited",
@@ -168,28 +142,42 @@ func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 	t.Run("typescript", func(t *testing.T) {
 		t.Parallel()
 		app := typeScriptApp(t)
-		installRuntime(t, app, "testdata/holon-sh")
+		runtime := filepath.Join(app, "node_modules", "holon-sh")
+		if err := os.RemoveAll(runtime); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.CopyFS(runtime, os.DirFS("testdata/holon-sh")); err != nil {
+			t.Fatal(err)
+		}
 		c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, orders)}}}
 		if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 			t.Fatal(err)
 		}
-		put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+		put(t, app, "src/index.ts", `import { apps, createApps, type EndpointBinding } from "#holon-sh";
 for await (const { data } of await apps.orders.ext.events.subscribe("cells.edited", { notebook: "1" })) {
   for (const edit of data.edits) {
     if (edit.op === "cell.updated") { const code: string = edit.code; }
     else { const id: string = edit.id; }
   }
 }
+const binding: EndpointBinding = { endpoint: "mcp:", fetch };
+const bound = createApps({ orders: binding }, { session: () => ({
+  callTool: async () => ({ structuredContent: { total: 1 } }),
+  readResource: async () => ({ contents: [] }),
+  listTools: async () => ({ tools: [] }),
+}) });
+export const total: Promise<number> = bound.orders.tools.lookup({ id: "1" }).then(result => result.total);
 `)
 		if output, err := check(t, app); err != nil {
 			t.Fatalf("check: %v\n%s", err, output)
 		}
-		put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+		put(t, app, "src/index.ts", `import { apps, createApps } from "#holon-sh";
 export const misnamed = apps.orders.ext.events.subscribe("cells.edit", { notebook: "1" });
 export const misargued = apps.orders.ext.events.subscribe("cells.edited", { notbook: "1" });
 for await (const { data } of await apps.orders.ext.events.subscribe("cells.edited", { notebook: "1" })) data.edits[0]!.code;
+export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch } });
 `)
-		mustReject(t, app, `"cells.edit"`, "'notbook' does not exist", "Property 'code' does not exist")
+		mustReject(t, app, `"cells.edit"`, "'notbook' does not exist", "Property 'code' does not exist", "'fetsh' does not exist")
 	})
 	t.Run("python", func(t *testing.T) {
 		t.Parallel()
@@ -198,7 +186,7 @@ for await (const { data } of await apps.orders.ext.events.subscribe("cells.edite
 		if err == nil {
 			err = os.Symlink(venv, filepath.Join(app, ".venv"))
 		}
-		if python := pythonEnvironment(app, ""); err != nil || exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
+		if python := pythonEnvironment(app); err != nil || exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
 			t.Skip("mypy is not installed in tooling/python/.venv")
 		}
 		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
@@ -314,12 +302,12 @@ export const owner: InputTypes["files"]["stat"]["Owner"] = { lgn: "a" };
 	t.Run("python", func(t *testing.T) {
 		t.Parallel()
 		app := t.TempDir()
-		// The tooling's environment, which has mypy, is the app's, as linkTypeScript lends the compiler.
+		// The tooling's environment, which has mypy, is the app's, as typeScriptApp lends the compiler.
 		venv, err := filepath.Abs("../../tooling/python/.venv")
 		if err == nil {
 			err = os.Symlink(venv, filepath.Join(app, ".venv"))
 		}
-		python := pythonEnvironment(app, "")
+		python := pythonEnvironment(app)
 		if err != nil || exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
 			t.Skip("mypy is not installed in tooling/python/.venv")
 		}

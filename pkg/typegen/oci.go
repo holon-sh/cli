@@ -1,47 +1,32 @@
 package typegen
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/containerd/containerd/v2/core/images"
+	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/ociimage"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
-	"oras.land/oras-go/v2/registry/remote/retry"
-)
-
-const (
-	dockerConfigEnv = "DOCKER_CONFIG"
-	homeEnv         = "HOME"
 )
 
 // DockerCredential looks registry credentials up in the Docker config, by the host being contacted.
 // DOCKER_CONFIG and HOME entries in env override this process's own.
 func DockerCredential(env []string) (auth.CredentialFunc, error) {
-	if err := validateEnv(env); err != nil {
+	env, err := commandenv.Environ(env)
+	if err != nil {
 		return nil, err
 	}
-	values := map[string]string{
-		dockerConfigEnv: os.Getenv(dockerConfigEnv),
-		homeEnv:         os.Getenv(homeEnv),
-	}
-	for _, entry := range env {
-		key, value, _ := strings.Cut(entry, "=")
-		values[key] = value
-	}
-	configDir := values[dockerConfigEnv]
+	configDir := commandenv.Value(env, "DOCKER_CONFIG")
 	if configDir == "" {
-		home := values[homeEnv]
+		home := commandenv.Value(env, "HOME")
 		if home == "" {
-			var err error
 			if home, err = os.UserHomeDir(); err != nil {
 				return nil, err
 			}
@@ -86,7 +71,7 @@ func resolveTypeMetadata(ctx context.Context, image string, o Options) (*Documen
 	if err != nil {
 		return nil, err
 	}
-	repository.Client = &auth.Client{Client: cmp.Or(o.HTTPClient, retry.DefaultClient), Cache: auth.NewCache(), Credential: credential}
+	repository.Client = &auth.Client{Client: o.HTTPClient, Cache: auth.NewCache(), Credential: credential}
 	descriptor, err := repository.Resolve(ctx, image)
 	if err != nil {
 		return nil, fmt.Errorf("resolve dependency contract for %s: %w", image, err)

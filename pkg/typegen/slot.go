@@ -106,8 +106,6 @@ func validateSlot(dir, target string) error {
 	return nil
 }
 
-// writeSlot atomically replaces a target's slot in the project at dir with exactly files. An identical
-// slot is left untouched.
 func writeSlot(dir, target string, files map[string][]byte) error {
 	if err := validateSlot(dir, target); err != nil {
 		return err
@@ -134,9 +132,6 @@ func writeSlot(dir, target string, files map[string][]byte) error {
 		return err
 	}
 	for name, content := range files {
-		if filepath.Base(name) != name || strings.HasPrefix(name, ".") {
-			return fmt.Errorf("invalid generated file %q", name)
-		}
 		if err := os.WriteFile(filepath.Join(temp, name), content, 0o644); err != nil {
 			return err
 		}

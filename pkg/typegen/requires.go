@@ -13,10 +13,16 @@ import (
 // serverMention is what an MCP server's entry names: the protocol, an SDK or holon-sh.
 var serverMention = regexp.MustCompile(`(?i)mcp|modelcontextprotocol|holon[-_]sh`)
 
-// OwnServer finds the MCP server a project keeps in dir or dir/server, as the directory holding its
-// entry, or returns nil when there is none. Only an entry that mentions MCP counts, since a project
-// can keep a plain web server under the same file name. More than one is an error.
-func OwnServer(dir string) (*Source, error) {
+// AppConsumer is the consumer for the app kept in dir, without its dependencies: the slots its SDK
+// dependencies declare and its own MCP server, kept in dir or dir/server as the directory holding its
+// entry. Only an entry that mentions MCP counts, since a project can keep a plain web server under the
+// same file name, and more than one is an error. It returns nil for an app with neither, which has
+// nothing to generate or check.
+func AppConsumer(name, dir string) (*Consumer, error) {
+	targets, err := DeclaredTargets(dir)
+	if err != nil && !errors.Is(err, ErrNoRuntime) {
+		return nil, err
+	}
 	var own *Source
 	for _, root := range []string{dir, filepath.Join(dir, "server")} {
 		if info, err := os.Stat(root); err != nil || !info.IsDir() {
@@ -41,20 +47,8 @@ func OwnServer(dir string) (*Source, error) {
 		}
 		own = &Source{Path: root}
 	}
-	return own, nil
-}
-
-// AppConsumer is the consumer for the app kept in dir, without its dependencies: the slots its SDK
-// dependencies declare and its OwnServer. It returns nil for an app with neither, which has nothing
-// to generate or check.
-func AppConsumer(name, dir string) (*Consumer, error) {
-	targets, err := DeclaredTargets(dir)
-	if err != nil && !errors.Is(err, ErrNoRuntime) {
-		return nil, err
-	}
-	own, err := OwnServer(dir)
-	if err != nil || (len(targets) == 0 && own == nil) {
-		return nil, err
+	if len(targets) == 0 && own == nil {
+		return nil, nil
 	}
 	return &Consumer{Name: name, Dir: dir, Targets: targets, Server: own}, nil
 }
