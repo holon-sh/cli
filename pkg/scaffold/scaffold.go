@@ -169,7 +169,7 @@ func (p Project) Write() (created, changed, notes []string, err error) {
 			continue
 		case present && slices.Contains([]string{"tsconfig.json", "pyproject.toml", "go.mod"}, name):
 			if name == "tsconfig.json" {
-				notes = append(notes, "kept tsconfig.json: holon types check uses it, so it must include ui/ with the DOM library and the node and vite/client types")
+				notes = append(notes, "kept tsconfig.json: holon types check uses it, so it must include ui/ with the DOM library and the node types")
 			}
 			continue
 		case name == ".gitignore" && present:

@@ -3,23 +3,12 @@ package mcptype
 import (
 	"context"
 	"fmt"
-	"net/url"
 )
 
 // bindingTypes declares the generated factory over the runtime's own binding and option types, so a
 // consumer's object literals are checked against the installed runtime rather than a copy of it.
-// The runtime's binding requires an endpoint; a session hook serves the app without dialing it.
-// endpointType declares the page's own endpoint.
-const endpointType = "/** The MCP endpoint of this app, as a path on the origin that serves the page. */\nexport declare const endpoint: string;\n"
-
 const bindingTypes = `export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
-`
-
-// exposeTypes re-exports the browser runtime's page tools and narrows exposeTools to these apps.
-const exposeTypes = `export type { ExposeOptions, PageResult, PageSchema, PageInput, PageAnnotations, PageTool, PageHost } from %[1]s;
-export { registerPageTools } from %[1]s;
-export declare function exposeTools(app: Apps[keyof Apps], options?: import(%[1]s).ExposeOptions): Promise<boolean>;
 `
 
 // TypeScriptModule is the generated clients' module, beside its declarations in index.d.mts. Its .mjs
@@ -62,21 +51,17 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> };\n", runtime, runtime, tools, resources, events)
 	identity, contracts := encode(request.caller()), encode(request.contracts)
 	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
-	if request.Target == "browser" {
-		files := map[string]string{
-			TypeScriptModule: fmt.Sprintf("import { bindApps, appClass } from %s;\nexport {ToolCallError, exposeTools, registerPageTools} from %s;\n%s", runtime, runtime, bound),
-			"index.d.mts":    types + bindingTypes + fmt.Sprintf(exposeTypes, runtime),
-		}
-		if request.Own != "" {
-			// Holon serves an app's MCP endpoint at /mcp/<app> on the origin that serves its page.
-			own, endpoint := quoted(request.Own), quoted("/mcp/"+url.PathEscape(request.Own))
-			files[TypeScriptModule] += fmt.Sprintf("export const App = /* @__PURE__ */ appClass(identity, contracts, %s);\nexport const endpoint = %s;\n", own, endpoint)
-			files["index.d.mts"] += fmt.Sprintf("import { App as HostApp } from \"@modelcontextprotocol/ext-apps\";\ntype OwnAppKey = %s;\nexport declare class App extends HostApp { constructor(info?: ConstructorParameters<typeof HostApp>[0], ...rest: ConstructorParameters<typeof HostApp> extends [unknown, ...infer Rest] ? Rest : never); readonly tools: Apps[OwnAppKey][\"tools\"]; readonly resources: Apps[OwnAppKey][\"resources\"]; readonly callTool: Apps[OwnAppKey][\"callTool\"] }\n", own) + endpointType
-		}
-		return files, nil
+	imports, module, declarations := "bindApps", bound, types
+	if request.Target == "node" {
+		imports, module, declarations = "createApps as create, bindApps", module+"export const apps = create(identity, contracts);\n", declarations+"export declare const apps: Apps;\n"
+	} else if own := quoted(request.Own); request.Own != "" {
+		// Holon serves an app's MCP endpoint at /mcp/<app> on the origin that serves its page.
+		imports += ", connect as open"
+		module += fmt.Sprintf("export const connect = options => open({ identity, contracts, own: %s, endpoint: %s }, options);\n", own, quoted("/mcp/"+request.Own))
+		declarations += fmt.Sprintf("export declare const connect: import(%s).Connect<Inputs[%[2]s], Outputs[%[2]s], Resources[%[2]s], Events[%[2]s]>;\n", runtime, own)
 	}
 	return map[string]string{
-		TypeScriptModule: fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\n%sexport const apps = create(identity, contracts);\n", runtime, runtime, bound),
-		"index.d.mts":    types + "export declare const apps: Apps;\n" + bindingTypes,
+		TypeScriptModule: fmt.Sprintf("import { %s } from %s;\nexport { ToolCallError } from %s;\n%s", imports, runtime, runtime, module),
+		"index.d.mts":    declarations + bindingTypes,
 	}, nil
 }

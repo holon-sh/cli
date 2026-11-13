@@ -25,8 +25,8 @@ func TestDockerAutomaticTypes(t *testing.T) {
 	const pkg = `{"type":"module","engines":{"node":">=22.20.0 <23"},
 "dependencies":{"@modelcontextprotocol/server":"2.3.1","holon-sh":"^0.0.1-dev.11","holon-ui":"^0.0.1-dev.8","zod":"4.6.5"},
 "devDependencies":{"typescript":"7.0.2"},
-"scripts":{"build":"node --input-type=module -e \"import {apps} from '#holon-sh'; import {App} from '#holon-ui'; ` +
-		`if (!apps.orders || typeof App !== 'function') throw Error('missing generated import')\""}}`
+"scripts":{"build":"node --input-type=module -e \"import {apps} from '#holon-sh'; ` +
+		`if (!apps.orders) throw Error('missing generated import')\""}}`
 	const config = `{"compilerOptions":{"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext",
 "strict":true,"skipLibCheck":true,"noEmit":true},"include":["server.ts"]}`
 	provider := `import {McpServer,createMcpHandler} from "@modelcontextprotocol/server"; import {z} from "zod";

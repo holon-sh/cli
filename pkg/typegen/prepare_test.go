@@ -54,7 +54,7 @@ func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing
 		if !strings.Contains(node, `"lookup"`) || strings.Contains(node, `"`+test.key+`": {`) != aliased || strings.Contains(python, "def status(") != aliased {
 			t.Fatalf("server clients under alias %q:\n%s\n%s", test.alias, node, python)
 		}
-		if browser := read(t, stage, "generated/holon-ui/index.d.mts"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `type OwnAppKey = "`+test.key+`"`) || strings.Contains(browser, `"checkout": {`) == aliased {
+		if browser := read(t, stage, "generated/holon-ui/index.d.mts"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `Connect<Inputs["`+test.key+`"]`) || strings.Contains(browser, `"checkout": {`) == aliased {
 			t.Fatalf("browser client under alias %q:\n%s", test.alias, browser)
 		}
 		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 1 {

@@ -178,13 +178,6 @@ export interface EventData {
 export type Events = { readonly [A in keyof EventArguments]: { [K in keyof EventArguments[A]]: { arguments: EventArguments[A][K]; data: K extends keyof EventData[A] ? EventData[A][K] : unknown } } };
 
 export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> };
+export declare const connect: import("holon-ui/runtime").Connect<Inputs["orders"], Outputs["orders"], Resources["orders"], Events["orders"]>;
 export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
-export type { ExposeOptions, PageResult, PageSchema, PageInput, PageAnnotations, PageTool, PageHost } from "holon-ui/runtime";
-export { registerPageTools } from "holon-ui/runtime";
-export declare function exposeTools(app: Apps[keyof Apps], options?: import("holon-ui/runtime").ExposeOptions): Promise<boolean>;
-import { App as HostApp } from "@modelcontextprotocol/ext-apps";
-type OwnAppKey = "orders";
-export declare class App extends HostApp { constructor(info?: ConstructorParameters<typeof HostApp>[0], ...rest: ConstructorParameters<typeof HostApp> extends [unknown, ...infer Rest] ? Rest : never); readonly tools: Apps[OwnAppKey]["tools"]; readonly resources: Apps[OwnAppKey]["resources"]; readonly callTool: Apps[OwnAppKey]["callTool"] }
-/** The MCP endpoint of this app, as a path on the origin that serves the page. */
-export declare const endpoint: string;

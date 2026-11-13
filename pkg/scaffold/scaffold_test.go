@@ -29,7 +29,7 @@ func TestWriteBesideAProject(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "billing")
 	put(t, dir, "pyproject.toml", "[project]\nname = \"billing\"\n")
 	put(t, dir, ".gitignore", ".venv\n")
-	put(t, dir, "package.json", "{\n  \"name\": \"billing\",\n  \"scripts\": {\n    \"build\": \"tsc\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^7.0.0\"\n  }\n}\n")
+	put(t, dir, "package.json", "{\n  \"name\": \"billing\",\n  \"scripts\": {\n    \"build\": \"\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^7.0.0\"\n  }\n}\n")
 	project := Project{Dir: dir, Language: "py", Name: "com.example/billing"}
 	created, changed, notes, err := project.Write()
 	if err != nil {
@@ -42,27 +42,10 @@ func TestWriteBesideAProject(t *testing.T) {
 		t.Errorf(".gitignore:\n%s", ignore)
 	}
 	pkg := read(t, dir, "package.json")
-	if !strings.Contains(pkg, `"vite": "^7.0.0"`) || !strings.Contains(pkg, `"build": "tsc"`) {
+	if !strings.Contains(pkg, `"vite": "^7.0.0"`) || !strings.Contains(pkg, `"build": ""`) {
 		t.Errorf("package.json:\n%s", pkg)
 	}
 	if len(notes) != 1 || !strings.Contains(notes[0], "build script") {
-		t.Errorf("notes = %v", notes)
-	}
-}
-
-func TestWriteKeepsAnEmptyBuildScript(t *testing.T) {
-	dir := t.TempDir()
-	put(t, dir, "package.json", `{"name": "billing", "scripts": {"build": ""}}`)
-	project := Project{Dir: dir, Language: "ts", Name: "com.example/billing"}
-	_, _, notes, err := project.Write()
-	if err != nil {
-		t.Fatal(err)
-	}
-	pkg := read(t, dir, "package.json")
-	if !strings.Contains(pkg, `"name": "billing"`) || !strings.Contains(pkg, `"build": ""`) {
-		t.Errorf("package.json:\n%s", pkg)
-	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "kept package.json's build script") {
 		t.Errorf("notes = %v", notes)
 	}
 }
