@@ -30,10 +30,8 @@ func ancestors(dir string) iter.Seq[string] {
 	}
 }
 
-// connectRuntime is the first holon-ui with connect, which generated browser clients import.
 const connectRuntime = "0.0.1-dev.12"
 
-// errNotInstalled reports a runtime that Node.js does not resolve.
 var errNotInstalled = errors.New("is not installed")
 
 // installedRuntime verifies that pkg is installed where Node.js resolves it from root, and that holon-ui
@@ -44,8 +42,11 @@ func installedRuntime(root, pkg string) error {
 		if !isFile(manifest) {
 			continue
 		}
+		if pkg != NodePackages[TargetUI] {
+			return nil
+		}
 		var installed PackageJSON
-		if err := readTypeJSON(manifest, &installed); err != nil || pkg != NodePackages[TargetUI] || semver.Compare("v"+installed.Version, "v"+connectRuntime) >= 0 {
+		if err := readTypeJSON(manifest, &installed); err != nil || semver.Compare("v"+installed.Version, "v"+connectRuntime) >= 0 {
 			return err
 		}
 		return fmt.Errorf("%s %s predates connect, which generated browser clients import; update %s to %s or later", pkg, installed.Version, pkg, connectRuntime)

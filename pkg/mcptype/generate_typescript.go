@@ -54,19 +54,15 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	identity, contracts := encode(request.caller()), encode(request.contracts)
 	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
 	if request.Target == "browser" {
-		if request.Own == "" {
-			return map[string]string{
-				TypeScriptModule: fmt.Sprintf("import { bindApps } from %s;\nexport {ToolCallError} from %s;\n%s", runtime, runtime, bound),
-				"index.d.mts":    types + bindingTypes,
-			}, nil
+		imports, module, declarations := "bindApps", bound, types+bindingTypes
+		if request.Own != "" {
+			// Holon serves an app's MCP endpoint at /mcp/<app> on the origin that serves its page.
+			own, endpoint := quoted(request.Own), quoted("/mcp/"+url.PathEscape(request.Own))
+			imports += ", connect as open"
+			module += fmt.Sprintf("export const connect = options => open({ identity, contracts, own: %s, endpoint: %s }, options);\n", own, endpoint)
+			declarations += fmt.Sprintf("export declare const connect: import(%s).Connect<Inputs[%[2]s], Outputs[%[2]s], Resources[%[2]s], Events[%[2]s]>;\n", runtime, own)
 		}
-		// The page connects to its own app, whose MCP endpoint Holon serves at /mcp/<app> on the origin
-		// that serves the page.
-		own, endpoint := quoted(request.Own), quoted("/mcp/"+url.PathEscape(request.Own))
-		return map[string]string{
-			TypeScriptModule: fmt.Sprintf("import { bindApps, connect as open } from %s;\nexport {ToolCallError} from %s;\n%sexport const connect = options => open({ identity, contracts, own: %s, endpoint: %s }, options);\n", runtime, runtime, bound, own, endpoint),
-			"index.d.mts":    types + bindingTypes + fmt.Sprintf("export declare const connect: import(%s).Connect<Inputs[%[2]s], Outputs[%[2]s], Resources[%[2]s], Events[%[2]s]>;\n", runtime, own),
-		}, nil
+		return map[string]string{TypeScriptModule: fmt.Sprintf("import { %s } from %s;\nexport {ToolCallError} from %s;\n%s", imports, runtime, runtime, module), "index.d.mts": declarations}, nil
 	}
 	return map[string]string{
 		TypeScriptModule: fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\n%sexport const apps = create(identity, contracts);\n", runtime, runtime, bound),

@@ -175,12 +175,13 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 			t.Fatalf("%s: installed runtime was reinstalled: %v", test.manager, err)
 		}
 	}
-	// A holon-ui without connect is not reinstalled: the error asks for an update.
-	put(t, c.Dir, "node_modules/holon-ui/package.json", `{"name":"holon-ui","version":"0.0.1-dev.11"}`)
 	ui := c
 	ui.Targets = []string{TargetUI}
-	if err := Generate(t.Context(), []Consumer{ui}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "holon-ui 0.0.1-dev.11 predates connect, which generated browser clients import; update holon-ui to") {
-		t.Fatalf("outdated holon-ui = %v", err)
+	for _, version := range []string{"0.0.1-dev.12", "0.0.1-dev.9"} {
+		put(t, c.Dir, "node_modules/holon-ui/package.json", `{"name":"holon-ui","version":"`+version+`"}`)
+		if err := Generate(t.Context(), []Consumer{ui}, Options{Run: extract}); (err == nil) != (version == "0.0.1-dev.12") || err != nil && !strings.Contains(err.Error(), "update holon-ui") {
+			t.Fatalf("holon-ui %s = %v", version, err)
+		}
 	}
 	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
 		t.Fatal(err)
