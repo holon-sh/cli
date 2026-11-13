@@ -142,13 +142,6 @@ func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 	t.Run("typescript", func(t *testing.T) {
 		t.Parallel()
 		app := typeScriptApp(t)
-		runtime := filepath.Join(app, "node_modules", "holon-sh")
-		if err := os.RemoveAll(runtime); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.CopyFS(runtime, os.DirFS("testdata/holon-sh")); err != nil {
-			t.Fatal(err)
-		}
 		c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, orders)}}}
 		if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 			t.Fatal(err)
@@ -162,7 +155,7 @@ for await (const { data } of await apps.orders.ext.events.subscribe("cells.edite
 }
 const binding: EndpointBinding = { endpoint: "mcp:", fetch };
 const bound = createApps({ orders: binding }, { session: () => ({
-  callTool: async () => ({ structuredContent: { total: 1 } }),
+  callTool: async () => ({ content: [], structuredContent: { total: 1 } }),
   readResource: async () => ({ contents: [] }),
   listTools: async () => ({ tools: [] }),
 }) });
@@ -190,27 +183,6 @@ export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch 
 			t.Skip("mypy is not installed in tooling/python/.venv")
 		}
 		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
-		put(t, app, "holon/client.py", `from typing import Any, Generic, TypeVar
-T = TypeVar("T")
-class Apps:
-    def __init__(self, *args: Any) -> None: ...
-    def __getitem__(self, name: str) -> Any: ...
-class Binding: ...
-class CallOptions: ...
-class CompleteResult(Generic[T]): ...
-class ToolResult(Generic[T]): ...
-`)
-		put(t, app, "holon/ext/__init__.py", "")
-		put(t, app, "holon/ext/events.pyi", `from typing import Any, Generic, TypeVar
-D = TypeVar("D")
-class Event(Generic[D]):
-    data: D
-class Subscription(Generic[D]):
-    async def __aenter__(self) -> "Subscription[D]": ...
-    async def __aexit__(self, *args: Any) -> None: ...
-    def __aiter__(self) -> "Subscription[D]": ...
-    async def __anext__(self) -> Event[D]: ...
-`)
 		c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, orders)}}}
 		if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 			t.Fatal(err)
@@ -314,16 +286,6 @@ export const owner: InputTypes["files"]["stat"]["Owner"] = { lgn: "a" };
 		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
 		generateFiles(t, app, TargetPy)
 		declaredOnce(t, read(t, app, "holon/apps/__init__.py"), `"login": _builtins.str`)
-		put(t, app, "holon/client.py", `from typing import Any, Generic, TypeVar
-T = TypeVar("T")
-class Apps:
-    def __init__(self, *args: Any) -> None: ...
-    def __getitem__(self, name: str) -> Any: ...
-class Binding: ...
-class CallOptions: ...
-class CompleteResult(Generic[T]): ...
-class ToolResult(Generic[T]): ...
-`)
 		put(t, app, "main.py", `from holon.apps import Outputs, OutputTypes, apps
 async def use(walk: Outputs.files.walk, stat: Outputs.files.stat, listed: Outputs.files.list, named: OutputTypes.files.walk.FileInfo) -> None:
     name: str = walk["root"]["children"][0]["children"][0]["name"]

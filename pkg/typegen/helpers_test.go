@@ -76,7 +76,7 @@ func writeProvider(t *testing.T, root, name, source string) {
 	put(t, root, "server.json", string(mustJSON(t, map[string]any{"name": "example.com/" + name, "version": "1.0.0", "description": name})))
 }
 
-// runtimePackage installs a minimal runtime package that runs contract-version-2 clients.
+// runtimePackage marks an SDK as installed for filesystem tests.
 func runtimePackage(t *testing.T, app, pkg string) string {
 	t.Helper()
 	dir := filepath.Join(app, "node_modules", pkg)
@@ -84,17 +84,16 @@ func runtimePackage(t *testing.T, app, pkg string) string {
 	return dir
 }
 
-// typeScriptApp makes a project with a stand-in holon-sh and the tooling's compiler.
+// typeScriptApp checks generated clients against the installed SDK and compiler.
 func typeScriptApp(t *testing.T) string {
 	t.Helper()
 	needNode(t)
 	app := t.TempDir()
 	put(t, app, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	put(t, app, "tsconfig.json", `{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true,"allowJs":true,"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext","allowImportingTsExtensions":true}}`)
-	put(t, runtimePackage(t, app, "holon-sh"), "runtime.d.ts", "export type ToolClient<I, O, R, E> = unknown;\nexport declare class ToolCallError {}\nexport type EndpointBinding = unknown;\nexport type CreateOptions = unknown;\n")
-	compiler, err := filepath.Abs("../../tooling/typescript/node_modules/typescript")
+	put(t, app, "tsconfig.json", `{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":false,"allowJs":true,"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext","allowImportingTsExtensions":true}}`)
+	modules, err := filepath.Abs("../../tooling/typescript/node_modules")
 	if err == nil {
-		err = os.Symlink(compiler, filepath.Join(app, "node_modules/typescript"))
+		err = os.Symlink(modules, filepath.Join(app, "node_modules"))
 	}
 	if err != nil {
 		t.Fatal(err)
