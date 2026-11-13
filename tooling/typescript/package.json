@@ -17,6 +17,8 @@
     "@modelcontextprotocol/server": "2.3.1",
     "esbuild": "0.28.2",
     "fflate": "0.8.3",
+    "holon-sh": "0.0.1-dev.20",
+    "holon-ui": "0.0.1-dev.10",
     "typescript": "~5.9.3",
     "zod": "4.6.5"
   }

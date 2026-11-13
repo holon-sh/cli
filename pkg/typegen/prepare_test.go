@@ -189,9 +189,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 func TestGenerateRefusesASymlinkOutOfTheProject(t *testing.T) {
 	dir, outside := t.TempDir(), t.TempDir()
 	put(t, dir, "package.json", `{"type":"module","dependencies":{"holon-sh":"^0.0.1"}}`)
-	if err := os.CopyFS(filepath.Join(dir, "node_modules", "holon-sh"), os.DirFS("testdata/holon-sh")); err != nil {
-		t.Fatal(err)
-	}
+	runtimePackage(t, dir, "holon-sh")
 	if err := os.Symlink(outside, filepath.Join(dir, "generated")); err != nil {
 		t.Fatal(err)
 	}

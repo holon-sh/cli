@@ -1,0 +1,29 @@
+#!/bin/sh
+# Check a packed SDK against the CLI's generated clients, before publishing it.
+set -eu
+if [ "$#" -ne 2 ]; then
+  echo "usage: $0 node|browser|python PACKAGE" >&2
+  exit 2
+fi
+target=$1
+package=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
+cd "$(dirname "$0")/.."
+sdk_env=$(mktemp -d "${TMPDIR:-/tmp}/holon-sdk.XXXXXX")
+trap 'rm -rf "$sdk_env"' EXIT HUP INT TERM
+case "$target" in
+  node|browser)
+    compiler=$(node -p 'require("./tooling/typescript/package-lock.json").packages["node_modules/typescript"].version')
+    npm install --prefix "$sdk_env" --no-save --package-lock=false "typescript@$compiler" "$package"
+    ;;
+  python)
+    uv sync --project tooling/python
+    compiler=$(tooling/python/.venv/bin/python -c 'from importlib.metadata import version; print(version("mypy"))')
+    uv venv --python tooling/python/.venv/bin/python "$sdk_env"
+    uv pip install --python "$sdk_env/bin/python" "mypy==$compiler" "$package"
+    ;;
+  *)
+    echo "unknown SDK target: $target" >&2
+    exit 2
+    ;;
+esac
+HOLON_SDK_TEST_ENV="$sdk_env" go test ./pkg/typegen -run "^TestGeneratedSDKConsumers/$target$" -count=1
