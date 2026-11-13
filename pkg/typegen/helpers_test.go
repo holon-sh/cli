@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opencontainers/go-digest"
@@ -104,13 +105,13 @@ func typeScriptApp(t *testing.T) string {
 
 func needPython(t *testing.T) {
 	t.Helper()
-	if _, err := typeLanguages["python"].localProgram(context.Background()); err != nil {
+	if _, err := tooling.Languages["python"].LocalProgram(context.Background()); err != nil {
 		t.Skip(err)
 	}
 }
 func needNode(t *testing.T) {
 	t.Helper()
-	if _, err := typeLanguages["typescript"].localProgram(context.Background()); err != nil {
+	if _, err := tooling.Languages["typescript"].LocalProgram(context.Background()); err != nil {
 		t.Skip(err)
 	}
 }

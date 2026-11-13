@@ -19,6 +19,7 @@ import (
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
+	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/protocol/runtimecontract"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -56,32 +57,6 @@ func (e *RunnerError) Error() string {
 
 // serverTimeout is how long a server may take to answer.
 var serverTimeout = 30 * time.Second
-
-// typeLanguage is how one language's tooling runs: the contract runner's interpreter flags and
-// script, the checker script, relative to the language's tooling directory, and the host
-// interpreters that can run them.
-type typeLanguage struct {
-	flags           []string
-	runner, checker string
-	programs, probe []string
-}
-
-var typeLanguages = map[string]typeLanguage{
-	"typescript": {[]string{"--experimental-vm-modules", "--no-warnings"}, "runner.mjs", "check.mjs", []string{"node"}, []string{"-e", "process.exit(Number(process.versions.node.split('.')[0]) < 22 ? 1 : 0)"}},
-	"python":     {nil, "extract.py", "runner.py", []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
-}
-
-func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
-	for _, program := range l.programs {
-		if exec.CommandContext(ctx, program, l.probe...).Run() == nil {
-			return program, nil
-		}
-	}
-	if ctx.Err() != nil {
-		return "", ctx.Err()
-	}
-	return "", fmt.Errorf("install a supported interpreter (%s)", strings.Join(l.programs, ", "))
-}
 
 // ContractFile is a server's committed contract document, beside its server.json: what
 // holon types generate --contract prints for it. It stands in for running the server when a
@@ -221,16 +196,16 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	return result, nil
 }
 
-func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
+func runLocal(ctx context.Context, toolingDir, language string, args []string, stdout io.Writer, env []string) error {
 	env, err := commandenv.Environ(env)
 	if err != nil {
 		return err
 	}
-	l := typeLanguages[language]
+	l := tooling.Languages[language]
 	run := func(program string) error {
 		limited, cancel := context.WithTimeout(ctx, serverTimeout)
 		defer cancel()
-		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
+		command := exec.CommandContext(limited, program, slices.Concat(l.Flags, []string{filepath.Join(toolingDir, language, l.Runner)}, args)...)
 		command.Env = env
 		var stderr bytes.Buffer
 		command.Stdout, command.Stderr = stdout, &stderr
@@ -244,13 +219,13 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdo
 		return err
 	}
 	if language == "python" {
-		if own := pythonEnvironment(args[1]); own != "" && exec.CommandContext(ctx, own, l.probe...).Run() == nil {
+		if own := pythonEnvironment(args[1]); own != "" && exec.CommandContext(ctx, own, l.Probe...).Run() == nil {
 			if err := run(own); !lacksSchemaLibraries(err) {
 				return err
 			}
 		}
 	}
-	program, err := l.localProgram(ctx)
+	program, err := l.LocalProgram(ctx)
 	if err != nil {
 		return err
 	}

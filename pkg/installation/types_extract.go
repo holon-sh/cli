@@ -18,18 +18,13 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/tailscale/hujson"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
 )
-
-// contractRunners are each language's interpreter, contract runner and checker, in its tooling directory.
-var contractRunners = map[string]struct{ program, runner, checker string }{
-	"typescript": {"node", "runner.mjs", "check.mjs"},
-	"python":     {"python", "extract.py", "runner.py"},
-}
 
 var finalStage = regexp.MustCompile(`(?m)^FROM (\S+) AS (\S+)$`)
 
@@ -40,8 +35,8 @@ const checkerInstall = "python -m pip install --disable-pip-version-check --no-c
 // extractTypes is typegen's contract-runner hook. It runs the runner in the app's extraction image without
 // network access, so the server's imports resolve against the dependencies its image installs.
 func (o buildOptions) extractTypes(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error {
-	runner := contractRunners[language]
-	command := slices.Concat([]string{runner.program, "/holon-tooling/" + language + "/" + runner.runner, args[0], "/app"}, args[2:])
+	runner := tooling.Languages[language]
+	command := slices.Concat([]string{runner.Program, "/holon-tooling/" + language + "/" + runner.Runner, args[0], "/app"}, args[2:])
 	return o.runInImage(ctx, args[1], toolingDir, "", false, command, stdout)
 }
 
@@ -68,8 +63,8 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 	if err := p.prepared.WriteClients(p.name, generated); err != nil {
 		return err
 	}
-	runner := contractRunners[language]
-	command := []string{runner.program, "/holon-tooling/" + language + "/" + runner.checker, "check", entry}
+	runner := tooling.Languages[language]
+	command := []string{runner.Program, "/holon-tooling/" + language + "/" + runner.Checker, "check", entry}
 	var output bytes.Buffer
 	err = o.runInImage(ctx, p.root, p.prepared.Tooling(), generated, language == "python", command, &output)
 	if failed := (*typegen.RunnerError)(nil); errors.As(err, &failed) {

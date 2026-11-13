@@ -50,21 +50,21 @@ func Check(ctx context.Context, dir string, options Options) error {
 	defer os.RemoveAll(root)
 	slices.Sort(languages)
 	for _, language := range slices.Compact(languages) {
-		l := typeLanguages[language]
+		l := tooling.Languages[language]
 		var program string
 		if language == "python" {
 			program = pythonEnvironment(dir)
 		}
 		if program == "" {
-			if program, err = l.localProgram(ctx); err != nil {
+			if program, err = l.LocalProgram(ctx); err != nil {
 				return err
 			}
 		}
-		checker, err := tooling.File(language, l.checker)
+		checker, err := tooling.File(language, l.Checker)
 		if err != nil {
 			return err
 		}
-		path := filepath.Join(root, l.checker)
+		path := filepath.Join(root, l.Checker)
 		if err = os.WriteFile(path, checker, 0o600); err != nil {
 			return err
 		}
