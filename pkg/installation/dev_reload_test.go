@@ -468,7 +468,8 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 		t.Fatalf("session app = %+v", app)
 	}
 	if first, overlay := f.reloadRequests()[0], f.overlay(t, f.started); first.Digest != f.started ||
-		!strings.Contains(string(overlay["server.py"]), "app = None") || string(overlay[runtimecontract.StartFile]) != "exec uv run python -m holon.serve server.py\n" {
+		!strings.Contains(string(overlay["server.py"]), "app = None") || string(overlay[runtimecontract.PrepareFile]) != "uv sync\n" ||
+		string(overlay[runtimecontract.StartFile]) != "exec uv run --no-sync python -m holon.serve server.py\n" {
 		t.Fatalf("the session was created from %s and first sent %s", f.started, first.Digest)
 	}
 	if f.uploaded != 0 || strings.Contains(f.stderr.String(), "alpha uploaded") {
@@ -497,28 +498,29 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	}
 }
 
-func TestStartScript(t *testing.T) {
+func TestOverlayScripts(t *testing.T) {
+	const python = "exec uv run --no-sync python -m holon.serve "
 	for _, test := range []struct {
-		name, entry string
-		files       map[string]string
-		want        string
+		name, entry    string
+		files          map[string]string
+		prepare, start string
 	}{
-		{name: "Python", entry: "server.py", want: "exec uv run python -m holon.serve server.py\n"},
+		{name: "Python", entry: "server.py", prepare: "uv sync\n", start: python + "server.py\n"},
 		{
 			name: "Node", entry: "src/server.ts", files: map[string]string{"package.json": `{}`, "package-lock.json": ""},
-			want: "npm install && exec node_modules/.bin/holon-serve src/server.ts\n",
+			prepare: "npm install\n", start: "exec node_modules/.bin/holon-serve src/server.ts\n",
 		},
 		{
 			name: "Python with a frontend", entry: "src/server.py",
-			files: map[string]string{"package.json": `{"scripts":{"build":"vite build"}}`, "pnpm-lock.yaml": ""},
-			want:  "pnpm install && pnpm run build && exec uv run python -m holon.serve src/server.py\n",
+			files:   map[string]string{"package.json": `{"scripts":{"build":"vite build"}}`, "pnpm-lock.yaml": ""},
+			prepare: "uv sync && pnpm install && pnpm run build\n", start: python + "src/server.py\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			sourceFiles(t, root, test.files)
-			if script, err := startScript(root, test.entry, true); err != nil || script != test.want {
-				t.Fatalf("script = %q, want %q: %v", script, test.want, err)
+			if prepare, start, err := overlayScripts(root, test.entry, true); err != nil || prepare != test.prepare || start != test.start {
+				t.Fatalf("scripts = %q, %q: %v", prepare, start, err)
 			}
 		})
 	}
@@ -594,7 +596,7 @@ func TestDevFirstSendsSourceThenItsGeneratedClients(t *testing.T) {
 			reloads := f.reloadRequests()
 			var builds []bool
 			for _, reload := range reloads {
-				builds = append(builds, strings.Contains(string(f.overlay(t, reload.Digest)[runtimecontract.StartFile]), " run build"))
+				builds = append(builds, strings.Contains(string(f.overlay(t, reload.Digest)[runtimecontract.PrepareFile]), " run build"))
 			}
 			var clients string
 			for name, data := range f.overlay(t, reloads[len(reloads)-1].Digest) {

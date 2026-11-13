@@ -245,15 +245,17 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
 	// A page is built once the clients it may import are in the source.
-	script, err := startScript(root, entry, accepted != nil)
+	prepare, start, err := overlayScripts(root, entry, accepted != nil)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.StartFile)), 0o755); err != nil {
 		return packedSource{}, err
 	}
-	if err := os.WriteFile(filepath.Join(root, runtimecontract.StartFile), []byte(script), 0o644); err != nil {
-		return packedSource{}, err
+	for name, script := range map[string]string{runtimecontract.PrepareFile: prepare, runtimecontract.StartFile: start} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(script), 0o644); err != nil {
+			return packedSource{}, err
+		}
 	}
 	source, err := fsutil.NewFS(root)
 	if err != nil {
@@ -285,16 +287,20 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	return packed, err
 }
 
-// startScript is the runtimecontract.StartFile the development image starts an app with. It installs what the app
-// declares, and builds its page when page is set, before serving entry, so the app accepts connections once all it
-// serves is ready.
-func startScript(root, entry string, page bool) (string, error) {
+// overlayScripts are the runtimecontract.PrepareFile and StartFile the development image runs an app with. prepare
+// installs what the app declares, and builds its page when page is set; start serves entry.
+func overlayScripts(root, entry string, page bool) (prepare, start string, err error) {
 	var steps []string
+	serve := serveCommand(entry)
+	if filepath.Ext(entry) == ".py" {
+		steps = append(steps, "uv sync")
+		serve = append([]string{"uv", "run", "--no-sync"}, serve...)
+	}
 	var pkg typegen.PackageJSON
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
 	if err == nil {
 		if err := json.Unmarshal(data, &pkg); err != nil {
-			return "", err
+			return "", "", err
 		}
 		manager := pkg.Manager(root)
 		steps = append(steps, manager+" install")
@@ -302,13 +308,9 @@ func startScript(root, entry string, page bool) (string, error) {
 			steps = append(steps, manager+" run build")
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return "", err
+		return "", "", err
 	}
-	serve := serveCommand(entry)
-	if filepath.Ext(entry) == ".py" {
-		serve = append([]string{"uv", "run"}, serve...)
-	}
-	return strings.Join(append(steps, "exec "+strings.Join(serve, " ")), " && ") + "\n", nil
+	return strings.Join(steps, " && ") + "\n", "exec " + strings.Join(serve, " ") + "\n", nil
 }
 
 func (p packedSource) publish(ctx context.Context) error {
