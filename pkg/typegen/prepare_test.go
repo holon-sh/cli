@@ -54,7 +54,7 @@ func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing
 		if !strings.Contains(node, `"lookup"`) || strings.Contains(node, `"`+test.key+`": {`) != aliased || strings.Contains(python, "def status(") != aliased {
 			t.Fatalf("server clients under alias %q:\n%s\n%s", test.alias, node, python)
 		}
-		if browser := read(t, stage, "generated/holon-ui/index.d.mts"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `type OwnAppKey = "`+test.key+`"`) || strings.Contains(browser, `"checkout": {`) == aliased {
+		if browser := read(t, stage, "generated/holon-ui/index.d.mts"); !strings.Contains(browser, `"lookup"`) || !strings.Contains(browser, `Connect<Inputs["`+test.key+`"]`) || strings.Contains(browser, `"checkout": {`) == aliased {
 			t.Fatalf("browser client under alias %q:\n%s", test.alias, browser)
 		}
 		if requires := prepared.Metadata()["checkout"].Requires; len(requires) != 1 {
@@ -174,6 +174,13 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Run: extract}); err != nil {
 			t.Fatalf("%s: installed runtime was reinstalled: %v", test.manager, err)
 		}
+	}
+	// A holon-ui without connect is not reinstalled: the error asks for an update.
+	put(t, c.Dir, "node_modules/holon-ui/package.json", `{"name":"holon-ui","version":"0.0.1-dev.11"}`)
+	ui := c
+	ui.Targets = []string{TargetUI}
+	if err := Generate(t.Context(), []Consumer{ui}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "holon-ui 0.0.1-dev.11 predates connect, which generated browser clients import; update holon-ui to") {
+		t.Fatalf("outdated holon-ui = %v", err)
 	}
 	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
 		t.Fatal(err)

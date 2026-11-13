@@ -83,8 +83,8 @@ func MapClients(consumers []Consumer, options Options) error {
 }
 
 func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
-	if installedRuntime(dir, pkg) == nil {
-		return nil
+	if err := installedRuntime(dir, pkg); !errors.Is(err, errNotInstalled) {
+		return err
 	}
 	var manifest PackageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil {

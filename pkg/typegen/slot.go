@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
@@ -28,14 +30,27 @@ func ancestors(dir string) iter.Seq[string] {
 	}
 }
 
-// installedRuntime verifies that pkg is installed where Node.js resolves it from root.
+// connectRuntime is the first holon-ui with connect, which generated browser clients import.
+const connectRuntime = "0.0.1-dev.12"
+
+// errNotInstalled reports a runtime that Node.js does not resolve.
+var errNotInstalled = errors.New("is not installed")
+
+// installedRuntime verifies that pkg is installed where Node.js resolves it from root, and that holon-ui
+// has connect.
 func installedRuntime(root, pkg string) error {
 	for dir := range ancestors(root) {
-		if isFile(filepath.Join(dir, "node_modules", pkg, "package.json")) {
-			return nil
+		manifest := filepath.Join(dir, "node_modules", pkg, "package.json")
+		if !isFile(manifest) {
+			continue
 		}
+		var installed PackageJSON
+		if err := readTypeJSON(manifest, &installed); err != nil || pkg != NodePackages[TargetUI] || semver.Compare("v"+installed.Version, "v"+connectRuntime) >= 0 {
+			return err
+		}
+		return fmt.Errorf("%s %s predates connect, which generated browser clients import; update %s to %s or later", pkg, installed.Version, pkg, connectRuntime)
 	}
-	return fmt.Errorf("%s is not installed for %s; install it before generating types", pkg, root)
+	return fmt.Errorf("%s %w for %s; install it before generating types", pkg, errNotInstalled, root)
 }
 
 // SlotDirectory is the directory a target's generated clients occupy in the project at dir.

@@ -27,31 +27,13 @@ func TestNodeModulePassesItsIdentityAndContractsToTheRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A stand-in runtime returns what each of its functions was called with.
-	root := t.TempDir()
-	writeFiles(t, root, map[string][]byte{
-		TypeScriptModule:                     files[TypeScriptModule],
-		"node_modules/holon-sh/package.json": []byte(`{"name":"holon-sh","type":"module","exports":{"./runtime":"./runtime.js"}}`),
-		"node_modules/holon-sh/runtime.js": []byte(`export class ToolCallError extends Error {}
-export const createApps = (...args) => args, bindApps = (...args) => args;
-`),
-		"main.mjs": []byte(`import { apps, createApps, ToolCallError } from "./index.mjs";
-console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:" } }, { timeout: 1 }), error: new ToolCallError() instanceof Error }));
-`),
-	})
-	command := exec.CommandContext(t.Context(), node, "main.mjs")
-	command.Dir = root
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("generated module failed to import: %v\n%s", err, output)
-	}
 	var got struct {
 		Apps, Bound []any
 		Error       bool
 	}
-	if err := json.Unmarshal(output, &got); err != nil {
-		t.Fatalf("%v: %s", err, output)
-	}
+	importModule(t, node, files, "holon-sh", "export const createApps = (...args) => args;\n", `import { apps, createApps, ToolCallError } from "./index.mjs";
+console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:" } }, { timeout: 1 }), error: new ToolCallError() instanceof Error }));
+`, &got)
 	want := []any{asJSON(t, map[string]any{"name": identity.Name, "version": identity.Version, "requires": requires}), asJSON(t, contracts)}
 	if diff := cmp.Diff(want, got.Apps); diff != "" {
 		t.Errorf("apps were created with (-want +got):\n%s", diff)
@@ -61,6 +43,64 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	}
 	if !got.Error {
 		t.Error("the module does not re-export the runtime's ToolCallError")
+	}
+}
+
+// The browser module connects the page to its own app at the endpoint Holon serves it on, passing
+// connect's options through. Without an own app it has no connect and loads from a runtime without one.
+func TestBrowserModuleConnectsToItsOwnApp(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	request := GenerateRequest{Target: "browser", Identity: mcpcontract.Identity{Name: "checkout", Version: "1"}}
+	if err := json.Unmarshal([]byte(`{"my orders": `+orderContract+`}`), &request.Contracts); err != nil {
+		t.Fatal(err)
+	}
+	files, err := Generate(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exported []string
+	importModule(t, node, files, "holon-ui", "", `import * as module from "./index.mjs";
+console.log(JSON.stringify(Object.keys(module)));
+`, &exported)
+	if want := []string{"ToolCallError", "createApps"}; !cmp.Equal(exported, want) {
+		t.Errorf("without an own app the module exports %v, want %v", exported, want)
+	}
+	request.Own = "my orders"
+	if files, err = Generate(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	var opened []any
+	importModule(t, node, files, "holon-ui", "export const connect = (...args) => args;\n", `import { connect } from "./index.mjs";
+console.log(JSON.stringify(connect({ tools: {} })));
+`, &opened)
+	app := map[string]any{"identity": map[string]any{"name": "checkout", "version": "1", "requires": map[string]any{}}, "contracts": request.Contracts, "own": "my orders", "endpoint": "/mcp/my%20orders"}
+	if diff := cmp.Diff([]any{asJSON(t, app), asJSON(t, map[string]any{"tools": map[string]any{}})}, opened); diff != "" {
+		t.Errorf("connect opened (-want +got):\n%s", diff)
+	}
+}
+
+// importModule runs main beside the generated module, with a stand-in runtime package whose functions
+// return what they were called with, and decodes what main prints into got.
+func importModule(t *testing.T, node string, files map[string][]byte, pkg, runtime, main string, got any) {
+	t.Helper()
+	root := t.TempDir()
+	writeFiles(t, root, map[string][]byte{
+		TypeScriptModule:                        files[TypeScriptModule],
+		"node_modules/" + pkg + "/package.json": []byte(`{"name":"` + pkg + `","type":"module","exports":{"./runtime":"./runtime.js"}}`),
+		"node_modules/" + pkg + "/runtime.js":   []byte("export class ToolCallError extends Error {}\nexport const bindApps = (...args) => args;\n" + runtime),
+		"main.mjs":                              []byte(main),
+	})
+	command := exec.CommandContext(t.Context(), node, "main.mjs")
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated module failed to import: %v\n%s", err, output)
+	}
+	if err := json.Unmarshal(output, got); err != nil {
+		t.Fatalf("%v: %s", err, output)
 	}
 }
 
