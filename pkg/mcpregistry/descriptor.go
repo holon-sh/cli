@@ -147,10 +147,11 @@ type InputFields wire.Input
 type DescriptorInput struct {
 	InputFields
 
-	Name      string                 `json:"name"`
-	Type      string                 `json:"type"`
-	ValueHint string                 `json:"valueHint"`
-	Variables map[string]InputFields `json:"variables"`
+	Description string                 `json:"description"`
+	Name        string                 `json:"name"`
+	Type        string                 `json:"type"`
+	ValueHint   string                 `json:"valueHint"`
+	Variables   map[string]InputFields `json:"variables"`
 }
 
 func ParseInput(raw json.RawMessage) (DescriptorInput, wire.Input, map[string]wire.Input, error) {
