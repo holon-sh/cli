@@ -147,12 +147,12 @@ func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 			t.Fatal(err)
 		}
 		put(t, app, "src/index.ts", `import { apps, createApps, type EndpointBinding } from "#holon-sh";
-for await (const { data } of await apps.orders.ext.events.subscribe("cells.edited", { notebook: "1" })) {
+await apps.orders.ext.events.watch("cells.edited", { notebook: "1" }, ({ data }) => {
   for (const edit of data.edits) {
     if (edit.op === "cell.updated") { const code: string = edit.code; }
     else { const id: string = edit.id; }
   }
-}
+});
 const binding: EndpointBinding = { endpoint: "mcp:", fetch };
 const bound = createApps({ orders: binding }, { session: () => ({
   callTool: async () => ({ content: [], structuredContent: { total: 1 } }),
@@ -165,9 +165,9 @@ export const total: Promise<number> = bound.orders.tools.lookup({ id: "1" }).the
 			t.Fatalf("check: %v\n%s", err, output)
 		}
 		put(t, app, "src/index.ts", `import { apps, createApps } from "#holon-sh";
-export const misnamed = apps.orders.ext.events.subscribe("cells.edit", { notebook: "1" });
-export const misargued = apps.orders.ext.events.subscribe("cells.edited", { notbook: "1" });
-for await (const { data } of await apps.orders.ext.events.subscribe("cells.edited", { notebook: "1" })) data.edits[0]!.code;
+export const misnamed = apps.orders.ext.events.watch("cells.edit", { notebook: "1" }, () => {});
+export const misargued = apps.orders.ext.events.watch("cells.edited", { notbook: "1" }, () => {});
+apps.orders.ext.events.watch("cells.edited", { notebook: "1" }, ({ data }) => data.edits[0]!.code);
 export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch } });
 `)
 		mustReject(t, app, `"cells.edit"`, "'notbook' does not exist", "Property 'code' does not exist", "'fetsh' does not exist")
