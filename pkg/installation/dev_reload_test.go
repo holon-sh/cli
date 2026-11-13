@@ -34,6 +34,7 @@ const (
 )
 
 const installed = "added 1 package\n"
+const installFailure = `{"error":{"code":"invalid_request","message":"npm install: exit status 1"},"output":"npm error 404\nnot found\n"}`
 
 type reloadFixture struct {
 	t        *testing.T
@@ -284,7 +285,6 @@ func TestDevSaves(t *testing.T) {
 		name       string
 		failReload bool
 		unrecorded bool
-		refusal    string
 		saves      []map[string]string
 		lines      []string
 		reloads    int
@@ -309,17 +309,11 @@ func TestDevSaves(t *testing.T) {
 			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "third"}},
 			lines: []string{"alpha reloaded in 1.2 s", "alpha reloaded, but not recorded in the session: no answer within a minute"}, reloads: 2,
 		},
-		{
-			name:    "a source that does not install shows what the install printed, then why",
-			refusal: `{"error":{"code":"invalid_request","message":"npm install: exit status 1"},"output":"npm error 404\nnot found\n"}`,
-			saves:   []map[string]string{{"alpha/tools.py": "second"}},
-			lines:   []string{"npm error 404\nnot found\nalpha reload failed: npm install: exit status 1\n"}, reloads: 1,
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true)
 			started := len(f.reloadRequests())
-			f.update(func() { f.failNext, f.unrecorded, f.refusal = test.failReload, test.unrecorded, test.refusal })
+			f.update(func() { f.failNext, f.unrecorded = test.failReload, test.unrecorded })
 			for i, files := range test.saves {
 				f.save(files, test.lines[i])
 			}
@@ -614,18 +608,24 @@ func TestDevFirstSendsSourceThenItsGeneratedClients(t *testing.T) {
 	}
 }
 
-func TestDevShowsWhatAnInstallPrintedOnlyWhenVerbose(t *testing.T) {
+func TestDevShowsReloadDetailsOnlyWhenVerbose(t *testing.T) {
 	f := startReloadFixture(t, true)
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reloaded")
+	f.update(func() { f.refusal = installFailure })
+	f.save(map[string]string{"alpha/tools.py": "third"}, "alpha reload failed: npm install: exit status 1")
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(f.stderr.String(), installed) {
-		t.Fatalf("stderr = %q", f.stderr.String())
+	if output := f.stderr.String(); strings.Contains(output, installed) || strings.Contains(output, "npm error 404") || strings.Contains(output, "Timing ") {
+		t.Fatalf("quiet stderr = %q", output)
 	}
-	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "third"})
 	f.start("--verbose")
-	f.await(func() bool { return strings.Contains(f.stderr.String(), installed+"alpha reloaded") })
+	f.await(func() bool {
+		output := f.stderr.String()
+		return strings.Contains(output, installed+"alpha reloaded") && strings.Contains(output, "Timing alpha reload:")
+	})
+	f.update(func() { f.refusal = installFailure })
+	f.save(map[string]string{"alpha/tools.py": "fourth"}, "npm error 404\nnot found\nalpha reload failed: npm install: exit status 1\n")
 }
 
 func TestDevStartup(t *testing.T) {

@@ -474,10 +474,7 @@ func (m *Client) summary(name string, apps []manifestApp) (string, error) {
 // StreamLogs follows session logs until ctx ends or the server rejects the request. A dropped stream resumes from
 // the last record received, skipping the records the server replays.
 func (m *Client) StreamLogs(ctx context.Context, input protocol.SessionLogsRequest, stdout io.Writer) error {
-	return m.streamLogs(ctx, input, &resumingWriter{out: stdout})
-}
-
-func (m *Client) streamLogs(ctx context.Context, input protocol.SessionLogsRequest, records *resumingWriter) error {
+	records := &resumingWriter{out: stdout}
 	query := url.Values{"follow": {"true"}}
 	for key, value := range map[string]string{
 		"app": input.App, "since": input.Since, "traceId": input.TraceID, "text": input.Text,
@@ -519,7 +516,6 @@ func (m *Client) streamLogs(ctx context.Context, input protocol.SessionLogsReque
 // one written, with their continuation lines, are replays and are dropped.
 type resumingWriter struct {
 	out     io.Writer
-	stdio   bool
 	last    time.Time
 	drop    bool
 	partial []byte
@@ -535,10 +531,10 @@ func (w *resumingWriter) Write(p []byte) (int, error) {
 	end := bytes.LastIndexByte(w.partial, '\n') + 1
 	var kept []byte
 	for line := range bytes.Lines(w.partial[:end]) {
-		token, rest, _ := bytes.Cut(bytes.TrimSpace(line), []byte(" "))
+		token, _, _ := bytes.Cut(bytes.TrimSpace(line), []byte(" "))
 		if at, err := time.Parse(time.RFC3339Nano, string(token)); err == nil {
-			w.drop = !at.After(w.last) || w.stdio && !bytes.HasPrefix(rest, []byte(" "))
-			if at.After(w.last) {
+			w.drop = !at.After(w.last)
+			if !w.drop {
 				w.last = at
 			}
 			line = bytes.Replace(line, token, []byte(logTime(at)), 1)

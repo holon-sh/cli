@@ -112,7 +112,9 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 		Use:   "dev [APP[=SOURCE]...]",
 		Short: "Run a development session",
 		Long: "Run apps and their required dependencies. Each app uses /<app-name>/ on the session host. " +
-			"Every change type-checks the app's calls to the apps it requires.\n\n" + appsHelp,
+			"Every change type-checks the app's calls to the apps it requires. " +
+			"Use --verbose to show build output, timings, app logs, and MCP calls. " +
+			"You can also view app logs and MCP calls with holon logs.\n\n" + appsHelp,
 		Example: `  # Run every app in holon.yaml
   holon dev
 
