@@ -10,7 +10,7 @@ dependencies = ["mcp>=2.3,<3"]
 package = false
 
 [dependency-groups]
-dev = ["mypy==2.4.0", "pytest==9.1.1", "ruff==0.16.8"]
+dev = ["holon-sh==0.0.1.dev14", "mypy==2.4.0", "pytest==9.1.1", "ruff==0.16.8"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
