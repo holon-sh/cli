@@ -118,7 +118,9 @@ func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
 			reason := err.Error()
 			if failure, ok := errors.AsType[*httpError](err); ok && failure.Message != "" {
 				reason = failure.Message
-				_, _ = io.WriteString(d.options.output.writer, failure.Output)
+				if d.options.output.verbose {
+					_, _ = io.WriteString(d.options.output.writer, failure.Output)
+				}
 			}
 			d.options.output.status(app.Name, "reload failed: "+reason, progressError)
 			d.pending.Delete(app.Name)

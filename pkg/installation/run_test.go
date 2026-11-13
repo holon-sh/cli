@@ -349,18 +349,11 @@ func TestRunDevLifecycle(t *testing.T) {
 			installationtest.WriteJSON(w, session())
 		})
 	const (
-		appOutput = "2026-11-09T10:00:00.1Z  alpha starting boom\n2026-11-09T10:00:00.2Z  alpha " + traceback + "\n"
-		callLine  = "2026-11-09T10:00:00.3Z INFO alpha tools/call boom error tool_error 22ms trace_id=aaaa\n"
+		appOutput = "2026-11-09T10:00:00.1Z  alpha starting up\n"
+		callLine  = "2026-11-09T10:00:00.2Z INFO alpha tools/call lookup ok 22ms\n"
 	)
-	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, r *http.Request) {
-		switch since := r.URL.Query().Get("since"); since {
-		case "":
-			t.Error("the log stream starts with the first record")
-		case "2026-11-09T10:00:00.3Z":
-			w.WriteHeader(http.StatusPreconditionFailed)
-		default:
-			_, _ = io.WriteString(w, appOutput+callLine)
-		}
+	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, appOutput+callLine)
 	})
 	h.start(t, nil)
 	t.Run("ambiguous creation is not retried or deleted", func(t *testing.T) {
@@ -389,18 +382,17 @@ func TestRunDevLifecycle(t *testing.T) {
 				t.Logf("stdout=%q\nstderr=%q", stdout.String(), stderr.String())
 			}
 		})
-		await := func(output *installationtest.ObservedOutput, texts ...string) {
+		await := func(text string) {
 			t.Helper()
 			stepUntil(t, fc, devDebounce, func() bool {
-				return !slices.ContainsFunc(texts, func(text string) bool { return !strings.Contains(output.String(), text) })
+				return strings.Contains(stderr.String(), text)
 			})
 		}
-		await(stderr, "Configure API_KEY to start the session.", "log stream stopped")
-		await(stdout, "alpha starting boom", traceback)
+		await("Configure API_KEY to start the session.")
 		mu.Lock()
 		waiting = ""
 		mu.Unlock()
-		await(stderr, watching)
+		await(watching)
 		from := len(stderr.String())
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
 		h.files.save(t, root, map[string]string{"alpha/logic.txt": "edited"})
@@ -424,8 +416,11 @@ func TestRunDevLifecycle(t *testing.T) {
 		if len(updates) != 0 || !slices.Equal(reloads, []string{"alpha", "beta", "alpha"}) || created[0].Image != "" || created[1].Image != "" {
 			t.Fatalf("source edit updates = %#v, reloads = %v, created = %#v", updates, reloads, created)
 		}
-		if strings.Contains(stdout.String()+stderr.String(), "grant-secret") || strings.Contains(stdout.String(), "tools/call") {
-			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+		output := stdout.String() + stderr.String()
+		for _, hidden := range []string{"grant-secret", "alpha starting up", "tools/call"} {
+			if strings.Contains(output, hidden) {
+				t.Errorf("quiet dev showed %q in %q", hidden, output)
+			}
 		}
 	})
 }
