@@ -52,12 +52,12 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	}
 	files := map[string][]byte{}
 	for path, text := range generated {
-		if request.Banner != "" {
+		if request.App != "" {
 			comment := "//"
 			if strings.HasSuffix(path, ".py") {
 				comment = "#"
 			}
-			text = comment + " " + request.Banner + "\n" + text
+			text = comment + " " + mcpcontract.Marker + " app=" + request.App + "\n" + text
 		}
 		files[path] = []byte(text)
 	}
@@ -85,14 +85,11 @@ func (r GenerateRequest) validate() error {
 			return err
 		}
 	}
-	if r.Banner != "" && (strings.TrimSpace(r.Banner) == "" || strings.ContainsFunc(r.Banner, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' })) {
-		return errors.New("banner must be nonempty and contain no line breaks or control characters")
+	if r.App != "" && (strings.TrimSpace(r.App) == "" || strings.ContainsFunc(r.App, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' })) {
+		return errors.New("app must be nonempty and contain no line breaks or control characters")
 	}
 	if r.Target == "go" && r.GoModule == "" {
 		return errors.New("go_module is required for the go target")
-	}
-	if r.Target == "browser" && r.Own != "" && r.App == "" {
-		return errors.New("app is required for the browser target's own client")
 	}
 	if _, empty := r.Contracts[""]; empty {
 		return errors.New("binding names must be nonempty")
