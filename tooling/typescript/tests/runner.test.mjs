@@ -131,7 +131,9 @@ test("a server that imports its generated clients extracts before holon has writ
     "package.json": '{"type":"module","imports":{"#holon-sh":"./generated/holon-sh/index.mjs"}}',
     "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./*"] } } }),
     "node_modules/holon-sh/package.json": '{"name":"holon-sh","type":"module","exports":{"./runtime":"./runtime.mjs"}}',
-    "node_modules/holon-sh/runtime.mjs": `export class ToolCallError extends Error {}
+    "node_modules/holon-sh/runtime.mjs": `import { AsyncLocalStorage } from "node:async_hooks";
+const holder = new AsyncLocalStorage();
+export class ToolCallError extends Error {}
 export const createApps = (identity, contracts) => Object.freeze(Object.fromEntries(Object.keys(contracts).map(name => [name, {}])));
 export const bindApps = (identity, contracts, bindings) => createApps(identity, contracts);`,
     "src/server.ts": `import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
