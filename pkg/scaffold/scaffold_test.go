@@ -2,7 +2,6 @@ package scaffold
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,7 +42,7 @@ func TestWriteBesideAProject(t *testing.T) {
 		t.Errorf(".gitignore:\n%s", ignore)
 	}
 	pkg := read(t, dir, "package.json")
-	if !strings.Contains(pkg, `"vite": "^7.0.0"`) || !strings.Contains(pkg, `"build": "tsc"`) || strings.Contains(pkg, `"dev:build"`) {
+	if !strings.Contains(pkg, `"vite": "^7.0.0"`) || !strings.Contains(pkg, `"build": "tsc"`) {
 		t.Errorf("package.json:\n%s", pkg)
 	}
 	if len(notes) != 1 || !strings.Contains(notes[0], "build script") {
@@ -60,36 +59,11 @@ func TestWriteKeepsAnEmptyBuildScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	pkg := read(t, dir, "package.json")
-	if !strings.Contains(pkg, `"name": "billing"`) || !strings.Contains(pkg, `"build": ""`) || strings.Contains(pkg, `"dev:build"`) {
+	if !strings.Contains(pkg, `"name": "billing"`) || !strings.Contains(pkg, `"build": ""`) {
 		t.Errorf("package.json:\n%s", pkg)
 	}
 	if len(notes) != 1 || !strings.Contains(notes[0], "kept package.json's build script") {
 		t.Errorf("notes = %v", notes)
-	}
-}
-
-func TestWriteAddsIndependentBuild(t *testing.T) {
-	for _, existing := range []string{"", "custom frontend build"} {
-		t.Run(existing, func(t *testing.T) {
-			dir := t.TempDir()
-			if existing != "" {
-				put(t, dir, "package.json", `{"scripts":{"dev:build":"custom frontend build"}}`)
-			}
-			if _, _, _, err := (Project{Dir: dir, Language: "ts", Name: "com.example/billing"}).Write(); err != nil {
-				t.Fatal(err)
-			}
-			var pkg struct{ Scripts map[string]string }
-			if err := json.Unmarshal([]byte(read(t, dir, "package.json")), &pkg); err != nil {
-				t.Fatal(err)
-			}
-			want := existing
-			if want == "" {
-				want = pkg.Scripts["build"]
-			}
-			if !strings.Contains(pkg.Scripts["build"], "vite build") || pkg.Scripts["dev:build"] != want {
-				t.Fatalf("scripts = %v", pkg.Scripts)
-			}
-		})
 	}
 }
 

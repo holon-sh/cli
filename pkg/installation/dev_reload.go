@@ -245,14 +245,14 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
 	// A page is built once the clients it may import are in the source.
-	scripts, err := overlayScripts(root, entry, accepted != nil)
+	prepare, start, err := overlayScripts(root, entry, accepted != nil)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.StartFile)), 0o755); err != nil {
 		return packedSource{}, err
 	}
-	for name, script := range scripts {
+	for name, script := range map[string]string{runtimecontract.PrepareFile: prepare, runtimecontract.StartFile: start} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(script), 0o644); err != nil {
 			return packedSource{}, err
 		}
@@ -287,10 +287,9 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	return packed, err
 }
 
-// overlayScripts install dependencies before serving the entry and building its page. Older supervisors build in
-// prepare; supervisors that advertise concurrent builds run BuildFile beside startup and wait for both.
-func overlayScripts(root, entry string, page bool) (map[string]string, error) {
-	scripts := map[string]string{}
+// overlayScripts are the runtimecontract.PrepareFile and StartFile the development image runs an app with. prepare
+// installs what the app declares, and builds its page when page is set; start serves entry.
+func overlayScripts(root, entry string, page bool) (prepare, start string, err error) {
 	var steps []string
 	serve := serveCommand(entry)
 	if filepath.Ext(entry) == ".py" {
@@ -301,22 +300,17 @@ func overlayScripts(root, entry string, page bool) (map[string]string, error) {
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
 	if err == nil {
 		if err := json.Unmarshal(data, &pkg); err != nil {
-			return nil, err
+			return "", "", err
 		}
 		manager := pkg.Manager(root)
 		steps = append(steps, manager+" install")
-		if page && pkg.Scripts["dev:build"] != "" {
-			scripts[runtimecontract.BuildFile] = manager + " run dev:build\n"
-			steps = append(steps, "if [ \"${"+runtimecontract.ConcurrentBuildEnv+":-}\" != 1 ]; then sh "+runtimecontract.BuildFile+"; fi")
-		} else if page && pkg.Scripts["build"] != "" {
+		if page && pkg.Scripts["build"] != "" {
 			steps = append(steps, manager+" run build")
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
+		return "", "", err
 	}
-	scripts[runtimecontract.PrepareFile] = strings.Join(steps, " && ") + "\n"
-	scripts[runtimecontract.StartFile] = "exec " + strings.Join(serve, " ") + "\n"
-	return scripts, nil
+	return strings.Join(steps, " && ") + "\n", "exec " + strings.Join(serve, " ") + "\n", nil
 }
 
 func (p packedSource) publish(ctx context.Context) error {

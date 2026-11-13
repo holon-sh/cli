@@ -166,18 +166,6 @@ greeting.text;
 
 </details>
 
-### Development builds
-
-`holon dev` runs an app in the installation's development container and keeps installed dependencies between saves.
-If `package.json` defines `dev:build`, Holon runs that script beside server startup after installing dependencies.
-Both must succeed before the app receives traffic or the reload is reported ready. Use `dev:build` only for work
-independent of server imports, such as building frontend files. It replaces `build` for development; production
-continues to use `build`. Newly scaffolded frontend apps declare both scripts.
-
-Without `dev:build`, the existing `build` script runs before server startup, so apps that import its generated code
-keep their required ordering. The first development start skips page builds until the generated clients exist.
-Older development images run `dev:build` synchronously; updating the development image enables overlap.
-
 ## Community
 
 Ask questions and share what you're building on the [Holon Discord](https://discord.gg/jXExyBdy).
