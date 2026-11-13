@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -501,9 +504,9 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 func TestOverlayScripts(t *testing.T) {
 	const python = "exec uv run --no-sync python -m holon.serve "
 	for _, test := range []struct {
-		name, entry    string
-		files          map[string]string
-		prepare, start string
+		name, entry           string
+		files                 map[string]string
+		prepare, start, build string
 	}{
 		{name: "Python", entry: "server.py", prepare: "uv sync\n", start: python + "server.py\n"},
 		{
@@ -511,18 +514,81 @@ func TestOverlayScripts(t *testing.T) {
 			prepare: "npm install\n", start: "exec node_modules/.bin/holon-serve src/server.ts\n",
 		},
 		{
-			name: "Python with a frontend", entry: "src/server.py",
-			files:   map[string]string{"package.json": `{"scripts":{"build":"vite build"}}`, "pnpm-lock.yaml": ""},
-			prepare: "uv sync && pnpm install && pnpm run build\n", start: python + "src/server.py\n",
+			name: "Python with an independent frontend", entry: "src/server.py",
+			files:   map[string]string{"package.json": `{"scripts":{"dev:build":"vite build"}}`, "pnpm-lock.yaml": ""},
+			prepare: "uv sync && pnpm install && if [ \"${HOLON_CONCURRENT_BUILD:-}\" != 1 ]; then sh .holon/build; fi\n",
+			start:   python + "src/server.py\n", build: "pnpm run dev:build\n",
+		},
+		{
+			name: "build required before server imports", entry: "server.ts",
+			files:   map[string]string{"package.json": `{"scripts":{"build":"generate-server-code"}}`, "package-lock.json": ""},
+			prepare: "npm install && npm run build\n", start: "exec node_modules/.bin/holon-serve server.ts\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			sourceFiles(t, root, test.files)
-			if prepare, start, err := overlayScripts(root, test.entry, true); err != nil || prepare != test.prepare || start != test.start {
-				t.Fatalf("scripts = %q, %q: %v", prepare, start, err)
+			want := map[string]string{runtimecontract.PrepareFile: test.prepare, runtimecontract.StartFile: test.start}
+			if test.build != "" {
+				want[runtimecontract.BuildFile] = test.build
+			}
+			if scripts, err := overlayScripts(root, test.entry, true); err != nil || !maps.Equal(scripts, want) {
+				t.Fatalf("scripts = %q, want %q: %v", scripts, want, err)
 			}
 		})
+	}
+}
+
+func TestBuildScriptsAcrossSupervisorVersions(t *testing.T) {
+	for _, concurrent := range []bool{false, true} {
+		for _, fail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("concurrent=%t/fail=%t", concurrent, fail), func(t *testing.T) {
+				root := t.TempDir()
+				sourceFiles(t, root, map[string]string{"package.json": `{"scripts":{"dev:build":"vite build"}}`, "package-lock.json": ""})
+				scripts, err := overlayScripts(root, "server.ts", true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sourceFiles(t, root, scripts)
+				bin := t.TempDir()
+				fake := "#!/bin/sh\necho \"$*\" >> \"$SCRIPT_LOG\"\nif [ \"$1\" = run ]; then exit \"$BUILD_EXIT\"; fi\n"
+				if err := os.WriteFile(filepath.Join(bin, "npm"), []byte(fake), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				log := filepath.Join(root, "commands")
+				mode, exit := "", "0"
+				if concurrent {
+					mode = "1"
+				}
+				if fail {
+					exit = "7"
+				}
+				run := func(file string) error {
+					cmd := exec.Command("sh", file)
+					cmd.Dir = root
+					cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "SCRIPT_LOG="+log, "BUILD_EXIT="+exit, runtimecontract.ConcurrentBuildEnv+"="+mode)
+					return cmd.Run()
+				}
+				err = run(runtimecontract.PrepareFile)
+				if concurrent {
+					if err != nil {
+						t.Fatal(err)
+					}
+					data, _ := os.ReadFile(log)
+					if string(data) != "install\n" {
+						t.Fatalf("prepare ran a build: %s", data)
+					}
+					err = run(runtimecontract.BuildFile)
+				}
+				if (err != nil) != fail {
+					t.Fatalf("build error=%v, want failure=%t", err, fail)
+				}
+				data, _ := os.ReadFile(log)
+				if string(data) != "install\nrun dev:build\n" {
+					t.Fatalf("commands=%q", data)
+				}
+			})
+		}
 	}
 }
 
@@ -579,7 +645,7 @@ func TestDevFirstSendsSourceThenItsGeneratedClients(t *testing.T) {
 		},
 		{
 			name:    "a page is built once its clients are in the source",
-			project: `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`,
+			project: `{"private":true,"scripts":{"dev:build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`,
 			builds:  []bool{false, true}, clients: true,
 		},
 		{
@@ -596,7 +662,8 @@ func TestDevFirstSendsSourceThenItsGeneratedClients(t *testing.T) {
 			reloads := f.reloadRequests()
 			var builds []bool
 			for _, reload := range reloads {
-				builds = append(builds, strings.Contains(string(f.overlay(t, reload.Digest)[runtimecontract.PrepareFile]), " run build"))
+				entries := f.overlay(t, reload.Digest)
+				builds = append(builds, len(entries[runtimecontract.BuildFile]) != 0 || strings.Contains(string(entries[runtimecontract.PrepareFile]), " run build"))
 			}
 			var clients string
 			for name, data := range f.overlay(t, reloads[len(reloads)-1].Digest) {

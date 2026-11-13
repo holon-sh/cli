@@ -289,6 +289,12 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	switch current, ok := pkg.Scripts["build"]; {
 	case !ok:
 		updated, err := typegen.AddPackageMember(data, "scripts", "build", build)
+		if err != nil {
+			return nil, "", err
+		}
+		if _, exists := pkg.Scripts["dev:build"]; !exists {
+			updated, err = typegen.AddPackageMember(updated, "scripts", "dev:build", build)
+		}
 		return updated, "", err
 	case current == build:
 		return data, "", nil
