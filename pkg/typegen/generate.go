@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -453,6 +454,18 @@ func (p *Prepared) Targets(consumer string) []string {
 		return slices.Clone(c.Consumer.Targets)
 	}
 	return nil
+}
+
+// SameClients reports whether both preparations generated the same files for consumer. It also
+// reports true when neither preparation generated clients for it, including after Close.
+func (p *Prepared) SameClients(consumer string, previous *Prepared) bool {
+	current, prior := p.consumer(consumer), previous.consumer(consumer)
+	if current == nil || prior == nil {
+		return current == prior
+	}
+	return maps.EqualFunc(current.packages, prior.packages, func(a, b map[string][]byte) bool {
+		return maps.EqualFunc(a, b, bytes.Equal)
+	})
 }
 
 // WriteClients writes a consumer's clients into dir, the project or a copy staged for an image, and

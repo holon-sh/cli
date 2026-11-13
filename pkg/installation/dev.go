@@ -381,7 +381,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 			return true
 		}
 	}
-	if change.contexts.Len() != 0 && d.reload(ctx, change.contexts) && d.pending.Len() == 0 {
+	if change.contexts.Len() != 0 && d.reload(ctx, change.contexts).Len() == 0 && d.pending.Len() == 0 {
 		d.regenerate(ctx)
 	}
 	return false

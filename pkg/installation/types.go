@@ -16,6 +16,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/typegen"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/ptr"
 )
 
@@ -42,12 +43,19 @@ func (w *typeWorkspace) close() {
 	}
 }
 
-func (w *typeWorkspace) accept(manifest manifestSpec) {
+func (w *typeWorkspace) accept(manifest manifestSpec) sets.Set[string] {
+	previous := w.accepted
+	w.accepted = map[string]*preparedTypes{}
+	changed := sets.New[string]()
 	for _, app := range manifest.Apps {
 		if p := app.resolved.types; p != nil {
 			w.accepted[app.Name] = p
+			if prior := previous[app.Name]; prior == nil || !p.prepared.SameClients(app.Name, prior.prepared) {
+				changed.Insert(app.Path)
+			}
 		}
 	}
+	return changed
 }
 
 func (w *typeWorkspace) acquire(manifest manifestSpec) error {

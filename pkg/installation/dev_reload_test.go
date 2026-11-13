@@ -50,6 +50,8 @@ type reloadFixture struct {
 	mu         sync.Mutex
 	ready      bool
 	failNext   bool
+	failApp    string
+	contract   string
 	refusal    string
 	failSave   bool
 	unserved   bool
@@ -92,7 +94,7 @@ func (f *reloadFixture) reloadRequests() []sentSource {
 
 func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *reloadFixture {
 	t.Helper()
-	f := &reloadFixture{t: t, root: t.TempDir(), ready: ready, changed: make(chan struct{})}
+	f := &reloadFixture{t: t, root: t.TempDir(), ready: ready, contract: servedContract, changed: make(chan struct{})}
 	sourceFiles(t, f.root, map[string]string{
 		manifestFileName:  alphaManifest,
 		"alpha/server.py": "app = None", "alpha/tools.py": "first", "alpha/pyproject.toml": alphaProject, "alpha/uv.lock": alphaLock,
@@ -105,13 +107,13 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	h := newRunHarness(t)
 	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		f.mu.Lock()
-		unserved := f.unserved
+		unserved, contract := f.unserved, f.contract
 		f.mu.Unlock()
 		if unserved {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		installationtest.WriteJSON(w, json.RawMessage(servedContract))
+		installationtest.WriteJSON(w, json.RawMessage(contract))
 	})
 	f.files = &h.files
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
@@ -122,6 +124,11 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	session := func() map[string]any {
 		response := apiSession("alpha")
 		response["apps"], response["revision"] = f.served, strconv.Itoa(f.revision)
+		var endpoints []protocol.SessionEndpoint
+		for _, app := range f.served {
+			endpoints = append(endpoints, protocol.SessionEndpoint{Name: app.Name})
+		}
+		response["endpoints"] = endpoints
 		if !f.ready {
 			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
 		}
@@ -180,8 +187,9 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.reloads = append(f.reloads, sentSource{r.PathValue("id"), r.PathValue("app"), digest.FromBytes(body).String(), body})
-		if f.failNext {
+		if f.failNext || f.failApp == r.PathValue("app") {
 			f.failNext = false
+			f.failApp = ""
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
@@ -626,6 +634,80 @@ func TestDevShowsReloadDetailsOnlyWhenVerbose(t *testing.T) {
 	})
 	f.update(func() { f.refusal = installFailure })
 	f.save(map[string]string{"alpha/tools.py": "fourth"}, "npm error 404\nnot found\nalpha reload failed: npm install: exit status 1\n")
+}
+
+func TestDevReloadsOnlyChangedClientsAndRetriesTheirFailedReload(t *testing.T) {
+	const manifest = alphaManifest + "- name: beta\n  access: {server: {}}\n  path: ./beta\n"
+	f := startReloadFixture(t, true, map[string]string{
+		manifestFileName:    manifest,
+		"alpha/server.py":   "import mcp\n",
+		"beta/server.py":    "import mcp\n",
+		"beta/package.json": `{"type":"module","dependencies":{"holon-sh":"0.0.1"}}`,
+		"beta/server.json":  `{"name":"example.com/beta","version":"1","description":"Beta","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"alpha":{}}}}}}`,
+	})
+	if err := f.stop(); err != nil {
+		t.Fatal(err)
+	}
+	f.start("--verbose")
+	f.watching()
+	tool := "lookup"
+	for _, step := range []struct {
+		source, tool, failure, manifest string
+		apps                            []string
+	}{
+		{source: "implementation change", apps: []string{"alpha"}},
+		{source: "contract change", tool: "changed", apps: []string{"alpha", "beta"}},
+		{source: "another implementation change", apps: []string{"alpha"}},
+		{
+			source: "source and manifest change with failed consumer", tool: "retry", failure: "beta",
+			manifest: manifest + "- name: gamma\n  access: {server: {}}\n  remote: {url: https://upstream.example/mcp}\n",
+			apps:     []string{"alpha", "beta"},
+		},
+		{source: "retry unchanged contract", apps: []string{"alpha", "beta"}},
+		{source: "another failed consumer", tool: "removed", failure: "beta", apps: []string{"alpha", "beta"}},
+		{source: "remove the failed consumer", manifest: alphaManifest, apps: []string{"alpha"}},
+	} {
+		if step.tool != "" {
+			tool = step.tool
+		}
+		f.update(func() {
+			f.contract = strings.Replace(servedContract, "lookup", tool, 1)
+			f.failApp = step.failure
+		})
+		before, output, stdout := len(f.reloadRequests()), len(f.stderr.String()), len(f.stdout.String())
+		line := "alpha reloaded"
+		if step.failure != "" {
+			line = step.failure + " reload failed"
+		}
+		files := map[string]string{"alpha/tools.py": step.source}
+		if step.manifest != "" {
+			files[manifestFileName] = step.manifest
+		}
+		f.save(files, line)
+		var apps []string
+		for _, request := range f.reloadRequests()[before:] {
+			apps = append(apps, request.App)
+			if request.App == "beta" && step.failure == "" && !strings.Contains(string(f.overlay(t, request.Digest)["generated/holon-sh/index.d.mts"]), `"`+tool+`"`) {
+				t.Fatalf("%s: the consumer did not receive the %s contract", step.source, tool)
+			}
+		}
+		if !slices.Equal(apps, step.apps) {
+			t.Fatalf("%s: reloaded %v, want %v", step.source, apps, step.apps)
+		}
+		if step.failure != "" && strings.Contains(f.stdout.String()[stdout:], "\nReady\n") {
+			t.Fatalf("%s: a failed reload was reported ready", step.source)
+		}
+		details := f.stderr.String()[output:]
+		for _, app := range []string{"alpha", "beta"} {
+			want := 0
+			if slices.Contains(step.apps, app) {
+				want = 1
+			}
+			if attempts := strings.Count(details, "Timing "+app+" reload:"); attempts != want {
+				t.Fatalf("%s: %s prepared %d times; stderr=%q", step.source, app, attempts, details)
+			}
+		}
+	}
 }
 
 func TestDevStartup(t *testing.T) {

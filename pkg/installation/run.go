@@ -121,9 +121,6 @@ func uploadManifest(
 		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
 	defer cleanup()
-	if options.served != nil {
-		options.types.accept(prepared)
-	}
 	built, err := buildManifestImages(ctx, manager, name, prepared, options)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, err

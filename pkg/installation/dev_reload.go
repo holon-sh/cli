@@ -88,7 +88,7 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
-	if !d.reload(ctx, d.paths(true)) {
+	if d.reload(ctx, d.unsent()).Len() != 0 {
 		return errUnstarted
 	}
 	options := d.options
@@ -101,15 +101,29 @@ func (d *devLoop) generate(ctx context.Context) error {
 		return err
 	}
 	cleanup()
-	d.options.types.accept(prepared)
-	if !d.reload(ctx, d.paths(false)) {
+	previous := d.options.types.accepted
+	changed := d.options.types.accept(prepared)
+	for _, app := range d.manifest.Apps {
+		if app.Path != "" && d.pending.Has(app.Name) {
+			changed.Insert(app.Path)
+		}
+	}
+	failed := d.reload(ctx, changed)
+	for name := range failed {
+		if prior := previous[name]; prior != nil {
+			d.options.types.accepted[name] = prior
+		} else {
+			delete(d.options.types.accepted, name)
+		}
+	}
+	if failed.Len() != 0 {
 		return errUnstarted
 	}
 	return nil
 }
 
-func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
-	reloaded := true
+func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) sets.Set[string] {
+	failed := sets.New[string]()
 	for _, app := range d.manifest.Apps {
 		if !contexts.Has(app.Path) {
 			continue
@@ -124,10 +138,10 @@ func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
 			}
 			d.options.output.status(app.Name, "reload failed: "+reason, progressError)
 			d.pending.Delete(app.Name)
-			reloaded = false
+			failed.Insert(app.Name)
 		}
 	}
-	return reloaded
+	return failed
 }
 
 func recordedSources(apps []protocol.App) map[string]string {
@@ -138,10 +152,10 @@ func recordedSources(apps []protocol.App) map[string]string {
 	return recorded
 }
 
-func (d *devLoop) paths(unsent bool) sets.Set[string] {
+func (d *devLoop) unsent() sets.Set[string] {
 	paths := sets.New[string]()
 	for _, app := range d.manifest.Apps {
-		if app.Path != "" && !(unsent && d.sent[app.Name] != "") {
+		if app.Path != "" && d.sent[app.Name] == "" {
 			paths.Insert(app.Path)
 		}
 	}
@@ -232,6 +246,9 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 
 func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string, upload *imageUpload) (packedSource, error) {
 	accepted := o.types.accepted[app.Name]
+	if o.served != nil {
+		accepted = app.resolved.types
+	}
 	if accepted != nil {
 		staged := *accepted
 		staged.root = root
