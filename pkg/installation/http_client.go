@@ -46,6 +46,7 @@ type httpError struct {
 	StatusCode int
 	Code       string
 	Message    string
+	Output     string
 	MovedTo    string
 }
 
@@ -126,6 +127,12 @@ func (c *apiClient) send(ctx context.Context, path string, request apiRequest, r
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		code, message := responseError(data, request.Token, response.StatusCode)
 		failure := &httpError{StatusCode: response.StatusCode, Code: code, Message: message}
+		var printed struct {
+			Output string `json:"output"`
+		}
+		if message != "" && json.Unmarshal(data, &printed) == nil && (request.Token == "" || !strings.Contains(printed.Output, request.Token)) {
+			failure.Output = printed.Output
+		}
 		if location, err := response.Location(); err == nil && location.Host != req.URL.Host &&
 			(response.StatusCode == http.StatusMovedPermanently || response.StatusCode == http.StatusPermanentRedirect) {
 			failure.MovedTo, _ = protocol.CanonicalOrigin("https://" + location.Host)

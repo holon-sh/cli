@@ -46,7 +46,7 @@ type commandConfig struct {
 	builder            buildApplication
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
-	Clock              clock.WithTicker
+	Clock              clock.WithTickerAndDelayedExecution
 	watch              func() (fileWatcher, error)
 	verbose            bool
 	jsonOutput         bool
@@ -60,8 +60,8 @@ func (c commandConfig) buildOptions(manager *Client, stderr io.Writer) buildOpti
 	}
 }
 
-func (c commandConfig) clock() clock.WithTicker {
-	return cmp.Or[clock.WithTicker](c.Clock, clock.RealClock{})
+func (c commandConfig) clock() clock.WithTickerAndDelayedExecution {
+	return cmp.Or[clock.WithTickerAndDelayedExecution](c.Clock, clock.RealClock{})
 }
 
 func resolveManifestFile(arg string) (manifestSpec, error) {
@@ -178,7 +178,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	dev := &devLoop{
 		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), watch: config.watch, started: config.clock().Now(), options: options,
 		pending: sets.New[string](), announce: true,
-		sent: map[string]string{}, background: context.WithoutCancel(ctx), recording: map[string]context.CancelFunc{},
+		sent: map[string]string{}, background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{},
 	}
 	defer dev.records.Wait()
 	first := options

@@ -33,6 +33,8 @@ const (
 	alphaLock     = "version = 1\n\n[[package]]\nname = \"alpha\"\nversion = \"1\"\nsource = { virtual = \".\" }\n"
 )
 
+const installed = "added 1 package\n"
+
 type reloadFixture struct {
 	t        *testing.T
 	root     string
@@ -44,20 +46,22 @@ type reloadFixture struct {
 	start    func(args ...string)
 	stop     func() error
 
-	mu       sync.Mutex
-	ready    bool
-	failNext bool
-	failSave bool
-	unserved bool
-	creates  int
-	started  string
-	uploaded int
-	served   []protocol.App
-	revision int
-	changed  chan struct{}
-	reads    []string
-	reloads  []sentSource
-	recorded []string
+	mu         sync.Mutex
+	ready      bool
+	failNext   bool
+	refusal    string
+	failSave   bool
+	unserved   bool
+	unrecorded bool
+	creates    int
+	started    string
+	uploaded   int
+	served     []protocol.App
+	revision   int
+	changed    chan struct{}
+	reads      []string
+	reloads    []sentSource
+	recorded   []string
 }
 
 type sentSource struct {
@@ -180,13 +184,27 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			w.WriteHeader(http.StatusConflict)
 			return
 		}
+		if f.refusal != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, f.refusal)
+			f.refusal = ""
+			return
+		}
 		f.unserved = false
-		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2})
+		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2, Output: installed})
 	})
 	h.control.Handle([]string{toolRecordAppSource}, nil, func(w http.ResponseWriter, r *http.Request) {
 		var input recordAppSourceRequest
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Error(err)
+		}
+		f.mu.Lock()
+		unrecorded := f.unrecorded
+		f.mu.Unlock()
+		if unrecorded {
+			<-r.Context().Done()
+			installationtest.WriteJSON(w, struct{}{})
+			return
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -265,6 +283,8 @@ func TestDevSaves(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		failReload bool
+		unrecorded bool
+		refusal    string
 		saves      []map[string]string
 		lines      []string
 		reloads    int
@@ -284,16 +304,30 @@ func TestDevSaves(t *testing.T) {
 			saves: []map[string]string{{"alpha/tools.py": "second"}},
 			lines: []string{"alpha reload failed"}, reloads: 1,
 		},
+		{
+			name: "a source the session has not recorded within a minute is reported, and one a newer save replaced is not", unrecorded: true,
+			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "third"}},
+			lines: []string{"alpha reloaded in 1.2 s", "alpha reloaded, but not recorded in the session: no answer within a minute"}, reloads: 2,
+		},
+		{
+			name:    "a source that does not install shows what the install printed, then why",
+			refusal: `{"error":{"code":"invalid_request","message":"npm install: exit status 1"},"output":"npm error 404\nnot found\n"}`,
+			saves:   []map[string]string{{"alpha/tools.py": "second"}},
+			lines:   []string{"npm error 404\nnot found\nalpha reload failed: npm install: exit status 1\n"}, reloads: 1,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true)
 			started := len(f.reloadRequests())
-			f.update(func() { f.failNext = test.failReload })
+			f.update(func() { f.failNext, f.unrecorded, f.refusal = test.failReload, test.unrecorded, test.refusal })
 			for i, files := range test.saves {
 				f.save(files, test.lines[i])
 			}
 			if reloads := len(f.reloadRequests()) - started; reloads != test.reloads {
 				t.Fatalf("reloads = %d, want %d", reloads, test.reloads)
+			}
+			if strings.Contains(f.stderr.String(), errSourceSuperseded.Error()) {
+				t.Fatalf("a replaced source was reported: %q", f.stderr.String())
 			}
 		})
 	}
@@ -483,7 +517,7 @@ func TestStartScript(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			sourceFiles(t, root, test.files)
-			if script, err := startScript(root, test.entry); err != nil || script != test.want {
+			if script, err := startScript(root, test.entry, true); err != nil || script != test.want {
 				t.Fatalf("script = %q, want %q: %v", script, test.want, err)
 			}
 		})
@@ -529,26 +563,67 @@ func (f *reloadFixture) overlay(t *testing.T, digest string) map[string][]byte {
 	}
 }
 
-func TestDevGeneratesClientsFromTheRunningApp(t *testing.T) {
-	f := startReloadFixture(t, true, map[string]string{
-		"alpha/server.py": "import mcp\n", "alpha/package.json": `{"private":true,"dependencies":{"holon-ui":"0.0.1"}}`,
-	})
-	generated := func(entries map[string][]byte) string {
-		var clients string
-		for name, data := range entries {
-			if strings.HasPrefix(name, "generated/holon-ui/") {
-				clients += string(data)
+func TestDevFirstSendsSourceThenItsGeneratedClients(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		project string
+		builds  []bool
+		clients bool
+	}{
+		{name: "an app with nothing to generate or build is sent once", builds: []bool{false}},
+		{
+			name: "clients generated from the running app follow in a second send", project: `{"private":true,"dependencies":{"holon-ui":"0.0.1"}}`,
+			builds: []bool{false, false}, clients: true,
+		},
+		{
+			name:    "a page is built once its clients are in the source",
+			project: `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`,
+			builds:  []bool{false, true}, clients: true,
+		},
+		{
+			name: "a page that takes no client is sent again to be built", project: `{"private":true,"scripts":{"build":"vite build"}}`,
+			builds: []bool{false, true},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := map[string]string{"alpha/server.py": "import mcp\n"}
+			if test.project != "" {
+				files["alpha/package.json"] = test.project
 			}
-		}
-		return clients
+			f := startReloadFixture(t, true, files)
+			reloads := f.reloadRequests()
+			var builds []bool
+			for _, reload := range reloads {
+				builds = append(builds, strings.Contains(string(f.overlay(t, reload.Digest)[runtimecontract.StartFile]), " run build"))
+			}
+			var clients string
+			for name, data := range f.overlay(t, reloads[len(reloads)-1].Digest) {
+				if strings.HasPrefix(name, "generated/holon-ui/") {
+					clients += string(data)
+				}
+			}
+			if !slices.Equal(builds, test.builds) || reloads[0].Digest != f.started || strings.Contains(clients, "lookup") != test.clients {
+				t.Fatalf("builds = %v, clients %q; stderr=%q", builds, clients, f.stderr.String())
+			}
+			if _, err := os.Stat(filepath.Join(f.root, "alpha", "generated", "holon-ui")); (err == nil) != test.clients {
+				t.Fatal(err)
+			}
+		})
 	}
-	reloads := f.reloadRequests()
-	if len(reloads) != 2 || reloads[0].Digest != f.started || generated(f.overlay(t, f.started)) != "" || !strings.Contains(generated(f.overlay(t, reloads[1].Digest)), "lookup") {
-		t.Fatalf("reloads = %d; stderr=%q", len(reloads), f.stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(f.root, "alpha", "generated", "holon-ui")); err != nil {
+}
+
+func TestDevShowsWhatAnInstallPrintedOnlyWhenVerbose(t *testing.T) {
+	f := startReloadFixture(t, true)
+	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reloaded")
+	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(f.stderr.String(), installed) {
+		t.Fatalf("stderr = %q", f.stderr.String())
+	}
+	sourceFiles(t, f.root, map[string]string{"alpha/tools.py": "third"})
+	f.start("--verbose")
+	f.await(func() bool { return strings.Contains(f.stderr.String(), installed+"alpha reloaded") })
 }
 
 func TestDevStartup(t *testing.T) {

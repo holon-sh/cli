@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,6 +41,7 @@ type recordAppSourceRequest struct {
 
 type reloadAppResult struct {
 	ElapsedSeconds float64 `json:"elapsedSeconds"`
+	Output         string  `json:"output"`
 }
 
 type packedSource struct {
@@ -70,7 +72,11 @@ func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error
 	return served, nil
 }
 
-var errUnstarted = errors.New("an app did not start from its source")
+var (
+	errUnstarted        = errors.New("an app did not start from its source")
+	errSourceSuperseded = errors.New("superseded by a newer save")
+	errSourceUnrecorded = errors.New("no answer within a minute")
+)
 
 func (d *devLoop) regenerate(ctx context.Context) bool {
 	err := d.generate(ctx)
@@ -109,7 +115,12 @@ func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
 			continue
 		}
 		if err := d.reloadApp(ctx, app); err != nil {
-			d.options.output.status(app.Name, fmt.Sprintf("reload failed: %v", err), progressError)
+			reason := err.Error()
+			if failure, ok := errors.AsType[*httpError](err); ok && failure.Message != "" {
+				reason = failure.Message
+				_, _ = io.WriteString(d.options.output.writer, failure.Output)
+			}
+			d.options.output.status(app.Name, "reload failed: "+reason, progressError)
 			d.pending.Delete(app.Name)
 			reloaded = false
 		}
@@ -183,34 +194,43 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 		return err
 	}
 	d.sent[app] = packed.overlay.Digest.String()
+	if d.options.output.verbose {
+		_, _ = io.WriteString(d.options.output.writer, result.Output)
+	}
 	d.options.output.status(app, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
 	return nil
 }
 
 func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 	if cancel := d.recording[app]; cancel != nil {
-		cancel()
+		cancel(errSourceSuperseded)
 	}
-	ctx, cancel := context.WithTimeout(d.background, time.Minute)
+	ctx, cancel := context.WithCancelCause(d.background)
 	d.recording[app] = cancel
+	d.clock.AfterFunc(time.Minute, func() { cancel(errSourceUnrecorded) })
 	d.records.Go(func() {
 		defer cleanup()
+		uploaded := d.options.output.measure(app, "source upload")
 		err := packed.publish(ctx)
+		uploaded()
 		if err == nil {
 			request := recordAppSourceRequest{
 				AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app},
 				Digest:     packed.overlay.Digest.String(),
 			}
+			recorded := d.options.output.measure(app, "source record")
 			err = d.manager.Call(ctx, ControlPlane(d.name), toolRecordAppSource, request, nil)
+			recorded()
 		}
-		if ctx.Err() == nil {
-			d.options.output.problem(app+" source", err)
+		if cause := cmp.Or(context.Cause(ctx), err); err != nil && cause != errSourceSuperseded {
+			d.options.output.status(app, "reloaded, but not recorded in the session: "+cause.Error(), progressError)
 		}
 	})
 }
 
 func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string, upload *imageUpload) (packedSource, error) {
-	if accepted := o.types.accepted[app.Name]; accepted != nil {
+	accepted := o.types.accepted[app.Name]
+	if accepted != nil {
 		staged := *accepted
 		staged.root = root
 		if err := stageTypes(&staged); err != nil {
@@ -224,7 +244,8 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	if entry == "" {
 		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
-	script, err := startScript(root, entry)
+	// A page is built once the clients it may import are in the source.
+	script, err := startScript(root, entry, accepted != nil)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}
@@ -264,9 +285,10 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	return packed, err
 }
 
-// startScript is the runtimecontract.StartFile the development image starts an app with. It installs and builds
-// what the app declares before serving entry, so the app accepts connections once all it serves is ready.
-func startScript(root, entry string) (string, error) {
+// startScript is the runtimecontract.StartFile the development image starts an app with. It installs what the app
+// declares, and builds its page when page is set, before serving entry, so the app accepts connections once all it
+// serves is ready.
+func startScript(root, entry string, page bool) (string, error) {
 	var steps []string
 	var pkg typegen.PackageJSON
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
@@ -276,7 +298,7 @@ func startScript(root, entry string) (string, error) {
 		}
 		manager := pkg.Manager(root)
 		steps = append(steps, manager+" install")
-		if pkg.Scripts["build"] != "" {
+		if page && pkg.Scripts["build"] != "" {
 			steps = append(steps, manager+" run build")
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
