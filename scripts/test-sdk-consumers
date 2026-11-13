@@ -13,7 +13,8 @@ trap 'rm -rf "$sdk_env"' EXIT HUP INT TERM
 case "$target" in
   node|browser)
     compiler=$(node -p 'require("./tooling/typescript/package-lock.json").packages["node_modules/typescript"].version')
-    npm install --prefix "$sdk_env" --no-save --package-lock=false "typescript@$compiler" "$package"
+    node_types=$(node -p 'require("./tooling/typescript/package-lock.json").packages["node_modules/@types/node"].version')
+    npm install --prefix "$sdk_env" --no-save --package-lock=false "typescript@$compiler" "@types/node@$node_types" "$package"
     ;;
   python)
     uv sync --project tooling/python

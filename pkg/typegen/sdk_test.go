@@ -22,6 +22,8 @@ const editsSchema = `{"type":"object","required":["edits"],"properties":{"edits"
 	"Updated":{"type":"object","required":["id","code"],"properties":{"op":{"const":"cell.updated","default":"cell.updated","type":"string"},"id":{"type":"string"},"code":{"type":"string"}}},
 	"Removed":{"type":"object","required":["id"],"properties":{"op":{"const":"cell.removed","default":"cell.removed","type":"string"},"id":{"type":"string"}}}}}`
 
+const consumerTSConfig = `{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":%t,"target":"ES2023","module":"NodeNext"},"include":["src"]}`
+
 // Generated clients must agree with the installed SDK's declarations and runtime, including
 // through its package exports. These dependencies can be replaced with candidate distributions.
 func TestGeneratedSDKConsumers(t *testing.T) {
@@ -74,7 +76,7 @@ func TestGeneratedSDKConsumers(t *testing.T) {
 					t.Fatal(err)
 				}
 				put(t, app, "package.json", fmt.Sprintf(`{"type":"module","dependencies":{%q:"*"}}`, NodePackages[test.target]))
-				put(t, app, "tsconfig.json", `{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true,"target":"ES2023","module":"NodeNext"},"include":["src"]}`)
+				put(t, app, "tsconfig.json", fmt.Sprintf(consumerTSConfig, false))
 			}
 			consumer := Consumer{Name: "caller", Dir: app, Targets: []string{test.target}, Sources: []Source{{Document: document(t, orders)}}}
 			if err := Generate(t.Context(), []Consumer{consumer}, Options{}); err != nil {
@@ -146,6 +148,7 @@ asyncio.run(main())
 `, endpoint.URL))
 				runSDKConsumer(t, app, program, "run.py")
 			} else {
+				put(t, app, "tsconfig.json", fmt.Sprintf(consumerTSConfig, true))
 				prefix := fmt.Sprintf(`import { createApps } from "#%s";
 const apps = createApps({ orders: { endpoint: "https://orders.example/mcp" } });
 `, NodePackages[test.target])
