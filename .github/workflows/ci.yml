@@ -56,7 +56,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/kiln
-      - run: scripts/build-mcp-runtime
+      - run: scripts/build-mcp-bridge
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -92,7 +92,7 @@ jobs:
       - uses: ./.github/actions/kiln
         with:
           static: "true"
-      - run: scripts/build-mcp-runtime
+      - run: scripts/build-mcp-bridge
       - uses: actions/setup-node@v7
         with:
           node-version: 22

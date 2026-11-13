@@ -94,13 +94,7 @@ func resolveAppMetadata(app *manifestApp, pkg mcpregistry.Package) error {
 		return err
 	}
 	app.resolved.Env, app.resolved.EnvTemplates, app.resolved.Args = declared.Env, declared.EnvTemplates, declared.Args
-	for _, name := range app.resolved.Requires {
-		variable := protocol.DependencyEnvName(name)
-		if input := app.resolved.Env[variable]; input.IsSecret || input.Value != nil || input.Default != nil {
-			return fmt.Errorf("dependency endpoint %s cannot be secret or have a value or default", variable)
-		}
-		delete(app.resolved.Env, variable)
-	}
+	app.resolved.Imported = app.Registry != nil
 	if app.resolved.stdio && app.OAuth != nil {
 		return errors.New("oauth requires an HTTP MCP server")
 	}

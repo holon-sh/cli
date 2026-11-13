@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"slices"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/protocol/runtimecontract"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -28,14 +30,12 @@ type listEventsResult struct {
 	NextCursor string              `json:"nextCursor,omitempty"`
 }
 
-var catalogMethods = []string{"tools/list", "resources/list", "events/list"}
-
 func listCatalog(capabilities *mcp.ServerCapabilities, pages func(method string) ([]json.RawMessage, error)) (*mcpcontract.Contract, error) {
 	capabilities = cmp.Or(capabilities, &mcp.ServerCapabilities{})
 	_, events := capabilities.Extensions[eventsExtension]
 	declared := map[string]bool{"tools/list": capabilities.Tools != nil, "resources/list": capabilities.Resources != nil, "events/list": events}
 	contract := &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}
-	for _, method := range catalogMethods {
+	for _, method := range runtimecontract.CatalogMethods {
 		if !declared[method] {
 			continue
 		}
@@ -97,4 +97,38 @@ func sessionPages(ctx context.Context, session *mcp.ClientSession) func(method s
 			cursor = next.NextCursor
 		}
 	}
+}
+
+// ServedContract lists what the server at endpoint serves, in the form Options.Served takes: its serverInfo,
+// capabilities and every page of each catalog it declares.
+func ServedContract(ctx context.Context, endpoint string, client *http.Client) (json.RawMessage, error) {
+	served, _, err := listServer(ctx, endpoint, client)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(served)
+}
+
+// listServer lists what the server at endpoint serves, and the contract that makes. It talks to the server under a
+// context of its own that ends with ctx: go-sdk takes the protocol version of an MCP request it serves from the
+// context, which a listing made inside a tool call would otherwise send.
+func listServer(ctx context.Context, endpoint string, client *http.Client) (*extraction, *mcpcontract.Contract, error) {
+	own, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer context.AfterFunc(ctx, cancel)()
+	session, err := dial(own, endpoint, client)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = session.Close() }()
+	initialized := session.InitializeResult()
+	info, _ := json.Marshal(initialized.ServerInfo)
+	served := &extraction{ServerInfo: info, Capabilities: initialized.Capabilities, Lists: map[string]listed{}}
+	pages := sessionPages(own, session)
+	contract, err := listCatalog(initialized.Capabilities, func(method string) ([]json.RawMessage, error) {
+		list, err := pages(method)
+		served.Lists[method] = listed{Pages: list}
+		return list, err
+	})
+	return served, contract, err
 }

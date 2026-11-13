@@ -71,7 +71,7 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resolved.Apps) != 2 || resolved.Apps[1].resolved.Image == "" ||
+	if len(resolved.Apps) != 2 || resolved.Apps[1].resolved.Image == "" || !resolved.Apps[1].resolved.Imported ||
 		resolved.Apps[0].resolved.Port != 3000 || resolved.Apps[1].resolved.Port != 8080 {
 		t.Fatalf("incorrect installation: %#v", resolved)
 	}
@@ -84,7 +84,7 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if local.Apps[1].resolved.Image != "" || local.Apps[1].resolved.Port != 8080 {
+	if local.Apps[1].resolved.Image != "" || local.Apps[1].resolved.Imported || local.Apps[1].resolved.Port != 8080 {
 		t.Fatalf("local replacement failed: %#v", local.Apps[1])
 	}
 	manifest.Apps[1] = manifestApp{Name: "beta", Remote: &manifestRemote{URL: "https://beta.example/mcp"}, Access: policy}
@@ -99,12 +99,10 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 		}},
 	}}
 	writeDescriptor(t, filepath.Join(root, "beta-cycle/server.json"), cycleBeta)
-	secretAlpha := descriptorDocument("alpha")
-	secretAlpha["_meta"] = alpha["_meta"]
-	secretAlpha["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{
-		map[string]any{"name": "BETA_MCP_URL", "isSecret": true},
-	}
-	writeDescriptor(t, filepath.Join(root, "alpha-secret/server.json"), secretAlpha)
+	endpointAlpha := descriptorDocument("alpha")
+	endpointAlpha["_meta"] = alpha["_meta"]
+	endpointAlpha["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{map[string]any{"name": "BETA_MCP_URL"}}
+	writeDescriptor(t, filepath.Join(root, "alpha-endpoint/server.json"), endpointAlpha)
 	orphanAlpha := descriptorDocument("alpha")
 	orphanAlpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
 		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{"zeta": {Name: "io.github.acme/zeta", Version: "1.0.0"}}},
@@ -135,8 +133,8 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 		{name: "dependency cycle", want: "cycle", change: func(p *manifestSpec) {
 			p.Apps[1].Path = filepath.Join(root, "beta-cycle")
 		}},
-		{name: "secret dependency endpoint", want: "dependency endpoint", change: func(p *manifestSpec) {
-			p.Apps[0].Path = filepath.Join(root, "alpha-secret")
+		{name: "declared dependency endpoint", want: `invalid environment name "BETA_MCP_URL"`, change: func(p *manifestSpec) {
+			p.Apps[0].Path = filepath.Join(root, "alpha-endpoint")
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

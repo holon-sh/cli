@@ -12,7 +12,8 @@ import (
 	"oras.land/oras-go/v2/content"
 )
 
-const RuntimePath = "/holon-mcp-runtime"
+// BridgePath is where an adapted stdio image holds the mcp-bridge binary that serves it over HTTP.
+const BridgePath = "/mcp-bridge"
 
 // FetchJSON decodes registry metadata, refusing documents larger than 4 MiB.
 func FetchJSON(ctx context.Context, source content.Fetcher, descriptor ocispec.Descriptor, value any) error {

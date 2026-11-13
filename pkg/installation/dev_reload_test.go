@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
+	"github.com/holon-sh/protocol/runtimecontract"
 )
 
 const (
@@ -65,8 +65,8 @@ type reloadFixture struct {
 }
 
 type sentSource struct {
-	Session, App, Digest, Query string
-	body                        []byte
+	Session, App, Digest string
+	body                 []byte
 }
 
 // update changes the session and moves it past its revision, which releases a held read.
@@ -173,12 +173,12 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		})
 	h.mux.HandleFunc("POST /sessions/{id}/apps/{app}/source", func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
-		if err != nil || r.Header.Get(protocol.HeaderContentType) != overlayMediaType {
+		if err != nil || r.Header.Get(protocol.HeaderContentType) != runtimecontract.OverlayMediaType {
 			t.Errorf("source request: %v %q", err, r.Header.Get(protocol.HeaderContentType))
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.reloads = append(f.reloads, sentSource{r.PathValue("id"), r.PathValue("app"), digest.FromBytes(body).String(), r.URL.RawQuery, body})
+		f.reloads = append(f.reloads, sentSource{r.PathValue("id"), r.PathValue("app"), digest.FromBytes(body).String(), body})
 		if f.failNext {
 			f.failNext = false
 			w.WriteHeader(http.StatusConflict)
@@ -467,7 +467,8 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	if app.Image != "" || app.Port != 0 {
 		t.Fatalf("session app = %+v", app)
 	}
-	if first := f.reloadRequests()[0]; first.Digest != f.started || !strings.Contains(string(f.overlay(t, f.started)["server.py"]), "app = None") {
+	if first, overlay := f.reloadRequests()[0], f.overlay(t, f.started); first.Digest != f.started ||
+		!strings.Contains(string(overlay["server.py"]), "app = None") || string(overlay[runtimecontract.StartFile]) != "exec uv run python -m holon.serve server.py\n" {
 		t.Fatalf("the session was created from %s and first sent %s", f.started, first.Digest)
 	}
 	if f.uploaded != 0 || strings.Contains(f.stderr.String(), "alpha uploaded") {
@@ -491,8 +492,35 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 		return slices.Contains(f.recorded, request.Digest)
 	})
 	entries := f.overlay(t, request.Digest)
-	if !bytes.Equal(request.body, f.blob(request.Digest)) || string(entries["tools.py"]) != "second" || slices.ContainsFunc(slices.Collect(maps.Keys(entries)), func(name string) bool { return strings.HasPrefix(name, ".holon") }) {
+	if !bytes.Equal(request.body, f.blob(request.Digest)) || string(entries["tools.py"]) != "second" {
 		t.Fatalf("overlay entries = %v", entries)
+	}
+}
+
+func TestStartScript(t *testing.T) {
+	for _, test := range []struct {
+		name, entry string
+		files       map[string]string
+		want        string
+	}{
+		{name: "Python", entry: "server.py", want: "exec uv run python -m holon.serve server.py\n"},
+		{
+			name: "Node", entry: "src/server.ts", files: map[string]string{"package.json": `{}`, "package-lock.json": ""},
+			want: "npm install && exec node_modules/.bin/holon-serve src/server.ts\n",
+		},
+		{
+			name: "Python with a frontend", entry: "src/server.py",
+			files: map[string]string{"package.json": `{"scripts":{"build":"vite build"}}`, "pnpm-lock.yaml": ""},
+			want:  "pnpm install && pnpm run build && exec uv run python -m holon.serve src/server.py\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			sourceFiles(t, root, test.files)
+			if script, err := startScript(root, test.entry, true); err != nil || script != test.want {
+				t.Fatalf("script = %q, want %q: %v", script, test.want, err)
+			}
+		})
 	}
 }
 
@@ -539,22 +567,22 @@ func TestDevFirstSendsSourceThenItsGeneratedClients(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		project string
-		queries []string
+		builds  []bool
 		clients bool
 	}{
-		{name: "an app with nothing to generate or build is sent once", queries: []string{""}},
+		{name: "an app with nothing to generate or build is sent once", builds: []bool{false}},
 		{
 			name: "clients generated from the running app follow in a second send", project: `{"private":true,"dependencies":{"holon-ui":"0.0.1"}}`,
-			queries: []string{"", ""}, clients: true,
+			builds: []bool{false, false}, clients: true,
 		},
 		{
 			name:    "a page is built once its clients are in the source",
 			project: `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`,
-			queries: []string{"build=false", ""}, clients: true,
+			builds:  []bool{false, true}, clients: true,
 		},
 		{
 			name: "a page that takes no client is sent again to be built", project: `{"private":true,"scripts":{"build":"vite build"}}`,
-			queries: []string{"build=false", ""},
+			builds: []bool{false, true},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -564,9 +592,9 @@ func TestDevFirstSendsSourceThenItsGeneratedClients(t *testing.T) {
 			}
 			f := startReloadFixture(t, true, files)
 			reloads := f.reloadRequests()
-			var queries []string
+			var builds []bool
 			for _, reload := range reloads {
-				queries = append(queries, reload.Query)
+				builds = append(builds, strings.Contains(string(f.overlay(t, reload.Digest)[runtimecontract.StartFile]), " run build"))
 			}
 			var clients string
 			for name, data := range f.overlay(t, reloads[len(reloads)-1].Digest) {
@@ -574,8 +602,8 @@ func TestDevFirstSendsSourceThenItsGeneratedClients(t *testing.T) {
 					clients += string(data)
 				}
 			}
-			if !slices.Equal(queries, test.queries) || reloads[0].Digest != f.started || strings.Contains(clients, "lookup") != test.clients {
-				t.Fatalf("sends = %q, clients %q; stderr=%q", queries, clients, f.stderr.String())
+			if !slices.Equal(builds, test.builds) || reloads[0].Digest != f.started || strings.Contains(clients, "lookup") != test.clients {
+				t.Fatalf("builds = %v, clients %q; stderr=%q", builds, clients, f.stderr.String())
 			}
 			if _, err := os.Stat(filepath.Join(f.root, "alpha", "generated", "holon-ui")); (err == nil) != test.clients {
 				t.Fatal(err)

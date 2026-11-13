@@ -19,6 +19,7 @@ import (
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
+	"github.com/holon-sh/protocol/runtimecontract"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -195,7 +196,7 @@ func (s *preparedSource) committedContract() (*Document, error) {
 
 func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Options) (*extraction, error) {
 	extensions, _ := json.Marshal(clientExtensions)
-	args := append([]string{"contract", dir, s.entry, string(extensions)}, catalogMethods...)
+	args := append([]string{"contract", dir, s.entry, string(extensions)}, runtimecontract.CatalogMethods...)
 	var stdout bytes.Buffer
 	var err error
 	if o.Run != nil {

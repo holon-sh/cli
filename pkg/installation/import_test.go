@@ -95,7 +95,7 @@ func TestRegistryPackagesImportOnTheServerAndBindArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := protocol.App{
-		Name: "echo", Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, Image: image, Port: 8080,
+		Name: "echo", Access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, Image: image, Port: 8080, Imported: true,
 		Args: []protocol.Template{"--workspace={WORKSPACE}", "--api-key={API_KEY}"},
 		Env: map[string]protocol.Input{
 			"API_TOKEN": {IsSecret: true, IsRequired: true}, "WORKSPACE": {Value: new("legal")}, "API_KEY": {IsRequired: true, IsSecret: true},

@@ -39,9 +39,9 @@ func (p PackageJSON) Declares(pkg string) bool {
 	return p.Dependencies[pkg] != "" || p.DevDependencies[pkg] != "" || p.PeerDependencies[pkg] != "" || p.OptionalDependencies[pkg] != ""
 }
 
-// packageManager is the project's declared package manager, else the one its nearest lockfile
-// belongs to, else npm.
-func packageManager(dir string, pkg PackageJSON) string {
+// Manager is the project's declared package manager, else the one the nearest lockfile in dir or
+// above belongs to, else npm.
+func (pkg PackageJSON) Manager(dir string) string {
 	if manager, _, _ := strings.Cut(pkg.PackageManager, "@"); manager != "" {
 		return manager
 	}
@@ -62,7 +62,7 @@ func PackageManager(dir string) (string, error) {
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	return packageManager(dir, manifest), nil
+	return manifest.Manager(dir), nil
 }
 
 func MapClients(consumers []Consumer, options Options) error {
@@ -93,7 +93,7 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 		}
 		return err
 	}
-	manager := packageManager(dir, manifest)
+	manager := manifest.Manager(dir)
 	if !manifest.Declares(pkg) {
 		verb := "add"
 		if manager == "npm" {

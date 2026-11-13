@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 	"github.com/klauspost/compress/zstd"
@@ -38,9 +39,10 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 		source := staticfs.NewFS()
 		source.Add("value", &fstypes.Stat{Mode: 0o644}, []byte(value))
 		request := buildRequest{
-			app: manifestApp{Name: "alpha", Path: value}, upload: &imageUpload{grant: grant},
+			Request: kiln.Request{Start: []string{"/serve"}},
+			app:     manifestApp{Name: "alpha", Path: value}, upload: &imageUpload{grant: grant},
 			Env: options.Env, httpClient: options.HTTPClient, builders: options.builders,
-			dockerfile: "FROM scratch\nCOPY value /value\nENV RECIPE=" + value + "\n",
+			dockerfile: "FROM scratch\nCOPY value /value\nENV RECIPE=" + value + "\nCMD [\"/serve\"]\n",
 		}
 		descriptor, err := publishPlatform(t.Context(), "linux/"+runtime.GOARCH, request, source, io.Discard)
 		if err != nil {
@@ -52,6 +54,9 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 		publishedJSON(t, repository, manifest.Config, &config)
 		if !slices.Contains(config.Config.Env, "RECIPE="+value) {
 			t.Fatalf("stale Dockerfile: %v", config.Config.Env)
+		}
+		if len(manifest.Layers) != 1 || config.Config.Entrypoint != nil || !slices.Equal(config.Config.Cmd, []string{"/serve"}) {
+			t.Fatalf("image wraps the app: %d layers, %q %q", len(manifest.Layers), config.Config.Entrypoint, config.Config.Cmd)
 		}
 		data, err := content.FetchAll(t.Context(), repository.Blobs(), manifest.Layers[0])
 		if err != nil {

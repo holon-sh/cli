@@ -254,3 +254,24 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 		t.Fatalf("alias not derived from serverInfo: %+v", prepared.Metadata()["app"].Requires)
 	}
 }
+
+func TestServedContractIsWhatGenerationReads(t *testing.T) {
+	live := liveServer(t, "orders", "99", true)
+	t.Cleanup(live.Close)
+	served, err := ServedContract(t.Context(), live.URL, live.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := &extraction{}
+	if err := json.Unmarshal(served, result); err != nil {
+		t.Fatal(err)
+	}
+	contract, err := listCatalog(result.Capabilities, result.pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result.ServerInfo) != `{"name":"orders","version":"99"}` || len(contract.Tools) != 1 || len(contract.Resources) != 2 ||
+		len(contract.Events) != 2 {
+		t.Fatalf("served %s: contract %+v", served, contract)
+	}
+}

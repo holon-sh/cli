@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -207,6 +208,29 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	}
 	if input := record.Runtime.Env["TOKEN"]; !input.IsSecret || !input.IsRequired {
 		t.Fatal("secret declaration was lost")
+	}
+}
+
+func TestSourceStartsThroughItsSDK(t *testing.T) {
+	for entry, want := range map[string][]string{
+		"server.ts":     {"node_modules/.bin/holon-serve", "server.ts"},
+		"src/server.py": {"python", "-m", "holon.serve", "src/server.py"},
+	} {
+		t.Run(entry, func(t *testing.T) {
+			root := t.TempDir()
+			sourceFiles(t, root, map[string]string{entry: ""})
+			manifest, err := resolveManifestGraph(t.Context(), manifestSpec{Apps: []manifestApp{{
+				Name: "alpha", Path: root, Access: &protocol.AppAccess{Server: &protocol.AccessRule{}},
+			}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			app := prepareBuild(t, manifest).Apps[0]
+			start, err := stageSnapshot(app, app.resolved.types)
+			if err != nil || !slices.Equal(start, want) {
+				t.Fatalf("start = %q, want %q: %v", start, want, err)
+			}
+		})
 	}
 }
 

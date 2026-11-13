@@ -178,7 +178,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	dev := &devLoop{
 		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), watch: config.watch, started: config.clock().Now(), options: options,
 		pending: sets.New[string](), announce: true,
-		sent: map[string]string{}, unbuilt: sets.New[string](), background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{},
+		sent: map[string]string{}, background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{},
 	}
 	defer dev.records.Wait()
 	first := options

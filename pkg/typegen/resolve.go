@@ -3,6 +3,7 @@ package typegen
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -182,22 +183,17 @@ func resolveRegistry(ctx context.Context, ref protocol.RegistryRef, o Options) (
 // the server's own serverInfo names the contract; a registry source supplies its record's identity.
 // MCP allows an empty serverInfo version, which SDKs report for a server that does not set one.
 func liveContract(ctx context.Context, location string, identity *mcpcontract.Identity, client *http.Client) (*Document, error) {
-	session, err := dial(ctx, location, client)
+	served, contract, err := listServer(ctx, location, client)
 	if err != nil {
 		return nil, err
 	}
-	defer session.Close()
-	initialized := session.InitializeResult()
 	if identity == nil {
-		info := initialized.ServerInfo
-		if info == nil || info.Name == "" {
+		var info struct{ Name, Version string }
+		_ = json.Unmarshal(served.ServerInfo, &info)
+		if info.Name == "" {
 			return nil, fmt.Errorf("%s does not report a server name; give the client an alias", location)
 		}
 		identity = &mcpcontract.Identity{Name: info.Name, Version: cmp.Or(info.Version, unversioned)}
-	}
-	contract, err := listCatalog(initialized.Capabilities, sessionPages(ctx, session))
-	if err != nil {
-		return nil, err
 	}
 	return NewDocument(&mcpcontract.Metadata{Identity: *identity, Schema: contract})
 }

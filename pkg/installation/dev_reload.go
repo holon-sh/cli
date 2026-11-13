@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -24,12 +25,12 @@ import (
 
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
+	"github.com/holon-sh/protocol/runtimecontract"
 )
 
 const (
 	toolRecordAppSource = "record_app_source"
 	toolGetAppContract  = "get_app_contract"
-	overlayMediaType    = "application/vnd.holon.source-overlay.v0.tar+zstd"
 )
 
 type recordAppSourceRequest struct {
@@ -46,7 +47,6 @@ type reloadAppResult struct {
 type packedSource struct {
 	overlay ocispec.Descriptor
 	file    string
-	build   bool
 	request buildRequest
 }
 
@@ -167,7 +167,7 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 		return errors.New("application removed from the session")
 	}
 	packed, cleanup, err := d.pack(ctx, app)
-	if err == nil && (packed.overlay.Digest.String() != d.sent[app.Name] || packed.build && d.unbuilt.Has(app.Name)) {
+	if err == nil && packed.overlay.Digest.String() != d.sent[app.Name] {
 		if err = d.send(ctx, app.Name, packed); err == nil {
 			d.record(app.Name, packed, cleanup)
 			return nil
@@ -189,18 +189,11 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 		return err
 	}
 	var result reloadAppResult
-	request := apiRequest{Plane: ControlPlane(d.name), Token: token, Body: file, ContentType: overlayMediaType}
-	target := path.Join(protocol.APIPathSessions, d.name, "apps", app, "source")
-	if !packed.build {
-		target += "?build=false"
-	}
-	if err := d.manager.client.send(ctx, target, request, &result); err != nil {
+	request := apiRequest{Plane: ControlPlane(d.name), Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
+	if err := d.manager.client.send(ctx, path.Join(protocol.APIPathSessions, d.name, "apps", app, "source"), request, &result); err != nil {
 		return err
 	}
 	d.sent[app] = packed.overlay.Digest.String()
-	if d.unbuilt.Delete(app); !packed.build {
-		d.unbuilt.Insert(app)
-	}
 	if d.options.output.verbose {
 		_, _ = io.WriteString(d.options.output.writer, result.Output)
 	}
@@ -244,20 +237,23 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 			return packedSource{}, err
 		}
 	}
-	var pkg typegen.PackageJSON
-	data, err := os.ReadFile(filepath.Join(root, "package.json"))
-	if err == nil {
-		err = json.Unmarshal(data, &pkg)
-	}
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return packedSource{}, err
-	}
 	entry, err := hostedEntry(app, root)
 	if err != nil {
 		return packedSource{}, err
 	}
 	if entry == "" {
 		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
+	}
+	// A page is built once the clients it may import are in the source.
+	script, err := startScript(root, entry, accepted != nil)
+	if err != nil {
+		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.StartFile)), 0o755); err != nil {
+		return packedSource{}, err
+	}
+	if err := os.WriteFile(filepath.Join(root, runtimecontract.StartFile), []byte(script), 0o644); err != nil {
+		return packedSource{}, err
 	}
 	source, err := fsutil.NewFS(root)
 	if err != nil {
@@ -269,7 +265,6 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	}
 	packed := packedSource{
 		file:    root + ".tar.zst",
-		build:   accepted != nil || pkg.Scripts["build"] == "",
 		request: buildRequest{app: app, upload: upload, httpClient: o.HTTPClient},
 	}
 	file, err := os.Create(packed.file)
@@ -285,9 +280,35 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	if err := errors.Join(fsutil.WriteTar(ctx, stable, compressed), compressed.Close()); err != nil {
 		return packedSource{}, err
 	}
-	packed.overlay = ocispec.Descriptor{MediaType: overlayMediaType, Digest: digester.Digest()}
+	packed.overlay = ocispec.Descriptor{MediaType: runtimecontract.OverlayMediaType, Digest: digester.Digest()}
 	packed.overlay.Size, err = file.Seek(0, io.SeekCurrent)
 	return packed, err
+}
+
+// startScript is the runtimecontract.StartFile the development image starts an app with. It installs what the app
+// declares, and builds its page when page is set, before serving entry, so the app accepts connections once all it
+// serves is ready.
+func startScript(root, entry string, page bool) (string, error) {
+	var steps []string
+	var pkg typegen.PackageJSON
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err == nil {
+		if err := json.Unmarshal(data, &pkg); err != nil {
+			return "", err
+		}
+		manager := pkg.Manager(root)
+		steps = append(steps, manager+" install")
+		if page && pkg.Scripts["build"] != "" {
+			steps = append(steps, manager+" run build")
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	serve := serveCommand(entry)
+	if filepath.Ext(entry) == ".py" {
+		serve = append([]string{"uv", "run"}, serve...)
+	}
+	return strings.Join(append(steps, "exec "+strings.Join(serve, " ")), " && ") + "\n", nil
 }
 
 func (p packedSource) publish(ctx context.Context) error {

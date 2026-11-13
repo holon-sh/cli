@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	mcpbridge "github.com/holon-sh/mcp-bridge/http"
 	"github.com/klauspost/compress/zstd"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -39,9 +40,13 @@ func preparedConfig(t *testing.T, registry *imageRegistry, image string) (ocispe
 }
 
 func TestStdioImageContract(t *testing.T) {
-	stdio := []string{ociimage.RuntimePath, "--origin", "https://holon.example", "--"}
+	stdio := []string{
+		ociimage.BridgePath, "serve", "--listen", ":3000", "--protocol-version", mcpbridge.ProtocolVersion,
+		"--allow-origin", "https://holon.example", "--",
+	}
 	for _, test := range []struct {
 		name                      string
+		http                      bool
 		entrypoint, cmd, expected []string
 		files                     map[string][]byte
 		wantErr                   string
@@ -50,14 +55,16 @@ func TestStdioImageContract(t *testing.T) {
 			name: "entrypoint and cmd", entrypoint: []string{"/server", "--flag"}, cmd: []string{"default"},
 			expected: slices.Concat(stdio, []string{"/server", "--flag"}),
 		},
+		{name: "cmd only", cmd: []string{"/server", "stdio"}, expected: stdio},
+		{name: "HTTP image", http: true, entrypoint: []string{"/server"}, cmd: []string{"http"}},
 		{name: "missing executable", wantErr: "no executable"},
 		{
 			name: "reserved directory", cmd: []string{"/server"},
-			files: map[string][]byte{"holon-mcp-runtime/file": []byte("collision")}, wantErr: "reserved path",
+			files: map[string][]byte{"mcp-bridge/file": []byte("collision")}, wantErr: "reserved path",
 		},
 		{
 			name: "reserved whiteout", cmd: []string{"/server"},
-			files: map[string][]byte{".wh.holon-mcp-runtime": []byte("collision")}, wantErr: "reserved path",
+			files: map[string][]byte{".wh.mcp-bridge": []byte("collision")}, wantErr: "reserved path",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -71,7 +78,7 @@ func TestStdioImageContract(t *testing.T) {
 			image := host + "/source@" + source.Digest.String()
 			grant := protocol.UploadGrant{Registry: host, Grant: "grant-secret", Repositories: map[string]string{"app": "holon/upload/app"}}
 			manifest := manifestSpec{Apps: []manifestApp{{
-				Name: "app", resolved: resolvedApp{stdio: true, App: protocol.App{Name: "app", Image: image, Port: 3000}},
+				Name: "app", resolved: resolvedApp{stdio: !test.http, App: protocol.App{Name: "app", Image: image, Port: 3000}},
 			}}}
 			options := buildOptions{HTTPClient: server.Client(), origin: "https://holon.example", Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
 			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant}, options)
@@ -83,6 +90,12 @@ func TestStdioImageContract(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			if test.http {
+				if apps[0].Image != host+"/holon/upload/app@"+source.Digest.String() {
+					t.Fatalf("HTTP image adapted: %s", apps[0].Image)
+				}
+				return
 			}
 			originalManifest, original := preparedConfig(t, registry, image)
 			imageManifest, config := preparedConfig(t, registry, apps[0].Image)
@@ -206,19 +219,19 @@ func TestStdioMultiArchitectureBuild(t *testing.T) {
 		raw, err := io.ReadAll(zipper)
 		zipper.Close()
 		if err != nil || digest.FromBytes(raw) != config.RootFS.DiffIDs[1] {
-			t.Fatalf("runtime diff ID: %v", err)
+			t.Fatalf("bridge diff ID: %v", err)
 		}
 		archive := tar.NewReader(bytes.NewReader(raw))
 		header, err := archive.Next()
-		if err != nil || header.Name != strings.TrimPrefix(ociimage.RuntimePath, "/") || header.Mode != 0o755 {
-			t.Fatalf("runtime layer: %#v %v", header, err)
+		if err != nil || header.Name != strings.TrimPrefix(ociimage.BridgePath, "/") || header.Mode != 0o755 {
+			t.Fatalf("bridge layer: %#v %v", header, err)
 		}
 		binary, err := io.ReadAll(archive)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if config.Config.Labels["sh.holon.bridge.runtime"] != digest.FromBytes(binary).String() {
-			t.Fatal("runtime provenance does not match bundled executable")
+			t.Fatal("bridge provenance does not match bundled executable")
 		}
 		executable, err := elf.NewFile(bytes.NewReader(binary))
 		if err != nil {
@@ -226,10 +239,10 @@ func TestStdioMultiArchitectureBuild(t *testing.T) {
 		}
 		machine := map[string]elf.Machine{"amd64": elf.EM_X86_64, "arm64": elf.EM_AARCH64}[child.Platform.Architecture]
 		if executable.Machine != machine {
-			t.Fatalf("runtime architecture = %s", executable.Machine)
+			t.Fatalf("bridge architecture = %s", executable.Machine)
 		}
 		if _, err := archive.Next(); err != io.EOF {
-			t.Fatalf("unexpected runtime files: %v", err)
+			t.Fatalf("unexpected bridge files: %v", err)
 		}
 	}
 }

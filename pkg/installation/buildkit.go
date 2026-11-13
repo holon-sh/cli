@@ -15,7 +15,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/containerd/containerd/v2/core/content"
 	contentlocal "github.com/containerd/containerd/v2/plugins/content/local"
@@ -44,7 +43,6 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/internal/commandenv"
-	"github.com/holon-sh/cli/pkg/ociimage"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
@@ -157,16 +155,6 @@ func publishPlatform(
 	defer cancel(context.Canceled)
 	recipe := staticfs.NewFS()
 	recipe.Add("Dockerfile", &fstypes.Stat{Mode: 0o600}, []byte(request.dockerfile))
-	var runtimeKey string
-	if len(request.Start) != 0 {
-		arch := strings.TrimPrefix(platform, "linux/")
-		binary, err := bridgePayloads.ReadFile("bridge-payloads/linux-" + arch)
-		if err != nil {
-			return ocispec.Descriptor{}, err
-		}
-		recipe.Add(arch, &fstypes.Stat{Mode: 0o755}, binary)
-		runtimeKey = digest.FromBytes(binary).Encoded()
-	}
 	name := request.app.Name + " " + platform
 	connected := request.output.measure(name, "connect builder")
 	c, err := request.builders.connect(platform, request.Env)
@@ -212,7 +200,7 @@ func publishPlatform(
 	solved := request.output.measure(name, "solve")
 	response, err := c.Build(ctx, client.SolveOpt{
 		SharedKey:   digest.FromBytes([]byte(hostname + "\x00" + platform)).Encoded(),
-		LocalMounts: map[string]fsutil.FS{"context": source, "dockerfile": recipe, "runtime": recipe},
+		LocalMounts: map[string]fsutil.FS{"context": source, "dockerfile": recipe},
 		Session:     []session.Attachable{authentication},
 		Exports: []client.ExportEntry{{Type: client.ExporterOCI, OutputStore: &sourceExport{Store: store, request: request}, Attrs: map[string]string{
 			"tar": "false", "source-date-epoch": "0", "oci-mediatypes": "true", "compression": "zstd", "compression-level": "1",
@@ -240,28 +228,6 @@ func publishPlatform(
 		maps.Copy(labels, image.Config.Labels)
 		maps.Copy(labels, sourceLabels(request.app))
 		image.Config.Labels = labels
-		if len(request.Start) != 0 {
-			state, err := result.Ref.ToState()
-			if err != nil {
-				return nil, err
-			}
-			runtime := llb.Scratch().File(llb.Copy(
-				llb.Local("runtime", llb.IncludePatterns([]string{image.Architecture}), llb.SharedKeyHint(runtimeKey)), image.Architecture, ociimage.RuntimePath,
-				llb.WithCreatedTime(time.Unix(0, 0)),
-			))
-			definition, err := llb.Merge([]llb.State{state, runtime}).Marshal(ctx, llb.Platform(image.Platform))
-			if err != nil {
-				return nil, err
-			}
-			hosted, err := g.Solve(ctx, gateway.SolveRequest{Definition: definition.ToPB(), Evaluate: true})
-			if err != nil {
-				return nil, err
-			}
-			result.SetRef(hosted.Ref)
-			image.Config.Entrypoint = append([]string{ociimage.RuntimePath, "--transport=hosted-http", "--"}, request.Start...)
-			image.Config.Cmd, image.Config.StopSignal = nil, "SIGTERM"
-			image.History = append(image.History, ocispec.History{CreatedBy: "holon application host"})
-		}
 		data, _ := json.Marshal(image)
 		result.AddMeta(exptypes.ExporterImageConfigKey, data)
 		return result, nil
