@@ -91,6 +91,9 @@ func (r GenerateRequest) validate() error {
 	if r.Target == "go" && r.GoModule == "" {
 		return errors.New("go_module is required for the go target")
 	}
+	if r.Target == "browser" && r.Own != "" && r.App == "" {
+		return errors.New("app is required for the browser target's own client")
+	}
 	if _, empty := r.Contracts[""]; empty {
 		return errors.New("binding names must be nonempty")
 	}

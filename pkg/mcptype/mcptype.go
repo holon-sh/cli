@@ -36,13 +36,16 @@ func SameContract(a, b *mcpcontract.Contract) (bool, error) {
 }
 
 // GenerateRequest asks for one target's typed client package: node, browser, python or go.
-// Empty optional strings use their defaults; GoModule is required for Go.
+// Empty optional strings use their defaults; GoModule is required for Go, and App for a browser
+// client of its own app.
 type GenerateRequest struct {
 	Target    string                           `json:"target"`
 	Identity  mcpcontract.Identity             `json:"identity"`
 	Requires  map[string]mcpcontract.Identity  `json:"requires,omitempty"`
 	Contracts map[string]*mcpcontract.Contract `json:"contracts,omitempty"`
 	Own       string                           `json:"own,omitempty"`
+	// App is the name Holon serves the own app under, which a browser page connects to at /mcp/<App>.
+	App string `json:"app,omitempty"`
 	// Banner is the first-line comment on generated sources.
 	Banner   string `json:"banner,omitempty"`
 	GoModule string `json:"go_module,omitempty"`
