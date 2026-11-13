@@ -12,6 +12,5 @@ form.addEventListener("submit", async (event) => {
   greeting.value = result;
 });
 
-// In an MCP Apps host, show the greeting the agent asked for.
 const opened = await app.opened;
 if (opened?.tool === "greet") greeting.value = opened.output.result;

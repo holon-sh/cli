@@ -10,10 +10,6 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-// The generated modules hand the runtime their app's identity and contracts: the node module for its
-// ready-made apps and for createApps, which passes bindings and options through, and the browser
-// module for connect, which opens the page's own app at the endpoint Holon serves it on. A page
-// without an own app has no connect.
 func TestModulesPassTheirIdentityAndContractsToTheRuntime(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
