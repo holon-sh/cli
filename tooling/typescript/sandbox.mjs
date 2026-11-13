@@ -3,11 +3,12 @@
 // The loader decides what every specifier resolves to: application files from its tree (TypeScript
 // transpiled with source maps, `.js` specifiers mapped to `.ts`, tsconfig paths honoured), packages
 // through package.json exports with the import/node conditions (CommonJS packages through a shim
-// whose require uses the same resolver), and node: builtins as stubs that throw when used. Zod and
-// the MCP SDK fall back to the copies bundled with the tooling when the application has none. The
-// context has the ECMAScript intrinsics, console, the web APIs the MCP SDK needs to serve an
-// in-memory request, and a frozen process (an empty environment, a fixed platform), a fixed clock and
-// seeded randomness; no filesystem, network or timers.
+// whose require uses the same resolver), and node: builtins as stubs that throw when used, but for
+// AsyncLocalStorage, which reaches nothing outside the context. Zod and the MCP SDK fall back to the
+// copies bundled with the tooling when the application has none. The context has the ECMAScript
+// intrinsics, console, the web APIs the MCP SDK needs to serve an in-memory request, and a frozen
+// process (an empty environment, a fixed platform), a fixed clock and seeded randomness; no
+// filesystem, network or timers.
 import vm from "node:vm";
 import module from "node:module";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
@@ -17,6 +18,7 @@ import ts from "typescript";
 
 const schemaPackages = new Set(["zod", "@modelcontextprotocol/server", "@modelcontextprotocol/core"]);
 const capabilities = { fs: "filesystem", "fs/promises": "filesystem", net: "network", http: "network", https: "network", http2: "network", dns: "network", "dns/promises": "network", tls: "network", dgram: "network", child_process: "child processes", cluster: "child processes", worker_threads: "child processes", timers: "timers", "timers/promises": "timers", os: "host information" };
+const provided = { async_hooks: ["AsyncLocalStorage"] };
 const globalCapabilities = { fetch: "network", XMLHttpRequest: "network", WebSocket: "network", setTimeout: "timers", setInterval: "timers", setImmediate: "timers", Buffer: "Node.js buffers", require: "require", __dirname: "filesystem", __filename: "filesystem" };
 const extensions = ["", ".ts", ".tsx", ".mts", ".js", ".mjs", ".cjs", ".json", "/index.ts", "/index.tsx", "/index.js", "/index.mjs"];
 
@@ -147,7 +149,7 @@ export function createSandbox(root, vendor) {
     if (!builtins.has(name)) {
       const real = module.createRequire(import.meta.url)(`node:${name}`);
       const capability = capabilities[name] ?? `node:${name}`;
-      builtins.set(name, Object.fromEntries(Object.keys(real).filter(n => n !== "default").map(n => [n, stub(`node:${name} ${n}`, capability)])));
+      builtins.set(name, Object.fromEntries(Object.keys(real).filter(n => n !== "default").map(n => [n, provided[name]?.includes(n) ? real[n] : stub(`node:${name} ${n}`, capability)])));
     }
     return builtins.get(name);
   }
