@@ -3,7 +3,6 @@ package installation
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
 
@@ -34,7 +34,7 @@ type buildOptions struct {
 	HTTPClient    *http.Client
 	output        *progressOutput
 	development   bool
-	served        map[string]json.RawMessage
+	served        map[string]typegen.Catalog
 	overlays      map[string]string
 }
 

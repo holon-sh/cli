@@ -3,7 +3,6 @@ package installation
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -94,7 +93,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	prepareOptions := typeOptions
 	prepareOptions.Run = options.extractTypes
 	if options.served != nil {
-		prepareOptions.Run, prepareOptions.Served = nil, map[string]json.RawMessage{}
+		prepareOptions.Run, prepareOptions.Served = nil, map[string]typegen.Catalog{}
 	}
 	var pathApps []*manifestApp
 	for i := range manifest.Apps {

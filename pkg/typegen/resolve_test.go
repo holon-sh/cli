@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -256,22 +257,30 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 }
 
 func TestServedContractIsWhatGenerationReads(t *testing.T) {
-	live := liveServer(t, "orders", "99", true)
+	live := liveServer(t, "example.com/orders", "99", true)
 	t.Cleanup(live.Close)
 	served, err := ServedContract(t.Context(), live.URL, live.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := &extraction{}
-	if err := json.Unmarshal(served, result); err != nil {
-		t.Fatal(err)
+	if string(served.ServerInfo) != `{"name":"example.com/orders","version":"99"}` || len(served.Lists["events/list"].Pages) != 2 {
+		t.Fatalf("served %+v", served)
 	}
-	contract, err := listCatalog(result.Capabilities, result.pages)
+	direct, err := ResolveDocument(t.Context(), Source{Endpoint: live.URL}, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(result.ServerInfo) != `{"name":"orders","version":"99"}` || len(contract.Tools) != 1 || len(contract.Resources) != 2 ||
-		len(contract.Events) != 2 {
-		t.Fatalf("served %s: contract %+v", served, contract)
+	root := t.TempDir()
+	put(t, root, "server.py", "")
+	put(t, root, "server.json", `{"name":"example.com/orders","version":"99","description":"orders"}`)
+	generated, err := ResolveDocument(t.Context(), Source{Path: root}, Options{Served: map[string]Catalog{root: served}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(direct.Data, generated.Data) || direct.Digest != generated.Digest {
+		t.Fatalf("direct catalog %s differs from served catalog %s", direct.Data, generated.Data)
+	}
+	if len(generated.Schema.Tools) != 1 || len(generated.Schema.Resources) != 2 || len(generated.Schema.Events) != 2 {
+		t.Fatalf("contract %+v", generated.Schema)
 	}
 }

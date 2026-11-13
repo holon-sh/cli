@@ -19,6 +19,19 @@ var clientExtensions = map[string]any{"io.modelcontextprotocol/files": map[strin
 
 const eventsExtension = "io.modelcontextprotocol/events"
 
+// Catalog is what a server advertises: its identity, capabilities, and the pages or error from each list method.
+// The same result is read from language runners and passed through the development control API.
+type Catalog struct {
+	ServerInfo   json.RawMessage        `json:"serverInfo"`
+	Capabilities json.RawMessage        `json:"capabilities"`
+	Lists        map[string]CatalogList `json:"lists"`
+}
+
+type CatalogList struct {
+	Pages []json.RawMessage `json:"pages"`
+	Error string            `json:"error,omitempty"`
+}
+
 type listEventsParams struct {
 	mcp.ParamsBase
 	Cursor string `json:"cursor,omitempty"`
@@ -30,20 +43,33 @@ type listEventsResult struct {
 	NextCursor string              `json:"nextCursor,omitempty"`
 }
 
-func listCatalog(capabilities *mcp.ServerCapabilities, pages func(method string) ([]json.RawMessage, error)) (*mcpcontract.Contract, error) {
+func catalogMethods(capabilities *mcp.ServerCapabilities) []string {
 	capabilities = cmp.Or(capabilities, &mcp.ServerCapabilities{})
 	_, events := capabilities.Extensions[eventsExtension]
 	declared := map[string]bool{"tools/list": capabilities.Tools != nil, "resources/list": capabilities.Resources != nil, "events/list": events}
-	contract := &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}
+	var methods []string
 	for _, method := range runtimecontract.CatalogMethods {
-		if !declared[method] {
-			continue
+		if declared[method] {
+			methods = append(methods, method)
 		}
-		listed, err := pages(method)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", method, err)
+	}
+	return methods
+}
+
+func (c Catalog) contract() (*mcpcontract.Contract, error) {
+	var capabilities mcp.ServerCapabilities
+	if len(c.Capabilities) != 0 {
+		if err := json.Unmarshal(c.Capabilities, &capabilities); err != nil {
+			return nil, err
 		}
-		for _, data := range listed {
+	}
+	contract := &mcpcontract.Contract{Tools: []mcpcontract.Tool{}}
+	for _, method := range catalogMethods(&capabilities) {
+		list := c.Lists[method]
+		if list.Error != "" {
+			return nil, fmt.Errorf("%s: %s", method, list.Error)
+		}
+		for _, data := range list.Pages {
 			var page struct {
 				Tools     []mcpcontract.Tool
 				Resources []struct {
@@ -71,64 +97,54 @@ func listCatalog(capabilities *mcp.ServerCapabilities, pages func(method string)
 	return contract, nil
 }
 
-func sessionPages(ctx context.Context, session *mcp.ClientSession) func(method string) ([]json.RawMessage, error) {
-	return func(method string) ([]json.RawMessage, error) {
-		var pages []json.RawMessage
-		for cursor := ""; ; {
-			var result any
-			var err error
-			switch method {
-			case "tools/list":
-				result, err = session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
-			case "resources/list":
-				result, err = session.ListResources(ctx, &mcp.ListResourcesParams{Cursor: cursor})
-			default:
-				result, err = mcp.CallCustomMethod[*listEventsParams, *listEventsResult](ctx, session, method, &listEventsParams{Cursor: cursor})
-			}
-			if err != nil {
-				return nil, err
-			}
-			page, _ := json.Marshal(result)
-			var next struct{ NextCursor string }
-			_ = json.Unmarshal(page, &next)
-			if pages = append(pages, page); next.NextCursor == "" {
-				return pages, nil
-			}
-			cursor = next.NextCursor
+func sessionPages(ctx context.Context, session *mcp.ClientSession, method string) ([]json.RawMessage, error) {
+	var pages []json.RawMessage
+	for cursor := ""; ; {
+		var result any
+		var err error
+		switch method {
+		case "tools/list":
+			result, err = session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
+		case "resources/list":
+			result, err = session.ListResources(ctx, &mcp.ListResourcesParams{Cursor: cursor})
+		default:
+			result, err = mcp.CallCustomMethod[*listEventsParams, *listEventsResult](ctx, session, method, &listEventsParams{Cursor: cursor})
 		}
+		if err != nil {
+			return nil, err
+		}
+		page, _ := json.Marshal(result)
+		var next struct{ NextCursor string }
+		_ = json.Unmarshal(page, &next)
+		if pages = append(pages, page); next.NextCursor == "" {
+			return pages, nil
+		}
+		cursor = next.NextCursor
 	}
 }
 
-// ServedContract lists what the server at endpoint serves, in the form Options.Served takes: its serverInfo,
-// capabilities and every page of each catalog it declares.
-func ServedContract(ctx context.Context, endpoint string, client *http.Client) (json.RawMessage, error) {
-	served, _, err := listServer(ctx, endpoint, client)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(served)
-}
-
-// listServer lists what the server at endpoint serves, and the contract that makes. It talks to the server under a
-// context of its own that ends with ctx: go-sdk takes the protocol version of an MCP request it serves from the
+// ServedContract lists the server at endpoint without generating a contract document.
+// Its own context ends with ctx: go-sdk takes the protocol version of an MCP request it serves from the
 // context, which a listing made inside a tool call would otherwise send.
-func listServer(ctx context.Context, endpoint string, client *http.Client) (*extraction, *mcpcontract.Contract, error) {
+func ServedContract(ctx context.Context, endpoint string, client *http.Client) (Catalog, error) {
 	own, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	defer context.AfterFunc(ctx, cancel)()
 	session, err := dial(own, endpoint, client)
 	if err != nil {
-		return nil, nil, err
+		return Catalog{}, err
 	}
 	defer func() { _ = session.Close() }()
 	initialized := session.InitializeResult()
 	info, _ := json.Marshal(initialized.ServerInfo)
-	served := &extraction{ServerInfo: info, Capabilities: initialized.Capabilities, Lists: map[string]listed{}}
-	pages := sessionPages(own, session)
-	contract, err := listCatalog(initialized.Capabilities, func(method string) ([]json.RawMessage, error) {
-		list, err := pages(method)
-		served.Lists[method] = listed{Pages: list}
-		return list, err
-	})
-	return served, contract, err
+	capabilities, _ := json.Marshal(initialized.Capabilities)
+	served := Catalog{ServerInfo: info, Capabilities: capabilities, Lists: map[string]CatalogList{}}
+	for _, method := range catalogMethods(initialized.Capabilities) {
+		pages, err := sessionPages(own, session, method)
+		if err != nil {
+			return Catalog{}, fmt.Errorf("%s: %w", method, err)
+		}
+		served.Lists[method] = CatalogList{Pages: pages}
+	}
+	return served, nil
 }

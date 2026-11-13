@@ -183,7 +183,11 @@ func resolveRegistry(ctx context.Context, ref protocol.RegistryRef, o Options) (
 // the server's own serverInfo names the contract; a registry source supplies its record's identity.
 // MCP allows an empty serverInfo version, which SDKs report for a server that does not set one.
 func liveContract(ctx context.Context, location string, identity *mcpcontract.Identity, client *http.Client) (*Document, error) {
-	served, contract, err := listServer(ctx, location, client)
+	served, err := ServedContract(ctx, location, client)
+	if err != nil {
+		return nil, err
+	}
+	contract, err := served.contract()
 	if err != nil {
 		return nil, err
 	}

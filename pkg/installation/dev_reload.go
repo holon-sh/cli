@@ -50,8 +50,8 @@ type packedSource struct {
 	request buildRequest
 }
 
-func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
-	var served map[string]json.RawMessage
+func (d *devLoop) served(ctx context.Context) (map[string]typegen.Catalog, error) {
+	var served map[string]typegen.Catalog
 	for _, app := range d.manifest.Apps {
 		if app.Path == "" {
 			continue
@@ -60,12 +60,12 @@ func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error
 			return nil, nil
 		}
 		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name}
-		var contract json.RawMessage
+		var contract typegen.Catalog
 		if err := d.manager.Call(ctx, ControlPlane(d.name), toolGetAppContract, request, &contract); err != nil {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
 		if served == nil {
-			served = map[string]json.RawMessage{}
+			served = map[string]typegen.Catalog{}
 		}
 		served[app.Name] = contract
 	}

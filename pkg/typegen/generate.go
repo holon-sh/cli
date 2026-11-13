@@ -3,7 +3,6 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -38,7 +37,7 @@ type Options struct {
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
 	// runs the server in its own directory and stops it after 30 seconds.
 	Run    func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
-	Served map[string]json.RawMessage
+	Served map[string]Catalog
 }
 
 func (o Options) defaults() Options {
@@ -54,8 +53,8 @@ type preparedSource struct {
 	server                                     *mcpregistry.Descriptor
 }
 
-func (s *preparedSource) extract(result *extraction) error {
-	contract, err := listCatalog(result.Capabilities, result.pages)
+func (s *preparedSource) extract(result Catalog) error {
+	contract, err := result.contract()
 	if err != nil {
 		return fmt.Errorf("%s: %w", s.origin, err)
 	}

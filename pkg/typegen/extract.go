@@ -20,27 +20,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/protocol/runtimecontract"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
-
-type extraction struct {
-	ServerInfo   json.RawMessage         `json:"serverInfo"`
-	Capabilities *mcp.ServerCapabilities `json:"capabilities"`
-	Lists        map[string]listed       `json:"lists"`
-}
-
-type listed struct {
-	Pages []json.RawMessage `json:"pages"`
-	Error string            `json:"error"`
-}
-
-func (e *extraction) pages(method string) ([]json.RawMessage, error) {
-	list := e.Lists[method]
-	if list.Error != "" {
-		return nil, errors.New(list.Error)
-	}
-	return list.Pages, nil
-}
 
 // RunnerError is a contract runner's failure: the status it exited with and what it wrote to
 // stderr. Status 2 is a diagnostic; status 3 means the server stopped on an uninstalled package,
@@ -105,11 +85,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			continue
 		}
 		if answers, served := o.Served[s.origin]; served {
-			result := &extraction{}
-			if err := json.Unmarshal(answers, result); err != nil {
-				return fmt.Errorf("%s: %w", s.origin, err)
-			}
-			if err := s.extract(result); err != nil {
+			if err := s.extract(answers); err != nil {
 				return err
 			}
 			continue
@@ -134,7 +110,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 		}
 		run = append(run, s)
 	}
-	results := make([]*extraction, len(run))
+	results := make([]Catalog, len(run))
 	failures := make([]error, len(run))
 	var group sync.WaitGroup
 	for i, s := range run {
@@ -194,7 +170,7 @@ func (s *preparedSource) committedContract() (*Document, error) {
 	return document, nil
 }
 
-func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Options) (*extraction, error) {
+func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Options) (Catalog, error) {
 	extensions, _ := json.Marshal(clientExtensions)
 	args := append([]string{"contract", dir, s.entry, string(extensions)}, runtimecontract.CatalogMethods...)
 	var stdout bytes.Buffer
@@ -208,15 +184,15 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 	switch {
 	case errors.As(err, &failed) && failed.Status == 3:
 		lines := strings.Split(strings.TrimRight(failed.Stderr, "\n"), "\n")
-		return nil, &missingPackage{name: lines[len(lines)-1], diagnostic: strings.Join(lines[:len(lines)-1], "\n")}
+		return Catalog{}, &missingPackage{name: lines[len(lines)-1], diagnostic: strings.Join(lines[:len(lines)-1], "\n")}
 	case errors.As(err, &failed) && failed.Status == 2:
-		return nil, fmt.Errorf("%s: %s", s.origin, strings.TrimSpace(failed.Stderr))
+		return Catalog{}, fmt.Errorf("%s: %s", s.origin, strings.TrimSpace(failed.Stderr))
 	case err != nil:
-		return nil, fmt.Errorf("%s: %w", s.origin, err)
+		return Catalog{}, fmt.Errorf("%s: %w", s.origin, err)
 	}
-	result := &extraction{}
-	if err := json.Unmarshal(stdout.Bytes(), result); err != nil {
-		return nil, fmt.Errorf("%s: the contract runner printed no answers: %w", s.origin, err)
+	var result Catalog
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return Catalog{}, fmt.Errorf("%s: the contract runner printed no answers: %w", s.origin, err)
 	}
 	return result, nil
 }

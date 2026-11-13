@@ -122,7 +122,7 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 		"example.com/orders": listing(lookupTool),
 		"example.com/broken": &RunnerError{Status: 2, Stderr: "tools are registered dynamically"},
 		"example.com/---":    listing(lookupTool),
-		"":                   extraction{ServerInfo: json.RawMessage(`{"name":"provider"}`)},
+		"":                   Catalog{ServerInfo: json.RawMessage(`{"name":"provider"}`)},
 	}
 	source := func(name string) Source { return Source{Path: filepath.Join(root, name)} }
 	orders := source("orders")
@@ -285,14 +285,15 @@ func TestARunnersAnswersMakeTheContract(t *testing.T) {
 	orders := t.TempDir()
 	writeProvider(t, orders, "orders", pythonProvider)
 	answers := listing(mcpcontract.Tool{Name: "read", Input: json.RawMessage(`{"type":"object"}`)}, lookupTool)
-	answers.Lists["resources/list"] = listed{Error: "Method not found"}
-	answers.Lists["events/list"] = listed{Error: "events are broken"}
-	answers.Capabilities.AddExtension(eventsExtension, nil)
+	answers.Lists["resources/list"] = CatalogList{Error: "Method not found"}
+	answers.Lists["events/list"] = CatalogList{Error: "events are broken"}
+	answers.Capabilities = json.RawMessage(`{"tools":{},"extensions":{"io.modelcontextprotocol/events":{}}}`)
 	options := Options{Run: fakeRun(map[string]any{"example.com/orders": answers})}
 	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, options); err == nil || !strings.Contains(err.Error(), "events/list: events are broken") {
 		t.Fatalf("a declared list that failed: %v", err)
 	}
-	delete(answers.Capabilities.Extensions, eventsExtension)
+	answers.Capabilities = json.RawMessage(`{"tools":{}}`)
+	options.Run = fakeRun(map[string]any{"example.com/orders": answers})
 	document, err := ResolveDocument(t.Context(), Source{Path: orders}, options)
 	if err != nil || len(document.Schema.Tools) != 2 || document.Schema.Tools[0].Name != "lookup" || document.Schema.Resources != nil {
 		t.Fatalf("contract = %+v, %v", document, err)
@@ -312,7 +313,8 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 }
 
 func TestAServedSourceAnswersForItself(t *testing.T) {
-	answers := json.RawMessage(`{"serverInfo":{"name":"example.com/live","version":"99","description":"orders"},"capabilities":{"tools":{}},"lists":{"tools/list":{"pages":[{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}]}}}`)
+	answers := Catalog{ServerInfo: json.RawMessage(`{"name":"example.com/live","version":"99","description":"orders"}`),
+		Capabilities: json.RawMessage(`{"tools":{}}`), Lists: map[string]CatalogList{"tools/list": {Pages: []json.RawMessage{json.RawMessage(`{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}`)}}}}
 	for _, test := range []struct {
 		name, descriptor string
 		want             mcpcontract.Identity
@@ -326,7 +328,7 @@ func TestAServedSourceAnswersForItself(t *testing.T) {
 			if test.descriptor != "" {
 				put(t, orders, "server.json", test.descriptor)
 			}
-			options := Options{Served: map[string]json.RawMessage{orders: answers}, Run: func(context.Context, string, string, []string, io.Writer) error {
+			options := Options{Served: map[string]Catalog{orders: answers}, Run: func(context.Context, string, string, []string, io.Writer) error {
 				return errors.New("ran the server")
 			}}
 			document, err := ResolveDocument(t.Context(), Source{Path: orders}, options)

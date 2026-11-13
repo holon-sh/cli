@@ -19,7 +19,6 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/protocol"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
@@ -115,13 +114,13 @@ func needNode(t *testing.T) {
 	}
 }
 
-func listing(tools ...mcpcontract.Tool) extraction {
+func listing(tools ...mcpcontract.Tool) Catalog {
 	var pages []json.RawMessage
 	for _, tool := range tools {
 		page, _ := json.Marshal(map[string]any{"tools": []mcpcontract.Tool{tool}})
 		pages = append(pages, page)
 	}
-	return extraction{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}, Lists: map[string]listed{"tools/list": {Pages: pages}}}
+	return Catalog{Capabilities: json.RawMessage(`{"tools":{}}`), Lists: map[string]CatalogList{"tools/list": {Pages: pages}}}
 }
 
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
@@ -140,7 +139,7 @@ func fakeRun(results map[string]any) func(context.Context, string, string, []str
 			return err
 		}
 		switch result := results[descriptor.Name].(type) {
-		case extraction:
+		case Catalog:
 			return json.NewEncoder(stdout).Encode(result)
 		case error:
 			return result
