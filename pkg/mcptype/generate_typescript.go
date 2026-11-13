@@ -58,7 +58,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		// Holon serves an app's MCP endpoint at /mcp/<app> on the origin that serves its page.
 		imports += ", connect as open"
 		module += fmt.Sprintf("export const connect = options => open({ identity, contracts, own: %s, endpoint: %s }, options);\n", own, quoted("/mcp/"+request.Own))
-		declarations += fmt.Sprintf("export declare const connect: import(%s).Connect<Inputs[%[2]s], Outputs[%[2]s], Resources[%[2]s], Events[%[2]s]>;\n", runtime, own)
+		declarations += fmt.Sprintf("export declare const connect: import(%s).Connect<Apps[%s]>;\n", runtime, own)
 	}
 	return map[string]string{
 		TypeScriptModule: fmt.Sprintf("import { %s } from %s;\nexport { ToolCallError } from %s;\n%s", imports, runtime, runtime, module),
