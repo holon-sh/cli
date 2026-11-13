@@ -28,6 +28,7 @@ type preparedTypes struct {
 	fingerprint string
 	metadata    *mcpcontract.Metadata
 	documents   map[string]*typegen.Document
+	unserved    bool
 }
 
 type typeWorkspace struct {
@@ -104,7 +105,8 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			if clientutil.PathInside(parent, app.Path) {
 				return manifestSpec{}, nil, fmt.Errorf("%s: build metadata must be outside application source", app.Name)
 			}
-			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name)}
+			contract, served := options.served[app.Name]
+			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name), unserved: options.served != nil && !served}
 			app.resolved.types = p
 			consumer, err := typegen.AppConsumer(app.Name, app.Path)
 			if err != nil {
@@ -112,10 +114,13 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			}
 			pathApps = append(pathApps, app)
 			byApp[app.Name] = typegen.Source{Path: app.Path}
-			if options.served != nil {
-				prepareOptions.Served[app.Path] = options.served[app.Name]
+			if served {
+				prepareOptions.Served[app.Path] = contract
 			}
 			if consumer != nil {
+				if p.unserved {
+					consumer.Server = nil
+				}
 				for _, name := range app.resolved.Requires {
 					needed[name] = true
 					consumer.Sources = append(consumer.Sources, typegen.Source{Alias: name})

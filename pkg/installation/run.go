@@ -121,9 +121,6 @@ func uploadManifest(
 		return protocol.AppsRequestFor[protocol.App]{}, err
 	}
 	defer cleanup()
-	if options.served != nil {
-		options.types.accept(prepared)
-	}
 	built, err := buildManifestImages(ctx, manager, name, prepared, options)
 	if err != nil {
 		return protocol.AppsRequestFor[protocol.App]{}, err
@@ -186,7 +183,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		dev.session = previousSession(ctx, manager, recordPath)
 		dev.name = dev.session.Name
 		first.overlays = recordedSources(dev.session.Apps)
-		if first.served, err = dev.served(ctx); err == nil {
+		if _, err = dev.served(ctx, first.overlays); err == nil {
 			dev.sent = maps.Clone(first.overlays)
 		}
 	}

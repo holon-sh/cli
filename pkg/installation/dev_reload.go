@@ -50,22 +50,16 @@ type packedSource struct {
 	request buildRequest
 }
 
-func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
-	var served map[string]json.RawMessage
+func (d *devLoop) served(ctx context.Context, sent map[string]string) (map[string]json.RawMessage, error) {
+	served := map[string]json.RawMessage{}
 	for _, app := range d.manifest.Apps {
-		if app.Path == "" {
+		if sent[app.Name] == "" {
 			continue
-		}
-		if !slices.ContainsFunc(d.session.Endpoints, func(endpoint protocol.SessionEndpoint) bool { return endpoint.Name == app.Name }) {
-			return nil, nil
 		}
 		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name}
 		var contract json.RawMessage
 		if err := d.manager.Call(ctx, ControlPlane(d.name), toolGetAppContract, request, &contract); err != nil {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
-		}
-		if served == nil {
-			served = map[string]json.RawMessage{}
 		}
 		served[app.Name] = contract
 	}
@@ -88,24 +82,31 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
-	if !d.reload(ctx, d.paths(true)) {
+	if !d.reload(ctx, d.paths(func(app manifestApp) bool { return d.unsent(app) && len(app.resolved.Requires) == 0 })) {
 		return errUnstarted
 	}
-	options := d.options
-	var err error
-	if options.served, err = d.served(ctx); options.served == nil {
-		return err
+	for {
+		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
+		options := d.options
+		var err error
+		if options.served, err = d.served(ctx, d.sent); err != nil {
+			return err
+		}
+		manifest := d.manifest
+		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), d.waiting)
+		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, options)
+		if err != nil {
+			return err
+		}
+		cleanup()
+		d.options.types.accept(prepared)
+		if !d.reload(ctx, d.paths(func(app manifestApp) bool { return !d.waiting(app) })) {
+			return errUnstarted
+		}
+		if last {
+			return nil
+		}
 	}
-	prepared, cleanup, err := prepareManifestTypes(ctx, d.manifest, options)
-	if err != nil {
-		return err
-	}
-	cleanup()
-	d.options.types.accept(prepared)
-	if !d.reload(ctx, d.paths(false)) {
-		return errUnstarted
-	}
-	return nil
 }
 
 func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
@@ -138,14 +139,24 @@ func recordedSources(apps []protocol.App) map[string]string {
 	return recorded
 }
 
-func (d *devLoop) paths(unsent bool) sets.Set[string] {
+func (d *devLoop) paths(include func(manifestApp) bool) sets.Set[string] {
 	paths := sets.New[string]()
 	for _, app := range d.manifest.Apps {
-		if app.Path != "" && !(unsent && d.sent[app.Name] != "") {
+		if app.Path != "" && include(app) {
 			paths.Insert(app.Path)
 		}
 	}
 	return paths
+}
+
+func (d *devLoop) unsent(app manifestApp) bool {
+	return app.Path != "" && d.sent[app.Name] == ""
+}
+
+func (d *devLoop) waiting(app manifestApp) bool {
+	return slices.ContainsFunc(d.manifest.Apps, func(required manifestApp) bool {
+		return d.unsent(required) && slices.Contains(app.resolved.Requires, required.Name)
+	})
 }
 
 func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func(), error) {
@@ -247,7 +258,7 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
 	// A page is built once the clients it may import are in the source.
-	prepare, start, err := overlayScripts(root, entry, accepted != nil)
+	prepare, start, err := overlayScripts(root, entry, accepted != nil && !accepted.unserved)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}

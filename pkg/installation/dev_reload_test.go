@@ -559,50 +559,69 @@ func (f *reloadFixture) overlay(t *testing.T, digest string) map[string][]byte {
 	}
 }
 
-func TestDevFirstSendsSourceThenItsGeneratedClients(t *testing.T) {
+func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
+	const (
+		ui            = "generated/holon-ui/index.mjs"
+		requiresAlpha = `{"name":"example.com/gamma","version":"1","description":"gamma","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"alpha":{}}}}}}`
+		gammaManifest = alphaManifest + "- name: gamma\n  access: {server: {}}\n  path: ./gamma\n"
+	)
+	type send struct{ clients, page bool }
 	for _, test := range []struct {
-		name    string
-		project string
-		builds  []bool
-		clients bool
+		name        string
+		files       map[string]string
+		app, client string
+		sends       []send
 	}{
-		{name: "an app with nothing to generate or build is sent once", builds: []bool{false}},
+		{name: "an app with nothing to generate or build is sent once", app: "alpha", client: ui, sends: []send{{}}},
 		{
-			name: "clients generated from the running app follow in a second send", project: `{"private":true,"dependencies":{"holon-ui":"0.0.1"}}`,
-			builds: []bool{false, false}, clients: true,
+			name: "clients generated from the running app follow in a second send", app: "alpha", client: ui,
+			files: map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-ui":"0.0.1"}}`},
+			sends: []send{{}, {clients: true}},
 		},
 		{
-			name:    "a page is built once its clients are in the source",
-			project: `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`,
-			builds:  []bool{false, true}, clients: true,
+			name: "a page is built once its clients are in the source", app: "alpha", client: ui,
+			files: map[string]string{"alpha/package.json": `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`},
+			sends: []send{{}, {clients: true, page: true}},
 		},
 		{
-			name: "a page that takes no client is sent again to be built", project: `{"private":true,"scripts":{"build":"vite build"}}`,
-			builds: []bool{false, true},
+			name: "a page that takes no client is sent again to be built", app: "alpha", client: ui,
+			files: map[string]string{"alpha/package.json": `{"private":true,"scripts":{"build":"vite build"}}`},
+			sends: []send{{}, {page: true}},
+		},
+		{
+			name: "a TypeScript server is first sent with the clients of the apps it requires", app: "gamma", client: "generated/holon-sh/index.mjs",
+			files: map[string]string{
+				manifestFileName: gammaManifest, "gamma/server.json": requiresAlpha,
+				"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
+				"gamma/package.json": `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-sh":"0.0.1","holon-ui":"0.0.1"}}`,
+			},
+			sends: []send{{clients: true}, {clients: true, page: true}},
+		},
+		{
+			name: "a Python server is first sent with the clients of the apps it requires", app: "gamma", client: "holon/apps/__init__.py",
+			files: map[string]string{
+				manifestFileName: gammaManifest, "gamma/server.json": requiresAlpha,
+				"gamma/server.py":      "from holon.apps import apps\nimport mcp\n",
+				"gamma/pyproject.toml": "[project]\nname = \"gamma\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n",
+			},
+			sends: []send{{clients: true}},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			files := map[string]string{"alpha/server.py": "import mcp\n"}
-			if test.project != "" {
-				files["alpha/package.json"] = test.project
-			}
-			f := startReloadFixture(t, true, files)
-			reloads := f.reloadRequests()
-			var builds []bool
-			for _, reload := range reloads {
-				builds = append(builds, strings.Contains(string(f.overlay(t, reload.Digest)[runtimecontract.PrepareFile]), " run build"))
-			}
-			var clients string
-			for name, data := range f.overlay(t, reloads[len(reloads)-1].Digest) {
-				if strings.HasPrefix(name, "generated/holon-ui/") {
-					clients += string(data)
+			f := startReloadFixture(t, true, map[string]string{"alpha/server.py": "import mcp\n"}, test.files)
+			var sends []send
+			for _, reload := range f.reloadRequests() {
+				if reload.App == test.app {
+					overlay := f.overlay(t, reload.Digest)
+					sends = append(sends, send{
+						clients: strings.Contains(string(overlay[test.client]), "lookup"),
+						page:    strings.Contains(string(overlay[runtimecontract.PrepareFile]), " run build"),
+					})
 				}
 			}
-			if !slices.Equal(builds, test.builds) || reloads[0].Digest != f.started || strings.Contains(clients, "lookup") != test.clients {
-				t.Fatalf("builds = %v, clients %q; stderr=%q", builds, clients, f.stderr.String())
-			}
-			if _, err := os.Stat(filepath.Join(f.root, "alpha", "generated", "holon-ui")); (err == nil) != test.clients {
-				t.Fatal(err)
+			_, err := os.Stat(filepath.Join(f.root, test.app, test.client))
+			if !slices.Equal(sends, test.sends) || (err == nil) != test.sends[len(test.sends)-1].clients {
+				t.Fatalf("%s sends = %+v, local %s: %v; stderr=%q", test.app, sends, test.client, err, f.stderr.String())
 			}
 		})
 	}
