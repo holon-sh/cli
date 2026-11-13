@@ -3,12 +3,10 @@ package mcptype
 import (
 	"context"
 	"fmt"
-	"net/url"
 )
 
 // bindingTypes declares the generated factory over the runtime's own binding and option types, so a
 // consumer's object literals are checked against the installed runtime rather than a copy of it.
-// The runtime's binding requires an endpoint; a session hook serves the app without dialing it.
 const bindingTypes = `export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;
 `
@@ -53,19 +51,17 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> };\n", runtime, runtime, tools, resources, events)
 	identity, contracts := encode(request.caller()), encode(request.contracts)
 	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
-	if request.Target == "browser" {
-		imports, module, declarations := "bindApps", bound, types+bindingTypes
-		if request.Own != "" {
-			// Holon serves an app's MCP endpoint at /mcp/<app> on the origin that serves its page.
-			own, endpoint := quoted(request.Own), quoted("/mcp/"+url.PathEscape(request.Own))
-			imports += ", connect as open"
-			module += fmt.Sprintf("export const connect = options => open({ identity, contracts, own: %s, endpoint: %s }, options);\n", own, endpoint)
-			declarations += fmt.Sprintf("export declare const connect: import(%s).Connect<Inputs[%[2]s], Outputs[%[2]s], Resources[%[2]s], Events[%[2]s]>;\n", runtime, own)
-		}
-		return map[string]string{TypeScriptModule: fmt.Sprintf("import { %s } from %s;\nexport {ToolCallError} from %s;\n%s", imports, runtime, runtime, module), "index.d.mts": declarations}, nil
+	imports, module, declarations := "bindApps", bound, types
+	if request.Target == "node" {
+		imports, module, declarations = "createApps as create, bindApps", module+"export const apps = create(identity, contracts);\n", declarations+"export declare const apps: Apps;\n"
+	} else if own := quoted(request.Own); request.Own != "" {
+		// Holon serves an app's MCP endpoint at /mcp/<app> on the origin that serves its page.
+		imports += ", connect as open"
+		module += fmt.Sprintf("export const connect = options => open({ identity, contracts, own: %s, endpoint: %s }, options);\n", own, quoted("/mcp/"+request.Own))
+		declarations += fmt.Sprintf("export declare const connect: import(%s).Connect<Inputs[%[2]s], Outputs[%[2]s], Resources[%[2]s], Events[%[2]s]>;\n", runtime, own)
 	}
 	return map[string]string{
-		TypeScriptModule: fmt.Sprintf("import { createApps as create, bindApps } from %s;\nexport { ToolCallError } from %s;\n%sexport const apps = create(identity, contracts);\n", runtime, runtime, bound),
-		"index.d.mts":    types + "export declare const apps: Apps;\n" + bindingTypes,
+		TypeScriptModule: fmt.Sprintf("import { %s } from %s;\nexport { ToolCallError } from %s;\n%s", imports, runtime, runtime, module),
+		"index.d.mts":    declarations + bindingTypes,
 	}, nil
 }

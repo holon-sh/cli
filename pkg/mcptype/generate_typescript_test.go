@@ -17,31 +17,26 @@ func TestModulesPassTheirIdentityAndContractsToTheRuntime(t *testing.T) {
 	}
 	identity := mcpcontract.Identity{Name: "a'b\"\\\n\r\t\x00\x1f\x7fé😀  ", Version: "1"}
 	requires := map[string]mcpcontract.Identity{"orders": {Name: "example.com/orders", Version: "1.0.0"}}
-	request := GenerateRequest{Target: "browser", Identity: identity, Requires: requires}
+	request := GenerateRequest{Identity: identity, Requires: requires}
 	if err := json.Unmarshal([]byte(`{"orders": `+orderContract+`}`), &request.Contracts); err != nil {
 		t.Fatal(err)
 	}
-	plain, err := Generate(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Own = "orders"
-	page, err := Generate(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Target = "node"
-	server, err := Generate(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
+	files := map[string][]byte{}
+	for _, module := range []struct{ name, target, own string }{{"plain", "browser", ""}, {"page", "browser", "orders"}, {"server", "node", ""}} {
+		request.Target, request.Own = module.target, module.own
+		generated, err := Generate(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[module.name+".mjs"] = generated[TypeScriptModule]
 	}
 	// A stand-in runtime returns what each of its functions was called with.
 	runtime := []byte("export class ToolCallError extends Error {}\nexport const createApps = (...args) => args, bindApps = createApps, connect = createApps;\n")
-	files := map[string][]byte{"server.mjs": server[TypeScriptModule], "page.mjs": page[TypeScriptModule], "plain.mjs": plain[TypeScriptModule], "main.mjs": []byte(`import { apps, createApps, ToolCallError } from "./server.mjs";
+	files["main.mjs"] = []byte(`import { apps, createApps, ToolCallError } from "./server.mjs";
 import { connect } from "./page.mjs";
 import * as plain from "./plain.mjs";
 console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:" } }, { timeout: 1 }), opened: connect({ timeout: 1 }), plainConnects: "connect" in plain }));
-`)}
+`)
 	for _, pkg := range []string{"holon-sh", "holon-ui"} {
 		files["node_modules/"+pkg+"/package.json"] = []byte(`{"name":"` + pkg + `","type":"module","exports":{"./runtime":"./runtime.js"}}`)
 		files["node_modules/"+pkg+"/runtime.js"] = runtime
