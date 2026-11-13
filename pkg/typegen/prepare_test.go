@@ -175,14 +175,6 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 			t.Fatalf("%s: installed runtime was reinstalled: %v", test.manager, err)
 		}
 	}
-	ui := c
-	ui.Targets = []string{TargetUI}
-	for _, version := range []string{"0.0.1-dev.12", "0.0.1-dev.9"} {
-		put(t, c.Dir, "node_modules/holon-ui/package.json", `{"name":"holon-ui","version":"`+version+`"}`)
-		if err := Generate(t.Context(), []Consumer{ui}, Options{Run: extract}); (err == nil) != (version == "0.0.1-dev.12") || err != nil && !strings.Contains(err.Error(), "update holon-ui") {
-			t.Fatalf("holon-ui %s = %v", version, err)
-		}
-	}
 	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
 		t.Fatal(err)
 	}

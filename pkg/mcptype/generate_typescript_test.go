@@ -1,7 +1,6 @@
 package mcptype
 
 import (
-	"bytes"
 	"encoding/json"
 	"os/exec"
 	"testing"
@@ -26,8 +25,9 @@ func TestModulesPassTheirIdentityAndContractsToTheRuntime(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"orders": `+orderContract+`}`), &request.Contracts); err != nil {
 		t.Fatal(err)
 	}
-	if plain, err := Generate(t.Context(), request); err != nil || bytes.Contains(plain[TypeScriptModule], []byte("connect")) {
-		t.Fatalf("a page without its own app: %v\n%s", err, plain[TypeScriptModule])
+	plain, err := Generate(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
 	}
 	request.Own = "orders"
 	page, err := Generate(t.Context(), request)
@@ -41,9 +41,10 @@ func TestModulesPassTheirIdentityAndContractsToTheRuntime(t *testing.T) {
 	}
 	// A stand-in runtime returns what each of its functions was called with.
 	runtime := []byte("export class ToolCallError extends Error {}\nexport const createApps = (...args) => args, bindApps = createApps, connect = createApps;\n")
-	files := map[string][]byte{"server.mjs": server[TypeScriptModule], "page.mjs": page[TypeScriptModule], "main.mjs": []byte(`import { apps, createApps, ToolCallError } from "./server.mjs";
+	files := map[string][]byte{"server.mjs": server[TypeScriptModule], "page.mjs": page[TypeScriptModule], "plain.mjs": plain[TypeScriptModule], "main.mjs": []byte(`import { apps, createApps, ToolCallError } from "./server.mjs";
 import { connect } from "./page.mjs";
-console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:" } }, { timeout: 1 }), opened: connect({ timeout: 1 }) }));
+import * as plain from "./plain.mjs";
+console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:" } }, { timeout: 1 }), opened: connect({ timeout: 1 }), plainConnects: "connect" in plain }));
 `)}
 	for _, pkg := range []string{"holon-sh", "holon-ui"} {
 		files["node_modules/"+pkg+"/package.json"] = []byte(`{"name":"` + pkg + `","type":"module","exports":{"./runtime":"./runtime.js"}}`)
@@ -57,7 +58,10 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	if err != nil {
 		t.Fatalf("generated modules failed to import: %v\n%s", err, output)
 	}
-	var got struct{ Apps, Bound, Opened []any }
+	var got struct {
+		Apps, Bound, Opened []any
+		PlainConnects       bool
+	}
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("%v: %s", err, output)
 	}
@@ -71,6 +75,9 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	}
 	if diff := cmp.Diff([]any{asJSON(t, map[string]any{"identity": want[0], "contracts": want[1], "own": "orders", "endpoint": "/mcp/orders"}), options}, got.Opened); diff != "" {
 		t.Errorf("connect opened (-want +got):\n%s", diff)
+	}
+	if got.PlainConnects {
+		t.Error("a page without its own app has connect")
 	}
 }
 
