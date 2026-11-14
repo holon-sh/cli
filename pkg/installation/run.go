@@ -101,11 +101,10 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 	return manifest, nil
 }
 
-func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec, output *progressOutput, apps ...string) (manifestSpec, error) {
+func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec, apps ...string) (manifestSpec, error) {
 	if _, err := manager.controlToken(ctx); err != nil {
 		return manifestSpec{}, err
 	}
-	output.status("", "Preparing apps", progressWorking)
 	resolved, err := resolveManifestGraph(ctx, manifest, apps...)
 	if err != nil {
 		return manifestSpec{}, err
@@ -155,7 +154,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if config.jsonOutput {
 		stdout = stderr
 	}
-	config.output.status("", "Authenticating", progressWorking)
+	config.output.headline(deployingApps, progressWorking)
 	manager, err := NewClient(ctx, config.Auth)
 	if err != nil {
 		return err
@@ -164,7 +163,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	options.types, options.development = new(typeWorkspace), true
 	defer options.types.close()
 	defer options.builders.close()
-	resolved, err := resolveManifest(ctx, manager, config.manifest, config.output, apps...)
+	resolved, err := resolveManifest(ctx, manager, config.manifest, apps...)
 	if err != nil {
 		return err
 	}
@@ -174,7 +173,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	recordPath := manager.sessionRecordPath(config.manifest, apps)
 	dev := &devLoop{
 		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), watch: config.watch, started: config.clock().Now(), options: options,
-		pending: sets.New[string](), announce: true,
+		updating: sets.New[string](), announce: true,
 		sent: map[string]string{}, background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{},
 	}
 	defer dev.records.Wait()
@@ -197,13 +196,12 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	request.TTLSeconds = config.devTTLSeconds
-	config.output.deploying(request.Apps)
 	if dev.name != "" {
 		err = dev.update(ctx, request, removedApps(dev.session.Apps, request.Apps)...)
 	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &dev.session); err == nil {
-		dev.name = dev.session.Name
+		dev.name, dev.rollout = dev.session.Name, true
 		for _, app := range request.Apps {
-			dev.pending.Insert(app.Name)
+			dev.begin(app.Name)
 		}
 		err = printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps)
 	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
@@ -224,6 +222,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 			defer cancel()
 			return errors.Join(err, manager.DeleteSession(cleanup, dev.name, dev.session.UID, true))
 		}
+		dev.finish()
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(dev.session)
 		}
@@ -303,7 +302,7 @@ func (m *Client) awaitSession(ctx context.Context, name, revision string) (proto
 func SessionReady(session protocol.SessionResponse) (bool, error) {
 	if lifecyclePending(session) {
 		if lifecycleFailed(session) {
-			return false, errors.New("session failed: " + session.Lifecycle.Message)
+			return false, errors.New("session failed: " + strings.TrimPrefix(session.Lifecycle.Hook+": "+session.Lifecycle.Message, ": "))
 		}
 		return false, nil
 	}
@@ -327,7 +326,7 @@ func terminalCondition(condition protocol.Condition) bool {
 func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer, config commandConfig) error {
 	finish := config.output.measure("production", "deploy")
 	defer finish()
-	config.output.status("", "Authenticating", progressWorking)
+	config.output.headline(deployingApps, progressWorking)
 	manifest := config.manifest
 	manager, err := NewClient(ctx, config.Auth)
 	if err != nil {
@@ -343,7 +342,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	}
 	options := config.buildOptions(manager, stderr)
 	defer options.builders.close()
-	resolved, err := resolveManifest(ctx, manager, manifest, config.output, selection...)
+	resolved, err := resolveManifest(ctx, manager, manifest, selection...)
 	if err != nil {
 		return err
 	}
@@ -351,7 +350,9 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
-	config.output.deploying(desired.Apps)
+	for _, app := range desired.Apps {
+		config.output.working(app.Name)
+	}
 	accepted, err := replaceExecution(ctx, manager, protocol.ProductionName, current, desired)
 	if err != nil {
 		return err
@@ -360,7 +361,9 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
-	config.output.apps(desired.Apps, "ready", progressDone)
+	for _, app := range desired.Apps {
+		config.output.ready(app.Name)
+	}
 	return config.output.endpoints(stdout, "Ready", manager, ready.Name, resolved.Apps, false)
 }
 
@@ -370,7 +373,6 @@ func waitSessionReady(
 	finish := output.measure(name, "rollout")
 	defer finish()
 	result := accepted
-	starting := startingApps(accepted)
 	err := wait.PollUntilContextCancel(ctx, workflowPoll, true, func(ctx context.Context) (bool, error) {
 		session, err := manager.awaitSession(ctx, name, result.Revision)
 		if err != nil {
@@ -380,8 +382,7 @@ func waitSessionReady(
 		if session.UID != accepted.UID || len(protocol.ChangedApps(session.Apps, accepted.Apps)) != 0 || session.Generation < accepted.Generation {
 			return false, errors.New("deployment was superseded")
 		}
-		output.serving(session, starting)
-		reportSessionProgress(session, output, "Deploying apps", progressWorking)
+		reportSessionProgress(session, output, deployingApps, progressWorking)
 		if err := manager.authorizeOperation(ctx, session); err != nil {
 			return false, err
 		}
@@ -390,57 +391,19 @@ func waitSessionReady(
 	return result, err
 }
 
-func (o *progressOutput) deploying(apps []protocol.App) {
-	o.status("", "Deploying apps", progressWorking)
-	o.apps(apps, "deploying", progressWorking)
-}
+const deployingApps = "Deploying apps"
 
-func (o *progressOutput) apps(apps []protocol.App, phase string, state progressState) {
-	for _, app := range apps {
-		o.status(app.Name, phase, state)
-	}
-}
-
-func startingApps(accepted protocol.SessionResponse) sets.Set[string] {
-	starting := sets.New[string]()
-	for _, app := range accepted.Apps {
-		starting.Insert(app.Name)
-	}
-	for _, endpoint := range accepted.Endpoints {
-		starting.Delete(endpoint.Name)
-	}
-	return starting
-}
-
-func (o *progressOutput) serving(session protocol.SessionResponse, starting sets.Set[string]) {
+func reportSessionProgress(session protocol.SessionResponse, output *progressOutput, headline string, state progressState) {
 	if lifecyclePending(session) {
-		return
-	}
-	for _, endpoint := range session.Endpoints {
-		if starting.Has(endpoint.Name) {
-			o.status(endpoint.Name, "ready", progressDone)
-		}
-	}
-}
-
-func reportSessionProgress(
-	session protocol.SessionResponse, output *progressOutput, phase string, state progressState,
-) {
-	name := ""
-	condition := session.Condition(protocol.ConditionReady)
-	if lifecyclePending(session) {
-		lifecycle := ptr.Deref(session.Lifecycle, protocol.LifecycleStatus{Phase: "Preparing lifecycle"})
-		name, phase, state = lifecycle.App, lifecycle.Phase, progressWorking
+		lifecycle := ptr.Deref(session.Lifecycle, protocol.LifecycleStatus{})
+		headline, state = deployingApps, progressWorking
 		if lifecycle.Hook != "" {
-			phase = lifecycle.Hook + ": " + phase
+			headline = strings.TrimSuffix("Running "+lifecycle.Hook+" for "+lifecycle.App, " for ")
 		}
-		if lifecycle.Phase == "Failed" {
-			phase, state = phase+": "+lifecycle.Message, progressError
-		}
-	} else if condition.Reason == "WaitingForConfiguration" {
-		phase, state = condition.Message, progressBlocked
+	} else if condition := session.Condition(protocol.ConditionReady); condition.Reason == "WaitingForConfiguration" {
+		headline, state = condition.Message, progressBlocked
 	}
-	output.status(name, phase, state)
+	output.headline(headline, state)
 }
 
 func printStartingEndpoints(stdout io.Writer, output *progressOutput, manager *Client, name string, apps []manifestApp) error {

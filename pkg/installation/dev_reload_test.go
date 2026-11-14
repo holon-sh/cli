@@ -192,7 +192,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			return
 		}
 		f.unserved = false
-		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 1.2, Output: installed})
+		installationtest.WriteJSON(w, reloadAppResult{Output: installed})
 	})
 	h.control.Handle([]string{toolRecordAppSource}, nil, func(w http.ResponseWriter, r *http.Request) {
 		var input recordAppSourceRequest
@@ -292,7 +292,7 @@ func TestDevSaves(t *testing.T) {
 		{
 			name:  "server source restarts the app in place, and the same source again does nothing",
 			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "second"}},
-			lines: []string{"alpha reloaded in 1.2 s", ""}, reloads: 1,
+			lines: []string{"alpha ready in", ""}, reloads: 1,
 		},
 		{
 			name:  "files an editor writes while saving do nothing",
@@ -300,14 +300,14 @@ func TestDevSaves(t *testing.T) {
 			lines: []string{""},
 		},
 		{
-			name: "a failed reload is reported", failReload: true,
-			saves: []map[string]string{{"alpha/tools.py": "second"}},
-			lines: []string{"alpha reload failed"}, reloads: 1,
+			name: "a failed reload is reported, and the source before it is sent again", failReload: true,
+			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "first"}},
+			lines: []string{"alpha failed", "alpha ready"}, reloads: 2,
 		},
 		{
 			name: "a source the session has not recorded within a minute is reported, and one a newer save replaced is not", unrecorded: true,
 			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "third"}},
-			lines: []string{"alpha reloaded in 1.2 s", "alpha reloaded, but not recorded in the session: no answer within a minute"}, reloads: 2,
+			lines: []string{"alpha ready in", "alpha serves this save, but a restart loses it: no answer within a minute"}, reloads: 2,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -400,7 +400,7 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			if f.blob(recorded) == nil {
 				t.Fatalf("the session names source %s, which the registry does not hold", recorded)
 			}
-			failed := strings.Contains(f.stderr.String(), "alpha reload failed")
+			failed := strings.Contains(f.stderr.String(), "alpha failed")
 			if failed == strings.Contains(f.stderr.String(), "alpha ready") || failed == strings.Contains(f.stdout.String(), "\nReady\n") {
 				t.Fatalf("stdout=%q stderr=%q", f.stdout.String(), f.stderr.String())
 			}
@@ -447,7 +447,7 @@ func TestDevSaveToAnAppRemovedFromTheSession(t *testing.T) {
 	f := startReloadFixture(t, true)
 	started := len(f.reloadRequests())
 	f.update(func() { f.served = nil })
-	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reload failed")
+	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha failed: application removed from the session")
 	if sent := len(f.reloadRequests()) - started; sent != 0 {
 		t.Fatalf("sources sent = %d", sent)
 	}
@@ -466,17 +466,10 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 		string(overlay[runtimecontract.StartFile]) != "exec uv run --no-sync python -m holon.serve server.py\n" {
 		t.Fatalf("the session was created from %s and first sent %s", f.started, first.Digest)
 	}
-	if f.uploaded != 0 || strings.Contains(f.stderr.String(), "alpha uploaded") {
-		t.Fatalf("uploads before the session existed = %d; stderr=%q", f.uploaded, f.stderr.String())
+	if f.uploaded != 0 {
+		t.Fatalf("uploads before the session existed = %d", f.uploaded)
 	}
-	if started := f.stderr.String(); strings.Index(started, "alpha ready") < strings.Index(started, "alpha reloaded") {
-		t.Fatalf("the app was reported ready before its source had started: %q", started)
-	}
-	from := len(f.stderr.String())
-	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reloaded")
-	if !strings.Contains(f.stderr.String()[from:], "alpha reloaded") {
-		t.Fatalf("stderr=%q", f.stderr.String())
-	}
+	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha ready")
 	request := f.reloadRequests()[1]
 	if request.Session != "gentle-otter-482" || request.App != "alpha" {
 		t.Fatalf("source sent to %s %s", request.Session, request.App)
@@ -620,7 +613,8 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 				}
 			}
 			_, err := os.Stat(filepath.Join(f.root, test.app, test.client))
-			if !slices.Equal(sends, test.sends) || (err == nil) != test.sends[len(test.sends)-1].clients {
+			if !slices.Equal(sends, test.sends) || (err == nil) != test.sends[len(test.sends)-1].clients ||
+				strings.Count(f.stderr.String(), test.app+" ready") != 1 {
 				t.Fatalf("%s sends = %+v, local %s: %v; stderr=%q", test.app, sends, test.client, err, f.stderr.String())
 			}
 		})
@@ -629,9 +623,9 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 
 func TestDevShowsReloadDetailsOnlyWhenVerbose(t *testing.T) {
 	f := startReloadFixture(t, true)
-	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha reloaded")
+	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha ready")
 	f.update(func() { f.refusal = installFailure })
-	f.save(map[string]string{"alpha/tools.py": "third"}, "alpha reload failed: npm install: exit status 1")
+	f.save(map[string]string{"alpha/tools.py": "third"}, "alpha failed: npm install: exit status 1")
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
@@ -641,10 +635,10 @@ func TestDevShowsReloadDetailsOnlyWhenVerbose(t *testing.T) {
 	f.start("--verbose")
 	f.await(func() bool {
 		output := f.stderr.String()
-		return strings.Contains(output, installed+"alpha reloaded") && strings.Contains(output, "Timing alpha reload:")
+		return strings.Contains(output, installed) && strings.Contains(output, "Timing alpha reload:")
 	})
 	f.update(func() { f.refusal = installFailure })
-	f.save(map[string]string{"alpha/tools.py": "fourth"}, "npm error 404\nnot found\nalpha reload failed: npm install: exit status 1\n")
+	f.save(map[string]string{"alpha/tools.py": "fourth"}, "npm error 404\nnot found\nalpha failed: npm install: exit status 1\n")
 }
 
 func TestDevStartup(t *testing.T) {
