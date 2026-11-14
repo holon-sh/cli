@@ -87,17 +87,16 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 	if !manifest.Declares(pkg) {
 		return fmt.Errorf("%s does not depend on %s; add it to package.json", dir, pkg)
 	}
-	if _, err := Install(ctx, dir, kiln.Node, o); err != nil {
+	if _, err := Install(ctx, dir, o); err != nil {
 		return err
 	}
 	return installedRuntime(dir, pkg)
 }
 
-// Install runs, in dir, the development install Kiln plans for the provider's part of the app there, and returns the
-// app's development steps.
-func Install(ctx context.Context, dir string, provider kiln.Provider, options Options) (kiln.Steps, error) {
+// Install runs, in dir, the development install Kiln plans for the app there, and returns the app's development steps.
+func Install(ctx context.Context, dir string, options Options) (kiln.Steps, error) {
 	o := options.defaults()
-	plan, err := kiln.Plan(ctx, kiln.Request{Source: dir, Provider: provider, Development: true})
+	steps, err := kiln.Development(ctx, dir)
 	if err != nil {
 		return kiln.Steps{}, fmt.Errorf("%s: %w", dir, err)
 	}
@@ -105,7 +104,7 @@ func Install(ctx context.Context, dir string, provider kiln.Provider, options Op
 	if err != nil {
 		return kiln.Steps{}, err
 	}
-	return plan.Steps, commandenv.RunEach(ctx, dir, filepath.Base(dir), plan.Steps.Install, env, o.Stderr)
+	return steps, commandenv.RunEach(ctx, dir, filepath.Base(dir), steps.Install, env, o.Stderr)
 }
 
 // mapClients gives a Node.js target's clients the import name #holon-sh or #holon-ui in the package.json
@@ -240,7 +239,7 @@ func ensurePythonRuntime(ctx context.Context, dir string, o Options) error {
 	if !declared[PythonRuntime] {
 		return fmt.Errorf("%s does not depend on holon-sh; add it to pyproject.toml or requirements.txt", dir)
 	}
-	_, err = Install(ctx, dir, kiln.Python, o)
+	_, err = Install(ctx, dir, o)
 	return err
 }
 

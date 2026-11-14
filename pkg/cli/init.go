@@ -134,12 +134,10 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 
 	install := func() (kiln.Steps, error) {
 		var commands [][]string
-		provider := kiln.Node
 		switch language {
 		case typegen.TargetGo:
 			commands = append(commands, []string{"go", "get", typegen.GoRuntimeModule + "@latest"})
 		case typegen.TargetPy:
-			provider = kiln.Python
 			dependencies, dev := project.PythonRequirements()
 			commands = append(commands, append([]string{"uv", "add", "--frozen"}, dependencies...),
 				append([]string{"uv", "add", "--frozen", "--dev"}, dev...), []string{"uv", "lock"})
@@ -148,7 +146,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 			return kiln.Steps{}, err
 		}
 		options := typegen.Options{Stdout: io.Discard, Stderr: stderr}
-		steps, err := typegen.Install(cmd.Context(), dir, provider, options)
+		steps, err := typegen.Install(cmd.Context(), dir, options)
 		if err != nil {
 			return kiln.Steps{}, err
 		}
