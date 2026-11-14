@@ -304,7 +304,8 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 // installs what the app depends on and names the digest of the files it installs from, so it changes when they do; the
 // PrepareFile builds the app's page when page is set; the StartFile serves entry.
 func overlayScripts(root, entry string, page bool) (map[string]string, error) {
-	var install, prepare []string
+	var install []string
+	var prepare string
 	serve := serveCommand(entry)
 	if filepath.Ext(entry) == ".py" {
 		install = append(install, "uv sync")
@@ -319,7 +320,7 @@ func overlayScripts(root, entry string, page bool) (map[string]string, error) {
 		manager := pkg.Manager(root)
 		install = append(install, manager+" install")
 		if page && pkg.Scripts["build"] != "" {
-			prepare = append(prepare, manager+" run build")
+			prepare = manager + " run build"
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
@@ -337,7 +338,7 @@ func overlayScripts(root, entry string, page bool) (map[string]string, error) {
 	}
 	return map[string]string{
 		runtimecontract.InstallFile: "# installs from " + installed.Digest().String() + "\n" + strings.Join(install, " && ") + "\n",
-		runtimecontract.PrepareFile: strings.Join(prepare, " && ") + "\n",
+		runtimecontract.PrepareFile: prepare + "\n",
 		runtimecontract.StartFile:   "exec " + strings.Join(serve, " ") + "\n",
 	}, nil
 }
