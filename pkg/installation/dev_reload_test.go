@@ -1,3 +1,5 @@
+//go:build kiln
+
 package installation
 
 import (
@@ -505,7 +507,7 @@ func TestOverlayPlan(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			sourceFiles(t, root, test.files)
-			plan, err := overlayPlan(root, test.entry, test.page)
+			plan, err := overlayPlan(t.Context(), root, test.entry, test.page)
 			plan.Install.Inputs = ""
 			if err != nil || !reflect.DeepEqual(plan, test.want) {
 				t.Fatalf("plan = %+v, want %+v: %v", plan, test.want, err)
@@ -517,7 +519,7 @@ func TestOverlayPlan(t *testing.T) {
 		files := map[string]string{"server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "", "package.json": build, "package-lock.json": ""}
 		sourceFiles(t, root, files)
 		install := func(page bool) runtimecontract.Install {
-			plan, err := overlayPlan(root, "server.py", page)
+			plan, err := overlayPlan(t.Context(), root, "server.py", page)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -621,6 +623,7 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 				manifestFileName: gammaManifest, "gamma/server.json": requiresAlpha,
 				"gamma/server.py":      "from holon.apps import apps\nimport mcp\n",
 				"gamma/pyproject.toml": "[project]\nname = \"gamma\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n",
+				"gamma/uv.lock":        "version = 1\n",
 			},
 			sends: []send{{clients: true}},
 		},

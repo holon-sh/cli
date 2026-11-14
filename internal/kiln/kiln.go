@@ -23,8 +23,10 @@ type Command struct {
 	Packages []string          `json:"packages,omitempty"`
 }
 
-// Steps are what a development environment runs in an app's source: Install, then Build.
+// Steps are what a development environment runs in an app's source: Install whenever a file in Inputs
+// changes, then Build.
 type Steps struct {
+	Inputs  []string   `json:"inputs"`
 	Install [][]string `json:"install"`
 	Build   [][]string `json:"build"`
 }
