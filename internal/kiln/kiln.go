@@ -9,9 +9,20 @@ var ErrNotLinked = errors.New("this holon was built without Kiln, which plans ho
 	"install a release build: curl -fsSL https://holonlabs.ai/install.sh | sh")
 
 type Request struct {
-	ConfigFilePath string   `json:"configFilePath,omitempty"`
-	Source         string   `json:"source"`
-	Start          []string `json:"start,omitempty"`
+	Source string   `json:"source"`
+	Start  []string `json:"start,omitempty"`
+	Run    *Run     `json:"run,omitempty"`
+}
+
+// Run is a command run with no network in an app's image, without the app's build; the image is the command's
+// stdout, stderr and exit status, as the files stdout, stderr and status. Mounts names build contexts mounted
+// read-only at the paths given, Overlay a build context copied over the app first, and Packages Python
+// requirements the command can import besides the app's.
+type Run struct {
+	Command  []string          `json:"command"`
+	Mounts   map[string]string `json:"mounts,omitempty"`
+	Overlay  string            `json:"overlay,omitempty"`
+	Packages []string          `json:"packages,omitempty"`
 }
 
 // Steps are what a development environment runs in an app's source: Install, then Build.

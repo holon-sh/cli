@@ -3,23 +3,19 @@ package installation
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/cli/pkg/typegen"
-	"github.com/tailscale/hujson"
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
@@ -30,12 +26,6 @@ var contractRunners = map[string]struct{ program, runner, checker string }{
 	"typescript": {"node", "runner.mjs", "check.mjs"},
 	"python":     {"python", "extract.py", "runner.py"},
 }
-
-var finalStage = regexp.MustCompile(`(?m)^FROM (\S+) AS (\S+)$`)
-
-// checkerInstall installs the Python type checker on the runtime's base image alone, so its layer survives
-// source and dependency changes. A check imports it from PYTHONPATH with the app's own interpreter.
-const checkerInstall = "python -m pip install --disable-pip-version-check --no-cache-dir --root-user-action=ignore --target /opt/holon-check mypy==2.4.0"
 
 // extractTypes is typegen's contract-runner hook. It runs the runner in the app's extraction image without
 // network access, so the server's imports resolve against the dependencies its image installs.
@@ -84,47 +74,19 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	if err != nil {
 		return err
 	}
-	config, err := railpackConfig(filepath.Join(source, "railpack.json"))
-	if err != nil {
-		return err
-	}
-	objectField(objectField(config, "steps"), "build")["commands"] = []any{}
-	directory := filepath.Join(source, ".holon-types")
-	if err := os.Mkdir(directory, 0o755); err != nil {
-		return fmt.Errorf(".holon-types is reserved: %w", err)
-	}
-	defer os.RemoveAll(directory)
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := mcpcontract.WriteStable(filepath.Join(directory, "railpack.json"), append(data, '\n'), 0o644); err != nil {
-		return err
-	}
-	dockerfile, err := kiln.Image(ctx, kiln.Request{
-		Source: source, ConfigFilePath: ".holon-types/railpack.json",
-	})
-	if err != nil {
-		return err
-	}
-	stages := finalStage.FindAllStringSubmatch(dockerfile, -1)
-	base, final := stages[len(stages)-1][1], stages[len(stages)-1][2]
+	run := kiln.Run{Command: command, Mounts: map[string]string{"tooling": "/holon-tooling"}}
 	args := []string{"--build-context", "tooling=" + toolingDir}
-	recipe, mounts := dockerfile, "--mount=type=bind,from=tooling,target=/holon-tooling,readonly"
-	if checker {
-		command = slices.Concat([]string{"env", "PYTHONPATH=/opt/holon-check", "MYPY_CACHE_DIR=/dev/null"}, command)
-		recipe += "FROM " + base + " AS checker\nRUN " + checkerInstall + "\n"
-		mounts += " --mount=type=bind,from=checker,source=/opt/holon-check,target=/opt/holon-check,readonly"
-	}
-	recipe += "FROM " + final + " AS contract\n"
 	if generated != "" {
+		run.Overlay = "generated"
 		args = append(args, "--build-context", "generated="+generated)
-		recipe += "COPY --from=generated . /app/\n"
 	}
-	words := make([]string, len(command))
-	for i, word := range command {
-		words[i] = "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
+	if checker {
+		run.Packages = []string{"mypy==2.4.0"}
 	}
-	recipe += fmt.Sprintf("RUN --network=none %s mkdir /tmp/contract && "+
-		"{ %s >/tmp/contract/stdout 2>/tmp/contract/stderr; echo $? >/tmp/contract/status; }\n"+
-		"FROM scratch\nCOPY --from=contract /tmp/contract/ /\n", mounts, strings.Join(words, " "))
+	recipe, err := kiln.Image(ctx, kiln.Request{Source: source, Run: &run})
+	if err != nil {
+		return err
+	}
 	work, err := os.MkdirTemp("", "holon-types-run-")
 	if err != nil {
 		return err
@@ -171,30 +133,4 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 		return err
 	}
 	return &typegen.RunnerError{Status: code, Stderr: string(stderr)}
-}
-
-func railpackConfig(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	config := map[string]any{}
-	if len(bytes.TrimSpace(data)) > 0 {
-		if data, err = hujson.Standardize(data); err != nil {
-			return nil, fmt.Errorf("railpack.json: %w", err)
-		}
-		if err := json.Unmarshal(data, &config); err != nil {
-			return nil, fmt.Errorf("railpack.json: %w", err)
-		}
-	}
-	return config, nil
-}
-
-func objectField(parent map[string]any, name string) map[string]any {
-	value, ok := parent[name].(map[string]any)
-	if !ok {
-		value = map[string]any{}
-		parent[name] = value
-	}
-	return value
 }

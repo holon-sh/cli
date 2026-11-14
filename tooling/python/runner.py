@@ -2,11 +2,12 @@
 
 Usage: runner.py check ENTRY, in the application's directory; an empty ENTRY checks all of it. mypy
 must be importable by the app's interpreter: the holon-types wheel installs it on the host, and an
-image check puts /opt/holon-check on PYTHONPATH.
+image check installs it apart from the app's packages.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 
 from mypy import api
@@ -14,6 +15,8 @@ from mypy import api
 stdout, stderr, status = api.run(
     [
         "--no-incremental",
+        "--cache-dir",
+        os.devnull,
         "--check-untyped-defs",
         "--explicit-package-bases",
         "--exclude",
