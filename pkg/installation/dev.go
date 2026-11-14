@@ -22,7 +22,7 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-const devDebounce = 250 * time.Millisecond
+const devDebounce = 50 * time.Millisecond
 
 type devChange struct {
 	contexts sets.Set[string]
