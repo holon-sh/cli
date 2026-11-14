@@ -38,14 +38,20 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 	if file == "" {
 		return nil, nil
 	}
-	entries, err := projectApps(file)
+	data, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
+	}
+	var project struct {
+		Apps []projectApp `json:"apps"`
+	}
+	if err := yaml.Unmarshal(data, &project); err != nil {
+		return nil, fmt.Errorf("%s: %w", file, err)
 	}
 	// The apps a dependency can name: each path app's resolved directory, a remote app's endpoint or a
 	// registry app's version.
 	apps := map[string]typegen.Source{}
-	for _, app := range entries {
+	for _, app := range project.Apps {
 		switch {
 		case filepath.IsAbs(app.Path):
 			return nil, fmt.Errorf("%s: %s path must be a relative directory", file, app.Name)
@@ -62,7 +68,7 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 		}
 	}
 	var consumers []typegen.Consumer
-	for _, app := range entries {
+	for _, app := range project.Apps {
 		if app.Path == "" {
 			continue
 		}
@@ -85,39 +91,6 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 		return nil, fmt.Errorf("%s: no path app declares a Holon SDK runtime or keeps an MCP server", file)
 	}
 	return consumers, nil
-}
-
-func projectApps(file string) ([]projectApp, error) {
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return nil, err
-	}
-	var project struct {
-		Apps []projectApp `json:"apps"`
-	}
-	if err := yaml.Unmarshal(data, &project); err != nil {
-		return nil, fmt.Errorf("%s: %w", file, err)
-	}
-	return project.Apps, nil
-}
-
-func declaredName(path, dir string) (string, error) {
-	root, _ := filepath.Abs(path)
-	for projectFile(root) == "" && root != filepath.Dir(root) {
-		root = filepath.Dir(root)
-	}
-	if file := projectFile(root); file != "" {
-		apps, err := projectApps(file)
-		if err != nil {
-			return "", err
-		}
-		for _, app := range apps {
-			if resolved, err := clientDir(filepath.Join(root, app.Path)); err == nil && resolved == dir {
-				return app.Name, nil
-			}
-		}
-	}
-	return filepath.Base(dir), nil
 }
 
 func projectFile(dir string) string {

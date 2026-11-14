@@ -75,7 +75,7 @@ func TestConsumerSelectsTheOwnServer(t *testing.T) {
 			writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
 			writeCLIFile(t, root, "server/server.py", pythonServer)
 			writeCLIFile(t, root, "server/server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"`+requiresOrders)
-			c, err := consumer("view", root, test.servers)
+			c, err := consumer(root, test.servers)
 			if test.err != "" {
 				if err == nil || !strings.Contains(err.Error(), test.err) {
 					t.Fatalf("consumer = %v, want %q", err, test.err)
@@ -98,29 +98,6 @@ func TestConsumerSelectsTheOwnServer(t *testing.T) {
 				t.Fatalf("consumer = %q %q %v, want %q %q %v", server, alias, sources, test.server, test.alias, test.sources)
 			}
 		})
-	}
-}
-
-func TestAnAppDirectoryIsTheAppItsProjectDeclares(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(root)
-	writeCLIFile(t, root, "project/holon.yaml", "apps:\n  - {name: chat, path: frontend}\n  - {name: web, path: linked}\n")
-	for _, dir := range []string{"project/frontend", "shared/ui"} {
-		writeCLIFile(t, root, dir+"/package.json", `{"dependencies":{"holon-ui":"^0.0.1"}}`)
-		installCLIRuntime(t, filepath.Join(root, dir))
-	}
-	if err := os.Symlink(filepath.Join(root, "shared/ui"), filepath.Join(root, "project/linked")); err != nil {
-		t.Fatal(err)
-	}
-	for dir, want := range map[string]string{"project/frontend": "chat", "project/linked": "web"} {
-		run(t, "", "types", "generate", dir)
-		page, err := os.ReadFile(filepath.Join(root, dir, "generated/holon-ui/index.mjs"))
-		if err != nil || !strings.HasPrefix(string(page), "// "+mcpcontract.Marker+" app="+want+"\n") {
-			t.Errorf("%s generated clients for another app: %v\n%s", dir, err, page)
-		}
 	}
 }
 
