@@ -175,9 +175,12 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			installationtest.WriteJSON(w, session())
 		})
 	h.mux.HandleFunc("POST /sessions/{id}/apps/{app}/source", func(w http.ResponseWriter, r *http.Request) {
+		if kind := r.Header.Get(protocol.HeaderContentType); kind != runtimecontract.OverlayMediaType {
+			t.Errorf("source request: %q", kind)
+		}
 		body, err := io.ReadAll(r.Body)
-		if err != nil || r.Header.Get(protocol.HeaderContentType) != runtimecontract.OverlayMediaType {
-			t.Errorf("source request: %v %q", err, r.Header.Get(protocol.HeaderContentType))
+		if err != nil {
+			return
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
