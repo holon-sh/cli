@@ -317,7 +317,7 @@ func overlayScripts(root, entry string, page bool) (prepare, start string, err e
 		}
 		manager := pkg.Manager(root)
 		inputs := strings.Join(append([]string{"package.json"}, typegen.Lockfiles(root)...), " ")
-		steps = append(steps, fmt.Sprintf("{ cat %[1]s | cmp -s - .holon/installed || { rm -f .holon/installed && %[2]s install && cat %[1]s >.holon/installed; }; }", inputs, manager))
+		steps = append(steps, fmt.Sprintf("{ cat %s >.holon/inputs && cmp -s .holon/inputs .holon/installed || { rm -f .holon/installed && %s install && mv .holon/inputs .holon/installed; }; }", inputs, manager))
 		if page && pkg.Scripts["build"] != "" {
 			steps = append(steps, manager+" run build")
 		}

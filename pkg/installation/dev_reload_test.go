@@ -493,57 +493,48 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	}
 }
 
+// TestOverlayScripts runs the scripts a development app is sent, with stand-ins for the programs they call. Each
+// stand-in records its call. A package manager also fails on a lockfile that says so and, as real ones may, rewrites
+// the lockfile it installed from.
 func TestOverlayScripts(t *testing.T) {
-	const python = "exec uv run --no-sync python -m holon.serve "
-	for _, test := range []struct {
-		name, entry    string
-		files          map[string]string
-		prepare, start string
-	}{
-		{
-			name: "Node", entry: "src/server.ts", files: map[string]string{"package.json": `{}`, "package-lock.json": ""},
-			prepare: "{ cat package.json package-lock.json | cmp -s - .holon/installed || { rm -f .holon/installed && npm install && cat package.json package-lock.json >.holon/installed; }; }\n",
-			start:   "exec node_modules/.bin/holon-serve src/server.ts\n",
-		},
-		{
-			name: "Python with a frontend", entry: "src/server.py",
-			files:   map[string]string{"package.json": `{"scripts":{"build":"vite build"}}`, "pnpm-lock.yaml": ""},
-			prepare: "uv sync && { cat package.json pnpm-lock.yaml | cmp -s - .holon/installed || { rm -f .holon/installed && pnpm install && cat package.json pnpm-lock.yaml >.holon/installed; }; } && pnpm run build\n",
-			start:   python + "src/server.py\n",
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			sourceFiles(t, root, test.files)
-			if prepare, start, err := overlayScripts(root, test.entry, true); err != nil || prepare != test.prepare || start != test.start {
-				t.Fatalf("scripts = %q, %q: %v", prepare, start, err)
-			}
-		})
-	}
-}
-
-func TestPrepareSkipsOnlyAnUnchangedInstall(t *testing.T) {
-	root, bin := t.TempDir(), t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "npm"), []byte("#!/bin/sh\necho >>installs\n! grep -q fail package-lock.json\n"), 0o755); err != nil {
-		t.Fatal(err)
+	const program = "#!/bin/sh\necho \"${0##*/} $*\" >>calls\n[ \"$1\" != install ] && exit\ngrep -qs fail package-lock.json && exit 1\n" +
+		"for lock in *lock*; do [ -f \"$lock\" ] && echo rewritten >>\"$lock\"; done\nexit 0\n"
+	bin, roots := t.TempDir(), map[string]string{"node": t.TempDir(), "python": t.TempDir()}
+	for _, path := range []string{bin + "/uv", bin + "/npm", bin + "/pnpm", roots["node"] + "/node_modules/.bin/holon-serve"} {
+		sourceFiles(t, filepath.Dir(path), map[string]string{filepath.Base(path): program})
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	build := `{"scripts":{"build":"vite build"}}`
 	for i, step := range []struct {
-		manifest, lock string
-		installs       int
-	}{{`{}`, "1", 1}, {`{}`, "1", 1}, {`{"x":1}`, "1", 2}, {`{"x":1}`, "fail", 3}, {`{"x":1}`, "1", 4}} {
-		sourceFiles(t, root, map[string]string{"package.json": step.manifest, "package-lock.json": step.lock})
-		prepare, _, err := overlayScripts(root, "server.ts", false)
+		app, entry string
+		files      map[string]string
+		page       bool
+		calls      string
+		fails      bool
+	}{
+		{app: "node", entry: "src/server.ts", files: map[string]string{"package.json": `{}`, "package-lock.json": "1"}, calls: "npm install\nholon-serve src/server.ts\n"},
+		{app: "node", entry: "src/server.ts", files: map[string]string{"package.json": `{}`, "package-lock.json": "1"}, calls: "holon-serve src/server.ts\n"},
+		{app: "node", entry: "src/server.ts", files: map[string]string{"package.json": `{"x":1}`, "package-lock.json": "1"}, calls: "npm install\nholon-serve src/server.ts\n"},
+		{app: "node", entry: "src/server.ts", files: map[string]string{"package.json": `{"x":1}`, "package-lock.json": "fail"}, calls: "npm install\n", fails: true},
+		{app: "node", entry: "src/server.ts", files: map[string]string{"package.json": `{"x":1}`, "package-lock.json": "1"}, calls: "npm install\nholon-serve src/server.ts\n"},
+		{app: "python", entry: "src/server.py", files: map[string]string{"package.json": build, "pnpm-lock.yaml": "1"}, calls: "uv sync\npnpm install\nuv run --no-sync python -m holon.serve src/server.py\n"},
+		{app: "python", entry: "src/server.py", files: map[string]string{"package.json": build, "pnpm-lock.yaml": "1"}, page: true, calls: "uv sync\npnpm run build\nuv run --no-sync python -m holon.serve src/server.py\n"},
+	} {
+		root := roots[step.app]
+		sourceFiles(t, root, step.files)
+		prepare, start, err := overlayScripts(root, step.entry, step.page)
 		if err != nil {
 			t.Fatal(err)
 		}
-		sourceFiles(t, root, map[string]string{runtimecontract.PrepareFile: prepare})
-		command := exec.Command("sh", runtimecontract.PrepareFile)
+		sourceFiles(t, root, map[string]string{runtimecontract.PrepareFile: prepare, runtimecontract.StartFile: start, "calls": ""})
+		command := exec.Command("sh", "-c", "sh "+runtimecontract.PrepareFile+" && sh "+runtimecontract.StartFile)
 		command.Dir = root
 		err = command.Run()
-		log, _ := os.ReadFile(filepath.Join(root, "installs"))
-		if installs := bytes.Count(log, []byte("\n")); (err != nil) != (step.lock == "fail") || installs != step.installs {
-			t.Fatalf("step %d: %d installs, want %d: %v", i, installs, step.installs, err)
+		if calls, _ := os.ReadFile(filepath.Join(root, "calls")); (err != nil) != step.fails || string(calls) != step.calls {
+			t.Fatalf("step %d ran %q, want %q: %v", i, calls, step.calls, err)
 		}
 	}
 }
