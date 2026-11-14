@@ -43,6 +43,7 @@ type progressOutput struct {
 	clock    clock.PassiveClock
 	renderer errgroup.Group
 	statuses map[string]tea.ProgramStatus
+	started  map[string]time.Time
 	preview  string
 	printed  string
 }
@@ -50,7 +51,7 @@ type progressOutput struct {
 func newProgressOutput(stdout, stderr io.Writer, verbose bool, clock clock.PassiveClock) (*progressOutput, io.Writer, io.Writer) {
 	output := &progressOutput{
 		writer: &buildLog{writer: stderr}, verbose: verbose, clock: clock,
-		statuses: map[string]tea.ProgramStatus{"": {}},
+		statuses: map[string]tea.ProgramStatus{"": {}}, started: map[string]time.Time{},
 	}
 	_, outTerminal := terminalFile(stdout)
 	_, errTerminal := terminalFile(stderr)
@@ -77,18 +78,48 @@ func (o *progressOutput) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (o *progressOutput) status(name, phase string, state tea.ProgramState) {
+func (o *progressOutput) headline(message string, state progressState) {
+	o.status("", message, state)
+}
+
+func (o *progressOutput) working(app string) {
+	o.status(app, "", progressWorking)
+}
+
+func (o *progressOutput) ready(app string) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	elapsed := o.clock.Since(o.started[app]).Seconds()
+	o.mu.Unlock()
+	o.status(app, fmt.Sprintf("ready in %.1f s", elapsed), progressDone)
+}
+
+func (o *progressOutput) failed(app, reason string) {
+	o.status(app, strings.TrimSuffix("failed: "+reason, ": "), progressError)
+}
+
+func (o *progressOutput) removed(app string) {
+	o.status(app, "removed", progressDone)
+}
+
+func (o *progressOutput) status(name, message string, state progressState) {
 	if o == nil {
 		return
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	status := tea.ProgramStatus{App: "holon", ID: progressStatusID(name), Title: name, Message: phase, State: state}
-	if o.statuses[name] == status {
+	status := tea.ProgramStatus{App: "holon", ID: progressStatusID(name), Title: name, Message: message, State: state}
+	previous, shown := o.statuses[name]
+	if shown && previous == status {
 		return
 	}
+	if state == progressWorking && (!shown || previous.State != progressWorking) {
+		o.started[name] = o.clock.Now()
+	}
 	o.statuses[name] = status
-	o.publish(ansi.SetProgramStatus(status), strings.TrimSpace(name+" "+phase))
+	o.publish(ansi.SetProgramStatus(status), name, message)
 }
 
 // problem shows err on the named row, or removes the row when err is nil. A task that never failed stays silent;
@@ -107,13 +138,15 @@ func (o *progressOutput) problem(name string, err error) {
 		return
 	}
 	delete(o.statuses, name)
-	o.publish(ansi.ClearProgramStatusID(progressStatusID(name)), name+" ok")
+	o.publish(ansi.ClearProgramStatusID(progressStatusID(name)), name, "ok")
 }
 
 // publish renders a status change: the rows and an OSC report on a terminal, or one line of plain output.
-func (o *progressOutput) publish(report, line string) {
+func (o *progressOutput) publish(report, name, message string) {
 	if o.program == nil {
-		_, _ = fmt.Fprintln(o.writer, line)
+		if message != "" {
+			_, _ = fmt.Fprintln(o.writer, strings.TrimSpace(name+" "+message))
+		}
 		return
 	}
 	o.program.Send(slices.SortedFunc(maps.Values(o.statuses), func(a, b tea.ProgramStatus) int {
@@ -180,12 +213,12 @@ func (o *progressOutput) finish(err error, message string) error {
 		delete(o.statuses, "")
 		for name, item := range o.statuses {
 			if item.State == progressWorking {
-				item.State, item.Message = state, message
+				item.State, item.Message = progressIdle, "not updated"
 				o.statuses[name] = item
 			}
 		}
 		o.program.Send(tea.RawMsg{Msg: ansi.ClearProgramStatusID(progressItemsID)})
-		o.status("", message, state)
+		o.headline(message, state)
 		o.program.Send(tea.Quit())
 	}
 	return o.renderer.Wait()
@@ -309,17 +342,6 @@ func (l *buildLog) explain(err error) error {
 		return err
 	}
 	return fmt.Errorf("%w:\n%s", err, output)
-}
-
-func (l *buildLog) finished(output *progressOutput, app, phase string, err error) error {
-	state := progressWorking
-	if errors.Is(err, context.Canceled) {
-		phase, state = "stopped", progressIdle
-	} else if err != nil {
-		err, phase, state = l.explain(err), "failed", progressError
-	}
-	output.status(app, phase, state)
-	return err
 }
 
 type progressFunc func([]byte) (int, error)
