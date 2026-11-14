@@ -258,14 +258,14 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
 	// A page is built once the clients it may import are in the source.
-	prepare, start, err := overlayScripts(root, entry, accepted != nil && !accepted.unserved)
+	scripts, err := overlayScripts(root, entry, accepted != nil && !accepted.unserved)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.StartFile)), 0o755); err != nil {
 		return packedSource{}, err
 	}
-	for name, script := range map[string]string{runtimecontract.PrepareFile: prepare, runtimecontract.StartFile: start} {
+	for name, script := range scripts {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(script), 0o644); err != nil {
 			return packedSource{}, err
 		}
@@ -300,31 +300,46 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	return packed, err
 }
 
-// overlayScripts are the runtimecontract.PrepareFile and StartFile the development image runs an app with. prepare
-// installs what the app declares, and builds its page when page is set; start serves entry.
-func overlayScripts(root, entry string, page bool) (prepare, start string, err error) {
-	var steps []string
+// overlayScripts are the scripts the development image runs an app with, by runtimecontract file. The InstallFile
+// installs what the app depends on and names the digest of the files it installs from, so it changes when they do; the
+// PrepareFile builds the app's page when page is set; the StartFile serves entry.
+func overlayScripts(root, entry string, page bool) (map[string]string, error) {
+	var install, prepare []string
 	serve := serveCommand(entry)
 	if filepath.Ext(entry) == ".py" {
-		steps = append(steps, "uv sync")
+		install = append(install, "uv sync")
 		serve = append([]string{"uv", "run", "--no-sync"}, serve...)
 	}
 	var pkg typegen.PackageJSON
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
 	if err == nil {
 		if err := json.Unmarshal(data, &pkg); err != nil {
-			return "", "", err
+			return nil, err
 		}
 		manager := pkg.Manager(root)
-		inputs := strings.Join(append([]string{"package.json"}, typegen.Lockfiles(root)...), " ")
-		steps = append(steps, fmt.Sprintf("{ cat %s >.holon/inputs && cmp -s .holon/inputs .holon/installed || { rm -f .holon/installed && %s install && mv .holon/inputs .holon/installed; }; }", inputs, manager))
+		install = append(install, manager+" install")
 		if page && pkg.Scripts["build"] != "" {
-			steps = append(steps, manager+" run build")
+			prepare = append(prepare, manager+" run build")
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return "", "", err
+		return nil, err
 	}
-	return strings.Join(steps, " && ") + "\n", "exec " + strings.Join(serve, " ") + "\n", nil
+	installed := digest.SHA256.Digester()
+	for _, name := range append([]string{".python-version", "pyproject.toml", "uv.lock", "package.json"}, typegen.Lockfiles(root)...) {
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(installed.Hash(), "%s %d\n%s", name, len(data), data)
+	}
+	return map[string]string{
+		runtimecontract.InstallFile: "# installs from " + installed.Digest().String() + "\n" + strings.Join(install, " && ") + "\n",
+		runtimecontract.PrepareFile: strings.Join(prepare, " && ") + "\n",
+		runtimecontract.StartFile:   "exec " + strings.Join(serve, " ") + "\n",
+	}, nil
 }
 
 func (p packedSource) publish(ctx context.Context) error {
