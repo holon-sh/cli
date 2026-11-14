@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -16,7 +15,6 @@ import (
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
-	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/protocol"
 )
 
@@ -42,9 +40,6 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 			return nil, err
 		}
 		defer os.RemoveAll(root)
-		if err := tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
-			return nil, err
-		}
 		// Printing a contract is how a committed one is regenerated, so a stale file is not an error here.
 		if err := extractSources(ctx, root, []*preparedSource{prepared}, o, false); err != nil {
 			return nil, err

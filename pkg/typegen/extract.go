@@ -19,6 +19,7 @@ import (
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
+	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/protocol/runtimecontract"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -133,6 +134,11 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			}
 		}
 		run = append(run, s)
+	}
+	if len(run) != 0 {
+		if err := tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
+			return err
+		}
 	}
 	results := make([]*extraction, len(run))
 	failures := make([]error, len(run))
