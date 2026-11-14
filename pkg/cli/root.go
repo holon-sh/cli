@@ -78,7 +78,11 @@ func selectConsumers(cmd *cobra.Command, servers []string) ([]typegen.Consumer, 
 // consumer is the app kept in dir, with -s in place of its declared dependencies. A -s path inside
 // dir names the app's own server instead, which supplies its identity and contract.
 func consumer(dir string, servers []string) (typegen.Consumer, error) {
-	c, err := appConsumer(filepath.Base(dir), dir)
+	name, err := declaredName(dir)
+	if err != nil {
+		return typegen.Consumer{}, err
+	}
+	c, err := appConsumer(name, dir)
 	if err == nil && (c == nil || len(c.Targets) == 0) {
 		err = fmt.Errorf("%s %w", dir, typegen.ErrNoRuntime)
 	}
