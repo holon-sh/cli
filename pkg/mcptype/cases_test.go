@@ -120,11 +120,11 @@ func generationCases(t *testing.T) []generationCase {
 	t.Helper()
 	var cases []generationCase
 	for _, target := range []string{"browser", "go"} {
-		cases = append(cases, generationCase{name: "sink-" + target, input: `{"target": "` + target + `", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": ` + sinkRequires + `, "contracts": ` + sinkContracts() + `, "go_module": "example.com/é/runtime", "own": "orders", "banner": "holon-generated-apps-v1 app=chéck\"out"}`})
+		cases = append(cases, generationCase{name: "sink-" + target, input: `{"target": "` + target + `", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": ` + sinkRequires + `, "contracts": ` + sinkContracts() + `, "go_module": "example.com/é/runtime", "own": "orders", "app": "chéck\"out"}`})
 	}
 	for _, test := range []struct{ name, patch string }{
 		{"go-module-missing", `"target": "go", "go_module": ""`},
-		{"banner-newline", `"banner": "marker\nimport os"`},
+		{"app-newline", `"app": "marker\nimport os"`},
 		{"binding-empty", `"contracts": {"": {"tools": []}}`},
 		{"bad-target", `"target": "wasm"`},
 		{"identity-empty", `"identity": {"name": "", "version": "1"}`},
@@ -136,7 +136,7 @@ func generationCases(t *testing.T) []generationCase {
 		{"external-ref-in-cycle", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/$defs/A"}}, "$defs": {"A": {"anyOf": [{"$ref": "/$defs/B"}]}, "B": {"$ref": "#/$defs/A"}}}}]}}`},
 		{"schema-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": 5}}}]}}`},
 	} {
-		cases = append(cases, generationCase{name: "invalid-" + test.name, input: `{"target": "node", "identity": {"name": "a", "version": "1"}, "go_module": "example.com/runtime", ` + test.patch + `}`, wantError: true})
+		cases = append(cases, generationCase{name: "invalid-" + test.name, input: `{"target": "node", "identity": {"name": "a", "version": "1"}, "app": "a", "go_module": "example.com/runtime", ` + test.patch + `}`, wantError: true})
 	}
 	return cases
 }

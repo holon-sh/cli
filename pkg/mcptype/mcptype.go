@@ -43,7 +43,6 @@ type GenerateRequest struct {
 	Requires  map[string]mcpcontract.Identity  `json:"requires,omitempty"`
 	Contracts map[string]*mcpcontract.Contract `json:"contracts,omitempty"`
 	Own       string                           `json:"own,omitempty"`
-	// Banner is the first-line comment on generated sources.
-	Banner   string `json:"banner,omitempty"`
-	GoModule string `json:"go_module,omitempty"`
+	App       string                           `json:"app,omitempty"`
+	GoModule  string                           `json:"go_module,omitempty"`
 }

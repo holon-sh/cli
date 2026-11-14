@@ -17,7 +17,7 @@ func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
 		t.Skip("python3 is not installed")
 	}
 	identity := mcpcontract.Identity{Name: "a'b\"\\\n\r\t\x00\x1f\x7fé😀 ", Version: "1"}
-	files, err := Generate(t.Context(), GenerateRequest{Target: "python", Identity: identity})
+	files, err := Generate(t.Context(), GenerateRequest{Target: "python", Identity: identity, App: "caller"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestPythonMethodsCallToolsNamedOtherwise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err := generationCase{input: `{"target": "python", "identity": {"name": "checkout", "version": "1.0.0"}, "requires": {"orders": {"name": "orders", "version": "1.0.0"}},
+	files, err := generationCase{input: `{"target": "python", "identity": {"name": "checkout", "version": "1.0.0"}, "app": "checkout", "requires": {"orders": {"name": "orders", "version": "1.0.0"}},
 		"contracts": {"orders": ` + orderContract + `, "with-hyphen": ` + orderContract + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}, "schemas": ` + kitchenSink + `}}`}.run(t)
 	if err != nil {
 		t.Fatal(err)

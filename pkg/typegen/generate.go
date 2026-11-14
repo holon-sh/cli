@@ -312,7 +312,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 	if c.server != nil {
 		c.metadata.Schema = c.server.metadata.Schema
 	}
-	request := mcptype.GenerateRequest{Identity: identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, Banner: mcpcontract.Marker + " app=" + c.Name}
+	request := mcptype.GenerateRequest{Identity: identity, Requires: map[string]mcpcontract.Identity{}, Contracts: map[string]*mcpcontract.Contract{}, App: c.Name}
 	aliases := map[string]string{}
 	for _, source := range c.Sources {
 		metadata, err := p.resolve(ctx, source)
