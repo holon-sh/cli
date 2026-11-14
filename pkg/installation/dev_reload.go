@@ -300,9 +300,6 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	return packed, err
 }
 
-// overlayScripts are the scripts the development image runs an app with, by runtimecontract file. The InstallFile
-// installs what the app depends on and names the digest of the files it installs from, so it changes when they do; the
-// PrepareFile builds the app's page when page is set; the StartFile serves entry.
 func overlayScripts(root, entry string, page bool) (map[string]string, error) {
 	manifests, read := digest.SHA256.Digester(), map[string][]byte{}
 	for _, name := range append([]string{".python-version", "pyproject.toml", "uv.lock", "package.json"}, typegen.Lockfiles()...) {

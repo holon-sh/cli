@@ -57,7 +57,6 @@ func (pkg PackageJSON) Manager(dir string) string {
 	return "npm"
 }
 
-// Lockfiles are the files the package managers lock dependencies in.
 func Lockfiles() []string {
 	names := make([]string, len(lockfiles))
 	for i, lock := range lockfiles {
