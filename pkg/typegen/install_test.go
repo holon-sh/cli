@@ -41,7 +41,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		put(t, dir, "pyproject.toml", "[project]\nname = \"app\"\nversion = \"1\"\nrequires-python = \">=3.12\"\ndependencies = [\"holon-sh\"]\n")
 		put(t, dir, "uv.lock", "version = 1\nrequires-python = \">=3.12\"\n")
 	}
-	put(t, page, "package.json", `{"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"^0.0.1"}}`)
+	put(t, page, "package.json", `{"packageManager":"pnpm@11.25.0","dependencies":{"holon-ui":"^0.0.1"}}`)
 	if err := os.MkdirAll(filepath.Join(page, ".venv", "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
