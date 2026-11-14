@@ -221,7 +221,7 @@ func (d *devLoop) renew(ctx context.Context) {
 	}
 }
 
-const watching = "Watching for changes. Ctrl-C exits and leaves this session for the next holon dev."
+const watching = "Watching for changes."
 
 func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	watcher, err := newDevWatcher(d.manifest, d.watch, d.clock, d.options.output)
