@@ -494,8 +494,7 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 }
 
 // TestOverlayScripts runs the scripts a development app is sent, with stand-ins for the programs they call. Each
-// stand-in records its call. A package manager also fails on a lockfile that says so and, as real ones may, rewrites
-// the lockfile it installed from.
+// stand-in records its call.
 func TestOverlayScripts(t *testing.T) {
 	bin := t.TempDir()
 	stand := func(path string) {

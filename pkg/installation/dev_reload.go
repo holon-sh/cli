@@ -304,6 +304,18 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 // installs what the app depends on and names the digest of the files it installs from, so it changes when they do; the
 // PrepareFile builds the app's page when page is set; the StartFile serves entry.
 func overlayScripts(root, entry string, page bool) (map[string]string, error) {
+	manifests, read := digest.SHA256.Digester(), map[string][]byte{}
+	for _, name := range append([]string{".python-version", "pyproject.toml", "uv.lock", "package.json"}, typegen.Lockfiles()...) {
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		read[name] = data
+		fmt.Fprintf(manifests.Hash(), "%s %d\n%s", name, len(data), data)
+	}
 	var install []string
 	var prepare string
 	serve := serveCommand(entry)
@@ -311,9 +323,8 @@ func overlayScripts(root, entry string, page bool) (map[string]string, error) {
 		install = append(install, "uv sync")
 		serve = append([]string{"uv", "run", "--no-sync"}, serve...)
 	}
-	var pkg typegen.PackageJSON
-	data, err := os.ReadFile(filepath.Join(root, "package.json"))
-	if err == nil {
+	if data, ok := read["package.json"]; ok {
+		var pkg typegen.PackageJSON
 		if err := json.Unmarshal(data, &pkg); err != nil {
 			return nil, err
 		}
@@ -322,22 +333,9 @@ func overlayScripts(root, entry string, page bool) (map[string]string, error) {
 		if page && pkg.Scripts["build"] != "" {
 			prepare = manager + " run build"
 		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
-	installed := digest.SHA256.Digester()
-	for _, name := range append([]string{".python-version", "pyproject.toml", "uv.lock", "package.json"}, typegen.Lockfiles(root)...) {
-		data, err := os.ReadFile(filepath.Join(root, name))
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		fmt.Fprintf(installed.Hash(), "%s %d\n%s", name, len(data), data)
 	}
 	return map[string]string{
-		runtimecontract.InstallFile: "# installs from " + installed.Digest().String() + "\n" + strings.Join(install, " && ") + "\n",
+		runtimecontract.InstallFile: "# installs from " + manifests.Digest().String() + "\n" + strings.Join(install, " && ") + "\n",
 		runtimecontract.PrepareFile: prepare + "\n",
 		runtimecontract.StartFile:   "exec " + strings.Join(serve, " ") + "\n",
 	}, nil

@@ -57,13 +57,11 @@ func (pkg PackageJSON) Manager(dir string) string {
 	return "npm"
 }
 
-// Lockfiles are the names of the package managers' lockfiles in dir.
-func Lockfiles(dir string) []string {
-	var names []string
-	for _, lock := range lockfiles {
-		if isFile(filepath.Join(dir, lock.file)) {
-			names = append(names, lock.file)
-		}
+// Lockfiles are the files the package managers lock dependencies in.
+func Lockfiles() []string {
+	names := make([]string, len(lockfiles))
+	for i, lock := range lockfiles {
+		names[i] = lock.file
 	}
 	return names
 }
