@@ -23,7 +23,7 @@ func TestModulesPassTheirIdentityAndContractsToTheRuntime(t *testing.T) {
 	}
 	files := map[string][]byte{}
 	for _, module := range []struct{ name, target, own string }{{"plain", "browser", ""}, {"page", "browser", "orders"}, {"server", "node", ""}} {
-		request.Target, request.Own = module.target, module.own
+		request.Target, request.Own, request.Endpoint = module.target, module.own, "/mcp/shop"
 		generated, err := Generate(t.Context(), request)
 		if err != nil {
 			t.Fatal(err)
@@ -64,7 +64,7 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	if diff := cmp.Diff(append(want, asJSON(t, map[string]any{"orders": map[string]any{"endpoint": "mcp:"}}), options), got.Bound); diff != "" {
 		t.Errorf("createApps bound (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff([]any{asJSON(t, map[string]any{"identity": want[0], "contracts": want[1], "own": "orders", "endpoint": "/mcp/orders"}), options}, got.Opened); diff != "" {
+	if diff := cmp.Diff([]any{asJSON(t, map[string]any{"identity": want[0], "contracts": want[1], "own": "orders", "endpoint": "/mcp/shop"}), options}, got.Opened); diff != "" {
 		t.Errorf("connect opened (-want +got):\n%s", diff)
 	}
 	if got.PlainConnects {

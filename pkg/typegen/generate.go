@@ -339,7 +339,7 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 		}
 	}
 	for _, target := range c.Targets {
-		files, err := generateTypes(ctx, target, request, c.metadata, alias)
+		files, err := generateTypes(ctx, target, request, c.metadata, alias, c.Name)
 		if err != nil {
 			return fmt.Errorf("%s: %w", c.Name, err)
 		}
@@ -355,8 +355,9 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 }
 
 // generateTypes generates one target's clients. Browser clients call the own server under its alias
-// or derived name; an alias also makes it a client in every other slot.
-func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, alias string) (map[string][]byte, error) {
+// or derived name, at the endpoint Holon serves app at; an alias also makes it a client in every
+// other slot.
+func generateTypes(ctx context.Context, target string, request mcptype.GenerateRequest, own *mcpcontract.Metadata, alias, app string) (map[string][]byte, error) {
 	switch target {
 	case TargetTS:
 		request.Target = "node"
@@ -372,7 +373,7 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 		if _, exists := request.Contracts[alias]; exists {
 			return nil, fmt.Errorf("own client %s conflicts with a dependency alias", alias)
 		}
-		request.Own = alias
+		request.Own, request.Endpoint = alias, "/mcp/"+app
 		request.Requires, request.Contracts = maps.Clone(request.Requires), maps.Clone(request.Contracts)
 		request.Requires[alias], request.Contracts[alias] = own.Identity, own.Schema
 	}
