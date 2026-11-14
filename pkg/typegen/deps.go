@@ -18,6 +18,7 @@ import (
 	"golang.org/x/mod/modfile"
 
 	"github.com/holon-sh/cli/internal/commandenv"
+	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/cli/pkg/mcptype"
 )
 
@@ -55,16 +56,6 @@ func (pkg PackageJSON) Manager(dir string) string {
 	return "npm"
 }
 
-// PackageManager is the package manager of the Node.js project in dir: the one its package.json
-// declares, else the one its nearest lockfile belongs to, else npm.
-func PackageManager(dir string) (string, error) {
-	var manifest PackageJSON
-	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	return manifest.Manager(dir), nil
-}
-
 func MapClients(consumers []Consumer, options Options) error {
 	o := options.defaults()
 	for _, c := range consumers {
@@ -89,27 +80,31 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 	var manifest PackageJSON
 	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%s has no package.json; create one and run npm install %s", dir, pkg)
+			return fmt.Errorf("%s has no package.json; create one that depends on %s", dir, pkg)
 		}
 		return err
 	}
-	manager := manifest.Manager(dir)
 	if !manifest.Declares(pkg) {
-		verb := "add"
-		if manager == "npm" {
-			verb = "install"
-		}
-		return fmt.Errorf("%s does not depend on %s; run %s %s %s", dir, pkg, manager, verb, pkg)
+		return fmt.Errorf("%s does not depend on %s; add it to package.json", dir, pkg)
 	}
-	fmt.Fprintf(o.Stderr, "%s: %s install\n", filepath.Base(dir), manager)
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
+	if _, err := Install(ctx, dir, o); err != nil {
 		return err
-	}
-	if err := commandenv.RunStreaming(ctx, dir, manager, []string{"install"}, nil, env, o.Stderr, o.Stderr); err != nil {
-		return fmt.Errorf("%s install in %s: %w", manager, dir, err)
 	}
 	return installedRuntime(dir, pkg)
+}
+
+// Install runs, in dir, the development install Kiln plans for the app there, and returns the app's development steps.
+func Install(ctx context.Context, dir string, options Options) (kiln.Steps, error) {
+	o := options.defaults()
+	steps, err := kiln.Development(ctx, dir)
+	if err != nil {
+		return kiln.Steps{}, fmt.Errorf("%s: %w", dir, err)
+	}
+	env, err := commandenv.Environ(o.Env)
+	if err != nil {
+		return kiln.Steps{}, err
+	}
+	return steps, commandenv.RunEach(ctx, dir, filepath.Base(dir), steps.Install, env, o.Stderr)
 }
 
 // mapClients gives a Node.js target's clients the import name #holon-sh or #holon-ui in the package.json
@@ -242,17 +237,10 @@ func ensurePythonRuntime(ctx context.Context, dir string, o Options) error {
 		return err
 	}
 	if !declared[PythonRuntime] {
-		return fmt.Errorf("%s does not depend on holon-sh; run uv add holon-sh (or add it to requirements.txt)", dir)
+		return fmt.Errorf("%s does not depend on holon-sh; add it to pyproject.toml or requirements.txt", dir)
 	}
-	fmt.Fprintf(o.Stderr, "%s: uv sync\n", filepath.Base(dir))
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
-		return err
-	}
-	if err := commandenv.RunStreaming(ctx, dir, "uv", []string{"sync"}, nil, env, o.Stderr, o.Stderr); err != nil {
-		return fmt.Errorf("uv sync in %s: %w", dir, err)
-	}
-	return nil
+	_, err = Install(ctx, dir, o)
+	return err
 }
 
 var requirementName = regexp.MustCompile(`^\s*([A-Za-z0-9][A-Za-z0-9._-]*)`)
