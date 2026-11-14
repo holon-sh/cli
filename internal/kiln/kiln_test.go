@@ -10,8 +10,8 @@ import (
 )
 
 func TestPlanFailure(t *testing.T) {
-	request := Request{Source: t.TempDir(), Platforms: []string{"linux/unsupported"}}
-	if _, err := Image(t.Context(), request); err == nil || !strings.Contains(err.Error(), "platform") {
+	request := Request{Source: t.TempDir()}
+	if _, err := Image(t.Context(), request); err == nil || !strings.Contains(err.Error(), "no provider detected") {
 		t.Fatalf("planning diagnostic: %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())

@@ -11,7 +11,6 @@ var ErrNotLinked = errors.New("this holon was built without Kiln, which plans ho
 type Request struct {
 	ConfigFilePath string   `json:"configFilePath,omitempty"`
 	Source         string   `json:"source"`
-	Platforms      []string `json:"platforms"`
 	Start          []string `json:"start,omitempty"`
 }
 
