@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -464,7 +464,7 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 		t.Fatalf("session app = %+v", app)
 	}
 	if first, overlay := f.reloadRequests()[0], f.overlay(t, f.started); first.Digest != f.started ||
-		!strings.Contains(string(overlay["server.py"]), "app = None") || overlay[runtimecontract.InstallFile] == nil {
+		!strings.Contains(string(overlay["server.py"]), "app = None") || overlay[runtimecontract.PlanFile] == nil {
 		t.Fatalf("the session was created from %s and first sent %s", f.started, first.Digest)
 	}
 	if f.uploaded != 0 || strings.Contains(f.stderr.String(), "alpha uploaded") {
@@ -493,68 +493,56 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	}
 }
 
-func TestOverlayScripts(t *testing.T) {
-	bin := t.TempDir()
-	stand := func(path string) {
-		sourceFiles(t, filepath.Dir(path), map[string]string{filepath.Base(path): "#!/bin/sh\necho \"${0##*/} $*\" >>calls\n"})
-		if err := os.Chmod(path, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, name := range []string{"uv", "npm", "pnpm"} {
-		stand(filepath.Join(bin, name))
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+func TestOverlayPlan(t *testing.T) {
 	build := `{"scripts":{"build":"vite build"}}`
 	python := map[string]string{"pyproject.toml": "", "uv.lock": "", "package.json": build, "pnpm-lock.yaml": ""}
+	serve := []string{"uv", "run", "--no-sync", "python", "-m", "holon.serve", "src/server.py"}
 	for _, test := range []struct {
 		name, entry string
 		files       map[string]string
 		page        bool
-		calls       string
+		want        runtimecontract.Plan
 	}{
-		{"a Node app", "src/server.ts", map[string]string{"package.json": build, "package-lock.json": ""}, true, "npm install\nnpm run build\nholon-serve src/server.ts\n"},
-		{"a Python app with a page", "src/server.py", python, true, "uv sync\npnpm install\npnpm run build\nuv run --no-sync python -m holon.serve src/server.py\n"},
-		{"a first send without a page", "src/server.py", python, false, "uv sync\npnpm install\nuv run --no-sync python -m holon.serve src/server.py\n"},
+		{"a Node app", "src/server.ts", map[string]string{"package.json": build, "package-lock.json": ""}, true, runtimecontract.Plan{
+			Install: runtimecontract.Install{Commands: [][]string{{"npm", "install"}}},
+			Prepare: [][]string{{"npm", "run", "build"}}, Start: []string{"node_modules/.bin/holon-serve", "src/server.ts"},
+		}},
+		{"a Python app with a page", "src/server.py", python, true, runtimecontract.Plan{
+			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}}, Prepare: [][]string{{"pnpm", "run", "build"}}, Start: serve,
+		}},
+		{"a first send without a page", "src/server.py", python, false, runtimecontract.Plan{
+			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}}, Start: serve,
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			stand(filepath.Join(root, "node_modules", ".bin", "holon-serve"))
 			sourceFiles(t, root, test.files)
-			scripts, err := overlayScripts(root, test.entry, test.page)
-			if err != nil {
-				t.Fatal(err)
-			}
-			sourceFiles(t, root, scripts)
-			command := exec.Command("sh", "-c", "sh "+runtimecontract.InstallFile+" && sh "+runtimecontract.PrepareFile+" && sh "+runtimecontract.StartFile)
-			command.Dir = root
-			if err := command.Run(); err != nil {
-				t.Fatal(err)
-			}
-			if calls, _ := os.ReadFile(filepath.Join(root, "calls")); string(calls) != test.calls {
-				t.Fatalf("ran %q, want %q", calls, test.calls)
+			plan, err := overlayPlan(root, test.entry, test.page)
+			plan.Install.Inputs = ""
+			if err != nil || !reflect.DeepEqual(plan, test.want) {
+				t.Fatalf("plan = %+v, want %+v: %v", plan, test.want, err)
 			}
 		})
 	}
-	t.Run("the install changes with what it installs from", func(t *testing.T) {
+	t.Run("the install's inputs change with what it installs from", func(t *testing.T) {
 		root := t.TempDir()
 		files := map[string]string{"server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "", "package.json": build, "package-lock.json": ""}
 		sourceFiles(t, root, files)
-		install := func(page bool) string {
-			scripts, err := overlayScripts(root, "server.py", page)
+		install := func(page bool) runtimecontract.Install {
+			plan, err := overlayPlan(root, "server.py", page)
 			if err != nil {
 				t.Fatal(err)
 			}
-			return scripts[runtimecontract.InstallFile]
+			return plan.Install
 		}
 		last := install(false)
-		if install(true) != last {
+		if !reflect.DeepEqual(install(true), last) {
 			t.Fatal("building the page changed the install")
 		}
 		for _, name := range slices.Sorted(maps.Keys(files)) {
 			sourceFiles(t, root, map[string]string{name: files[name] + "\n"})
-			if next := install(true); (next != last) != (name != "server.py") {
-				t.Fatalf("changing %s changed the install: %t", name, next != last)
+			if next := install(true); (next.Inputs != last.Inputs) != (name != "server.py") {
+				t.Fatalf("changing %s changed the install's inputs: %t", name, next.Inputs != last.Inputs)
 			} else {
 				last = next
 			}
@@ -655,10 +643,9 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 			for _, reload := range f.reloadRequests() {
 				if reload.App == test.app {
 					overlay := f.overlay(t, reload.Digest)
-					sends = append(sends, send{
-						clients: strings.Contains(string(overlay[test.client]), "lookup"),
-						page:    strings.Contains(string(overlay[runtimecontract.PrepareFile]), " run build"),
-					})
+					var plan runtimecontract.Plan
+					_ = json.Unmarshal(overlay[runtimecontract.PlanFile], &plan)
+					sends = append(sends, send{clients: strings.Contains(string(overlay[test.client]), "lookup"), page: plan.Prepare != nil})
 				}
 			}
 			_, err := os.Stat(filepath.Join(f.root, test.app, test.client))

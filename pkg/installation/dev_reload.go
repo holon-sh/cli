@@ -12,7 +12,6 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -258,17 +257,16 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
 	// A page is built once the clients it may import are in the source.
-	scripts, err := overlayScripts(root, entry, accepted != nil && !accepted.unserved)
+	plan, err := overlayPlan(root, entry, accepted != nil && !accepted.unserved)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.StartFile)), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.PlanFile)), 0o755); err != nil {
 		return packedSource{}, err
 	}
-	for name, script := range scripts {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(script), 0o644); err != nil {
-			return packedSource{}, err
-		}
+	data, _ := json.Marshal(plan)
+	if err := os.WriteFile(filepath.Join(root, runtimecontract.PlanFile), data, 0o644); err != nil {
+		return packedSource{}, err
 	}
 	source, err := fsutil.NewFS(root)
 	if err != nil {
@@ -300,42 +298,36 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	return packed, err
 }
 
-func overlayScripts(root, entry string, page bool) (map[string]string, error) {
-	manifests, read := digest.SHA256.Digester(), map[string][]byte{}
+func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
+	read := map[string][]byte{}
 	for _, name := range append([]string{".python-version", "pyproject.toml", "uv.lock", "package.json"}, typegen.Lockfiles()...) {
 		data, err := os.ReadFile(filepath.Join(root, name))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return runtimecontract.Plan{}, err
 		}
 		read[name] = data
-		fmt.Fprintf(manifests.Hash(), "%s %d\n%s", name, len(data), data)
 	}
-	var install []string
-	var prepare string
-	serve := serveCommand(entry)
+	inputs, _ := json.Marshal(read)
+	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: digest.FromBytes(inputs).String()}, Start: serveCommand(entry)}
 	if filepath.Ext(entry) == ".py" {
-		install = append(install, "uv sync")
-		serve = append([]string{"uv", "run", "--no-sync"}, serve...)
+		plan.Install.Commands = append(plan.Install.Commands, []string{"uv", "sync"})
+		plan.Start = append([]string{"uv", "run", "--no-sync"}, plan.Start...)
 	}
 	if data, ok := read["package.json"]; ok {
 		var pkg typegen.PackageJSON
 		if err := json.Unmarshal(data, &pkg); err != nil {
-			return nil, err
+			return runtimecontract.Plan{}, err
 		}
 		manager := pkg.Manager(root)
-		install = append(install, manager+" install")
+		plan.Install.Commands = append(plan.Install.Commands, []string{manager, "install"})
 		if page && pkg.Scripts["build"] != "" {
-			prepare = manager + " run build"
+			plan.Prepare = [][]string{{manager, "run", "build"}}
 		}
 	}
-	return map[string]string{
-		runtimecontract.InstallFile: "# installs from " + manifests.Digest().String() + "\n" + strings.Join(install, " && ") + "\n",
-		runtimecontract.PrepareFile: prepare + "\n",
-		runtimecontract.StartFile:   "exec " + strings.Join(serve, " ") + "\n",
-	}, nil
+	return plan, nil
 }
 
 func (p packedSource) publish(ctx context.Context) error {
