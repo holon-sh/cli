@@ -323,9 +323,6 @@ func TestRunDevLifecycle(t *testing.T) {
 		mu.Unlock()
 		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 0.5})
 	})
-	h.control.Handle([]string{toolRecordAppSource}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, struct{}{})
-	})
 	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession},
 		map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
 			installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
@@ -691,7 +688,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	mu.Lock()
 	initial := slices.Clone(desired.Apps)
 	mu.Unlock()
-	if slices.ContainsFunc(initial, func(app protocol.App) bool { return app.Overlay != "" }) {
+	if slices.ContainsFunc(initial, func(app protocol.App) bool { return app.Source }) {
 		t.Fatalf("deploy carries an overlay: %+v", initial)
 	}
 	if strings.Contains(diagnostics.String(), "fixture build output") ||

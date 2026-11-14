@@ -32,7 +32,7 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 			Endpoints: []protocol.SessionEndpoint{{Name: "chat", URL: "https://s-one.example/chat/mcp"}},
 		},
 		{Name: "s-two", Revision: "1", Apps: []protocol.App{app("chat"), {
-			Name: "draft", Overlay: "sha256:" + strings.Repeat("b", 64), Access: &protocol.AppAccess{Server: &protocol.AccessRule{}},
+			Name: "draft", Source: true, Access: &protocol.AppAccess{Server: &protocol.AccessRule{}},
 		}}},
 		{Name: "s-three", Revision: "1", Apps: []protocol.App{app("other"), {
 			Name: "hf", Remote: &protocol.Remote{URL: "https://huggingface.co/mcp"}, Access: &protocol.AppAccess{Server: &protocol.AccessRule{}},
@@ -84,7 +84,7 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 				"s-one 8m chat https://s-one.example/chat/mcp image registry.example/chat@",
 				"s-one 8m other - ",
 				"s-two - chat",
-				"s-two - draft - source sha256:bbbbbbbbbbbb",
+				"s-two - draft - source",
 				"s-three - hf - remote huggingface.co public huggingface.co:443",
 				"s-empty 23h59m -\n",
 			},
