@@ -427,7 +427,7 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	f.mu.Lock()
 	app := f.served[0]
 	f.mu.Unlock()
-	if app.Image != "" || app.Port != 0 || !app.Overlay {
+	if app.Image != "" || app.Port != 0 || !app.Source {
 		t.Fatalf("session app = %+v", app)
 	}
 	if overlay := overlayEntries(t, f.reloadRequests()[0].body); !strings.Contains(string(overlay["server.py"]), "app = None") ||

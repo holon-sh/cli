@@ -52,7 +52,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			if _, err := devEntry(app, app.resolved.types.root); err != nil {
 				return nil, err
 			}
-			declaration.Port, declaration.Overlay = 0, true
+			declaration.Port, declaration.Source = 0, true
 			apps[index] = declaration
 			continue
 		}
