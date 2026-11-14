@@ -119,9 +119,6 @@ func fetchSources(ctx context.Context, consumers []Consumer, o Options) func() m
 
 func (p *Prepared) Close() error { return os.RemoveAll(p.root) }
 
-// Tooling is the directory the contract runners and checkers are unpacked in once a server is run, until Close.
-func (p *Prepared) Tooling() string { return filepath.Join(p.root, "tooling") }
-
 // Metadata returns each consumer's own contract document (identity, extracted contract and the
 // expectations it holds of its sources) by consumer name, plus every resolved source by alias.
 func (p *Prepared) Metadata() map[string]*mcpcontract.Metadata {
