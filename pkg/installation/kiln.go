@@ -75,7 +75,7 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 		request.Platforms = append(request.Platforms, "linux/"+arch)
 	}
 	planned := o.output.measure(app.Name, "plan")
-	request.dockerfile, err = kiln.Plan(ctx, request.Request)
+	request.dockerfile, err = kiln.Image(ctx, request.Request)
 	planned()
 	return request, err
 }
