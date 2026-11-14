@@ -74,7 +74,7 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	if err != nil {
 		return err
 	}
-	run := kiln.Run{Command: command, Mounts: map[string]string{"tooling": "/holon-tooling"}}
+	run := kiln.Command{Argv: command, Mounts: map[string]string{"tooling": "/holon-tooling"}}
 	args := []string{"--build-context", "tooling=" + toolingDir}
 	if generated != "" {
 		run.Overlay = "generated"
@@ -83,7 +83,7 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	if checker {
 		run.Packages = []string{"mypy==2.4.0"}
 	}
-	recipe, err := kiln.Image(ctx, kiln.Request{Source: source, Run: &run})
+	recipe, err := kiln.Run(ctx, source, run)
 	if err != nil {
 		return err
 	}
