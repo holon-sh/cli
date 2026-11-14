@@ -42,7 +42,6 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		return "", err
 	}
 	request.upload = upload
-	options.output.status(app.Name, "building", progressWorking)
 	build := options.builder
 	if build == nil {
 		build = publishSource

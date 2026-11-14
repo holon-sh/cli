@@ -91,6 +91,9 @@ func (w *devWatcher) refresh(root string) error {
 		return err
 	}
 	return filepath.WalkDir(root, func(path string, item fs.DirEntry, walkErr error) error {
+		if errors.Is(walkErr, fs.ErrNotExist) {
+			return nil
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -104,7 +107,10 @@ func (w *devWatcher) refresh(root string) error {
 		if typegen.GeneratedSource(root, path) || ignored && !matcher.Exclusions() {
 			return filepath.SkipDir
 		}
-		return w.watcher.Add(path)
+		if err := w.watcher.Add(path); !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
 	})
 }
 
@@ -199,8 +205,9 @@ type devLoop struct {
 	started             time.Time
 	options             buildOptions
 	session             protocol.SessionResponse
-	pending             sets.Set[string]
+	updating            sets.Set[string]
 	announce, unapplied bool
+	rollout             bool
 	sent                map[string]string
 	background          context.Context
 	recording           map[string]context.CancelCauseFunc
@@ -252,8 +259,8 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 		if err := d.settle(ctx, stdout); err != nil {
 			return err
 		}
-		if d.pending.Len() > 0 {
-			reportSessionProgress(d.session, d.options.output, "Deploying apps", progressWorking)
+		if d.rollout {
+			reportSessionProgress(d.session, d.options.output, deployingApps, progressWorking)
 		} else {
 			reportSessionProgress(d.session, d.options.output, watching, progressIdle)
 		}
@@ -287,15 +294,16 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 }
 
 func (d *devLoop) settle(ctx context.Context, stdout io.Writer) error {
-	if d.pending.Len() == 0 {
+	if !d.rollout {
 		return nil
 	}
 	ready, err := SessionReady(d.session)
 	if !ready {
 		return err
 	}
+	d.rollout = false
 	started := d.regenerate(ctx)
-	d.finishPending("ready", progressDone)
+	d.finish()
 	if !started || !d.announce {
 		return nil
 	}
@@ -358,15 +366,28 @@ func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
 	}
 	d.options.output.problem("remote deployment",
 		fmt.Errorf("%s (generation %d): %s: %s", message, current.Generation, condition.Reason, condition.Message))
-	d.finishPending("deployment failed", progressError)
+	d.rollout = false
+	for _, app := range sets.List(d.updating) {
+		d.fail(app, "")
+	}
 	return nil
 }
 
-func (d *devLoop) finishPending(phase string, state progressState) {
-	for _, app := range sets.List(d.pending) {
-		d.options.output.status(app, phase, state)
+func (d *devLoop) begin(app string) {
+	d.updating.Insert(app)
+	d.options.output.working(app)
+}
+
+func (d *devLoop) fail(app, reason string) {
+	d.updating.Delete(app)
+	d.options.output.failed(app, reason)
+}
+
+func (d *devLoop) finish() {
+	for _, app := range sets.List(d.updating) {
+		d.options.output.ready(app)
 	}
-	d.pending.Clear()
+	d.updating.Clear()
 }
 
 func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
@@ -381,8 +402,11 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 			return true
 		}
 	}
-	if change.contexts.Len() != 0 && d.reload(ctx, change.contexts) && d.pending.Len() == 0 {
+	if change.contexts.Len() != 0 && d.reload(ctx, change.contexts) && !d.rollout {
 		d.regenerate(ctx)
+	}
+	if !d.rollout {
+		d.finish()
 	}
 	return false
 }
@@ -400,7 +424,7 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	if err != nil || reflect.DeepEqual(resolved.Apps, d.manifest.Apps) {
 		return false, err
 	}
-	d.options.output.status("", "Preparing apps", progressWorking)
+	d.options.output.headline(deployingApps, progressWorking)
 	if err := d.options.types.acquire(resolved); err != nil {
 		return false, err
 	}
@@ -410,7 +434,6 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	d.options.output.deploying(request.Apps)
 	if err := d.update(ctx, request, removedApps(d.session.Apps, request.Apps)...); err != nil {
 		return false, err
 	}
@@ -421,16 +444,15 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[protocol.App], remove ...string) error {
 	updated, err := replaceExecution(ctx, d.manager, d.name, d.session, desired, remove...)
 	if err != nil {
-		d.options.output.apps(desired.Apps, "deployment failed", progressError)
 		return err
 	}
 	for _, app := range desired.Apps {
-		d.pending.Insert(app.Name)
+		d.begin(app.Name)
 	}
 	for _, name := range remove {
-		d.options.output.status(name, "removed", progressDone)
+		d.options.output.removed(name)
 	}
-	d.session = updated
+	d.session, d.rollout = updated, true
 	return nil
 }
 

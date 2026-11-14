@@ -321,7 +321,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		mu.Lock()
 		reloads = append(reloads, r.PathValue("app"))
 		mu.Unlock()
-		installationtest.WriteJSON(w, reloadAppResult{ElapsedSeconds: 0.5})
+		installationtest.WriteJSON(w, reloadAppResult{})
 	})
 	h.control.Handle([]string{toolRecordAppSource}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, struct{}{})
@@ -396,7 +396,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		from := len(stderr.String())
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
 		h.files.save(t, root, map[string]string{"alpha/logic.txt": "edited"})
-		stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[from:], "alpha reloaded in 0.5 s") })
+		stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[from:], "alpha ready in") })
 		mu.Lock()
 		unavailable = true
 		mu.Unlock()

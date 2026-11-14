@@ -40,8 +40,7 @@ type recordAppSourceRequest struct {
 }
 
 type reloadAppResult struct {
-	ElapsedSeconds float64 `json:"elapsedSeconds"`
-	Output         string  `json:"output"`
+	Output string `json:"output"`
 }
 
 type packedSource struct {
@@ -123,8 +122,7 @@ func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
 					_, _ = io.WriteString(d.options.output.writer, failure.Output)
 				}
 			}
-			d.options.output.status(app.Name, "reload failed: "+reason, progressError)
-			d.pending.Delete(app.Name)
+			d.fail(app.Name, reason)
 			reloaded = false
 		}
 	}
@@ -181,17 +179,18 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	}
 	packed, cleanup, err := d.pack(ctx, app)
 	if err == nil && packed.overlay.Digest.String() != d.sent[app.Name] {
+		d.begin(app.Name)
 		if err = d.send(ctx, app.Name, packed); err == nil {
 			d.record(app.Name, packed, cleanup)
 			return nil
 		}
+		delete(d.sent, app.Name)
 	}
 	cleanup()
 	return err
 }
 
 func (d *devLoop) send(ctx context.Context, app string, packed packedSource) error {
-	d.options.output.status(app, "reloading", progressWorking)
 	file, err := os.Open(packed.file)
 	if err != nil {
 		return err
@@ -210,7 +209,6 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 	if d.options.output.verbose {
 		_, _ = io.WriteString(d.options.output.writer, result.Output)
 	}
-	d.options.output.status(app, fmt.Sprintf("reloaded in %.1f s", result.ElapsedSeconds), progressDone)
 	return nil
 }
 
@@ -236,7 +234,7 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 			recorded()
 		}
 		if cause := cmp.Or(context.Cause(ctx), err); err != nil && cause != errSourceSuperseded {
-			d.options.output.status(app, "reloaded, but not recorded in the session: "+cause.Error(), progressError)
+			d.options.output.problem(app, fmt.Errorf("serves this save, but a restart loses it: %w", cause))
 		}
 	})
 }

@@ -12,11 +12,10 @@ import (
 )
 
 func importRegistryBuild(
-	ctx context.Context, manager *Client, plane protocol.Plane, app manifestApp, output *progressOutput,
+	ctx context.Context, manager *Client, plane protocol.Plane, app manifestApp,
 ) (protocol.ResolvedAppBuild, error) {
 	var build protocol.ResolvedAppBuild
 	pkg := app.resolved.registryPackage
-	output.status(app.Name, "importing "+pkg.Identifier+" "+pkg.Version, progressWorking)
 	source := *app.Registry
 	source.Package = &protocol.PackageSelection{RegistryType: pkg.RegistryType, Identifier: pkg.Identifier}
 	var imported protocol.Import
