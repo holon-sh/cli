@@ -45,8 +45,8 @@ func Image(ctx context.Context, request Request) (string, error) {
 func Development(ctx context.Context, source string) (Steps, error) {
 	var steps Steps
 	err := plan(ctx, struct {
-		Source      string  `json:"source"`
-		Development startup `json:"development"`
+		Source      string   `json:"source"`
+		Development struct{} `json:"development"`
 	}{Source: source}, &steps)
 	return steps, err
 }
