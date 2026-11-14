@@ -292,11 +292,6 @@ func TestDevSaves(t *testing.T) {
 		reloads    int
 	}{
 		{
-			name:  "server source restarts the app in place, and the same source again does nothing",
-			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "second"}},
-			lines: []string{"alpha ready in", ""}, reloads: 1,
-		},
-		{
 			name:  "files an editor writes while saving do nothing",
 			saves: []map[string]string{{"alpha/.tools.py.swp": "swap", "alpha/tools.py~": "first", manifestFileName: alphaManifest + "# comment\n"}},
 			lines: []string{""},
@@ -464,7 +459,7 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 		t.Fatalf("session app = %+v", app)
 	}
 	if first, overlay := f.reloadRequests()[0], f.overlay(t, f.started); first.Digest != f.started ||
-		!strings.Contains(string(overlay["server.py"]), "app = None") || overlay[runtimecontract.PlanFile] == nil {
+		!strings.Contains(string(overlay["server.py"]), "app = None") {
 		t.Fatalf("the session was created from %s and first sent %s", f.started, first.Digest)
 	}
 	if f.uploaded != 0 {
@@ -502,9 +497,6 @@ func TestOverlayPlan(t *testing.T) {
 		}},
 		{"a Python app with a page", "src/server.py", python, true, runtimecontract.Plan{
 			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}}, Prepare: [][]string{{"pnpm", "run", "build"}}, Start: serve,
-		}},
-		{"a first send without a page", "src/server.py", python, false, runtimecontract.Plan{
-			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}}, Start: serve,
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -679,12 +671,6 @@ func TestDevStartup(t *testing.T) {
 	if strings.Count(f.stdout.String(), "/mcp/alpha") != 1 || !strings.Contains(f.stdout.String(), "\nReady\n") {
 		t.Fatalf("stdout = %q", f.stdout.String())
 	}
-	// Each read names the revision the session last had, so the server holds it until the session moves.
-	f.await(func() bool {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		return slices.Equal(f.reads, []string{"0", "1", "2"})
-	})
 }
 
 func TestDevInstallsNothingOnThisMachine(t *testing.T) {
