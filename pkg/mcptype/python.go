@@ -323,7 +323,7 @@ func generatePython(contracts, events map[string]catalog) string {
 			arguments, _ := emitter.input(event.input.value, prefix+"Arguments")
 			data := emitter.render(event.output.value, prefix+"Data")
 			emitter.events = true
-			subscriptions = append(subscriptions, fmt.Sprintf("    def subscribe(self, name: _typing.Literal[%s], arguments: %s, /, *, cursor: _builtins.str | None = ..., max_age: _builtins.float | None = ..., delivery: _typing.Literal[\"poll\", \"push\"] | None = ..., on_gap: _typing.Callable[[], _builtins.object] | None = ...) -> _Subscription[%s]: ...", quoted(name), arguments, data))
+			subscriptions = append(subscriptions, fmt.Sprintf("    def subscribe(self, name: _typing.Literal[%s], arguments: %s, /, *, cursor: _builtins.str | None = ..., max_age: _builtins.float | None = ..., delivery: _typing.Literal[\"poll\", \"push\"] | None = ..., on_status: _typing.Callable[[_typing.Literal[\"connected\", \"reconnecting\", \"gap\"]], _builtins.object] | None = ...) -> _Subscription[%s]: ...", quoted(name), arguments, data))
 		}
 		eventMethods := append([]string{"    async def list(self) -> _builtins.list[_builtins.dict[_builtins.str, _typing.Any]]: ..."}, pythonOverloaded(subscriptions)...)
 		var app []string
