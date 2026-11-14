@@ -1,10 +1,9 @@
 import { defaultClientConditions, defineConfig } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
   root: "ui",
-  base: mode === "mcp" ? "./" : "/{{.App}}/",
-  plugins: mode === "mcp" ? [viteSingleFile()] : [],
-  resolve: { conditions: mode === "mcp" ? ["mcp-app", ...defaultClientConditions] : undefined },
-  build: { outDir: mode === "mcp" ? "../dist/mcp" : "../dist/web", emptyOutDir: true },
-}));
+  plugins: [viteSingleFile()],
+  build: { outDir: "../dist/web", emptyOutDir: true },
+  environments: { mcp: { consumer: "client", resolve: { conditions: ["mcp-app", ...defaultClientConditions] }, build: { outDir: "../dist/mcp" } } },
+});

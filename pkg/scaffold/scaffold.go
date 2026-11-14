@@ -47,7 +47,7 @@ func AppName(dir string) string {
 }
 
 // build builds the view: a page into dist/web, and the single file the server returns into dist/mcp.
-const build = "vite build && vite build --mode mcp"
+const build = "vite build --app"
 
 // shared are the files an existing project may already have: the app merges into package.json and
 // .gitignore, and leaves the others as written.
