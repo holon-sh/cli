@@ -62,6 +62,8 @@ type reloadFixture struct {
 	reloads  []sentSource
 }
 
+const sessionUID = "5b0c2f1e-7d4a-4c8e-9a61-2f3b8e0d4c71"
+
 type sentSource struct {
 	Session, App, Digest string
 	body                 []byte
@@ -102,7 +104,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		f.mu.Lock()
 		unsaved := f.unsaved
 		f.mu.Unlock()
-		if unsaved && strings.HasSuffix(r.URL.Path, "/manifests/"+runtimecontract.OverlayTag) {
+		if unsaved && strings.HasSuffix(r.URL.Path, "/manifests/"+sessionUID) {
 			_, _ = io.Copy(io.Discard, r.Body)
 			<-r.Context().Done()
 			return
@@ -122,6 +124,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	})
 	session := func() map[string]any {
 		response := apiSession("alpha")
+		response["uid"] = sessionUID
 		response["apps"], response["revision"] = f.served, strconv.Itoa(f.revision)
 		if !f.ready {
 			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
@@ -444,11 +447,11 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	var tagged ocispec.Manifest
-	err := json.Unmarshal(f.item("manifests/"+runtimecontract.OverlayTag), &tagged)
+	err := json.Unmarshal(f.item("manifests/"+sessionUID), &tagged)
 	if err != nil || tagged.ArtifactType != runtimecontract.OverlayMediaType || len(tagged.Layers) != 1 ||
 		tagged.Layers[0].Digest.String() != request.Digest || !bytes.Equal(f.item("blobs/"+request.Digest), request.body) ||
 		string(overlayEntries(t, request.body)["tools.py"]) != "second" {
-		t.Fatalf("the repository tags %+v as the source, want %s: %v", tagged.Layers, request.Digest, err)
+		t.Fatalf("the session's tag names %+v, want %s: %v", tagged.Layers, request.Digest, err)
 	}
 }
 

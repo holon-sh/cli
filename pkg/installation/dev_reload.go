@@ -205,10 +205,11 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 	ctx, cancel := context.WithCancelCause(d.background)
 	d.recording[app] = cancel
 	d.clock.AfterFunc(time.Minute, func() { cancel(errSourceUnrecorded) })
+	session := d.session.UID
 	d.records.Go(func() {
 		defer cleanup()
 		uploaded := d.options.output.measure(app, "source upload")
-		err := packed.publish(ctx)
+		err := packed.publish(ctx, session)
 		uploaded()
 		if cause := cmp.Or(context.Cause(ctx), err); err != nil && cause != errSourceSuperseded {
 			d.options.output.status(app, "reloaded, but its source was not saved: "+cause.Error(), progressError)
@@ -306,7 +307,7 @@ func overlayScripts(root, entry string, page bool) (prepare, start string, err e
 	return strings.Join(steps, " && ") + "\n", "exec " + strings.Join(serve, " ") + "\n", nil
 }
 
-func (p packedSource) publish(ctx context.Context) error {
+func (p packedSource) publish(ctx context.Context, session string) error {
 	file, err := os.Open(p.file)
 	if err != nil {
 		return err
@@ -324,7 +325,7 @@ func (p packedSource) publish(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		return repository.Tag(ctx, manifest, runtimecontract.OverlayTag)
+		return repository.Tag(ctx, manifest, session)
 	})
 }
 
