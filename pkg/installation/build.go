@@ -35,7 +35,6 @@ type buildOptions struct {
 	output        *progressOutput
 	development   bool
 	served        map[string]json.RawMessage
-	overlays      map[string]string
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
@@ -50,14 +49,10 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			continue
 		}
 		if app.Path != "" && options.development {
-			declaration.Port = 0
-			if declaration.Overlay = options.overlays[app.Name]; declaration.Overlay == "" {
-				packed, err := options.packSource(ctx, app, app.resolved.types.root, upload)
-				if err != nil {
-					return nil, err
-				}
-				declaration.Overlay = packed.overlay.Digest.String()
+			if _, err := devEntry(app, app.resolved.types.root); err != nil {
+				return nil, err
 			}
+			declaration.Port, declaration.Overlay = 0, true
 			apps[index] = declaration
 			continue
 		}

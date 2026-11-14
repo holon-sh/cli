@@ -271,8 +271,8 @@ func appSource(app protocol.App) string {
 		return "remote " + remoteHost(*app.Remote)
 	case app.Release != nil && app.Release.Name != "":
 		return "registry " + app.Release.Name + "@" + app.Release.Version
-	case app.Overlay != "":
-		return "source " + app.Overlay[:len("sha256:")+12]
+	case app.Overlay:
+		return "source"
 	}
 	repository, digest, _ := strings.Cut(app.Image, "@sha256:")
 	return "image " + repository + "@sha256:" + digest[:12]

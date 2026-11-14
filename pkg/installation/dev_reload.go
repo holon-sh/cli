@@ -21,6 +21,7 @@ import (
 	"github.com/tonistiigi/fsutil"
 	fstypes "github.com/tonistiigi/fsutil/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/pkg/typegen"
@@ -28,16 +29,7 @@ import (
 	"github.com/holon-sh/protocol/runtimecontract"
 )
 
-const (
-	toolRecordAppSource = "record_app_source"
-	toolGetAppContract  = "get_app_contract"
-)
-
-type recordAppSourceRequest struct {
-	protocol.AppRequest
-
-	Digest string `json:"digest"`
-}
+const toolGetAppContract = "get_app_contract"
 
 type reloadAppResult struct {
 	ElapsedSeconds float64 `json:"elapsedSeconds"`
@@ -50,10 +42,10 @@ type packedSource struct {
 	request buildRequest
 }
 
-func (d *devLoop) served(ctx context.Context, sent map[string]string) (map[string]json.RawMessage, error) {
+func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
 	served := map[string]json.RawMessage{}
 	for _, app := range d.manifest.Apps {
-		if sent[app.Name] == "" {
+		if d.sent[app.Name] == "" {
 			continue
 		}
 		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name}
@@ -89,7 +81,7 @@ func (d *devLoop) generate(ctx context.Context) error {
 		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
 		options := d.options
 		var err error
-		if options.served, err = d.served(ctx, d.sent); err != nil {
+		if options.served, err = d.served(ctx); err != nil {
 			return err
 		}
 		manifest := d.manifest
@@ -129,14 +121,6 @@ func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
 		}
 	}
 	return reloaded
-}
-
-func recordedSources(apps []protocol.App) map[string]string {
-	recorded := map[string]string{}
-	for _, app := range apps {
-		recorded[app.Name] = app.Overlay
-	}
-	return recorded
 }
 
 func (d *devLoop) paths(include func(manifestApp) bool) sets.Set[string] {
@@ -226,17 +210,8 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 		uploaded := d.options.output.measure(app, "source upload")
 		err := packed.publish(ctx)
 		uploaded()
-		if err == nil {
-			request := recordAppSourceRequest{
-				AppRequest: protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app},
-				Digest:     packed.overlay.Digest.String(),
-			}
-			recorded := d.options.output.measure(app, "source record")
-			err = d.manager.Call(ctx, ControlPlane(d.name), toolRecordAppSource, request, nil)
-			recorded()
-		}
 		if cause := cmp.Or(context.Cause(ctx), err); err != nil && cause != errSourceSuperseded {
-			d.options.output.status(app, "reloaded, but not recorded in the session: "+cause.Error(), progressError)
+			d.options.output.status(app, "reloaded, but its source was not saved: "+cause.Error(), progressError)
 		}
 	})
 }
@@ -250,12 +225,9 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 			return packedSource{}, err
 		}
 	}
-	entry, err := hostedEntry(app, root)
+	entry, err := devEntry(app, root)
 	if err != nil {
 		return packedSource{}, err
-	}
-	if entry == "" {
-		return packedSource{}, fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
 	// A page is built once the clients it may import are in the source.
 	prepare, start, err := overlayScripts(root, entry, accepted != nil && !accepted.unserved)
@@ -300,6 +272,14 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	return packed, err
 }
 
+func devEntry(app manifestApp, root string) (string, error) {
+	entry, err := hostedEntry(app, root)
+	if err == nil && entry == "" {
+		err = fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
+	}
+	return entry, err
+}
+
 // overlayScripts are the runtimecontract.PrepareFile and StartFile the development image runs an app with. prepare
 // installs what the app declares, and builds its page when page is set; start serves entry.
 func overlayScripts(root, entry string, page bool) (prepare, start string, err error) {
@@ -332,16 +312,20 @@ func (p packedSource) publish(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = file.Close() }()
-	err = p.request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
+	return p.request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		return repository.Blobs().Push(ctx, p.overlay, file)
+		if err := repository.Blobs().Push(ctx, p.overlay, file); err != nil {
+			return err
+		}
+		manifest, err := oras.PackManifest(ctx, repository, oras.PackManifestVersion1_1, runtimecontract.OverlayMediaType,
+			oras.PackManifestOptions{Layers: []ocispec.Descriptor{p.overlay}})
+		if err != nil {
+			return err
+		}
+		return repository.Tag(ctx, manifest, runtimecontract.OverlayTag)
 	})
-	if err != nil {
-		return fmt.Errorf("upload source: %w", err)
-	}
-	return nil
 }
 
 func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
