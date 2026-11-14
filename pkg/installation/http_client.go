@@ -158,7 +158,7 @@ func HTTPStatus(err error) int {
 			return http.StatusUnauthorized
 		case "invalid_request":
 			return http.StatusBadRequest
-		case "conflict", "baseline_unknown", "identity_required_by_apps":
+		case "conflict", "baseline_unknown":
 			return http.StatusConflict
 		case "precondition_failed":
 			return http.StatusPreconditionFailed

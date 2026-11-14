@@ -623,6 +623,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 					http.NotFound(w, r)
 					return
 				}
+				if loseResponse && installationtest.ToolArguments(r)["revision"] != nil {
+					t.Error("deploy waited for a deployment that was already ready")
+				}
 				generation := int64(revision)
 				conditions := []protocol.Condition{{Type: protocol.ConditionReady, Status: "True", Reason: "Ready"}}
 				if rolloutFailure != "" {

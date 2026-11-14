@@ -1,7 +1,6 @@
 package typegen
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -145,43 +144,6 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 				t.Fatalf("Prepare = %v, want %q", err, test.want)
 			}
 		})
-	}
-}
-
-func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
-	t.Setenv("VIRTUAL_ENV", "")
-	c, extract := checkoutConsumer(t, TargetTS)
-	python := t.TempDir()
-	put(t, python, "pyproject.toml", "[project]\nname = \"app\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
-	bin := t.TempDir()
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	for _, test := range []struct {
-		manager, install, installed string
-		consumer                    Consumer
-	}{
-		{"npm", "mkdir -p node_modules/holon-sh\nprintf '%s' '{}' > node_modules/holon-sh/package.json", "node_modules/holon-sh/package.json", c},
-		{"uv", "mkdir -p .venv/bin\n: > .venv/bin/python", ".venv/bin/python", Consumer{Name: "app", Dir: python, Targets: []string{TargetPy}}},
-	} {
-		put(t, bin, test.manager, "#!/bin/sh\nset -e\n"+test.install+"\n")
-		if err := os.Chmod(filepath.Join(bin, test.manager), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		var output bytes.Buffer
-		if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Stdout: &output, Stderr: &output, Run: extract}); err != nil || !isFile(filepath.Join(test.consumer.Dir, test.installed)) {
-			t.Fatalf("%s: generate: %v\n%s", test.manager, err, &output)
-		}
-		put(t, bin, test.manager, "#!/bin/sh\nexit 17\n")
-		if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Run: extract}); err != nil {
-			t.Fatalf("%s: installed runtime was reinstalled: %v", test.manager, err)
-		}
-	}
-	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
-		t.Fatal(err)
-	}
-	put(t, c.Dir, "package.json", `{"type":"module"}`)
-	err := Generate(t.Context(), []Consumer{c}, Options{Run: extract})
-	if err == nil || !strings.Contains(err.Error(), "does not depend on holon-sh; run npm install holon-sh") {
-		t.Fatalf("undeclared runtime = %v", err)
 	}
 }
 

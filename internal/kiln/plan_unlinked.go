@@ -4,6 +4,6 @@ package kiln
 
 import "context"
 
-func Plan(context.Context, Request) (string, error) {
-	return "", ErrNotLinked
+func plan(context.Context, any, any) error {
+	return ErrNotLinked
 }
