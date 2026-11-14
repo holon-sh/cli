@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -499,15 +500,16 @@ func TestOverlayScripts(t *testing.T) {
 		files          map[string]string
 		prepare, start string
 	}{
-		{name: "Python", entry: "server.py", prepare: "uv sync\n", start: python + "server.py\n"},
 		{
 			name: "Node", entry: "src/server.ts", files: map[string]string{"package.json": `{}`, "package-lock.json": ""},
-			prepare: "npm install\n", start: "exec node_modules/.bin/holon-serve src/server.ts\n",
+			prepare: "{ cat package.json package-lock.json | cmp -s - .holon/installed || { rm -f .holon/installed && npm install && cat package.json package-lock.json >.holon/installed; }; }\n",
+			start:   "exec node_modules/.bin/holon-serve src/server.ts\n",
 		},
 		{
 			name: "Python with a frontend", entry: "src/server.py",
 			files:   map[string]string{"package.json": `{"scripts":{"build":"vite build"}}`, "pnpm-lock.yaml": ""},
-			prepare: "uv sync && pnpm install && pnpm run build\n", start: python + "src/server.py\n",
+			prepare: "uv sync && { cat package.json pnpm-lock.yaml | cmp -s - .holon/installed || { rm -f .holon/installed && pnpm install && cat package.json pnpm-lock.yaml >.holon/installed; }; } && pnpm run build\n",
+			start:   python + "src/server.py\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -517,6 +519,32 @@ func TestOverlayScripts(t *testing.T) {
 				t.Fatalf("scripts = %q, %q: %v", prepare, start, err)
 			}
 		})
+	}
+}
+
+func TestPrepareSkipsOnlyAnUnchangedInstall(t *testing.T) {
+	root, bin := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "npm"), []byte("#!/bin/sh\necho >>installs\n! grep -q fail package-lock.json\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for i, step := range []struct {
+		manifest, lock string
+		installs       int
+	}{{`{}`, "1", 1}, {`{}`, "1", 1}, {`{"x":1}`, "1", 2}, {`{"x":1}`, "fail", 3}, {`{"x":1}`, "1", 4}} {
+		sourceFiles(t, root, map[string]string{"package.json": step.manifest, "package-lock.json": step.lock})
+		prepare, _, err := overlayScripts(root, "server.ts", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sourceFiles(t, root, map[string]string{runtimecontract.PrepareFile: prepare})
+		command := exec.Command("sh", runtimecontract.PrepareFile)
+		command.Dir = root
+		err = command.Run()
+		log, _ := os.ReadFile(filepath.Join(root, "installs"))
+		if installs := bytes.Count(log, []byte("\n")); (err != nil) != (step.lock == "fail") || installs != step.installs {
+			t.Fatalf("step %d: %d installs, want %d: %v", i, installs, step.installs, err)
+		}
 	}
 }
 
