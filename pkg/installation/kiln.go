@@ -24,6 +24,7 @@ type buildApplication func(context.Context, buildRequest, io.Writer) (string, er
 type buildRequest struct {
 	kiln.Request
 
+	Platforms  []string
 	Env        []string
 	app        manifestApp
 	dockerfile string

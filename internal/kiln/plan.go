@@ -42,13 +42,11 @@ func plan(ctx context.Context, request, result any) error {
 	if response.status == C.KILN_OK {
 		return json.Unmarshal(output, result)
 	}
-	var diagnostic struct {
-		Logs []struct {
-			Msg string `json:"Msg"`
-		} `json:"logs"`
+	var failure struct {
+		Error string `json:"error"`
 	}
-	if json.Unmarshal(output, &diagnostic) == nil && len(diagnostic.Logs) > 0 {
-		return errors.New(diagnostic.Logs[0].Msg)
+	if json.Unmarshal(output, &failure) == nil && failure.Error != "" {
+		return errors.New(failure.Error)
 	}
 	return fmt.Errorf("kiln FFI: %s", output)
 }
