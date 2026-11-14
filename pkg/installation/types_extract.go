@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -100,7 +99,7 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 		return err
 	}
 	dockerfile, err := kiln.Image(ctx, kiln.Request{
-		Source: source, ConfigFilePath: ".holon-types/railpack.json", Platforms: []string{"linux/" + runtime.GOARCH},
+		Source: source, ConfigFilePath: ".holon-types/railpack.json",
 	})
 	if err != nil {
 		return err
