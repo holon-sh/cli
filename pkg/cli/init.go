@@ -16,6 +16,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/holon-sh/cli/internal/commandenv"
+	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/cli/pkg/scaffold"
 	"github.com/holon-sh/cli/pkg/typegen"
 )
@@ -94,12 +95,8 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	if !typegen.ValidServerName(name) || typegen.ServerKey(name) == "" {
 		return fmt.Errorf("%s is not an MCP server name such as io.github.acme/%s", name, app)
 	}
-	manager, err := typegen.PackageManager(dir)
-	if err != nil {
-		return err
-	}
-	for _, tool := range []string{tools[language], manager} {
-		if _, err := exec.LookPath(tool); tool != "" && err != nil {
+	if tool := tools[language]; tool != "" {
+		if _, err := exec.LookPath(tool); err != nil {
 			return fmt.Errorf("a %s app needs %s; install it and run holon init again", language, tool)
 		}
 	}
@@ -135,42 +132,39 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	}
 	fmt.Fprintf(stderr, "%s: added to %s\n", app, scaffold.Relative(manifestPath))
 
-	run := func(args ...string) error {
-		fmt.Fprintf(stderr, "%s: %s\n", app, strings.Join(args, " "))
-		if err := commandenv.RunStreaming(cmd.Context(), dir, args[0], args[1:], nil, nil, stderr, stderr); err != nil {
-			return fmt.Errorf("%s in %s: %w", strings.Join(args, " "), dirArg, err)
-		}
-		return nil
-	}
-	install := func() error {
+	install := func() (kiln.Steps, error) {
 		var commands [][]string
+		provider := kiln.Node
 		switch language {
 		case typegen.TargetGo:
 			commands = append(commands, []string{"go", "get", typegen.GoRuntimeModule + "@latest"})
 		case typegen.TargetPy:
+			provider = kiln.Python
 			dependencies, dev := project.PythonRequirements()
 			commands = append(commands, append([]string{"uv", "add", "--frozen"}, dependencies...),
-				append([]string{"uv", "add", "--frozen", "--dev"}, dev...), []string{"uv", "sync"})
+				append([]string{"uv", "add", "--frozen", "--dev"}, dev...), []string{"uv", "lock"})
 		}
-		for _, command := range append(commands, []string{manager, "install"}) {
-			if err := run(command...); err != nil {
-				return err
-			}
+		if err := commandenv.RunEach(cmd.Context(), dir, app, commands, nil, stderr); err != nil {
+			return kiln.Steps{}, err
+		}
+		options := typegen.Options{Stdout: io.Discard, Stderr: stderr}
+		steps, err := typegen.Install(cmd.Context(), dir, provider, options)
+		if err != nil {
+			return kiln.Steps{}, err
 		}
 		c, err := consumer(dir, nil)
 		if err != nil {
-			return err
+			return kiln.Steps{}, err
 		}
-		return typegen.Generate(cmd.Context(), []typegen.Consumer{c}, typegen.Options{Stdout: io.Discard, Stderr: stderr})
+		return steps, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, options)
 	}
-	if err := install(); err != nil {
+	steps, err := install()
+	if err != nil {
 		return fmt.Errorf("%w\nthe app is written; run holon types generate in %s once that is fixed", err, dirArg)
 	}
 	if language == typegen.TargetGo {
-		for _, command := range [][]string{{manager, "run", "build"}, {"go", "mod", "tidy"}} {
-			if err := run(command...); err != nil {
-				return err
-			}
+		if err := commandenv.RunEach(cmd.Context(), dir, app, append(steps.Build, []string{"go", "mod", "tidy"}), nil, stderr); err != nil {
+			return err
 		}
 	}
 
