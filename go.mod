@@ -27,7 +27,6 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/swaggest/jsonschema-go v0.3.78
 	github.com/swaggest/refl v1.4.0
-	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd
 	github.com/tonistiigi/fsutil v0.0.0-20260819142231-83cac42c1c52
 	golang.org/x/mod v0.41.0
 	golang.org/x/oauth2 v0.37.0
