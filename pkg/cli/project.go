@@ -38,14 +38,14 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 	if file == "" {
 		return nil, nil
 	}
-	declared, err := projectApps(file)
+	entries, err := projectApps(file)
 	if err != nil {
 		return nil, err
 	}
 	// The apps a dependency can name: each path app's resolved directory, a remote app's endpoint or a
 	// registry app's version.
 	apps := map[string]typegen.Source{}
-	for _, app := range declared {
+	for _, app := range entries {
 		switch {
 		case filepath.IsAbs(app.Path):
 			return nil, fmt.Errorf("%s: %s path must be a relative directory", file, app.Name)
@@ -62,7 +62,7 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 		}
 	}
 	var consumers []typegen.Consumer
-	for _, app := range declared {
+	for _, app := range entries {
 		if app.Path == "" {
 			continue
 		}
@@ -101,8 +101,8 @@ func projectApps(file string) ([]projectApp, error) {
 	return project.Apps, nil
 }
 
-func declaredName(dir string) (string, error) {
-	root := dir
+func declaredName(path, dir string) (string, error) {
+	root, _ := filepath.Abs(path)
 	for projectFile(root) == "" && root != filepath.Dir(root) {
 		root = filepath.Dir(root)
 	}
@@ -112,8 +112,7 @@ func declaredName(dir string) (string, error) {
 			return "", err
 		}
 		for _, app := range apps {
-			path, err := clientDir(filepath.Join(root, app.Path))
-			if app.Path != "" && err == nil && path == dir {
+			if resolved, err := clientDir(filepath.Join(root, app.Path)); err == nil && resolved == dir {
 				return app.Name, nil
 			}
 		}

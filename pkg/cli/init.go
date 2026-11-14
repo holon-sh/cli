@@ -157,7 +157,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 				return err
 			}
 		}
-		c, err := consumer(dir, nil)
+		c, err := consumer(app, dir, nil)
 		if err != nil {
 			return err
 		}

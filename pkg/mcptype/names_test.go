@@ -44,7 +44,7 @@ func notebookTools() []mcpcontract.Tool {
 func declaredTypes(t *testing.T, target string, tools []mcpcontract.Tool) map[string]string {
 	t.Helper()
 	files, err := Generate(t.Context(), GenerateRequest{
-		Target: target, Identity: mcpcontract.Identity{Name: "caller", Version: "1"}, GoModule: "example.com/runtime",
+		Target: target, Identity: mcpcontract.Identity{Name: "caller", Version: "1"}, App: "caller", GoModule: "example.com/runtime",
 		Contracts: map[string]*mcpcontract.Contract{"notebooks": {Tools: tools}},
 	})
 	if err != nil {

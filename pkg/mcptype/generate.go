@@ -52,14 +52,11 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	}
 	files := map[string][]byte{}
 	for path, text := range generated {
-		if request.App != "" {
-			comment := "//"
-			if strings.HasSuffix(path, ".py") {
-				comment = "#"
-			}
-			text = comment + " " + mcpcontract.Marker + " app=" + request.App + "\n" + text
+		comment := "//"
+		if strings.HasSuffix(path, ".py") {
+			comment = "#"
 		}
-		files[path] = []byte(text)
+		files[path] = []byte(comment + " " + mcpcontract.Marker + " app=" + request.App + "\n" + text)
 	}
 	return files, nil
 }
@@ -85,7 +82,7 @@ func (r GenerateRequest) validate() error {
 			return err
 		}
 	}
-	if r.App != "" && (strings.TrimSpace(r.App) == "" || strings.ContainsFunc(r.App, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' })) {
+	if strings.TrimSpace(r.App) == "" || strings.ContainsFunc(r.App, func(r rune) bool { return unicode.IsControl(r) || r == '\u2028' || r == '\u2029' }) {
 		return errors.New("app must be nonempty and contain no line breaks or control characters")
 	}
 	if r.Target == "go" && r.GoModule == "" {
