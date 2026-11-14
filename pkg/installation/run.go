@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 
@@ -372,23 +371,24 @@ func waitSessionReady(
 ) (protocol.SessionResponse, error) {
 	finish := output.measure(name, "rollout")
 	defer finish()
-	result := accepted
-	err := wait.PollUntilContextCancel(ctx, workflowPoll, true, func(ctx context.Context) (bool, error) {
-		session, err := manager.awaitSession(ctx, name, result.Revision)
-		if err != nil {
-			return false, err
-		}
-		result = session
+	session := accepted
+	for {
 		if session.UID != accepted.UID || len(protocol.ChangedApps(session.Apps, accepted.Apps)) != 0 || session.Generation < accepted.Generation {
-			return false, errors.New("deployment was superseded")
+			return session, errors.New("deployment was superseded")
 		}
 		reportSessionProgress(session, output, deployingApps, progressWorking)
 		if err := manager.authorizeOperation(ctx, session); err != nil {
-			return false, err
+			return session, err
 		}
-		return SessionReady(session)
-	})
-	return result, err
+		if ready, err := SessionReady(session); ready || err != nil {
+			return session, err
+		}
+		next, err := manager.awaitSession(ctx, name, session.Revision)
+		if err != nil {
+			return session, err
+		}
+		session = next
+	}
 }
 
 const deployingApps = "Deploying apps"

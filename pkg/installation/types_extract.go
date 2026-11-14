@@ -99,7 +99,7 @@ func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, genera
 	if err := mcpcontract.WriteStable(filepath.Join(directory, "railpack.json"), append(data, '\n'), 0o644); err != nil {
 		return err
 	}
-	dockerfile, err := kiln.Plan(ctx, kiln.Request{
+	dockerfile, err := kiln.Image(ctx, kiln.Request{
 		Source: source, ConfigFilePath: ".holon-types/railpack.json", Platforms: []string{"linux/" + runtime.GOARCH},
 	})
 	if err != nil {
