@@ -19,7 +19,6 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/mcptype"
-	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/opencontainers/go-digest"
 )
 
@@ -119,9 +118,6 @@ func fetchSources(ctx context.Context, consumers []Consumer, o Options) func() m
 }
 
 func (p *Prepared) Close() error { return os.RemoveAll(p.root) }
-
-// Tooling is the directory the contract runners and checkers are unpacked in, until Close.
-func (p *Prepared) Tooling() string { return filepath.Join(p.root, "tooling") }
 
 // Metadata returns each consumer's own contract document (identity, extracted contract and the
 // expectations it holds of its sources) by consumer name, plus every resolved source by alias.
@@ -230,11 +226,6 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 			}
 			p.paths[absolute] = s
 			paths = append(paths, s)
-		}
-	}
-	if len(paths) != 0 {
-		if err = tooling.Unpack(filepath.Join(root, "tooling")); err != nil {
-			return nil, err
 		}
 	}
 	if err = extractSources(ctx, root, paths, o, true); err != nil {

@@ -70,10 +70,11 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			options := options
 			logs := options.output.logs(stderr)
 			options.Stderr = logs
-			defer func() { err = logs.finished(options.output, app.Name, "uploaded", err) }()
-			if app.resolved.Image != "" || app.resolved.registryPackage != nil {
-				options.output.status(app.Name, "importing", progressWorking)
-			}
+			defer func() {
+				if err != nil {
+					err = logs.explain(err)
+				}
+			}()
 			if app.resolved.registryPackage != nil {
 				build, err := options.importPackage(ctx, app)
 				if err != nil {
@@ -98,7 +99,6 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 					image = imported
 				}
 				if app.resolved.stdio {
-					options.output.status(app.Name, "adapting", progressWorking)
 					prepared, err := prepareStdioImage(ctx, image, grant.Grant, options)
 					if err != nil {
 						return fmt.Errorf("adapt stdio app %s: %w", app.Name, err)
@@ -119,11 +119,6 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 		})
 	}
 	if err := group.Wait(); err != nil {
-		for _, app := range apps {
-			if app.Name != "" && app.Remote == nil {
-				options.output.status(app.Name, "update not applied", progressIdle)
-			}
-		}
 		return nil, err
 	}
 	return apps, nil
@@ -158,7 +153,7 @@ func buildManifestImages(
 ) ([]protocol.App, error) {
 	upload := newImageUpload(manager, name, manifest)
 	options.importPackage = func(ctx context.Context, app manifestApp) (protocol.ResolvedAppBuild, error) {
-		return importRegistryBuild(ctx, manager, ControlPlane(name), app, options.output)
+		return importRegistryBuild(ctx, manager, ControlPlane(name), app)
 	}
 	options.origin = manager.client.baseURL
 	if name == protocol.ProductionName {

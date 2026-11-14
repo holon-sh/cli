@@ -33,9 +33,9 @@ func TestProgressTransitions(t *testing.T) {
 				return err
 			})
 			for range 2 {
-				output.status("alpha", "building", progressWorking)
+				output.working("alpha")
 				output.problem("editor imports", errors.New("write failed"))
-				output.status("", "Watching for changes", progressIdle)
+				output.headline("Watching for changes", progressIdle)
 			}
 			output.problem("editor imports", nil)
 			output.problem("never reported", nil)
@@ -44,7 +44,7 @@ func TestProgressTransitions(t *testing.T) {
 				t.Fatal(err)
 			}
 			visible := strings.Join(strings.Fields(ansi.Strip(stream.String())), " ")
-			for _, want := range []string{"alpha " + tc.message, "remote deployment update failed"} {
+			for _, want := range []string{"alpha not updated", "remote deployment update failed", tc.message} {
 				if !strings.Contains(visible, want) {
 					t.Fatalf("final terminal status = %q, missing %q", visible, want)
 				}
@@ -53,7 +53,7 @@ func TestProgressTransitions(t *testing.T) {
 			reports := strings.Join(regexp.MustCompile("\x1b]7501;[^\x07]*\x07").FindAllString(stream.String(), -1), "")
 			var want strings.Builder
 			for _, report := range []string{
-				ansi.SetProgramStatus(tea.ProgramStatus{App: "holon", ID: progressStatusID("alpha"), Title: "alpha", Message: "building", State: tea.ProgramStateWorking}),
+				ansi.SetProgramStatus(tea.ProgramStatus{App: "holon", ID: progressStatusID("alpha"), Title: "alpha", State: tea.ProgramStateWorking}),
 				ansi.SetProgramStatus(tea.ProgramStatus{App: "holon", ID: progressStatusID("editor imports"), Title: "editor imports", Message: "write failed", State: tea.ProgramStateError}),
 				ansi.SetProgramStatus(tea.ProgramStatus{App: "holon", ID: "holon", Message: "Watching for changes", State: tea.ProgramStateIdle}),
 				ansi.ClearProgramStatusID(progressStatusID("editor imports")),

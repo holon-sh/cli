@@ -1,10 +1,4 @@
-import { defaultClientConditions, defineConfig } from "vite";
-import { viteSingleFile } from "vite-plugin-singlefile";
+import { defineConfig } from "vite";
+import { holon } from "holon-ui/vite";
 
-export default defineConfig(({ mode }) => ({
-  root: "ui",
-  base: mode === "mcp" ? "./" : "/{{.App}}/",
-  plugins: mode === "mcp" ? [viteSingleFile()] : [],
-  resolve: { conditions: mode === "mcp" ? ["mcp-app", ...defaultClientConditions] : undefined },
-  build: { outDir: mode === "mcp" ? "../dist/mcp" : "../dist/web", emptyOutDir: true },
-}));
+export default defineConfig({ plugins: [holon()] });

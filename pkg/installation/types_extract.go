@@ -18,6 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/tooling"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/tailscale/hujson"
 
@@ -60,18 +61,19 @@ func (o buildOptions) checkTypes(ctx context.Context, apps []*manifestApp) error
 }
 
 func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry, language string) error {
-	generated, err := os.MkdirTemp("", "holon-types-check-")
+	scratch, err := os.MkdirTemp("", "holon-types-check-")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(generated)
-	if err := p.prepared.WriteClients(p.name, generated); err != nil {
+	defer os.RemoveAll(scratch)
+	generated, checkers := filepath.Join(scratch, "generated"), filepath.Join(scratch, "tooling")
+	if err := errors.Join(os.Mkdir(generated, 0o700), tooling.Unpack(checkers), p.prepared.WriteClients(p.name, generated)); err != nil {
 		return err
 	}
 	runner := contractRunners[language]
 	command := []string{runner.program, "/holon-tooling/" + language + "/" + runner.checker, "check", entry}
 	var output bytes.Buffer
-	err = o.runInImage(ctx, p.root, p.prepared.Tooling(), generated, language == "python", command, &output)
+	err = o.runInImage(ctx, p.root, checkers, generated, language == "python", command, &output)
 	if failed := (*typegen.RunnerError)(nil); errors.As(err, &failed) {
 		return fmt.Errorf("%s does not type-check against its typed contracts:\n%s", p.name, strings.TrimSpace(output.String()+failed.Stderr))
 	}
