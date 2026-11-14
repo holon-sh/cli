@@ -47,7 +47,7 @@ func AppName(dir string) string {
 }
 
 // build builds the view: a page into dist/web, and the single file the server returns into dist/mcp.
-const build = "vite build && vite build --mode mcp"
+const build = "vite build"
 
 // shared are the files an existing project may already have: the app merges into package.json and
 // .gitignore, and leaves the others as written.
@@ -262,7 +262,7 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 		return nil, "", err
 	}
 	dependencies := map[string]string{"@modelcontextprotocol/ext-apps": "^2.0.4", typegen.NodePackages[typegen.TargetUI]: p.Versions.HolonUI}
-	dev := map[string]string{"@types/node": "^26.6.6", "typescript": "^7.0.2", "vite": "^8.3.7", "vite-plugin-singlefile": "^2.3.4"}
+	dev := map[string]string{"@types/node": "^26.6.6", "typescript": "^7.0.2", "vite": "^8.3.7"}
 	if p.Language == typegen.TargetTS {
 		dependencies["@modelcontextprotocol/server"] = "^2.4.0"
 		dependencies[typegen.NodePackages[typegen.TargetTS]] = p.Versions.HolonSH
