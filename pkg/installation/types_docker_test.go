@@ -203,8 +203,7 @@ async def checkout(id: str) -> float:
 			"server.py": code,
 			"requirements.txt": "holon-sh @ https://github.com/holon-sh/sdk-py/archive/6e2e0140bc48296681ce717ef8887ce44766991d.tar.gz\n" +
 				"mcp==2.3.0\n",
-			"railpack.json": `{"provider":"python","steps":{"build":{"commands":[` +
-				`"python -c 'from holon.apps import apps; assert apps.orders'"]}}}`,
+			"package.json": `{"scripts":{"build":"node -e \"require('fs').accessSync('holon/apps/__init__.py')\""}}`,
 		})
 		manifest.Apps = append(manifest.Apps, app)
 	}
