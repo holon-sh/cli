@@ -439,7 +439,7 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequestFor[protocol.App], remove ...string) error {
+func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequest, remove ...string) error {
 	updated, err := replaceExecution(ctx, d.manager, d.name, d.session, desired, remove...)
 	if err != nil {
 		return err

@@ -79,7 +79,7 @@ func (m *Client) DeleteSession(ctx context.Context, name, uid string, skip bool)
 		if uid != current.UID {
 			return errors.New("execution identity changed; refusing deletion")
 		}
-		var result protocol.DeleteSessionResultFor[protocol.SessionResponse]
+		var result protocol.DeleteSessionResult
 		err = m.Call(ctx, ControlPlane(name), protocol.ToolDeleteSession, protocol.DeleteSessionRequest{
 			SessionRequest: protocol.SessionRequest{Session: name}, ExpectedRevision: current.Revision, SkipHooks: skip,
 		}, &result)

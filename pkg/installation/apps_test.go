@@ -57,7 +57,7 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		}
 	})
 	h.control.Handle([]string{protocol.ToolUpdateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
-		var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
+		var input protocol.UpdateSessionRequest
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Error(err)
 			return

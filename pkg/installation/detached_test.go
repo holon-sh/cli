@@ -42,7 +42,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 			}
 			h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
 				installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
-				var request protocol.AppsRequestFor[protocol.App]
+				var request protocol.AppsRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds {
 					t.Errorf("detached request: %#v, %v", request, err)
 				}
@@ -71,7 +71,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 					t.Error("cleanup missing current revision")
 				}
 				deleted.Store(true)
-				installationtest.WriteJSON(w, protocol.DeleteSessionResultFor[protocol.SessionResponse]{Deleted: true})
+				installationtest.WriteJSON(w, protocol.DeleteSessionResult{Deleted: true})
 			})
 			h.start(t, nil)
 			args := []string{"dev", "-f", filepath.Join(root, manifestFileName), "--detach"}

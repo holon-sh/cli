@@ -112,20 +112,20 @@ func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec
 
 func uploadManifest(
 	ctx context.Context, manager *Client, name string, resolved manifestSpec, options buildOptions,
-) (protocol.AppsRequestFor[protocol.App], error) {
+) (protocol.AppsRequest, error) {
 	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options)
 	if err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, err
+		return protocol.AppsRequest{}, err
 	}
 	defer cleanup()
 	built, err := buildManifestImages(ctx, manager, name, prepared, options)
 	if err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, err
+		return protocol.AppsRequest{}, err
 	}
 	if err := currentTypeSources(prepared); err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, err
+		return protocol.AppsRequest{}, err
 	}
-	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
+	return protocol.AppsRequest{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
 }
 
 func imageDestination(ctx context.Context, manager *Client, name string, manifest manifestSpec) (protocol.UploadGrant, error) {

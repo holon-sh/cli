@@ -13,7 +13,7 @@ import (
 )
 
 func replaceExecution(ctx context.Context, manager *Client, name string,
-	baseline protocol.SessionResponse, desired protocol.AppsRequestFor[protocol.App], remove ...string,
+	baseline protocol.SessionResponse, desired protocol.AppsRequest, remove ...string,
 ) (protocol.SessionResponse, error) {
 	current := baseline
 	desired.RequestID = cmp.Or(desired.RequestID, strings.ToLower(rand.Text()))
@@ -26,7 +26,7 @@ func replaceExecution(ctx context.Context, manager *Client, name string,
 		if err != nil {
 			return protocol.SessionResponse{}, err
 		}
-		input := protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]{
+		input := protocol.UpdateSessionRequest{
 			SessionRequest:    protocol.SessionRequest{Session: name},
 			WritePrecondition: protocol.WritePrecondition{ExpectedRevision: current.Revision, CreateOnly: current.Revision == ""}, Desired: desired,
 			Remove: remove,
