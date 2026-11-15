@@ -25,7 +25,6 @@ import (
 // PackageJSON is what Holon reads of a package.json.
 type PackageJSON struct {
 	Name, Version, Main                                                   string
-	PackageManager                                                        string `json:"packageManager"`
 	Scripts                                                               map[string]string
 	Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
 }
@@ -38,32 +37,6 @@ func (p PackageJSON) Launches() bool {
 
 func (p PackageJSON) Declares(pkg string) bool {
 	return p.Dependencies[pkg] != "" || p.DevDependencies[pkg] != "" || p.PeerDependencies[pkg] != "" || p.OptionalDependencies[pkg] != ""
-}
-
-var lockfiles = []struct{ file, manager string }{{"pnpm-lock.yaml", "pnpm"}, {"yarn.lock", "yarn"}, {"bun.lock", "bun"}, {"bun.lockb", "bun"}, {"package-lock.json", "npm"}, {"npm-shrinkwrap.json", "npm"}}
-
-// Manager is the project's declared package manager, else the one the nearest lockfile in dir or
-// above belongs to, else npm.
-func (pkg PackageJSON) Manager(dir string) string {
-	if manager, _, _ := strings.Cut(pkg.PackageManager, "@"); manager != "" {
-		return manager
-	}
-	for current := range ancestors(dir) {
-		for _, lock := range lockfiles {
-			if isFile(filepath.Join(current, lock.file)) {
-				return lock.manager
-			}
-		}
-	}
-	return "npm"
-}
-
-func Lockfiles() []string {
-	names := make([]string, len(lockfiles))
-	for i, lock := range lockfiles {
-		names[i] = lock.file
-	}
-	return names
 }
 
 func MapClients(consumers []Consumer, options Options) error {

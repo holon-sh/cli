@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -23,7 +22,7 @@ import (
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 
-	"github.com/holon-sh/cli/pkg/typegen"
+	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
 )
@@ -228,7 +227,7 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 		return packedSource{}, err
 	}
 	// A page is built once the clients it may import are in the source.
-	plan, err := overlayPlan(root, entry, accepted != nil && !accepted.unserved)
+	plan, err := overlayPlan(ctx, root, entry, accepted != nil && !accepted.unserved)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}
@@ -277,34 +276,24 @@ func devEntry(app manifestApp, root string) (string, error) {
 	return entry, err
 }
 
-func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
+func overlayPlan(ctx context.Context, root, entry string, page bool) (runtimecontract.Plan, error) {
+	steps, err := kiln.Development(ctx, root)
+	if err != nil {
+		return runtimecontract.Plan{}, err
+	}
 	read := map[string][]byte{}
-	for _, name := range append([]string{".python-version", "pyproject.toml", "uv.lock", "package.json"}, typegen.Lockfiles()...) {
-		data, err := os.ReadFile(filepath.Join(root, name))
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
+	for _, name := range steps.Inputs {
+		if read[name], err = os.ReadFile(filepath.Join(root, name)); err != nil {
 			return runtimecontract.Plan{}, err
 		}
-		read[name] = data
 	}
 	inputs, _ := json.Marshal(read)
-	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: digest.FromBytes(inputs).String()}, Start: serveCommand(entry)}
+	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: digest.FromBytes(inputs).String(), Commands: steps.Install}, Start: serveCommand(entry)}
 	if filepath.Ext(entry) == ".py" {
-		plan.Install.Commands = append(plan.Install.Commands, []string{"uv", "sync"})
 		plan.Start = append([]string{"uv", "run", "--no-sync"}, plan.Start...)
 	}
-	if data, ok := read["package.json"]; ok {
-		var pkg typegen.PackageJSON
-		if err := json.Unmarshal(data, &pkg); err != nil {
-			return runtimecontract.Plan{}, err
-		}
-		manager := pkg.Manager(root)
-		plan.Install.Commands = append(plan.Install.Commands, []string{manager, "install"})
-		if page && pkg.Scripts["build"] != "" {
-			plan.Prepare = [][]string{{manager, "run", "build"}}
-		}
+	if page {
+		plan.Prepare = steps.Build
 	}
 	return plan, nil
 }
