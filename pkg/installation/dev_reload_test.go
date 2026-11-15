@@ -64,6 +64,7 @@ type reloadFixture struct {
 	changed  chan struct{}
 	reads    []string
 	reloads  []sentSource
+	running  map[string][]byte
 }
 
 const sessionUID = "5b0c2f1e-7d4a-4c8e-9a61-2f3b8e0d4c71"
@@ -117,8 +118,16 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	}))
 	t.Cleanup(registry.Close)
 	h := newRunHarness(t)
-	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, json.RawMessage(servedContract))
+	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		running, ok := f.running[installationtest.ToolArguments(r)["app"].(string)]
+		f.mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		tool := "lookup_" + string(overlayEntries(t, running)["tools.py"])
+		installationtest.WriteJSON(w, json.RawMessage(strings.Replace(servedContract, "lookup", tool, 1)))
 	})
 	f.files = &h.files
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
@@ -153,7 +162,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			switch installationtest.ToolName(r) {
 			case protocol.ToolCreateSession:
 				f.creates++
-				f.served = input.Apps
+				f.served, f.running = input.Apps, map[string][]byte{}
 			case protocol.ToolUpdateSession:
 				if f.failSave {
 					f.failSave = false
@@ -202,6 +211,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			f.refusal = ""
 			return
 		}
+		f.running[r.PathValue("app")] = body
 		installationtest.WriteJSON(w, reloadAppResult{Output: installed})
 	})
 	h.start(t, nil)
@@ -322,10 +332,13 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 		uploads int
 		apps    []string
 	}{
-		{name: "an unchanged source is sent and uploaded once", creates: 1, reloads: 1, uploads: 1},
 		{
 			name: "a reload that fails is neither reported ready nor uploaded", creates: 1, reloads: 1,
 			between: func(_ *testing.T, f *reloadFixture) { f.failNext = true },
+		},
+		{
+			name: "an app that no longer runs is started", creates: 1, reloads: 1, uploads: 1,
+			between: func(_ *testing.T, f *reloadFixture) { f.running = map[string][]byte{} },
 		},
 		{
 			name: "an app added to the project since joins the session", edit: map[string]string{manifestFileName: alphaManifest + betaRemote},
@@ -376,6 +389,31 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 				t.Fatalf("stdout=%q stderr=%q", f.stdout.String(), f.stderr.String())
 			}
 		})
+	}
+}
+
+func TestDevResumesTheAppsAnEarlierRunStarted(t *testing.T) {
+	f := startReloadFixture(t, true, map[string]string{"alpha/server.py": "import mcp\n", "alpha/package.json": `{"private":true,"dependencies":{"holon-ui":"0.0.1"}}`})
+	resume := func(tools string) (before, after []sentSource) {
+		t.Helper()
+		if err := f.stop(); err != nil {
+			t.Fatal(err)
+		}
+		before = f.reloadRequests()
+		sourceFiles(t, f.root, map[string]string{"alpha/tools.py": tools})
+		f.start()
+		f.watching()
+		return before, f.reloadRequests()[len(before):]
+	}
+	if before, after := resume("first"); len(after) != 1 || after[0].Digest != before[len(before)-1].Digest {
+		t.Fatalf("an unchanged source was sent %d times, not as it runs", len(after))
+	}
+	resume("second")
+	f.mu.Lock()
+	runs := overlayEntries(t, f.running["alpha"])
+	f.mu.Unlock()
+	if client := string(runs["generated/holon-ui/index.mjs"]); string(runs["tools.py"]) != "second" || !strings.Contains(client, "lookup_second") {
+		t.Fatalf("after an edit alpha runs %q with the clients %q", runs["tools.py"], client)
 	}
 }
 

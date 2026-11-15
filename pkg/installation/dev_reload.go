@@ -42,15 +42,17 @@ type packedSource struct {
 func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
 	served := map[string]json.RawMessage{}
 	for _, app := range d.manifest.Apps {
-		if d.sent[app.Name] == "" {
+		sent, running := d.sent[app.Name]
+		if !running {
 			continue
 		}
 		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name}
 		var contract json.RawMessage
-		if err := d.manager.Call(ctx, ControlPlane(d.name), toolGetAppContract, request, &contract); err != nil {
+		if err := d.manager.Call(ctx, ControlPlane(d.name), toolGetAppContract, request, &contract); err == nil {
+			served[app.Name] = contract
+		} else if sent != "" {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
-		served[app.Name] = contract
 	}
 	return served, nil
 }
@@ -71,7 +73,8 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
-	if !d.reload(ctx, d.paths(func(app manifestApp) bool { return d.unsent(app) && len(app.resolved.Requires) == 0 })) {
+	running := sets.KeySet(d.sent)
+	if !d.reload(ctx, d.paths(func(app manifestApp) bool { return !running.Has(app.Name) && len(app.resolved.Requires) == 0 })) {
 		return errUnstarted
 	}
 	for {
