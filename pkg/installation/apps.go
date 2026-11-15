@@ -93,7 +93,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 					return err
 				}
 				for _, target := range targets {
-					request := protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]{Remove: args}
+					request := protocol.UpdateSessionRequest{Remove: args}
 					request.Session, request.ExpectedRevision = target.session.Name, target.session.Revision
 					request.Desired.Apps = []protocol.App{}
 					if err := manager.Call(cmd.Context(), ControlPlane(target.session.Name), protocol.ToolUpdateSession, request, nil); err != nil {
@@ -189,7 +189,7 @@ func updateAccess(
 	}
 	for _, target := range targets {
 		if _, err := replaceExecution(cmd.Context(), manager, target.session.Name, target.session,
-			protocol.AppsRequestFor[protocol.App]{Apps: []protocol.App{target.app}}); err != nil {
+			protocol.AppsRequest{Apps: []protocol.App{target.app}}); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s access in %s: %s\n", name, target.label(), accessSummary(target.app.Access))
@@ -271,8 +271,8 @@ func appSource(app protocol.App) string {
 		return "remote " + remoteHost(*app.Remote)
 	case app.Release != nil && app.Release.Name != "":
 		return "registry " + app.Release.Name + "@" + app.Release.Version
-	case app.Overlay != "":
-		return "source " + app.Overlay[:len("sha256:")+12]
+	case app.Source:
+		return "source"
 	}
 	repository, digest, _ := strings.Cut(app.Image, "@sha256:")
 	return "image " + repository + "@sha256:" + digest[:12]

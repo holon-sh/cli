@@ -296,7 +296,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		})
 	})
 	h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
-		var input protocol.AppsRequestFor[protocol.App]
+		var input protocol.AppsRequest
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Error(err)
 		}
@@ -323,9 +323,6 @@ func TestRunDevLifecycle(t *testing.T) {
 		mu.Unlock()
 		installationtest.WriteJSON(w, reloadAppResult{})
 	})
-	h.control.Handle([]string{toolRecordAppSource}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, struct{}{})
-	})
 	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession},
 		map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
 			installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
@@ -333,7 +330,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			defer mu.Unlock()
 			switch tool := installationtest.ToolName(r); {
 			case tool == protocol.ToolUpdateSession:
-				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
+				var input protocol.UpdateSessionRequest
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 					t.Error(err)
 				}
@@ -522,7 +519,7 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 			h.control.Handle([]string{protocol.ToolCreateSession, protocol.ToolGetSession}, nil, func(w http.ResponseWriter, r *http.Request) {
 				switch installationtest.ToolName(r) {
 				case protocol.ToolCreateSession:
-					var input protocol.AppsRequestFor[protocol.App]
+					var input protocol.AppsRequest
 					if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 						t.Error(err)
 					}
@@ -585,7 +582,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var existing bool
-	var desired protocol.AppsRequestFor[protocol.App]
+	var desired protocol.AppsRequest
 	var written []protocol.App
 	var forceConflict, loseResponse bool
 	var rolloutFailure string
@@ -646,7 +643,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 					Conditions: conditions,
 				})
 			case protocol.ToolUpdateSession:
-				var input protocol.UpdateSessionRequestFor[protocol.AppsRequestFor[protocol.App]]
+				var input protocol.UpdateSessionRequest
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 					t.Error(err)
 					return
@@ -694,7 +691,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	mu.Lock()
 	initial := slices.Clone(desired.Apps)
 	mu.Unlock()
-	if slices.ContainsFunc(initial, func(app protocol.App) bool { return app.Overlay != "" }) {
+	if slices.ContainsFunc(initial, func(app protocol.App) bool { return app.Source }) {
 		t.Fatalf("deploy carries an overlay: %+v", initial)
 	}
 	if strings.Contains(diagnostics.String(), "fixture build output") ||
@@ -753,7 +750,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	for _, scenario := range []string{"disjoint update", "lost accepted response"} {
 		t.Run(scenario, func(t *testing.T) {
 			mu.Lock()
-			desired = protocol.AppsRequestFor[protocol.App]{Apps: slices.Clone(initial)}
+			desired = protocol.AppsRequest{Apps: slices.Clone(initial)}
 			existing, rolloutFailure = true, ""
 			forceConflict = scenario == "disjoint update"
 			loseResponse = scenario == "lost accepted response"

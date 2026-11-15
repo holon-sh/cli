@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -113,20 +112,20 @@ func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec
 
 func uploadManifest(
 	ctx context.Context, manager *Client, name string, resolved manifestSpec, options buildOptions,
-) (protocol.AppsRequestFor[protocol.App], error) {
+) (protocol.AppsRequest, error) {
 	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options)
 	if err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, err
+		return protocol.AppsRequest{}, err
 	}
 	defer cleanup()
 	built, err := buildManifestImages(ctx, manager, name, prepared, options)
 	if err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, err
+		return protocol.AppsRequest{}, err
 	}
 	if err := currentTypeSources(prepared); err != nil {
-		return protocol.AppsRequestFor[protocol.App]{}, err
+		return protocol.AppsRequest{}, err
 	}
-	return protocol.AppsRequestFor[protocol.App]{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
+	return protocol.AppsRequest{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
 }
 
 func imageDestination(ctx context.Context, manager *Client, name string, manifest manifestSpec) (protocol.UploadGrant, error) {
@@ -176,21 +175,16 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		sent: map[string]string{}, background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{},
 	}
 	defer dev.records.Wait()
-	first := options
 	if config.devTTLSeconds == nil {
 		dev.session = previousSession(ctx, manager, recordPath)
 		dev.name = dev.session.Name
-		first.overlays = recordedSources(dev.session.Apps)
-		if _, err = dev.served(ctx, first.overlays); err == nil {
-			dev.sent = maps.Clone(first.overlays)
-		}
 	}
 	if dev.name != "" {
 		if err := printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps); err != nil {
 			return err
 		}
 	}
-	request, err := uploadManifest(ctx, manager, "", resolved, first)
+	request, err := uploadManifest(ctx, manager, "", resolved, options)
 	if err != nil {
 		return err
 	}

@@ -23,6 +23,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	testingclock "k8s.io/utils/clock/testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
@@ -51,23 +52,21 @@ type reloadFixture struct {
 	start    func(args ...string)
 	stop     func() error
 
-	mu         sync.Mutex
-	ready      bool
-	failNext   bool
-	refusal    string
-	failSave   bool
-	unserved   bool
-	unrecorded bool
-	creates    int
-	started    string
-	uploaded   int
-	served     []protocol.App
-	revision   int
-	changed    chan struct{}
-	reads      []string
-	reloads    []sentSource
-	recorded   []string
+	mu       sync.Mutex
+	ready    bool
+	failNext bool
+	refusal  string
+	failSave bool
+	unsaved  bool
+	creates  int
+	served   []protocol.App
+	revision int
+	changed  chan struct{}
+	reads    []string
+	reloads  []sentSource
 }
+
+const sessionUID = "5b0c2f1e-7d4a-4c8e-9a61-2f3b8e0d4c71"
 
 type sentSource struct {
 	Session, App, Digest string
@@ -104,17 +103,21 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	for _, more := range files {
 		sourceFiles(t, f.root, more)
 	}
-	var registry *httptest.Server
-	f.registry, registry = buildRegistry(t)
-	h := newRunHarness(t)
-	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, _ *http.Request) {
+	f.registry = newImageRegistry()
+	registry := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		unserved := f.unserved
+		unsaved := f.unsaved
 		f.mu.Unlock()
-		if unserved {
-			w.WriteHeader(http.StatusServiceUnavailable)
+		if unsaved && strings.HasSuffix(r.URL.Path, "/manifests/"+sessionUID) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			<-r.Context().Done()
 			return
 		}
+		f.registry.ServeHTTP(w, r)
+	}))
+	t.Cleanup(registry.Close)
+	h := newRunHarness(t)
+	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, json.RawMessage(servedContract))
 	})
 	f.files = &h.files
@@ -125,6 +128,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	})
 	session := func() map[string]any {
 		response := apiSession("alpha")
+		response["uid"] = sessionUID
 		response["apps"], response["revision"] = f.served, strconv.Itoa(f.revision)
 		if !f.ready {
 			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
@@ -149,7 +153,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			switch installationtest.ToolName(r) {
 			case protocol.ToolCreateSession:
 				f.creates++
-				f.served, f.started, f.uploaded = input.Apps, input.Apps[0].Overlay, f.uploads()
+				f.served = input.Apps
 			case protocol.ToolUpdateSession:
 				if f.failSave {
 					f.failSave = false
@@ -198,28 +202,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			f.refusal = ""
 			return
 		}
-		f.unserved = false
 		installationtest.WriteJSON(w, reloadAppResult{Output: installed})
-	})
-	h.control.Handle([]string{toolRecordAppSource}, nil, func(w http.ResponseWriter, r *http.Request) {
-		var input recordAppSourceRequest
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
-		}
-		f.mu.Lock()
-		unrecorded := f.unrecorded
-		f.mu.Unlock()
-		if unrecorded {
-			<-r.Context().Done()
-			installationtest.WriteJSON(w, struct{}{})
-			return
-		}
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		f.served[slices.IndexFunc(f.served, func(app protocol.App) bool { return app.Name == input.App })].Overlay = input.Digest
-		f.recorded = append(f.recorded, input.Digest)
-		f.moved()
-		installationtest.WriteJSON(w, struct{}{})
 	})
 	h.start(t, nil)
 	fc := testingclock.NewFakeClock(time.Now())
@@ -291,7 +274,7 @@ func TestDevSaves(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		failReload bool
-		unrecorded bool
+		unsaved    bool
 		saves      []map[string]string
 		lines      []string
 		reloads    int
@@ -307,7 +290,7 @@ func TestDevSaves(t *testing.T) {
 			lines: []string{"alpha failed", "alpha ready"}, reloads: 2,
 		},
 		{
-			name: "a source the session has not recorded within a minute is reported, and one a newer save replaced is not", unrecorded: true,
+			name: "a source not saved within a minute is reported, and one a newer save replaced is not", unsaved: true,
 			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "third"}},
 			lines: []string{"alpha ready in", "alpha serves this save, but a restart loses it: no answer within a minute"}, reloads: 2,
 		},
@@ -315,7 +298,7 @@ func TestDevSaves(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true)
 			started := len(f.reloadRequests())
-			f.update(func() { f.failNext, f.unrecorded = test.failReload, test.unrecorded })
+			f.update(func() { f.failNext, f.unsaved = test.failReload, test.unsaved })
 			for i, files := range test.saves {
 				f.save(files, test.lines[i])
 			}
@@ -339,22 +322,14 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 		uploads int
 		apps    []string
 	}{
-		{name: "unchanged source is neither sent nor uploaded", creates: 1},
+		{name: "an unchanged source is sent and uploaded once", creates: 1, reloads: 1, uploads: 1},
 		{
-			name: "server source edited since reloads into the session", edit: map[string]string{"alpha/tools.py": "second"},
-			creates: 1, reloads: 1, uploads: 1,
-		},
-		{
-			name: "a reload that fails is neither reported ready nor uploaded", edit: map[string]string{"alpha/tools.py": "second"}, creates: 1, reloads: 1,
+			name: "a reload that fails is neither reported ready nor uploaded", creates: 1, reloads: 1,
 			between: func(_ *testing.T, f *reloadFixture) { f.failNext = true },
 		},
 		{
-			name: "an app that never started is sent its source", creates: 1, reloads: 1, uploads: 1,
-			between: func(_ *testing.T, f *reloadFixture) { f.unserved = true },
-		},
-		{
 			name: "an app added to the project since joins the session", edit: map[string]string{manifestFileName: alphaManifest + betaRemote},
-			creates: 1, apps: []string{"beta"},
+			creates: 1, reloads: 1, uploads: 1, apps: []string{"beta"},
 		},
 		{
 			name: "the same apps from another directory start their own session", creates: 2, reloads: 1, uploads: 1,
@@ -395,12 +370,6 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			}
 			if names := f.apps(); !slices.Equal(names, append([]string{"alpha"}, test.apps...)) {
 				t.Fatalf("session apps = %v", names)
-			}
-			f.mu.Lock()
-			recorded := f.served[slices.IndexFunc(f.served, func(app protocol.App) bool { return app.Name == "alpha" })].Overlay
-			f.mu.Unlock()
-			if f.blob(recorded) == nil {
-				t.Fatalf("the session names source %s, which the registry does not hold", recorded)
 			}
 			failed := strings.Contains(f.stderr.String(), "alpha failed")
 			if failed == strings.Contains(f.stderr.String(), "alpha ready") || failed == strings.Contains(f.stdout.String(), "\nReady\n") {
@@ -460,29 +429,26 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	f.mu.Lock()
 	app := f.served[0]
 	f.mu.Unlock()
-	if app.Image != "" || app.Port != 0 {
+	if app.Image != "" || app.Port != 0 || !app.Source {
 		t.Fatalf("session app = %+v", app)
 	}
-	if first, overlay := f.reloadRequests()[0], f.overlay(t, f.started); first.Digest != f.started ||
-		!strings.Contains(string(overlay["server.py"]), "app = None") {
-		t.Fatalf("the session was created from %s and first sent %s", f.started, first.Digest)
-	}
-	if f.uploaded != 0 {
-		t.Fatalf("uploads before the session existed = %d", f.uploaded)
+	if overlay := overlayEntries(t, f.reloadRequests()[0].body); !strings.Contains(string(overlay["server.py"]), "app = None") {
+		t.Fatalf("first overlay entries = %v", overlay)
 	}
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha ready")
 	request := f.reloadRequests()[1]
 	if request.Session != "gentle-otter-482" || request.App != "alpha" {
 		t.Fatalf("source sent to %s %s", request.Session, request.App)
 	}
-	f.await(func() bool {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		return slices.Contains(f.recorded, request.Digest)
-	})
-	entries := f.overlay(t, request.Digest)
-	if !bytes.Equal(request.body, f.blob(request.Digest)) || string(entries["tools.py"]) != "second" {
-		t.Fatalf("overlay entries = %v", entries)
+	if err := f.stop(); err != nil {
+		t.Fatal(err)
+	}
+	var tagged ocispec.Manifest
+	err := json.Unmarshal(f.item("manifests/"+sessionUID), &tagged)
+	if err != nil || tagged.ArtifactType != runtimecontract.OverlayMediaType || len(tagged.Layers) != 1 ||
+		tagged.Layers[0].Digest.String() != request.Digest || !bytes.Equal(f.item("blobs/"+request.Digest), request.body) ||
+		string(overlayEntries(t, request.body)["tools.py"]) != "second" {
+		t.Fatalf("the session's tag names %+v, want %s: %v", tagged.Layers, request.Digest, err)
 	}
 }
 
@@ -546,21 +512,15 @@ func (f *reloadFixture) uploads() int {
 	return len(f.registry.uploads)
 }
 
-func (f *reloadFixture) blob(digest string) []byte {
+func (f *reloadFixture) item(name string) []byte {
 	f.registry.mu.Lock()
 	defer f.registry.mu.Unlock()
-	return f.registry.items["holon/upload/alpha/blobs/"+digest].data
+	return f.registry.items["holon/upload/alpha/"+name].data
 }
 
-func (f *reloadFixture) overlay(t *testing.T, digest string) map[string][]byte {
+func overlayEntries(t *testing.T, overlay []byte) map[string][]byte {
 	t.Helper()
-	blob := f.blob(digest)
-	for _, sent := range f.reloadRequests() {
-		if sent.Digest == digest {
-			blob = sent.body
-		}
-	}
-	decoder, err := zstd.NewReader(bytes.NewReader(blob))
+	decoder, err := zstd.NewReader(bytes.NewReader(overlay))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -633,7 +593,7 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 			var sends []send
 			for _, reload := range f.reloadRequests() {
 				if reload.App == test.app {
-					overlay := f.overlay(t, reload.Digest)
+					overlay := overlayEntries(t, reload.body)
 					var plan runtimecontract.Plan
 					_ = json.Unmarshal(overlay[runtimecontract.PlanFile], &plan)
 					sends = append(sends, send{clients: strings.Contains(string(overlay[test.client]), "lookup"), page: plan.Prepare != nil})
