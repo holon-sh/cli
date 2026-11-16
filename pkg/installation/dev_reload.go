@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path"
@@ -22,7 +23,7 @@ import (
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 
-	"github.com/holon-sh/cli/internal/kiln"
+	"github.com/holon-sh/cli/pkg/recipe"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
@@ -223,13 +224,10 @@ func packSource(ctx context.Context, app manifestApp, root string, accepted *pre
 	if err != nil {
 		return packedSource{}, err
 	}
-	plan, err := kiln.Development(ctx, root, serveCommand(entry))
+	// A page is built once the clients it may import are in the source.
+	plan, err := overlayPlan(root, entry, accepted != nil && !accepted.unserved)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
-	}
-	// A page is built once the clients it may import are in the source.
-	if accepted == nil || accepted.unserved {
-		plan.Prepare = nil
 	}
 	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.PlanFile)), 0o755); err != nil {
 		return packedSource{}, err
@@ -271,6 +269,27 @@ func devEntry(app manifestApp, root string) (string, error) {
 		err = fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
 	return entry, err
+}
+
+func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
+	source := os.DirFS(root)
+	steps, err := recipe.Read(source)
+	if err != nil {
+		return runtimecontract.Plan{}, err
+	}
+	inputs := digest.SHA256.Digester()
+	for _, name := range steps.Inputs {
+		data, err := fs.ReadFile(source, name)
+		if err != nil {
+			return runtimecontract.Plan{}, err
+		}
+		_, _ = fmt.Fprintf(inputs.Hash(), "%s\x00%d\x00%s", name, len(data), data)
+	}
+	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: inputs.Digest().String(), Commands: steps.Install}, Start: recipe.Start(entry)}
+	if page {
+		plan.Prepare = steps.Build
+	}
+	return plan, nil
 }
 
 func (p packedSource) publish(ctx context.Context, app, session string) error {

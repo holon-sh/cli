@@ -1,5 +1,3 @@
-//go:build kiln
-
 package installation
 
 import (
@@ -8,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	testingclock "k8s.io/utils/clock/testing"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
@@ -569,6 +570,59 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 		string(overlayEntries(t, request.body)["tools.py"]) != "second" {
 		t.Fatalf("the session's tag names %+v, want %s: %v", tagged.Layers, request.Digest, err)
 	}
+}
+
+func TestOverlayPlan(t *testing.T) {
+	build := `{"scripts":{"build":"vite build"}}`
+	python := map[string]string{"pyproject.toml": "", "uv.lock": "", "package.json": build, "pnpm-lock.yaml": ""}
+	serve := []string{".venv/bin/python", "-m", "holon.serve", "src/server.py"}
+	for _, test := range []struct {
+		name, entry string
+		files       map[string]string
+		page        bool
+		want        runtimecontract.Plan
+	}{
+		{"a Node app whose page waits for its clients", "src/server.ts", map[string]string{"package.json": build, "package-lock.json": ""}, false, runtimecontract.Plan{
+			Install: runtimecontract.Install{Commands: [][]string{{"npm", "install"}}}, Start: []string{"node_modules/.bin/holon-serve", "src/server.ts"},
+		}},
+		{"a Python app with a page", "src/server.py", python, true, runtimecontract.Plan{
+			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}}, Prepare: [][]string{{"pnpm", "run", "build"}}, Start: serve,
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			testfiles.Write(t, root, test.files)
+			plan, err := overlayPlan(root, test.entry, test.page)
+			plan.Install.Inputs = ""
+			if err != nil || !reflect.DeepEqual(plan, test.want) {
+				t.Fatalf("plan = %+v, want %+v: %v", plan, test.want, err)
+			}
+		})
+	}
+	t.Run("the install's inputs change with what it installs from", func(t *testing.T) {
+		root := t.TempDir()
+		files := map[string]string{"server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "", "package.json": build, "package-lock.json": ""}
+		testfiles.Write(t, root, files)
+		install := func(page bool) runtimecontract.Install {
+			plan, err := overlayPlan(root, "server.py", page)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return plan.Install
+		}
+		last := install(false)
+		if !reflect.DeepEqual(install(true), last) {
+			t.Fatal("building the page changed the install")
+		}
+		for _, name := range slices.Sorted(maps.Keys(files)) {
+			testfiles.Write(t, root, map[string]string{name: files[name] + "\n"})
+			if next := install(true); (next.Inputs != last.Inputs) != (name != "server.py") {
+				t.Fatalf("changing %s changed the install's inputs: %t", name, next.Inputs != last.Inputs)
+			} else {
+				last = next
+			}
+		}
+	})
 }
 
 func (f *reloadFixture) uploads() int {
