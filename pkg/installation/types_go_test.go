@@ -59,4 +59,14 @@ func main() {
 	if err != nil || !strings.Contains(string(clients), `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(string(clients), " GetOrder(") {
 		t.Fatalf("the app's Go clients in its image: %v\n%s", err, clients)
 	}
+	options.plane = protocol.DevPlane
+	_, cleanupDev, err := prepareManifestTypes(t.Context(), manifest, options, map[string]json.RawMessage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupDev()
+	clients, err = os.ReadFile(filepath.Join(root, "holon", "clients.go"))
+	if err != nil || !strings.Contains(string(clients), `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(string(clients), " GetOrder(") {
+		t.Fatalf("the app's Go clients in its source: %v\n%s", err, clients)
+	}
 }
