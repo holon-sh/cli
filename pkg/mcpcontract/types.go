@@ -51,6 +51,16 @@ type Contract struct {
 	Events    []Event    `json:"events,omitempty"`
 }
 
+// MarshalJSON writes "tools" as an array even when there are none, as the v1
+// contract document requires.
+func (c Contract) MarshalJSON() ([]byte, error) {
+	type wire Contract
+	if c.Tools == nil {
+		c.Tools = []Tool{}
+	}
+	return json.Marshal(wire(c))
+}
+
 type Identity struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
