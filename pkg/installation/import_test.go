@@ -38,10 +38,10 @@ func registryPackageManifest(t *testing.T, registryType string) manifestSpec {
 	app.resolved.descriptor = &mcpregistry.Descriptor{
 		Name: app.Registry.Name, Version: app.Registry.Version, Description: "Echo tools", Packages: []mcpregistry.Package{{
 			RegistryType: registryType, Identifier: "echo", Version: "1.2.3", Transport: mcpregistry.Transport{Type: "stdio"},
-			Environment: []json.RawMessage{json.RawMessage(`{"name":"API_TOKEN","isSecret":true,"isRequired":true}`)},
-			PackageArguments: []json.RawMessage{
-				json.RawMessage(`{"type":"named","name":"--workspace","isRequired":true}`),
-				json.RawMessage(`{"type":"named","name":"--api-key","isRequired":true,"isSecret":true}`),
+			Environment: []mcpregistry.DescriptorInput{{Name: "API_TOKEN", InputFields: mcpregistry.InputFields{IsSecret: true, IsRequired: true}}},
+			PackageArguments: []mcpregistry.DescriptorInput{
+				{Type: "named", Name: "--workspace", InputFields: mcpregistry.InputFields{IsRequired: true}},
+				{Type: "named", Name: "--api-key", InputFields: mcpregistry.InputFields{IsRequired: true, IsSecret: true}},
 			},
 		}},
 	}

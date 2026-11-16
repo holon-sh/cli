@@ -2,7 +2,6 @@ package mcpregistry
 
 import (
 	"cmp"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -21,15 +20,14 @@ type RunConfig struct {
 	Env  map[string]Value
 }
 
-// SelectPackage returns the index of the one OCI, npm or PyPI package in d that matches selection,
+// SelectPackage returns the one OCI, npm or PyPI package in d that matches selection,
 // whose empty fields match any package.
-func SelectPackage(d *Descriptor, selection protocol.PackageSelection) (int, error) {
-	index, count := -1, 0
-	for i, pkg := range d.Packages {
+func SelectPackage(d *Descriptor, selection protocol.PackageSelection) (Package, error) {
+	var matches []Package
+	for _, pkg := range d.Packages {
 		if slices.Contains([]string{"oci", "npm", "pypi"}, pkg.RegistryType) && (selection.RegistryType == "" || selection.RegistryType == pkg.RegistryType) &&
 			(selection.Identifier == "" || selection.Identifier == pkg.Identifier) {
-			index = i
-			count++
+			matches = append(matches, pkg)
 		}
 	}
 	var remotes []string
@@ -39,53 +37,39 @@ func SelectPackage(d *Descriptor, selection protocol.PackageSelection) (int, err
 		}
 	}
 	switch {
-	case count > 1:
-		return -1, errors.New("ambiguous package; select one with registry.package and its published identifier")
-	case count == 0 && len(remotes) != 0:
-		return -1, fmt.Errorf("server publishes no matching OCI, npm or PyPI package; for its remote endpoint, declare the app with remote.url %s", strings.Join(remotes, " or "))
-	case count == 0:
-		return -1, errors.New("server publishes no matching OCI, npm or PyPI package")
+	case len(matches) > 1:
+		return Package{}, errors.New("ambiguous package; select one with registry.package and its published identifier")
+	case len(matches) == 0 && len(remotes) != 0:
+		return Package{}, fmt.Errorf("server publishes no matching OCI, npm or PyPI package; for its remote endpoint, declare the app with remote.url %s", strings.Join(remotes, " or "))
+	case len(matches) == 0:
+		return Package{}, errors.New("server publishes no matching OCI, npm or PyPI package")
 	}
-	return index, nil
+	return matches[0], nil
 }
 
 func (p Package) environmentInputs() (map[string]protocol.Input, map[string]string, error) {
 	inputs, templates := map[string]protocol.Input{}, map[string]string{}
-	set := func(name string, input protocol.Input, variables map[string]protocol.Input) error {
-		if err := mergeInputs(inputs, variables); err != nil {
-			return err
-		}
-		if variables == nil {
-			return mergeInput(inputs, name, input)
-		}
-		templates[name] = *input.Value
-		return validEnvironmentName(name)
-	}
-	for _, raw := range p.Environment {
-		spec, input, variables, err := ParseInput(raw)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := set(spec.Name, input, variables); err != nil {
-			return nil, nil, err
-		}
-	}
-	if slices.Contains([]string{"npm", "pypi"}, p.RegistryType) {
-		return inputs, templates, nil
-	}
-	for _, raw := range p.RuntimeArguments {
-		var spec DescriptorInput
-		err := json.Unmarshal(raw, &spec)
+	specs := slices.Clone(p.Environment)
+	for _, spec := range p.RuntimeArguments {
 		name, value, assigns := strings.Cut(ptr.Deref(spec.Value, ""), "=")
-		if err != nil || spec.Name != "-e" && spec.Name != "--env" || !assigns {
-			continue
+		if (spec.Name == "-e" || spec.Name == "--env") && assigns && !slices.Contains([]string{"npm", "pypi"}, p.RegistryType) {
+			specs = append(specs, DescriptorInput{
+				InputFields: InputFields{Value: &value, IsRequired: spec.IsRequired}, Name: name, Variables: spec.Variables,
+			})
 		}
-		assigned := DescriptorInput{
-			InputFields: InputFields{Value: &value, IsRequired: spec.IsRequired}, Variables: spec.Variables,
-		}
-		input, variables, err := assigned.Parse()
+	}
+	for _, spec := range specs {
+		input, variables, err := spec.Parse()
 		if err == nil {
-			err = set(name, input, variables)
+			err = MergeInputs(inputs, variables)
+		}
+		switch {
+		case err != nil:
+		case variables == nil:
+			err = mergeInput(inputs, spec.Name, input)
+		default:
+			templates[spec.Name] = *input.Value
+			err = validEnvironmentName(spec.Name)
 		}
 		if err != nil {
 			return nil, nil, err
@@ -94,17 +78,10 @@ func (p Package) environmentInputs() (map[string]protocol.Input, map[string]stri
 	return inputs, templates, nil
 }
 
-func (p Package) ValidateTransport() error {
-	if _, err := p.Port(); err != nil {
-		return err
-	}
-	if len(p.Transport.Headers) != 0 {
-		return errors.New("package HTTP headers are unsupported")
-	}
-	return nil
-}
-
 func (p Package) Port() (int, error) {
+	if len(p.Transport.Headers) != 0 {
+		return 0, errors.New("package HTTP headers are unsupported")
+	}
 	if p.Transport.Type == "stdio" {
 		return 3000, nil
 	}
@@ -121,10 +98,9 @@ func (p Package) Port() (int, error) {
 }
 
 func (p Package) publishedValue(name string) (string, bool) {
-	for _, raw := range slices.Concat(p.Environment, p.PackageArguments) {
-		spec, input, _, _ := ParseInput(raw)
+	for _, spec := range slices.Concat(p.Environment, p.PackageArguments) {
 		if spec.Name == name || spec.ValueHint == name {
-			value := cmp.Or(input.Value, input.Default)
+			value := cmp.Or(spec.Value, spec.Default)
 			return ptr.Deref(value, ""), value != nil
 		}
 	}
@@ -138,10 +114,10 @@ func (p Package) App(values map[string]Value, run RunConfig) (protocol.App, erro
 	}
 	args := []protocol.Template{}
 	used := map[string]bool{}
-	for index, raw := range p.PackageArguments {
-		spec, input, variables, err := ParseInput(raw)
+	for index, spec := range p.PackageArguments {
+		input, variables, err := spec.Parse()
 		if err == nil {
-			err = mergeInputs(env, variables)
+			err = MergeInputs(env, variables)
 		}
 		if err != nil {
 			return protocol.App{}, err
@@ -169,9 +145,7 @@ func (p Package) App(values map[string]Value, run RunConfig) (protocol.App, erro
 			}
 			used[id] = true
 			input.IsRequired = input.IsRequired || separate || spec.Type == "positional" && index != len(p.PackageArguments)-1
-			if err := mergeInput(env, key, input); err != nil {
-				return protocol.App{}, fmt.Errorf("argument %s: %w", id, err)
-			}
+			env[key] = input
 			if bound, supplied := values[id]; supplied {
 				switch {
 				case bound.Value != nil && input.IsSecret:

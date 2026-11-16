@@ -138,18 +138,17 @@ func resolveApp(app *manifestApp) error {
 		if app.Registry != nil {
 			selection = ptr.Deref(app.Registry.Package, protocol.PackageSelection{})
 		}
-		index, err := mcpregistry.SelectPackage(d, selection)
-		if err != nil {
+		var err error
+		if pkg, err = mcpregistry.SelectPackage(d, selection); err != nil {
 			return err
 		}
-		pkg = d.Packages[index]
 		if app.Run != nil {
 			pkg = mcpregistry.Package{
 				RegistryType: pkg.RegistryType, Identifier: pkg.Identifier,
 				Transport: mcpregistry.Transport{Type: app.Run.Transport.Type, URL: app.Run.Transport.URL},
 			}
 		}
-		if err := pkg.ValidateTransport(); err != nil {
+		if _, err = pkg.Port(); err != nil {
 			return err
 		}
 	}
