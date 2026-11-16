@@ -87,9 +87,10 @@ func (o *progressOutput) working(app string) {
 
 func (o *progressOutput) ready(app string) {
 	o.mu.Lock()
-	elapsed := o.clock.Since(o.started[app]).Seconds()
-	o.mu.Unlock()
-	o.status(app, fmt.Sprintf("ready in %.1f s", elapsed), progressDone)
+	defer o.mu.Unlock()
+	if o.statuses[app].State != progressError {
+		o.show(app, fmt.Sprintf("ready in %.1f s", o.clock.Since(o.started[app]).Seconds()), progressDone)
+	}
 }
 
 func (o *progressOutput) failed(app, reason string) {
@@ -103,7 +104,7 @@ func (o *progressOutput) removed(app string) {
 func (o *progressOutput) unrecorded(app string, cause error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.statuses[app].State == progressDone {
+	if o.statuses[app].State != progressError {
 		o.show(app, fmt.Sprintf("serves this save, but a restart loses it: %v", cause), progressError)
 	}
 }

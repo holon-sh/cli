@@ -137,7 +137,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
 		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 		grant := buildGrant(registry)
-		grant.Repositories["beta"] = "holon/upload/beta"
+		grant.Repositories["beta"], grant.Repositories["gamma"] = "holon/upload/beta", "holon/upload/gamma"
 		installationtest.WriteJSON(w, grant)
 	})
 	session := func() map[string]any {
