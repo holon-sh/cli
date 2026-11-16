@@ -182,12 +182,6 @@ func newRunHarness(t *testing.T) *runHarness {
 
 const servedContract = `{"serverInfo":{"name":"example.com/alpha","version":"1","description":"alpha"},"capabilities":{"tools":{}},"lists":{"tools/list":{"pages":[{"tools":[{"name":"lookup","inputSchema":{"type":"object"}}]}]}}}`
 
-func (h *runHarness) serveContract() {
-	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, json.RawMessage(servedContract))
-	})
-}
-
 func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
 	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {

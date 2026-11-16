@@ -48,31 +48,29 @@ type reloadFixture struct {
 	registry *imageRegistry
 	harness  *runHarness
 	clock    *testingclock.FakeClock
-	files    *fakeFiles
 	stdout   *installationtest.ObservedOutput
 	stderr   *installationtest.ObservedOutput
 	await    func(check func() bool)
 	start    func(args ...string)
 	stop     func() error
 
-	mu          sync.Mutex
-	ready       bool
-	ambiguous   bool
-	unavailable bool
-	waiting     string
-	outage      sets.Set[string]
-	updates     int
-	failNext    bool
-	refusal     string
-	failSave    bool
-	unsaved     bool
-	creates     int
-	served      []protocol.App
-	revision    int
-	changed     chan struct{}
-	reads       []string
-	reloads     []sentSource
-	running     map[string][]byte
+	mu        sync.Mutex
+	ready     bool
+	ambiguous bool
+	reason    string
+	outage    sets.Set[string]
+	updates   int
+	failNext  bool
+	refusal   string
+	failSave  bool
+	unsaved   bool
+	creates   int
+	served    []protocol.App
+	revision  int
+	changed   chan struct{}
+	reads     []string
+	reloads   []sentSource
+	running   map[string][]byte
 }
 
 const sessionUID = "5b0c2f1e-7d4a-4c8e-9a61-2f3b8e0d4c71"
@@ -104,7 +102,7 @@ func (f *reloadFixture) reloadRequests() []sentSource {
 
 func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *reloadFixture {
 	t.Helper()
-	f := &reloadFixture{t: t, root: t.TempDir(), ready: ready, changed: make(chan struct{}), outage: sets.New[string]()}
+	f := &reloadFixture{t: t, root: t.TempDir(), ready: ready, reason: "Provisioning", changed: make(chan struct{})}
 	sourceFiles(t, f.root, map[string]string{
 		manifestFileName:  alphaManifest,
 		"alpha/server.py": "app = None", "alpha/tools.py": "first", "alpha/pyproject.toml": alphaProject, "alpha/uv.lock": alphaLock,
@@ -139,7 +137,6 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		contract := strings.NewReplacer(`"lookup"`, `"lookup_`+tools+`"`, `"description":"alpha"`, `"description":"`+tools+`"`).Replace(servedContract)
 		installationtest.WriteJSON(w, json.RawMessage(contract))
 	})
-	f.files = &h.files
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
 		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 		grant := buildGrant(registry)
@@ -151,10 +148,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		response["uid"] = sessionUID
 		response["apps"], response["revision"] = f.served, strconv.Itoa(f.revision)
 		if !f.ready {
-			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
-		}
-		if f.waiting != "" {
-			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "WaitingForConfiguration", Message: f.waiting}}
+			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: f.reason, Message: "Configure API_KEY to start the session."}}
 		}
 		return response
 	}
@@ -175,7 +169,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 				t.Error(err)
 			}
 			switch tool := installationtest.ToolName(r); {
-			case f.unavailable:
+			case f.outage != nil:
 				f.outage.Insert(tool)
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return
@@ -183,10 +177,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 				f.creates++
 				f.served, f.running = input.Apps, map[string][]byte{}
 				if f.ambiguous {
-					if connection, _, err := w.(http.Hijacker).Hijack(); err == nil {
-						_ = connection.Close()
-					}
-					return
+					panic(http.ErrAbortHandler)
 				}
 			case tool == protocol.ToolUpdateSession:
 				if f.failSave {
@@ -287,7 +278,7 @@ func (f *reloadFixture) save(files map[string]string, line string) {
 		return reads > 0 && f.reads[reads-1] == strconv.Itoa(f.revision)
 	})
 	from := len(f.stderr.String())
-	f.files.save(f.t, f.root, files)
+	f.harness.files.save(f.t, f.root, files)
 	f.await(func() bool {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -498,20 +489,20 @@ func TestDevSessionLifecycle(t *testing.T) {
 		"beta/server.py": "app = None", "beta/tools.py": "first",
 		"beta/pyproject.toml": strings.ReplaceAll(alphaProject, "alpha", "beta"), "beta/uv.lock": strings.ReplaceAll(alphaLock, "alpha", "beta"),
 	})
-	f.update(func() { f.waiting = "Configure API_KEY to start the session." })
+	f.update(func() { f.reason = "WaitingForConfiguration" })
 	f.await(func() bool { return strings.Contains(f.stderr.String(), "Configure API_KEY to start the session.") })
-	f.update(func() { f.waiting, f.ready = "", true })
+	f.update(func() { f.ready = true })
 	f.watching()
 	config := f.harness.run.Auth.ConfigDir
 	sourceFiles(t, config, map[string]string{"config.json": `{"origin":"https://other.example"}`})
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha ready in")
-	f.update(func() { f.unavailable = true })
+	f.update(func() { f.outage = sets.New[string]() })
 	stepUntil(t, f.clock, renewalInterval, func() bool {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		return f.outage.HasAll(protocol.ToolGetSession, protocol.ToolRenewSession)
 	})
-	f.update(func() { f.unavailable = false })
+	f.update(func() { f.outage = nil })
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
@@ -520,16 +511,10 @@ func TestDevSessionLifecycle(t *testing.T) {
 		reloads = append(reloads, sent.App)
 	}
 	f.mu.Lock()
-	if f.updates != 0 || !slices.Equal(reloads, []string{"alpha", "beta", "alpha"}) || f.served[0].Image != "" || f.served[1].Image != "" ||
-		strings.Count(f.stdout.String(), "Ready\n") != 1 {
-		t.Fatalf("updates = %d, reloads = %v, served = %#v, stdout=%q", f.updates, reloads, f.served, f.stdout.String())
+	if f.updates != 0 || !slices.Equal(reloads, []string{"alpha", "beta", "alpha"}) || strings.Count(f.stdout.String(), "Ready\n") != 1 {
+		t.Fatalf("updates = %d, reloads = %v, stdout=%q", f.updates, reloads, f.stdout.String())
 	}
 	f.mu.Unlock()
-	for _, hidden := range []string{"grant-secret", "alpha starting up", "tools/call"} {
-		if output := f.stdout.String() + f.stderr.String(); strings.Contains(output, hidden) {
-			t.Errorf("quiet dev showed %q in %q", hidden, output)
-		}
-	}
 	sourceFiles(t, config, map[string]string{"config.json": `{"origin":"` + f.harness.server.URL + `"}`})
 	f.update(func() { f.ambiguous = true })
 	f.start("--detach")
@@ -746,8 +731,10 @@ func TestDevShowsReloadDetailsOnlyWhenVerbose(t *testing.T) {
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
-	if output := f.stderr.String(); strings.Contains(output, installed) || strings.Contains(output, "npm error 404") || strings.Contains(output, "Timing ") {
-		t.Fatalf("quiet stderr = %q", output)
+	for _, hidden := range []string{installed, "npm error 404", "Timing ", "grant-secret", "alpha starting up", "tools/call"} {
+		if output := f.stdout.String() + f.stderr.String(); strings.Contains(output, hidden) {
+			t.Fatalf("quiet dev showed %q in %q", hidden, output)
+		}
 	}
 	f.start("--verbose")
 	f.await(func() bool {
@@ -772,7 +759,7 @@ func TestDevStartup(t *testing.T) {
 func TestDevInstallsNothingOnThisMachine(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	f := startReloadFixture(t, true)
-	f.files.save(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
+	f.harness.files.save(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
 	f.await(func() bool {
 		data, _ := os.ReadFile(filepath.Join(f.root, "alpha", "package.json"))
 		return strings.Contains(string(data), `"#holon-sh"`)

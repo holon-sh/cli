@@ -397,7 +397,6 @@ func TestConcurrentAuthentication(t *testing.T) {
 		AccessToken: "expired", RefreshToken: "refresh-one",
 		TokenType: "Bearer", Expiry: time.Unix(1, 0),
 	})
-	first, second := newManager(t, server, dir), newManager(t, server, dir)
 	tokens := make(chan error, 2)
 	refresh := func(manager *Client) {
 		token, err := manager.controlToken(ctx)
@@ -406,19 +405,19 @@ func TestConcurrentAuthentication(t *testing.T) {
 		}
 		tokens <- err
 	}
-	go refresh(first)
+	go refresh(newManager(t, server, dir))
 	select {
 	case <-entered:
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
+	go refresh(newManager(t, server, dir))
 	other := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, map[string]any{"access_token": "other-access", "token_type": "Bearer", "refresh_token": "other-refresh", "expires_in": 3600})
 	})
 	if err := newManager(t, other, dir).loginInteractive(ctx); err != nil {
 		t.Fatalf("another remote's authentication was blocked: %v", err)
 	}
-	go refresh(second)
 	close(release)
 	for range 2 {
 		if err := <-tokens; err != nil {
