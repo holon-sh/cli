@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
@@ -23,7 +24,7 @@ func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
 	}
 	// A stand-in runtime prints the identity the generated module constructs its clients with.
 	root := t.TempDir()
-	writeFiles(t, root, map[string][]byte{
+	testfiles.Write(t, root, map[string][]byte{
 		"holon/apps/__init__.py": files["__init__.py"],
 		"holon/client.py":        []byte("import json\nclass Apps:\n    def __init__(self, identity, *rest):\n        print(json.dumps(identity))\ndef __getattr__(name):\n    return object\n"),
 	})
@@ -83,12 +84,9 @@ func TestPythonMethodsCallToolsNamedOtherwise(t *testing.T) {
 	if exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
 		t.Skip("mypy is not installed")
 	}
-	nested, err := os.ReadFile(filepath.Join("testdata", "nested-types.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	nested := testfiles.Read(t, "testdata", "nested-types.json")
 	files, err := generationCase{input: `{"target": "python", "identity": {"name": "checkout", "version": "1.0.0"}, "app": "checkout", "requires": {"orders": {"name": "orders", "version": "1.0.0"}},
-		"contracts": {"orders": ` + orderContract + `, "with-hyphen": ` + orderContract + `, "mysql": ` + string(nested) + `, "empty": {"tools": []}, "schemas": ` + kitchenSink + `}}`}.run(t)
+		"contracts": {"orders": ` + orderContract + `, "with-hyphen": ` + orderContract + `, "mysql": ` + nested + `, "empty": {"tools": []}, "schemas": ` + kitchenSink + `}}`}.run(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +97,7 @@ async def use(request: Inputs.schemas.runtime_run) -> Outputs.schemas.runtime_ru
     return await apps.schemas.tools.runtime_run(**request)
 `)
 	root := t.TempDir()
-	writeFiles(t, root, files)
+	testfiles.Write(t, root, files)
 	run := func(args ...string) string {
 		command := exec.CommandContext(t.Context(), python, args...)
 		command.Dir = root

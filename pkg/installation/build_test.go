@@ -17,6 +17,7 @@ import (
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/appartifact"
 	"github.com/holon-sh/protocol"
 )
@@ -89,18 +90,7 @@ func buildGrant(server *httptest.Server) protocol.UploadGrant {
 	return protocol.UploadGrant{Grant: "grant-secret", Registry: strings.TrimPrefix(server.URL, "https://"), Repositories: map[string]string{"alpha": "holon/upload/alpha"}}
 }
 
-func sourceFiles(t *testing.T, root string, files map[string]string) {
-	t.Helper()
-	for name, contents := range files {
-		path := filepath.Join(root, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
+var sourceFiles = testfiles.Write[string]
 
 const sourcePackage = `{"private":true,"engines":{"node":">=22.20.0 <23"}}`
 
