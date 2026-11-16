@@ -68,7 +68,16 @@ jobs:
           uv sync --project tooling/python
           echo "$PWD/tooling/python/.venv/bin" >> "$GITHUB_PATH"
       - run: npm ci --prefix tooling/typescript
-      - run: go test -trimpath -vet=all -tags="kiln${{ runner.os == 'Linux' && ',docker' || '' }}" ./...
+      - run: |
+          mkdir cover
+          go test -trimpath -tags=kiln,docker -skip '^TestDocker' -coverpkg=./... -coverprofile=cover/base.out ./...
+          for t in AutomaticTypes PythonTypedBuild SourceBuild SourceCacheIsolation TransportContract; do
+            go test -trimpath -tags=kiln,docker -run "^TestDocker$t\$" -coverpkg=./... -coverprofile="cover/$t.out" ./pkg/installation
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cover
+          path: cover
       - name: Build without Kiln, as go install does
         run: go vet -trimpath ./...
   test-package:
