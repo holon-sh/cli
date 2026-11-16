@@ -9,6 +9,7 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/cli/pkg/typegen"
 
 	"github.com/holon-sh/protocol"
 )
@@ -60,7 +61,7 @@ func main() {
 		t.Fatalf("the app's Go clients in its image: %v\n%s", err, clients)
 	}
 	options.plane = protocol.DevPlane
-	_, cleanupDev, err := prepareManifestTypes(t.Context(), manifest, options, map[string]json.RawMessage{})
+	_, cleanupDev, err := prepareManifestTypes(t.Context(), manifest, options, map[string]*typegen.Served{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -94,7 +94,7 @@ func consumer(dir string, servers []string, resolve bool) (typegen.Consumer, err
 	for _, arg := range servers {
 		source, err := typegen.ParseSource(arg)
 		path, isPath := source.Server.(typegen.Path)
-		own := isPath && clientutil.PathInside(string(path), dir)
+		own := isPath && clientutil.PathInside(path.Dir, dir)
 		switch {
 		case err != nil && source.Server == nil:
 			return typegen.Consumer{}, fmt.Errorf("%s: %w", arg, err)
@@ -123,8 +123,8 @@ func appConsumer(
 		return c, err
 	}
 	roots := []string{dir}
-	if c.Server != "" && string(c.Server) != dir {
-		roots = append(roots, string(c.Server))
+	if c.Server.Dir != "" && c.Server.Dir != dir {
+		roots = append(roots, c.Server.Dir)
 	}
 	for _, root := range roots {
 		requires, err := typegen.Requires(root)

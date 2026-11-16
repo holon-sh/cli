@@ -32,7 +32,7 @@ func liveServer(t *testing.T, name, version string, events bool) *httptest.Serve
 		options = &mcp.ServerOptions{Capabilities: &mcp.ServerCapabilities{}}
 		options.Capabilities.AddExtension(eventsExtension, nil)
 	}
-	server := mcp.NewServer(&mcp.Implementation{Name: name, Version: version}, options)
+	server := mcp.NewServer(&mcp.Implementation{Name: name, Version: version, Description: name}, options)
 	if options != nil {
 		pages := map[string]*listEventsResult{
 			"":  {Events: []mcpcontract.Event{{Name: "order.shipped", Input: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}}}`), Payload: json.RawMessage(`{"type":"string"}`)}}, NextCursor: "2"},
@@ -247,26 +247,5 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	}
 	if reference := prepared.Metadata()["app"].Requires["orders-live"]; prepared.Documents()[reference] == nil {
 		t.Fatalf("alias not derived from serverInfo: %+v", prepared.Metadata()["app"].Requires)
-	}
-}
-
-func TestServedContractIsWhatGenerationReads(t *testing.T) {
-	live := liveServer(t, "orders", "99", true)
-	t.Cleanup(live.Close)
-	served, err := ServedContract(t.Context(), live.URL, live.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	result := &extraction{}
-	if err := json.Unmarshal(served, result); err != nil {
-		t.Fatal(err)
-	}
-	contract, err := listCatalog(result.Capabilities, result.pages)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(result.ServerInfo) != `{"name":"orders","version":"99"}` || len(contract.Tools) != 1 || len(contract.Resources) != 2 ||
-		len(contract.Events) != 2 {
-		t.Fatalf("served %s: contract %+v", served, contract)
 	}
 }

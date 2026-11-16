@@ -46,7 +46,7 @@ func TestRequiredSources(t *testing.T) {
 			}
 			got := map[string]Source{}
 			for alias, requirement := range requires {
-				if got[alias], err = RequiredSource(alias, requirement, ""); err != nil {
+				if got[alias], err = RequiredSource(alias, requirement, Path{}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -55,7 +55,7 @@ func TestRequiredSources(t *testing.T) {
 			}
 		})
 	}
-	if _, err := RequiredSource("docs", mcpregistry.Requirement{}, ""); err == nil || !strings.Contains(err.Error(), "dependency docs has no server to read") {
+	if _, err := RequiredSource("docs", mcpregistry.Requirement{}, Path{}); err == nil || !strings.Contains(err.Error(), "dependency docs has no server to read") {
 		t.Fatalf("RequiredSource = %v, want the dependency named", err)
 	}
 }
@@ -76,7 +76,7 @@ func TestServerDescribesItself(t *testing.T) {
 			root := t.TempDir()
 			put(t, root, entry, source)
 			want := mcpcontract.Identity{Name: "example.com/checkout", Version: "1.2.3"}
-			document, err := ResolveDocument(t.Context(), Source{Server: Path(root)}, Options{})
+			document, err := ResolveDocument(t.Context(), Source{Server: Path{Dir: root}}, Options{})
 			if err != nil || document.Identity != want || len(document.Schema.Tools) != 1 || document.Schema.Tools[0].Name != "read" {
 				t.Fatalf("document = %+v, %v; want %+v with the tool read", document, err, want)
 			}
@@ -106,7 +106,7 @@ func TestAppConsumerFindsTheOwnServer(t *testing.T) {
 			}
 			var got string
 			if c != nil {
-				got, _ = filepath.Rel(dir, string(c.Server))
+				got, _ = filepath.Rel(dir, c.Server.Dir)
 			}
 			if got != test.want {
 				t.Fatalf("own server = %q, want %q", got, test.want)

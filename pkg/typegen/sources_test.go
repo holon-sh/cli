@@ -32,7 +32,7 @@ func TestResolveDocumentFindsServerSources(t *testing.T) {
 		{"odd/index.ts", "is not a server entry"},
 		{"missing", "no such file"},
 	} {
-		document, err := ResolveDocument(t.Context(), Source{Server: Path(filepath.Join(root, test.path))}, Options{})
+		document, err := ResolveDocument(t.Context(), Source{Server: Path{Dir: filepath.Join(root, test.path)}}, Options{})
 		if test.want != "" {
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Errorf("%s: %v, want %q", test.path, err, test.want)
@@ -118,7 +118,7 @@ func TestParseSource(t *testing.T) {
 		arg  string
 		want Source
 	}{
-		{arg: "orders=../orders/server.py", want: Source{Alias: "orders", Server: Path(filepath.Join(cwd, "../orders/server.py"))}},
+		{arg: "orders=../orders/server.py", want: Source{Alias: "orders", Server: Path{Dir: filepath.Join(cwd, "../orders/server.py")}}},
 		{arg: "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4", want: Source{Server: Registry{Name: "io.github.upstash/context7", Version: "4.4.4", Registry: "https://registry.modelcontextprotocol.io"}}},
 		{arg: "docs=https://registry.example/v0/servers/example.com%2Fdocs/versions/1.0.0", want: Source{Alias: "docs", Server: Registry{Name: "example.com/docs", Version: "1.0.0", Registry: "https://registry.example"}}},
 		{arg: "https://huggingface.co/mcp", want: Source{Server: Endpoint("https://huggingface.co/mcp")}},

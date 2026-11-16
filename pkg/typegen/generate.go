@@ -3,7 +3,6 @@ package typegen
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -36,8 +35,7 @@ type Options struct {
 	// extract.py, with args (contract ROOT ENTRY), copying the runner's stdout to stdout. A failure the
 	// runner reports is a *RunnerError. It defaults to the host's Node.js or Python interpreter, which
 	// runs the server in its own directory and stops it after 30 seconds.
-	Run    func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
-	Served map[string]json.RawMessage
+	Run func(ctx context.Context, language, toolingDir string, args []string, stdout io.Writer) error
 }
 
 func (o Options) defaults() Options {
@@ -53,7 +51,7 @@ type preparedSource struct {
 	server                        *mcpregistry.Descriptor
 }
 
-func (s *preparedSource) extract(result *extraction) error {
+func (s *preparedSource) extract(result *Served) error {
 	contract, err := listCatalog(result.Capabilities, result.pages)
 	if err != nil {
 		return fmt.Errorf("%s: %w", s.origin, err)
@@ -86,7 +84,7 @@ type Prepared struct {
 
 type preparation struct {
 	*Prepared
-	paths map[Path]*preparedSource
+	paths map[string]*preparedSource
 	// fetched holds each registry and endpoint source's resolution, keyed by source.
 	fetched map[string]*fetch
 }
@@ -152,8 +150,8 @@ func (p *Prepared) consumer(name string) *preparedConsumer {
 	return nil
 }
 
-func prepareSource(name, path string) (*preparedSource, error) {
-	origin, entry, language, err := serverEntry(path)
+func prepareSource(name string, path Path) (*preparedSource, error) {
+	origin, entry, language, err := serverEntry(path.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +166,9 @@ func prepareSource(name, path string) (*preparedSource, error) {
 		return nil, fmt.Errorf("%s: a Go server source needs a server.json beside its entry", origin)
 	}
 	_, err = SnapshotSource(name, origin, "")
+	if err == nil && path.Served != nil && language != "go" {
+		err = s.extract(path.Served)
+	}
 	return s, err
 }
 
@@ -180,7 +181,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (*Prepa
 		return nil, err
 	}
 	defer os.RemoveAll(root)
-	p := &preparation{Prepared: &Prepared{documents: map[string]*Document{}}, paths: map[Path]*preparedSource{}}
+	p := &preparation{Prepared: &Prepared{documents: map[string]*Document{}}, paths: map[string]*preparedSource{}}
 	// Registry and endpoint sources are fetched while path sources are extracted, and stopped when
 	// preparation fails.
 	ctx, cancel := context.WithCancel(ctx)
@@ -193,15 +194,15 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (*Prepa
 		p.consumers = append(p.consumers, pc)
 		for _, source := range append([]Source{{Server: c.Server}}, c.Sources...) {
 			path, _ := source.Server.(Path)
-			if _, done := p.paths[path]; path == "" || done {
+			if _, done := p.paths[path.Dir]; path.Dir == "" || done {
 				continue
 			}
 			name := strconv.Itoa(len(p.paths))
-			s, err := prepareSource(name, string(path))
+			s, err := prepareSource(name, path)
 			if err != nil {
 				return nil, err
 			}
-			p.paths[path] = s
+			p.paths[path.Dir] = s
 			paths = append(paths, s)
 		}
 	}
@@ -220,9 +221,9 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (*Prepa
 func (p *preparation) resolve(ctx context.Context, source Source) (*Document, error) {
 	switch server := source.Server.(type) {
 	case Path:
-		dependency := p.paths[server]
+		dependency := p.paths[server.Dir]
 		for _, consumer := range p.consumers {
-			if consumer.Server == "" || p.paths[consumer.Server].origin != dependency.origin {
+			if consumer.Server.Dir == "" || p.paths[consumer.Server.Dir].origin != dependency.origin {
 				continue
 			}
 			if err := p.prepareConsumer(ctx, consumer); err != nil {
@@ -250,8 +251,8 @@ func (p *preparation) prepareConsumer(ctx context.Context, c *preparedConsumer) 
 		return fmt.Errorf("contract dependency cycle at %s", c.Name)
 	}
 	identity := mcpcontract.Identity{Name: c.Name, Version: unversioned}
-	if c.Server != "" {
-		c.server = p.paths[c.Server]
+	if c.Server.Dir != "" {
+		c.server = p.paths[c.Server.Dir]
 		if !lexicallyInside(c.server.origin, c.Dir) {
 			return fmt.Errorf("%s: own server %s is outside %s", c.Name, c.server.origin, c.Dir)
 		}

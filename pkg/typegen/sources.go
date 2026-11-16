@@ -54,7 +54,11 @@ type Source struct {
 type Server interface{ server() }
 
 // Path is the absolute path of a server entry file, or of a directory holding exactly one.
-type Path string
+type Path struct {
+	Dir string
+	// Served is what its running server answered, when it already has.
+	Served *Served
+}
 
 // Endpoint is a live MCP endpoint; with an Alias, <ALIAS>_MCP_TOKEN supplies a bearer token for its origin.
 type Endpoint string
@@ -62,6 +66,7 @@ type Endpoint string
 // Registry is an MCP registry server version, read from its OCI package's document or its streamable-http remote.
 type Registry protocol.RegistryRef
 
+func (p Path) String() string      { return p.Dir }
 func (r Registry) String() string  { return r.Name + "@" + r.Version }
 func (d *Document) String() string { return d.Identity.Name + "@" + d.Identity.Version }
 func (Path) server()               {}
@@ -91,7 +96,7 @@ func ParseSource(arg string) (Source, error) {
 		return source, errors.New("a server path or URL is required")
 	}
 	path, err := filepath.Abs(arg)
-	source.Server = Path(path)
+	source.Server = Path{Dir: path}
 	if u, parseErr := url.Parse(arg); parseErr == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
 			name, _ := url.PathUnescape(m[1])
