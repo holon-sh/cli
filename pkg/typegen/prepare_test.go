@@ -27,7 +27,7 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 		"example.com/checkout": listing(own),
 		"example.com/orders":   listing(lookupTool),
 	}
-	c := Consumer{Name: "checkout", Dir: checkout, Targets: targets, Server: &Source{Path: filepath.Join(checkout, "server.ts")}, Sources: []Source{{Path: orders}}}
+	c := Consumer{Name: "checkout", Dir: checkout, Targets: targets, Server: Path(filepath.Join(checkout, "server.ts")), Sources: []Source{{Server: Path(orders)}}}
 	return c, fakeRun(results)
 }
 
@@ -37,12 +37,11 @@ func checkoutConsumer(t *testing.T, targets ...string) (Consumer, func(context.C
 func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing.T) {
 	c, extract := checkoutConsumer(t, TargetTS, TargetUI, TargetPy)
 	for _, test := range []struct{ alias, key string }{{"", "checkout"}, {"shop", "shop"}} {
-		c.Server.Alias = test.alias
+		c.Alias = test.alias
 		prepared, err := Prepare(t.Context(), []Consumer{c}, Options{Run: extract})
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer prepared.Close()
 		stage := t.TempDir()
 		if err := prepared.WriteClients("checkout", stage); err != nil {
 			t.Fatal(err)
@@ -93,12 +92,11 @@ func TestConsumersAnnounceTheirManifestIdentity(t *testing.T) {
 			for name, content := range test.files {
 				put(t, dir, name, content)
 			}
-			c := Consumer{Name: "app", Dir: dir, Targets: test.targets, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+			c := Consumer{Name: "app", Dir: dir, Targets: test.targets, Sources: []Source{{Server: document(t, ordersMetadata())}}}
 			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer prepared.Close()
 			if got := prepared.Metadata()["app"].Identity; got != test.want {
 				t.Fatalf("identity = %+v, want %+v", got, test.want)
 			}
@@ -123,11 +121,11 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 		"example.com/---":    listing(lookupTool),
 		"":                   extraction{ServerInfo: json.RawMessage(`{"name":"provider"}`)},
 	}
-	source := func(name string) Source { return Source{Path: filepath.Join(root, name)} }
+	source := func(name string) Source { return Source{Server: Path(filepath.Join(root, name))} }
 	orders := source("orders")
 	for _, test := range []struct {
 		name    string
-		server  *Source
+		server  Path
 		sources []Source
 		want    string
 	}{
@@ -136,7 +134,7 @@ func TestPrepareRejectsWhatItCannotResolve(t *testing.T) {
 		{name: "extraction diagnostic", sources: []Source{source("broken")}, want: "tools are registered dynamically"},
 		{name: "invalid derived alias", sources: []Source{source("odd")}, want: `cannot derive a client name from "example.com/---"; write ALIAS=`},
 		{name: "duplicate alias", sources: []Source{orders, source("orders-copy")}, want: "both become apps.orders"},
-		{name: "own server outside the consumer", server: &orders, want: "is outside"},
+		{name: "own server outside the consumer", server: orders.Server.(Path), want: "is outside"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := Prepare(t.Context(), []Consumer{{Name: "app", Dir: app, Targets: []string{TargetTS}, Server: test.server, Sources: test.sources}}, Options{Run: fakeRun(results)})
@@ -155,7 +153,7 @@ func TestGenerateRefusesASymlinkOutOfTheProject(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, "generated")); err != nil {
 		t.Fatal(err)
 	}
-	c := Consumer{Name: "caller", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, ordersMetadata())}}}
+	c := Consumer{Name: "caller", Dir: dir, Targets: []string{TargetTS}, Sources: []Source{{Server: document(t, ordersMetadata())}}}
 	if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil || !strings.Contains(err.Error(), "which is not a directory") {
 		t.Fatalf("generate through a symlinked directory = %v", err)
 	}
@@ -171,7 +169,7 @@ func TestAServerThatImportsItsOwnClientsExtractsBeforeTheyExist(t *testing.T) {
 	put(t, orders, "requirements.txt", "holon-sh\n")
 	// Stands in for the installed holon-sh package that generated clients import.
 	put(t, orders, "holon/client.py", "class Apps:\n    def __init__(self, *args):\n        pass\ndef __getattr__(name):\n    return object\n")
-	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
+	contract, err := ResolveDocument(t.Context(), Source{Server: Path(orders)}, Options{})
 	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "read" {
 		t.Fatalf("ResolveDocument = %+v, %v", contract, err)
 	}
@@ -198,18 +196,18 @@ import Database from "better-sqlite3";
 export const driver = Database;
 export default createMcpHandler(() => new McpServer({ name: "orders", version: "1" }));`)
 	put(t, orders, "server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
-	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "better-sqlite3 is not installed") {
+	if _, err := ResolveDocument(t.Context(), Source{Server: Path(orders)}, Options{}); err == nil || !strings.Contains(err.Error(), "better-sqlite3 is not installed") {
 		t.Fatalf("without the package or a committed contract: %v", err)
 	}
 	committedContract(t, orders, ordersMetadata())
-	contract, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{})
+	contract, err := ResolveDocument(t.Context(), Source{Server: Path(orders)}, Options{})
 	if err != nil || len(contract.Schema.Tools) != 1 || contract.Schema.Tools[0].Name != "lookup" {
 		t.Fatalf("committed contract = %+v, %v", contract, err)
 	}
 	other := ordersMetadata()
 	other.Identity.Version = "2.0.0"
 	committedContract(t, orders, other)
-	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "describes example.com/orders@2.0.0") {
+	if _, err := ResolveDocument(t.Context(), Source{Server: Path(orders)}, Options{}); err == nil || !strings.Contains(err.Error(), "describes example.com/orders@2.0.0") {
 		t.Fatalf("committed contract for another version: %v", err)
 	}
 }
@@ -219,14 +217,12 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 	orders, app := filepath.Join(root, "orders"), filepath.Join(root, "app")
 	writeProvider(t, orders, "orders", pythonProvider)
 	put(t, app, "package.json", "{}")
-	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Path: orders}}}
+	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Server: Path(orders)}}}
 	options := Options{Run: fakeRun(map[string]any{"example.com/orders": listing(ordersMetadata().Schema.Tools...)})}
 	committedContract(t, orders, ordersMetadata())
-	prepared, err := Prepare(t.Context(), []Consumer{c}, options)
-	if err != nil {
+	if _, err := Prepare(t.Context(), []Consumer{c}, options); err != nil {
 		t.Fatalf("matching committed contract: %v", err)
 	}
-	_ = prepared.Close()
 	stale := ordersMetadata()
 	stale.Schema.Tools[0].Name = "find"
 	committedContract(t, orders, stale)
@@ -234,7 +230,7 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 		t.Fatalf("stale committed contract: %v", err)
 	}
 	// Printing the contract regenerates the file, so it answers what the server does.
-	if contract, err := ResolveDocument(t.Context(), Source{Path: orders}, options); err != nil || contract.Schema.Tools[0].Name != "lookup" {
+	if contract, err := ResolveDocument(t.Context(), Source{Server: Path(orders)}, options); err != nil || contract.Schema.Tools[0].Name != "lookup" {
 		t.Fatalf("printed contract = %+v, %v", contract, err)
 	}
 }
@@ -249,11 +245,11 @@ func TestARunnersAnswersMakeTheContract(t *testing.T) {
 	answers.Lists["events/list"] = listed{Error: "events are broken"}
 	answers.Capabilities.AddExtension(eventsExtension, nil)
 	options := Options{Run: fakeRun(map[string]any{"example.com/orders": answers})}
-	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, options); err == nil || !strings.Contains(err.Error(), "events/list: events are broken") {
+	if _, err := ResolveDocument(t.Context(), Source{Server: Path(orders)}, options); err == nil || !strings.Contains(err.Error(), "events/list: events are broken") {
 		t.Fatalf("a declared list that failed: %v", err)
 	}
 	delete(answers.Capabilities.Extensions, eventsExtension)
-	document, err := ResolveDocument(t.Context(), Source{Path: orders}, options)
+	document, err := ResolveDocument(t.Context(), Source{Server: Path(orders)}, options)
 	if err != nil || len(document.Schema.Tools) != 2 || document.Schema.Tools[0].Name != "lookup" || document.Schema.Resources != nil {
 		t.Fatalf("contract = %+v, %v", document, err)
 	}
@@ -266,7 +262,7 @@ func TestAServerThatDoesNotAnswerIsStopped(t *testing.T) {
 	t.Cleanup(func() { serverTimeout = limit })
 	orders := t.TempDir()
 	writeProvider(t, orders, "orders", "while True:\n    pass\n")
-	if _, err := ResolveDocument(t.Context(), Source{Path: orders}, Options{}); err == nil || !strings.Contains(err.Error(), "server.py: no catalog within 1s") {
+	if _, err := ResolveDocument(t.Context(), Source{Server: Path(orders)}, Options{}); err == nil || !strings.Contains(err.Error(), "server.py: no catalog within 1s") {
 		t.Fatalf("server that never answers: %v", err)
 	}
 }
@@ -289,7 +285,7 @@ func TestAServedSourceAnswersForItself(t *testing.T) {
 			options := Options{Served: map[string]json.RawMessage{orders: answers}, Run: func(context.Context, string, string, []string, io.Writer) error {
 				return errors.New("ran the server")
 			}}
-			document, err := ResolveDocument(t.Context(), Source{Path: orders}, options)
+			document, err := ResolveDocument(t.Context(), Source{Server: Path(orders)}, options)
 			if err != nil || document.Identity != test.want || len(document.Schema.Tools) != 1 || document.Schema.Tools[0].Name != "read" {
 				t.Fatalf("contract = %+v, %v", document, err)
 			}

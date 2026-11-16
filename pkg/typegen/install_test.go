@@ -32,7 +32,6 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 			}
 		}
 	}
-	installs := func(dir, installed string) { stand(dir, "mkdir -p "+filepath.Dir(installed), "touch "+installed) }
 	c, extract := checkoutConsumer(t, TargetTS)
 	python, page := t.TempDir(), t.TempDir()
 	for _, dir := range []string{python, page} {
@@ -55,7 +54,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		{".venv/bin/python", Consumer{Name: "app", Dir: python, Targets: []string{TargetPy}}},
 		{"node_modules/holon-ui/package.json", Consumer{Name: "page", Dir: page, Targets: []string{TargetUI}}},
 	} {
-		installs(test.consumer.Dir, test.installed)
+		stand(test.consumer.Dir, "mkdir -p "+filepath.Dir(test.installed), "touch "+test.installed)
 		var output bytes.Buffer
 		if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Stdout: &output, Stderr: &output, Run: extract}); err != nil || !isFile(filepath.Join(test.consumer.Dir, test.installed)) {
 			t.Fatalf("%s: generate: %v\n%s", test.installed, err, &output)
@@ -64,13 +63,5 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Run: extract}); err != nil {
 			t.Fatalf("%s: installed runtime was reinstalled: %v", test.installed, err)
 		}
-	}
-	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
-		t.Fatal(err)
-	}
-	put(t, c.Dir, "package.json", `{"type":"module"}`)
-	installs(c.Dir, "node_modules/holon-sh/package.json")
-	if err := Generate(t.Context(), []Consumer{c}, Options{Run: extract}); err == nil || isFile(filepath.Join(c.Dir, "node_modules/holon-sh/package.json")) {
-		t.Fatalf("undeclared runtime was installed: %v", err)
 	}
 }

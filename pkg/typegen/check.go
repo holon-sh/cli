@@ -14,14 +14,10 @@ import (
 // checkers type-check each target's clients; the Go compiler checks Go's.
 var checkers = map[string]string{TargetTS: "typescript", TargetUI: "typescript", TargetPy: "python"}
 
-func Check(ctx context.Context, dir string, options Options) error {
-	o := options.defaults()
-	targets, err := DeclaredTargets(dir)
-	if err != nil {
-		return err
-	}
+func Check(ctx context.Context, c Consumer, options Options) error {
+	o, dir := options.defaults(), c.Dir
 	var languages []string
-	for _, target := range targets {
+	for _, target := range c.Targets {
 		language, ok := checkers[target]
 		if !ok {
 			continue
@@ -32,16 +28,12 @@ func Check(ctx context.Context, dir string, options Options) error {
 			}
 		}
 		if !generatedSlot(dir, target) {
-			return fmt.Errorf("%s has no generated clients; run holon types generate", SlotDirectory(dir, target))
+			return fmt.Errorf("%s has no generated clients; run holon types generate", slotDirectory(dir, target))
 		}
 		languages = append(languages, language)
 	}
 	if len(languages) == 0 {
 		return fmt.Errorf("%s: Go clients are generated; run go test ./... to check the project", dir)
-	}
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
-		return err
 	}
 	root, err := os.MkdirTemp("", "holon-types-")
 	if err != nil {
@@ -68,7 +60,7 @@ func Check(ctx context.Context, dir string, options Options) error {
 		if err = os.WriteFile(path, checker, 0o600); err != nil {
 			return err
 		}
-		if err = commandenv.RunStreaming(ctx, dir, program, []string{path, "check", ""}, nil, append(env, "PYTHONDONTWRITEBYTECODE=1"), o.Stdout, o.Stderr); err != nil {
+		if err = commandenv.RunStreaming(ctx, dir, program, []string{path, "check", ""}, nil, append(commandenv.Environ(o.Env), "PYTHONDONTWRITEBYTECODE=1"), o.Stdout, o.Stderr); err != nil {
 			return fmt.Errorf("%s does not type-check against its typed contracts: %w", filepath.Base(dir), err)
 		}
 	}

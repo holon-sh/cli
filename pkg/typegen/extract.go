@@ -125,12 +125,8 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			// access, so it gets a snapshot there: a server that needs only its schema libraries
 			// extracts with the tooling's copies, and others report the package they miss.
 			directories[s] = filepath.Join(root, "sources", s.name)
-			fingerprint, err := SnapshotSource(s.name, s.origin, directories[s])
-			if err != nil {
+			if _, err := SnapshotSource(s.name, s.origin, directories[s]); err != nil {
 				return err
-			}
-			if fingerprint != s.fingerprint {
-				return fmt.Errorf("%s changed during preparation; discarding the superseded update", s.origin)
 			}
 		}
 		run = append(run, s)
@@ -228,16 +224,12 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 }
 
 func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
-	env, err := commandenv.Environ(env)
-	if err != nil {
-		return err
-	}
 	l := typeLanguages[language]
 	run := func(program string) error {
 		limited, cancel := context.WithTimeout(ctx, serverTimeout)
 		defer cancel()
 		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
-		command.Env = env
+		command.Env = commandenv.Environ(env)
 		var stderr bytes.Buffer
 		command.Stdout, command.Stderr = stdout, &stderr
 		err := command.Run()
