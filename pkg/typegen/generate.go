@@ -48,9 +48,9 @@ func (o Options) defaults() Options {
 }
 
 type preparedSource struct {
-	origin, name, entry, language, fingerprint string
-	metadata                                   *mcpcontract.Metadata
-	server                                     *mcpregistry.Descriptor
+	origin, name, entry, language string
+	metadata                      *mcpcontract.Metadata
+	server                        *mcpregistry.Descriptor
 }
 
 func (s *preparedSource) extract(result *extraction) error {
@@ -152,7 +152,7 @@ func (p *Prepared) consumer(name string) *preparedConsumer {
 	return nil
 }
 
-func prepareSource(ctx context.Context, name, path string) (*preparedSource, error) {
+func prepareSource(name, path string) (*preparedSource, error) {
 	origin, entry, language, err := serverEntry(path)
 	if err != nil {
 		return nil, err
@@ -167,15 +167,10 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 	case language == "go":
 		return nil, fmt.Errorf("%s: a Go server source needs a server.json beside its entry", origin)
 	}
-	// The runners import the server where it lives, beside its installed dependencies, so the
-	// fingerprint guards against changes until preparation finishes.
-	if s.fingerprint, err = SnapshotSource(name, origin, ""); err != nil {
-		return nil, err
-	}
-	return s, ctx.Err()
+	return s, nil
 }
 
-// Prepare fingerprints and extracts every path source once, resolves every other source once, and
+// Prepare extracts every path source once, resolves every other source once, and
 // generates the client files for each consumer and target. Nothing is written to the consumers.
 func Prepare(ctx context.Context, consumers []Consumer, options Options) (*Prepared, error) {
 	o := options.defaults()
@@ -201,7 +196,7 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (*Prepa
 				continue
 			}
 			name := strconv.Itoa(len(p.paths))
-			s, err := prepareSource(ctx, name, string(path))
+			s, err := prepareSource(name, string(path))
 			if err != nil {
 				return nil, err
 			}
@@ -217,9 +212,6 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (*Prepa
 		if err = p.prepareConsumer(ctx, c); err != nil {
 			return nil, err
 		}
-	}
-	if err = p.currentSources(); err != nil {
-		return nil, err
 	}
 	return p.Prepared, nil
 }
@@ -338,20 +330,6 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 		request.Requires[alias], request.Contracts[alias] = own.Identity, own.Schema
 	}
 	return mcptype.Generate(ctx, request)
-}
-
-// currentSources fails when any source directory changed since preparation.
-func (p *preparation) currentSources() error {
-	for _, s := range p.paths {
-		fingerprint, err := SnapshotSource(s.name, s.origin, "")
-		if err != nil {
-			return err
-		}
-		if fingerprint != s.fingerprint {
-			return fmt.Errorf("%s changed during preparation; discarding the superseded update", s.origin)
-		}
-	}
-	return nil
 }
 
 // Generate maps #holon-sh and #holon-ui to the clients in package.json, installs missing declared
