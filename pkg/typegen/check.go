@@ -28,7 +28,7 @@ func Check(ctx context.Context, c Consumer, options Options) error {
 			}
 		}
 		if !generatedSlot(dir, target) {
-			return fmt.Errorf("%s has no generated clients; run holon types generate", SlotDirectory(dir, target))
+			return fmt.Errorf("%s has no generated clients; run holon types generate", slotDirectory(dir, target))
 		}
 		languages = append(languages, language)
 	}

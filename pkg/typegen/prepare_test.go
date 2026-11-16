@@ -42,7 +42,6 @@ func TestTheOwnServerIsAClientOfBrowserCodeAndUnderAnAliasOfEverySlot(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer prepared.Close()
 		stage := t.TempDir()
 		if err := prepared.WriteClients("checkout", stage); err != nil {
 			t.Fatal(err)
@@ -98,7 +97,6 @@ func TestConsumersAnnounceTheirManifestIdentity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer prepared.Close()
 			if got := prepared.Metadata()["app"].Identity; got != test.want {
 				t.Fatalf("identity = %+v, want %+v", got, test.want)
 			}
@@ -222,11 +220,9 @@ func TestACommittedContractThatDiffersFromTheServerIsStale(t *testing.T) {
 	c := Consumer{Name: "app", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Server: Path(orders)}}}
 	options := Options{Run: fakeRun(map[string]any{"example.com/orders": listing(ordersMetadata().Schema.Tools...)})}
 	committedContract(t, orders, ordersMetadata())
-	prepared, err := Prepare(t.Context(), []Consumer{c}, options)
-	if err != nil {
+	if _, err := Prepare(t.Context(), []Consumer{c}, options); err != nil {
 		t.Fatalf("matching committed contract: %v", err)
 	}
-	_ = prepared.Close()
 	stale := ordersMetadata()
 	stale.Schema.Tools[0].Name = "find"
 	committedContract(t, orders, stale)

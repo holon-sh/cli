@@ -77,16 +77,16 @@ type preparedConsumer struct {
 	document *Document
 }
 
-// Prepared owns a temporary directory for tooling and documents. Close releases it; preparation
-// never modifies consumers.
+// Prepared holds each consumer's generated clients and the documents they pin; preparation never
+// modifies consumers.
 type Prepared struct {
 	consumers []*preparedConsumer
-	paths     map[Path]*preparedSource
-	root      string
-	options   Options
-	// resolved holds every non-path source's contract, keyed by alias as each consumer sees it.
-	resolved  map[string]*mcpcontract.Metadata
 	documents map[string]*Document
+}
+
+type preparation struct {
+	*Prepared
+	paths map[Path]*preparedSource
 	// fetched holds each registry and endpoint source's resolution, keyed by source.
 	fetched map[string]*fetch
 }
@@ -119,12 +119,10 @@ func fetchSources(ctx context.Context, consumers []Consumer, o Options) func() m
 	}
 }
 
-func (p *Prepared) Close() error { return os.RemoveAll(p.root) }
-
 // Metadata returns each consumer's own contract document (identity, extracted contract and the
-// expectations it holds of its sources) by consumer name, plus every resolved source by alias.
+// expectations it holds of its sources) by consumer name.
 func (p *Prepared) Metadata() map[string]*mcpcontract.Metadata {
-	result := maps.Clone(p.resolved)
+	result := map[string]*mcpcontract.Metadata{}
 	for _, c := range p.consumers {
 		result[c.Name] = c.metadata
 	}
@@ -179,18 +177,14 @@ func prepareSource(ctx context.Context, name, path string) (*preparedSource, err
 
 // Prepare fingerprints and extracts every path source once, resolves every other source once, and
 // generates the client files for each consumer and target. Nothing is written to the consumers.
-func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Prepared, err error) {
+func Prepare(ctx context.Context, consumers []Consumer, options Options) (*Prepared, error) {
 	o := options.defaults()
 	root, err := os.MkdirTemp("", "holon-types-")
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if err != nil {
-			_ = os.RemoveAll(root)
-		}
-	}()
-	p := &Prepared{paths: map[Path]*preparedSource{}, root: root, options: o, resolved: map[string]*mcpcontract.Metadata{}, documents: map[string]*Document{}}
+	defer os.RemoveAll(root)
+	p := &preparation{Prepared: &Prepared{documents: map[string]*Document{}}, paths: map[Path]*preparedSource{}}
 	// Registry and endpoint sources are fetched while path sources are extracted, and stopped when
 	// preparation fails.
 	ctx, cancel := context.WithCancel(ctx)
@@ -227,10 +221,10 @@ func Prepare(ctx context.Context, consumers []Consumer, options Options) (_ *Pre
 	if err = p.currentSources(); err != nil {
 		return nil, err
 	}
-	return p, nil
+	return p.Prepared, nil
 }
 
-func (p *Prepared) resolve(ctx context.Context, source Source) (*Document, error) {
+func (p *preparation) resolve(ctx context.Context, source Source) (*Document, error) {
 	switch server := source.Server.(type) {
 	case Path:
 		dependency := p.paths[server]
@@ -254,7 +248,7 @@ func (p *Prepared) resolve(ctx context.Context, source Source) (*Document, error
 	return fetched.document, nil
 }
 
-func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) error {
+func (p *preparation) prepareConsumer(ctx context.Context, c *preparedConsumer) error {
 	if c.document != nil {
 		return nil
 	}
@@ -304,9 +298,6 @@ func (p *Prepared) prepareConsumer(ctx context.Context, c *preparedConsumer) err
 		request.Contracts[alias] = metadata.Schema
 		c.metadata.Requires[alias] = metadata.Digest
 		p.documents[metadata.Digest] = metadata
-		if _, ok := source.Server.(Path); !ok {
-			p.resolved[alias] = metadata.Metadata
-		}
 	}
 	for _, target := range c.Targets {
 		files, err := generateTypes(ctx, target, request, c.metadata, c.Alias)
@@ -350,7 +341,7 @@ func generateTypes(ctx context.Context, target string, request mcptype.GenerateR
 }
 
 // currentSources fails when any source directory changed since preparation.
-func (p *Prepared) currentSources() error {
+func (p *preparation) currentSources() error {
 	for _, s := range p.paths {
 		fingerprint, err := SnapshotSource(s.name, s.origin, "")
 		if err != nil {
@@ -389,13 +380,12 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 	if err != nil {
 		return err
 	}
-	defer prepared.Close()
-	return prepared.Write()
+	return prepared.Write(options.defaults().Stdout)
 }
 
-// Write validates all consumer slots before writing any of them. Callers hold AcquireLocks and
-// install dependencies before Prepare.
-func (p *Prepared) Write() error {
+// Write validates all consumer slots before writing any of them, then reports each written target on
+// stdout. Callers hold AcquireLocks and install dependencies before Prepare.
+func (p *Prepared) Write(stdout io.Writer) error {
 	for _, c := range p.consumers {
 		for _, target := range c.Targets {
 			if err := validateSlot(c.Dir, target); err != nil {
@@ -408,26 +398,27 @@ func (p *Prepared) Write() error {
 			return err
 		}
 		for _, target := range c.Targets {
-			fmt.Fprintf(p.options.Stdout, "%s: generated %s types\n", c.Name, target)
+			fmt.Fprintf(stdout, "%s: generated %s types\n", c.Name, target)
 		}
 	}
 	return nil
 }
 
-// Targets reports the prepared targets of a consumer, in the order given; none for an unknown one.
-func (p *Prepared) Targets(consumer string) []string {
-	if c := p.consumer(consumer); c != nil {
-		return slices.Clone(c.Consumer.Targets)
-	}
-	return nil
-}
-
-// WriteClients writes a consumer's clients into dir, the project or a copy staged for an image, and
-// nothing for an unknown one. It refuses to overwrite files it did not generate, and leaves identical
-// clients untouched.
+// WriteClients writes a consumer's clients into dir, a build context, each file with its StableTime,
+// and nothing for an unknown one. It refuses to overwrite files it did not generate.
 func (p *Prepared) WriteClients(consumer, dir string) error {
 	if c := p.consumer(consumer); c != nil {
-		return c.write(dir)
+		if err := c.write(dir); err != nil {
+			return err
+		}
+		for _, target := range c.Targets {
+			for name, data := range c.packages[target] {
+				stable := mcpcontract.StableTime(data)
+				if err := os.Chtimes(filepath.Join(slotDirectory(dir, target), name), stable, stable); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
 }

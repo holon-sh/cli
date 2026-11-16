@@ -78,7 +78,6 @@ func TestPrepareResolvesRegistryPackages(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer prepared.Close()
 			reference := prepared.Metadata()["caller"].Requires["orders"]
 			if reference != digest.FromBytes(original).String() || !bytes.Equal(prepared.Documents()[reference].Data, original) {
 				t.Fatal("dependency was not pinned to the registry's blob bytes")
@@ -95,7 +94,6 @@ func TestLocalDependencyDocumentsAreComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
 	reference := prepared.Metadata()["checkout"].Requires["orders"]
 	document := prepared.Documents()[reference]
 	if document == nil || len(document.Requires) != 1 || document.Requires["inventory"] == "" {
@@ -106,10 +104,7 @@ func TestLocalDependencyDocumentsAreComplete(t *testing.T) {
 		t.Fatalf("consumer did not pin provider's published document: %v", err)
 	}
 	orders.Sources = []Source{{Server: Path(checkout.Dir)}}
-	if p, err := Prepare(t.Context(), []Consumer{checkout, orders}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "contract dependency cycle") {
-		if p != nil {
-			p.Close()
-		}
+	if _, err := Prepare(t.Context(), []Consumer{checkout, orders}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "contract dependency cycle") {
 		t.Fatalf("cyclic document graph: %v", err)
 	}
 }

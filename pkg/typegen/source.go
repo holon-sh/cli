@@ -123,7 +123,7 @@ func generatedSource(root, path string) bool {
 		return true
 	}
 	return slices.ContainsFunc(targets, func(target string) bool {
-		return lexicallyInside(path, SlotDirectory(root, target)) && generatedSlot(root, target)
+		return lexicallyInside(path, slotDirectory(root, target)) && generatedSlot(root, target)
 	})
 }
 
