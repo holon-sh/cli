@@ -439,7 +439,7 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 	var stream bytes.Buffer
 	output, _, _ := newProgressOutput(io.Discard, &stream, false, h.run.clock())
 	dev := devLoop{
-		manager: manager, name: "gentle-otter-482", clock: h.run.clock(),
+		manager: manager, clock: h.run.clock(),
 		options: buildOptions{output: output},
 	}
 	for _, ready := range []string{"False", "True"} {
@@ -447,7 +447,7 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 			{Type: protocol.ConditionReady, Status: ready, Reason: protocol.ReasonProgressDeadline, Message: "rollout failed"},
 			{Type: protocol.ConditionAvailable, Status: "True"},
 		}}
-		if err := dev.poll(manager.Session(t.Context(), dev.name)); err != nil {
+		if err := dev.poll(manager.Session(t.Context(), "gentle-otter-482")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -473,8 +473,8 @@ func TestDevStopsWhenReauthenticationIsRequired(t *testing.T) {
 	if err := manager.loginInteractive(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	dev := devLoop{manager: manager, name: "gentle-otter-482"}
-	if err := dev.poll(manager.Session(t.Context(), dev.name)); !errors.Is(err, errReauthenticationRequired) {
+	dev := devLoop{manager: manager}
+	if err := dev.poll(manager.Session(t.Context(), "gentle-otter-482")); !errors.Is(err, errReauthenticationRequired) {
 		t.Fatalf("poll = %v, want %v", err, errReauthenticationRequired)
 	}
 }
