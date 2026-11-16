@@ -74,8 +74,10 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
-	running := sets.KeySet(d.sent)
-	if !d.reload(ctx, d.paths(func(app manifestApp) bool { return !running.Has(app.Name) && len(app.resolved.Requires) == 0 })) {
+	if !d.reload(ctx, d.paths(func(app manifestApp) bool {
+		_, running := d.sent[app.Name]
+		return !running && len(app.resolved.Requires) == 0
+	})) {
 		return errUnstarted
 	}
 	for {
