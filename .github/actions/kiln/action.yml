@@ -10,8 +10,7 @@ runs:
         GH_TOKEN: ${{ github.token }}
       run: |
         archive="kiln-$(go env GOOS)_$(go env GOARCH).tar.gz"
-        gh release download "sdk-$KILN" --repo hughhan1/kiln --pattern "$archive" --dir "$RUNNER_TEMP"
-        gh attestation verify "$RUNNER_TEMP/$archive" --repo hughhan1/kiln --source-digest "$KILN"
+        gh run download 43935006410 --repo hughhan1/kiln --name "${archive%.tar.gz}" --dir "$RUNNER_TEMP"
         mkdir .kiln-sdk
         tar -xzf "$RUNNER_TEMP/$archive" -C .kiln-sdk
     - name: Install the musl compiler
