@@ -125,10 +125,11 @@ func (w *devWatcher) observe(root, path string, op fsnotify.Op) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if slices.Contains([]string{dockerignoreFile, ".gitignore"}, filepath.Base(path)) || op.Has(fsnotify.Create) && dir {
+	rule := slices.Contains([]string{dockerignoreFile, ".gitignore"}, filepath.Base(path))
+	if rule || op.Has(fsnotify.Create) && dir {
 		err = w.refresh(root)
 	}
-	return !ignored, err
+	return !ignored || rule, err
 }
 
 // editorFiles are what editors write beside a file while saving it: backups, vim's write test and swap

@@ -64,7 +64,7 @@ func (s *SourceRules) Ignored(path string, dir bool) (ignored, below bool, err e
 	if relative == "." || relative == dockerignoreFile {
 		return false, false, nil
 	}
-	if filepath.Base(path) == ".git" || generatedSource(s.root, path) {
+	if slices.Contains(strings.Split(filepath.ToSlash(relative), "/"), ".git") || generatedSource(s.root, path) {
 		return true, true, nil
 	}
 	if ignored, err := s.gitignored(path, dir); ignored || err != nil {
@@ -186,7 +186,11 @@ func SnapshotSource(name, dir, destination string) (string, error) {
 			if !clientutil.PathInside(resolved, root) {
 				return fmt.Errorf("source symlink escapes application: %s", relative)
 			}
-			excluded, _, err := rules.Ignored(resolved, false)
+			linked, err := os.Stat(resolved)
+			if err != nil {
+				return err
+			}
+			excluded, _, err := rules.Ignored(resolved, linked.IsDir())
 			if err != nil {
 				return err
 			}
