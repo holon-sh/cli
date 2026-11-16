@@ -41,6 +41,8 @@ func goRecursive(value typ) bool {
 	return value.kind == kindArray || value.kind == kindObject
 }
 
+func goStruct(value typ) bool { return strings.HasPrefix(renderGo(value), "struct") }
+
 // goRawJSON reports whether a type decodes as raw JSON, by whatever name.
 func goRawJSON(value typ) bool {
 	for value.kind == kindDeclared && !value.ref.cyclic {

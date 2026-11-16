@@ -160,6 +160,35 @@ func (client _Orders2) KitchenSink(ctx context.Context, input Orders2KitchenSink
 	return holon.Call[Orders2KitchenSinkOutput](ctx, client._dependency, "kitchen-sink", input)
 }
 
+var Shared = _Shared{&holon.Dependency{Name: "shared", Tools: map[string]holon.ToolSchema{
+	"input_filter": {
+		Input:  "{\"additionalProperties\":false,\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"}",
+		Output: "",
+	},
+	"remove": {
+		Input:  "{\"$defs\":{\"IfMatch\":{\"additionalProperties\":false,\"properties\":{\"etag\":{\"type\":\"string\"}},\"type\":\"object\"}},\"additionalProperties\":false,\"properties\":{\"a\":{\"additionalProperties\":true,\"properties\":{\"filter-input\":{\"type\":\"string\"}},\"type\":\"object\"},\"condition\":{\"$ref\":\"#/$defs/IfMatch\"},\"headers\":{\"additionalProperties\":true,\"properties\":{\"if-match\":{\"type\":\"string\"}},\"type\":\"object\"},\"labels\":{\"additionalProperties\":false,\"properties\":{\"ünï\":{\"type\":\"string\"}},\"type\":\"object\"}},\"type\":\"object\"}",
+		Output: "{\"anyOf\":[{\"additionalProperties\":true,\"properties\":{\"note\":{\"type\":\"string\"}},\"type\":\"object\"},{\"type\":\"null\"}]}",
+	},
+	"save": {
+		Input:  "{\"$defs\":{\"IfMatch\":{\"additionalProperties\":false,\"properties\":{\"etag\":{\"type\":\"string\"}},\"type\":\"object\"}},\"additionalProperties\":false,\"properties\":{\"a\":{\"additionalProperties\":true,\"properties\":{\"filter-input\":{\"type\":\"string\"}},\"type\":\"object\"},\"condition\":{\"$ref\":\"#/$defs/IfMatch\"},\"content\":{\"type\":\"string\"},\"headers\":{\"additionalProperties\":true,\"properties\":{\"if-match\":{\"type\":\"string\"}},\"type\":\"object\"},\"labels\":{\"additionalProperties\":false,\"properties\":{\"ünï\":{\"type\":\"string\"}},\"type\":\"object\"}},\"type\":\"object\"}",
+		Output: "{\"anyOf\":[{\"additionalProperties\":true,\"properties\":{\"note\":{\"type\":\"string\"}},\"type\":\"object\"},{\"type\":\"null\"}]}",
+	},
+}}}
+
+type _Shared struct{ *_dependency }
+
+func (client _Shared) InputFilter(ctx context.Context, input SharedInputFilterInput) (SharedInputFilterOutput, error) {
+	return holon.Call[SharedInputFilterOutput](ctx, client._dependency, "input_filter", input)
+}
+
+func (client _Shared) Remove(ctx context.Context, input SharedRemoveInput) (SharedRemoveOutput, error) {
+	return holon.Call[SharedRemoveOutput](ctx, client._dependency, "remove", input)
+}
+
+func (client _Shared) Save(ctx context.Context, input SharedSaveInput) (SharedSaveOutput, error) {
+	return holon.Call[SharedSaveOutput](ctx, client._dependency, "save", input)
+}
+
 var WithHyphen = _WithHyphen{&holon.Dependency{Name: "with-hyphen", Tools: map[string]holon.ToolSchema{
 	"y": {
 		Input:  "{\"type\":\"object\"}",

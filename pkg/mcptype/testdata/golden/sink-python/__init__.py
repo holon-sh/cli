@@ -60,6 +60,16 @@ OrdersMojiInput = _typing.TypedDict("OrdersMojiInput", {"é": _typing.NotRequire
 
 OrdersKitchenSinkInput = _typing.TypedDict("OrdersKitchenSinkInput", {"id": _builtins.str})
 
+SharedInputFilterInput = _typing.TypedDict("SharedInputFilterInput", {"q": _typing.NotRequired[_builtins.str]})
+
+SharedInputIfMatch = _typing.TypedDict("SharedInputIfMatch", {"etag": _typing.NotRequired[_builtins.str]})
+
+SharedInputN = _typing.TypedDict("SharedInputN", {"ünï": _typing.NotRequired[_builtins.str]})
+
+SharedRemoveInput = _typing.TypedDict("SharedRemoveInput", {"a": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "condition": _typing.NotRequired[SharedInputIfMatch], "headers": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "labels": _typing.NotRequired[SharedInputN]})
+
+SharedSaveInput = _typing.TypedDict("SharedSaveInput", {"a": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "condition": _typing.NotRequired[SharedInputIfMatch], "content": _typing.NotRequired[_builtins.str], "headers": _typing.NotRequired[_builtins.dict[_builtins.str, _builtins.object]], "labels": _typing.NotRequired[SharedInputN]})
+
 class Inputs:
     class orders:
         value: _typing.TypeAlias = _builtins.dict[_builtins.str, _builtins.object]
@@ -72,6 +82,10 @@ class Inputs:
         runtime_run: _typing.TypeAlias = OrdersRuntimeRunInput
         weird_keys: _typing.TypeAlias = OrdersWeirdKeysInput
         moji: _typing.TypeAlias = OrdersMojiInput
+    class shared:
+        input_filter: _typing.TypeAlias = SharedInputFilterInput
+        remove: _typing.TypeAlias = SharedRemoveInput
+        save: _typing.TypeAlias = SharedSaveInput
 
 class Outputs:
     class orders:
@@ -80,6 +94,9 @@ class Outputs:
         runtime_run: _typing.TypeAlias = OrdersRuntimeRunOutput
         weird_keys: _typing.TypeAlias = OrdersWeirdKeysOutput
         moji: _typing.TypeAlias = _builtins.str
+    class shared:
+        remove: _typing.TypeAlias = _builtins.dict[_builtins.str, _builtins.object] | None
+        save: _typing.TypeAlias = _builtins.dict[_builtins.str, _builtins.object] | None
 
 class InputTypes:
     class orders:
@@ -106,6 +123,13 @@ class InputTypes:
             pass
         class moji:
             pass
+    class shared:
+        class input_filter:
+            pass
+        class remove:
+            IfMatch: _typing.TypeAlias = SharedInputIfMatch
+        class save:
+            IfMatch: _typing.TypeAlias = SharedInputIfMatch
 
 class OutputTypes:
     class orders:
@@ -118,6 +142,11 @@ class OutputTypes:
         class weird_keys:
             pass
         class moji:
+            pass
+    class shared:
+        class remove:
+            pass
+        class save:
             pass
 
 class X123Tools(_typing.Protocol):
@@ -224,6 +253,27 @@ class OrdersApp2(_typing.Protocol):
     ext: OrdersExt2
     async def call_tool(self, name: _typing.Literal["kitchen-sink"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[OrdersKitchenSinkInput]) -> _ToolResult[_builtins.bool]: ...
 
+class SharedTools(_typing.Protocol):
+    async def input_filter(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SharedInputFilterInput]) -> _CompleteResult[_builtins.object]: ...
+    async def remove(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SharedRemoveInput]) -> _builtins.dict[_builtins.str, _builtins.object] | None: ...
+    async def save(self, options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SharedSaveInput]) -> _builtins.dict[_builtins.str, _builtins.object] | None: ...
+
+class SharedEvents(_typing.Protocol):
+    async def list(self) -> _builtins.list[_builtins.dict[_builtins.str, _typing.Any]]: ...
+
+class SharedExt(_typing.Protocol):
+    events: SharedEvents
+
+class SharedApp(_typing.Protocol):
+    tools: SharedTools
+    ext: SharedExt
+    @_typing.overload
+    async def call_tool(self, name: _typing.Literal["input_filter"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SharedInputFilterInput]) -> _ToolResult[_builtins.object]: ...
+    @_typing.overload
+    async def call_tool(self, name: _typing.Literal["remove"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SharedRemoveInput]) -> _ToolResult[_builtins.dict[_builtins.str, _builtins.object] | None]: ...
+    @_typing.overload
+    async def call_tool(self, name: _typing.Literal["save"], options: _CallOptions | None = ..., /, **arguments: _typing.Unpack[SharedSaveInput]) -> _ToolResult[_builtins.dict[_builtins.str, _builtins.object] | None]: ...
+
 class WithHyphenTools(_typing.Protocol):
     async def y(self, options: _CallOptions | None = ..., /, **arguments: _builtins.object) -> _CompleteResult[_builtins.object]: ...
 
@@ -254,6 +304,7 @@ class NApp(_typing.Protocol):
 
 class _Clients(_typing.Protocol):
     orders: OrdersApp
+    shared: SharedApp
     @_typing.overload
     def __getitem__(self, name: _typing.Literal["123"]) -> X123App: ...
     @_typing.overload
@@ -265,12 +316,14 @@ class _Clients(_typing.Protocol):
     @_typing.overload
     def __getitem__(self, name: _typing.Literal["orders!"]) -> OrdersApp2: ...
     @_typing.overload
+    def __getitem__(self, name: _typing.Literal["shared"]) -> SharedApp: ...
+    @_typing.overload
     def __getitem__(self, name: _typing.Literal["with-hyphen"]) -> WithHyphenApp: ...
     @_typing.overload
     def __getitem__(self, name: _typing.Literal["ünï"]) -> NApp: ...
 
 
-_identity, _contracts, _methods = _json.loads("[{\"name\":\"ch\u00e9ck\\\"out\",\"requires\":{\"123\":{\"name\":\"n\",\"version\":\"1\"},\"_private\":{\"name\":\"p\",\"version\":\"1\"},\"for\":{\"name\":\"keyword\",\"version\":\"1\"},\"orders\":{\"name\":\"orders\",\"version\":\"1.0.0\"},\"orders!\":{\"name\":\"example/orders\",\"version\":\"2\"},\"with-hyphen\":{\"name\":\"h\",\"version\":\"1\"},\"\u00fcn\u00ef\":{\"name\":\"\u00fc\",\"version\":\"1\"}},\"version\":\"1.0.0-rc.1\"},{\"123\":{\"tools\":[]},\"_private\":{\"tools\":[]},\"for\":{\"tools\":[{\"inputSchema\":{\"type\":\"object\"},\"name\":\"x\"}]},\"orders\":{\"resources\":[{\"outputSchema\":{\"type\":\"string\"},\"uri\":\"res://plain\"},{\"outputSchema\":{\"$defs\":{\"Item\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}},\"additionalProperties\":false,\"properties\":{\"items\":{\"items\":{\"$ref\":\"#/$defs/Item\"},\"type\":\"array\"}},\"required\":[\"items\"],\"type\":\"object\"},\"uri\":\"res://typed\"},{\"outputSchema\":{\"properties\":{\"n\":{\"default\":-0,\"maximum\":1e21,\"minimum\":0.5,\"multipleOf\":1.0,\"type\":\"number\"}},\"type\":\"object\"},\"uri\":\"res://\u00e9/\u00fc\"}],\"tools\":[{\"inputSchema\":{\"type\":\"object\"},\"name\":\"-\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"123\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"CallTool\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"_hidden\"},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"a\":{\"type\":\"integer\"},\"b\":{\"type\":\"string\"}},\"required\":[\"b\"],\"type\":\"object\"},\"name\":\"call_tool\",\"outputSchema\":{\"additionalProperties\":false,\"properties\":{\"x\":{\"type\":\"boolean\"}},\"required\":[\"x\"],\"type\":\"object\"}},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"opt\":{\"additionalProperties\":false,\"properties\":{\"n\":{\"type\":\"number\"}},\"type\":\"object\"}},\"type\":\"object\"},\"name\":\"class\",\"outputSchema\":{\"items\":{\"$ref\":\"#/items\"},\"type\":\"array\"}},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"name\":\"get-order\"},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"name\":\"get_order\"},{\"inputSchema\":{\"$defs\":{\"9lives\":{\"type\":\"string\"},\"Node\":{\"additionalProperties\":false,\"properties\":{\"next\":{\"$ref\":\"#/$defs/Node\"},\"value\":{\"type\":\"integer\"}},\"required\":[\"value\"],\"type\":\"object\"},\"Nodes\":{\"items\":{\"$ref\":\"#/$defs/Node\"},\"type\":\"array\"},\"_private\":{\"type\":\"boolean\"},\"a/b~c\":{\"type\":\"integer\"},\"for\":{\"type\":\"string\"},\"list\":{\"prefixItems\":[{\"type\":\"string\"}],\"type\":\"array\"}},\"additionalProperties\":false,\"definitions\":{\"Legacy\":{\"type\":\"number\"},\"Node\":{\"type\":\"string\"}},\"properties\":{\"1starts\":{\"type\":\"string\"},\"Dash-Key\":{\"type\":\"string\"},\"all\":{\"allOf\":[{\"properties\":{\"a\":{\"type\":\"string\"}},\"required\":[\"a\"],\"type\":\"object\"},{\"properties\":{\"b\":{\"type\":\"integer\"}},\"type\":\"object\"}]},\"allConflict\":{\"allOf\":[{\"properties\":{\"a\":{\"type\":\"string\"}},\"type\":\"object\"},{\"properties\":{\"a\":{\"type\":\"integer\"}},\"type\":\"object\"}]},\"allNonObject\":{\"allOf\":[{\"type\":\"string\"},{\"type\":\"object\"}]},\"annotated\":{\"$comment\":\"c\",\"description\":\"gone\",\"examples\":[1],\"title\":\"t\",\"type\":\"string\"},\"arrayRef\":{\"$ref\":\"#/$defs/list/prefixItems/0\"},\"closedEmpty\":{\"additionalProperties\":false,\"type\":\"object\"},\"constNum\":{\"const\":1e21},\"constObj\":{\"const\":{\"deep\":[1,2]}},\"constString\":{\"const\":\"it's \\\"quoted\\\"\\n\"},\"cycle\":{\"$ref\":\"#/$defs/Node\"},\"dash-key\":{\"type\":\"string\"},\"emptyAll\":{\"allOf\":[]},\"emptyAny\":{\"anyOf\":[]},\"falseSchema\":false,\"files\":{\"items\":{\"properties\":{\"data\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"mimeType\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"size\":{\"type\":\"integer\"}},\"required\":[\"id\",\"mimeType\",\"size\"],\"type\":\"object\",\"x-mcp-file\":{\"accept\":[\"image/png\"],\"maxSize\":1048576}},\"type\":\"array\"},\"implicitTuple\":{\"minItems\":2.0,\"prefixItems\":[{\"const\":\"x\"}],\"type\":\"array\"},\"literals\":{\"enum\":[\"a\",1,2.5,-3,true,null,[1],{\"k\":\"v\"},1.0,1e21,-0]},\"mapOf\":{\"additionalProperties\":{\"type\":\"string\"},\"type\":\"object\"},\"multi\":{\"items\":{\"type\":\"integer\"},\"type\":[\"string\",\"null\",\"array\",5]},\"nested\":{\"items\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"deep\":{\"type\":\"null\"}},\"type\":\"object\"},\"type\":\"array\"},\"type\":\"array\"},\"noType\":{\"properties\":{\"p\":{\"type\":\"boolean\"}},\"required\":[\"p\",7]},\"nodes\":{\"$ref\":\"#/$defs/Nodes\"},\"numericType\":{\"properties\":{\"p\":{\"type\":\"boolean\"}},\"type\":7},\"odd key with spaces\":{\"type\":\"string\"},\"oneOf\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"number\"}]},\"openObj\":{\"additionalProperties\":{\"type\":\"integer\"},\"properties\":{\"x\":{\"type\":\"string\"}},\"type\":\"object\"},\"openTuple\":{\"additionalItems\":{\"type\":\"number\"},\"items\":[{\"type\":\"boolean\"}],\"type\":\"array\"},\"plainArray\":{\"type\":\"array\"},\"pointerEscape\":{\"$ref\":\"#/$defs/a~1b~0c\"},\"rootRef\":{\"$ref\":\"#\"},\"trueObj\":{\"additionalProperties\":true,\"properties\":{\"x\":{\"type\":\"string\"}},\"type\":\"object\"},\"trueSchema\":true,\"tuple\":{\"items\":false,\"minItems\":1,\"prefixItems\":[{\"type\":\"string\"},{\"type\":\"integer\"}],\"type\":\"array\"},\"unknownKeyword\":{\"format\":\"email\"}},\"required\":[\"tuple\",\"literals\",\"noType\"],\"type\":\"object\"},\"name\":\"kitchen-sink\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"order.list\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"order/list\"},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"},\"name\":\"runtime.run\",\"outputSchema\":{\"additionalProperties\":false,\"properties\":{\"stdout\":{\"type\":\"string\"}},\"required\":[\"stdout\"],\"type\":\"object\"}},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"\":{\"type\":\"null\"},\"-\":{\"type\":\"boolean\"},\"x\\\"quote\":{\"type\":\"string\"},\"\u00fcn\u00efcode\":{\"type\":\"integer\"}},\"required\":[\"\"],\"type\":\"object\"},\"name\":\"weird-keys\",\"outputSchema\":{\"additionalProperties\":false,\"properties\":{\"a.b\":{\"type\":\"string\"},\"nl\\nname\":{\"type\":\"string\"},\"tab\\tname\":{\"type\":\"string\"}},\"required\":[\"tab\\tname\"],\"type\":\"object\"}},{\"inputSchema\":{\"properties\":{\"\u00e9\":{\"type\":\"string\"}},\"type\":\"object\"},\"name\":\"\u00e9moji\U0001f389\",\"outputSchema\":{\"description\":\"\u00e9\",\"type\":\"string\"}}]},\"orders!\":{\"tools\":[{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"name\":\"kitchen-sink\",\"outputSchema\":{\"type\":\"boolean\"}}]},\"with-hyphen\":{\"tools\":[{\"inputSchema\":{\"type\":\"object\"},\"name\":\"y\"}]},\"\u00fcn\u00ef\":{\"tools\":[{\"inputSchema\":{\"type\":\"object\"},\"name\":\"z\"}]}},{\"orders\":{\"-\":\"value\",\"123\":\"x123\",\"class\":\"class_\",\"kitchen-sink\":\"kitchen_sink\",\"runtime.run\":\"runtime_run\",\"weird-keys\":\"weird_keys\",\"\u00e9moji\U0001f389\":\"moji\"},\"orders!\":{\"kitchen-sink\":\"kitchen_sink\"}}]")
+_identity, _contracts, _methods = _json.loads("[{\"name\":\"ch\u00e9ck\\\"out\",\"requires\":{\"123\":{\"name\":\"n\",\"version\":\"1\"},\"_private\":{\"name\":\"p\",\"version\":\"1\"},\"for\":{\"name\":\"keyword\",\"version\":\"1\"},\"orders\":{\"name\":\"orders\",\"version\":\"1.0.0\"},\"orders!\":{\"name\":\"example/orders\",\"version\":\"2\"},\"with-hyphen\":{\"name\":\"h\",\"version\":\"1\"},\"\u00fcn\u00ef\":{\"name\":\"\u00fc\",\"version\":\"1\"}},\"version\":\"1.0.0-rc.1\"},{\"123\":{\"tools\":[]},\"_private\":{\"tools\":[]},\"for\":{\"tools\":[{\"inputSchema\":{\"type\":\"object\"},\"name\":\"x\"}]},\"orders\":{\"resources\":[{\"outputSchema\":{\"type\":\"string\"},\"uri\":\"res://plain\"},{\"outputSchema\":{\"$defs\":{\"Item\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}},\"additionalProperties\":false,\"properties\":{\"items\":{\"items\":{\"$ref\":\"#/$defs/Item\"},\"type\":\"array\"}},\"required\":[\"items\"],\"type\":\"object\"},\"uri\":\"res://typed\"},{\"outputSchema\":{\"properties\":{\"n\":{\"default\":-0,\"maximum\":1e21,\"minimum\":0.5,\"multipleOf\":1.0,\"type\":\"number\"}},\"type\":\"object\"},\"uri\":\"res://\u00e9/\u00fc\"}],\"tools\":[{\"inputSchema\":{\"type\":\"object\"},\"name\":\"-\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"123\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"CallTool\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"_hidden\"},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"a\":{\"type\":\"integer\"},\"b\":{\"type\":\"string\"}},\"required\":[\"b\"],\"type\":\"object\"},\"name\":\"call_tool\",\"outputSchema\":{\"additionalProperties\":false,\"properties\":{\"x\":{\"type\":\"boolean\"}},\"required\":[\"x\"],\"type\":\"object\"}},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"opt\":{\"additionalProperties\":false,\"properties\":{\"n\":{\"type\":\"number\"}},\"type\":\"object\"}},\"type\":\"object\"},\"name\":\"class\",\"outputSchema\":{\"items\":{\"$ref\":\"#/items\"},\"type\":\"array\"}},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"name\":\"get-order\"},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"name\":\"get_order\"},{\"inputSchema\":{\"$defs\":{\"9lives\":{\"type\":\"string\"},\"Node\":{\"additionalProperties\":false,\"properties\":{\"next\":{\"$ref\":\"#/$defs/Node\"},\"value\":{\"type\":\"integer\"}},\"required\":[\"value\"],\"type\":\"object\"},\"Nodes\":{\"items\":{\"$ref\":\"#/$defs/Node\"},\"type\":\"array\"},\"_private\":{\"type\":\"boolean\"},\"a/b~c\":{\"type\":\"integer\"},\"for\":{\"type\":\"string\"},\"list\":{\"prefixItems\":[{\"type\":\"string\"}],\"type\":\"array\"}},\"additionalProperties\":false,\"definitions\":{\"Legacy\":{\"type\":\"number\"},\"Node\":{\"type\":\"string\"}},\"properties\":{\"1starts\":{\"type\":\"string\"},\"Dash-Key\":{\"type\":\"string\"},\"all\":{\"allOf\":[{\"properties\":{\"a\":{\"type\":\"string\"}},\"required\":[\"a\"],\"type\":\"object\"},{\"properties\":{\"b\":{\"type\":\"integer\"}},\"type\":\"object\"}]},\"allConflict\":{\"allOf\":[{\"properties\":{\"a\":{\"type\":\"string\"}},\"type\":\"object\"},{\"properties\":{\"a\":{\"type\":\"integer\"}},\"type\":\"object\"}]},\"allNonObject\":{\"allOf\":[{\"type\":\"string\"},{\"type\":\"object\"}]},\"annotated\":{\"$comment\":\"c\",\"description\":\"gone\",\"examples\":[1],\"title\":\"t\",\"type\":\"string\"},\"arrayRef\":{\"$ref\":\"#/$defs/list/prefixItems/0\"},\"closedEmpty\":{\"additionalProperties\":false,\"type\":\"object\"},\"constNum\":{\"const\":1e21},\"constObj\":{\"const\":{\"deep\":[1,2]}},\"constString\":{\"const\":\"it's \\\"quoted\\\"\\n\"},\"cycle\":{\"$ref\":\"#/$defs/Node\"},\"dash-key\":{\"type\":\"string\"},\"emptyAll\":{\"allOf\":[]},\"emptyAny\":{\"anyOf\":[]},\"falseSchema\":false,\"files\":{\"items\":{\"properties\":{\"data\":{\"type\":\"string\"},\"id\":{\"type\":\"string\"},\"mimeType\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"size\":{\"type\":\"integer\"}},\"required\":[\"id\",\"mimeType\",\"size\"],\"type\":\"object\",\"x-mcp-file\":{\"accept\":[\"image/png\"],\"maxSize\":1048576}},\"type\":\"array\"},\"implicitTuple\":{\"minItems\":2.0,\"prefixItems\":[{\"const\":\"x\"}],\"type\":\"array\"},\"literals\":{\"enum\":[\"a\",1,2.5,-3,true,null,[1],{\"k\":\"v\"},1.0,1e21,-0]},\"mapOf\":{\"additionalProperties\":{\"type\":\"string\"},\"type\":\"object\"},\"multi\":{\"items\":{\"type\":\"integer\"},\"type\":[\"string\",\"null\",\"array\",5]},\"nested\":{\"items\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"deep\":{\"type\":\"null\"}},\"type\":\"object\"},\"type\":\"array\"},\"type\":\"array\"},\"noType\":{\"properties\":{\"p\":{\"type\":\"boolean\"}},\"required\":[\"p\",7]},\"nodes\":{\"$ref\":\"#/$defs/Nodes\"},\"numericType\":{\"properties\":{\"p\":{\"type\":\"boolean\"}},\"type\":7},\"odd key with spaces\":{\"type\":\"string\"},\"oneOf\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"number\"}]},\"openObj\":{\"additionalProperties\":{\"type\":\"integer\"},\"properties\":{\"x\":{\"type\":\"string\"}},\"type\":\"object\"},\"openTuple\":{\"additionalItems\":{\"type\":\"number\"},\"items\":[{\"type\":\"boolean\"}],\"type\":\"array\"},\"plainArray\":{\"type\":\"array\"},\"pointerEscape\":{\"$ref\":\"#/$defs/a~1b~0c\"},\"rootRef\":{\"$ref\":\"#\"},\"trueObj\":{\"additionalProperties\":true,\"properties\":{\"x\":{\"type\":\"string\"}},\"type\":\"object\"},\"trueSchema\":true,\"tuple\":{\"items\":false,\"minItems\":1,\"prefixItems\":[{\"type\":\"string\"},{\"type\":\"integer\"}],\"type\":\"array\"},\"unknownKeyword\":{\"format\":\"email\"}},\"required\":[\"tuple\",\"literals\",\"noType\"],\"type\":\"object\"},\"name\":\"kitchen-sink\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"order.list\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"order/list\"},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"code\":{\"type\":\"string\"}},\"required\":[\"code\"],\"type\":\"object\"},\"name\":\"runtime.run\",\"outputSchema\":{\"additionalProperties\":false,\"properties\":{\"stdout\":{\"type\":\"string\"}},\"required\":[\"stdout\"],\"type\":\"object\"}},{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"\":{\"type\":\"null\"},\"-\":{\"type\":\"boolean\"},\"x\\\"quote\":{\"type\":\"string\"},\"\u00fcn\u00efcode\":{\"type\":\"integer\"}},\"required\":[\"\"],\"type\":\"object\"},\"name\":\"weird-keys\",\"outputSchema\":{\"additionalProperties\":false,\"properties\":{\"a.b\":{\"type\":\"string\"},\"nl\\nname\":{\"type\":\"string\"},\"tab\\tname\":{\"type\":\"string\"}},\"required\":[\"tab\\tname\"],\"type\":\"object\"}},{\"inputSchema\":{\"properties\":{\"\u00e9\":{\"type\":\"string\"}},\"type\":\"object\"},\"name\":\"\u00e9moji\U0001f389\",\"outputSchema\":{\"description\":\"\u00e9\",\"type\":\"string\"}}]},\"orders!\":{\"tools\":[{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"id\":{\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"},\"name\":\"kitchen-sink\",\"outputSchema\":{\"type\":\"boolean\"}}]},\"shared\":{\"tools\":[{\"inputSchema\":{\"additionalProperties\":false,\"properties\":{\"q\":{\"type\":\"string\"}},\"type\":\"object\"},\"name\":\"input_filter\"},{\"inputSchema\":{\"$defs\":{\"IfMatch\":{\"additionalProperties\":false,\"properties\":{\"etag\":{\"type\":\"string\"}},\"type\":\"object\"}},\"additionalProperties\":false,\"properties\":{\"a\":{\"additionalProperties\":true,\"properties\":{\"filter-input\":{\"type\":\"string\"}},\"type\":\"object\"},\"condition\":{\"$ref\":\"#/$defs/IfMatch\"},\"headers\":{\"additionalProperties\":true,\"properties\":{\"if-match\":{\"type\":\"string\"}},\"type\":\"object\"},\"labels\":{\"additionalProperties\":false,\"properties\":{\"\u00fcn\u00ef\":{\"type\":\"string\"}},\"type\":\"object\"}},\"type\":\"object\"},\"name\":\"remove\",\"outputSchema\":{\"anyOf\":[{\"additionalProperties\":true,\"properties\":{\"note\":{\"type\":\"string\"}},\"type\":\"object\"},{\"type\":\"null\"}]}},{\"inputSchema\":{\"$defs\":{\"IfMatch\":{\"additionalProperties\":false,\"properties\":{\"etag\":{\"type\":\"string\"}},\"type\":\"object\"}},\"additionalProperties\":false,\"properties\":{\"a\":{\"additionalProperties\":true,\"properties\":{\"filter-input\":{\"type\":\"string\"}},\"type\":\"object\"},\"condition\":{\"$ref\":\"#/$defs/IfMatch\"},\"content\":{\"type\":\"string\"},\"headers\":{\"additionalProperties\":true,\"properties\":{\"if-match\":{\"type\":\"string\"}},\"type\":\"object\"},\"labels\":{\"additionalProperties\":false,\"properties\":{\"\u00fcn\u00ef\":{\"type\":\"string\"}},\"type\":\"object\"}},\"type\":\"object\"},\"name\":\"save\",\"outputSchema\":{\"anyOf\":[{\"additionalProperties\":true,\"properties\":{\"note\":{\"type\":\"string\"}},\"type\":\"object\"},{\"type\":\"null\"}]}}]},\"with-hyphen\":{\"tools\":[{\"inputSchema\":{\"type\":\"object\"},\"name\":\"y\"}]},\"\u00fcn\u00ef\":{\"tools\":[{\"inputSchema\":{\"type\":\"object\"},\"name\":\"z\"}]}},{\"orders\":{\"-\":\"value\",\"123\":\"x123\",\"class\":\"class_\",\"kitchen-sink\":\"kitchen_sink\",\"runtime.run\":\"runtime_run\",\"weird-keys\":\"weird_keys\",\"\u00e9moji\U0001f389\":\"moji\"},\"orders!\":{\"kitchen-sink\":\"kitchen_sink\"}}]")
 
 def _clients(bindings: _typing.Mapping[str, _Binding] | None = None) -> _Clients:
     apps = _Apps(_identity, _contracts, bindings)
