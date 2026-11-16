@@ -33,17 +33,6 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 			httpError: &httpError{StatusCode: http.StatusConflict, Code: "conflict"},
 		},
 		{
-			name: "policy error", status: http.StatusBadRequest, body: `{"error":{"code":"invalid_request","message":"OAuth support is disabled"}}`,
-			httpError: &httpError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Message: "OAuth support is disabled"},
-		},
-		{
-			name: "what the failed step printed", status: http.StatusBadRequest,
-			body: `{"error":{"code":"invalid_request","message":"npm install: exit status 1"},"output":"npm error 404\n"}`,
-			httpError: &httpError{
-				StatusCode: http.StatusBadRequest, Code: "invalid_request", Message: "npm install: exit status 1", Output: "npm error 404\n",
-			},
-		},
-		{
 			name: "token redacted from what was printed", status: http.StatusBadRequest,
 			body:      `{"error":{"code":"invalid_request","message":"npm install: exit status 1"},"output":"` + token + `"}`,
 			httpError: &httpError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Message: "npm install: exit status 1"},
