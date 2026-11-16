@@ -33,7 +33,7 @@ type projectApp struct {
 // A dependency is the manifest's app of that name: a path app's source, a remote app's endpoint or a
 // registry app's version. Other dependencies keep what sh.holon.requires says. Without a manifest it
 // returns nil.
-func projectConsumers(dir string) ([]typegen.Consumer, error) {
+func projectConsumers(dir string, resolve bool) ([]typegen.Consumer, error) {
 	file := projectFile(dir)
 	if file == "" {
 		return nil, nil
@@ -50,21 +50,22 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 	}
 	// The apps a dependency can name: each path app's resolved directory, a remote app's endpoint or a
 	// registry app's version.
-	apps := map[string]typegen.Source{}
+	apps := map[string]typegen.Server{}
 	for _, app := range project.Apps {
 		switch {
 		case filepath.IsAbs(app.Path):
 			return nil, fmt.Errorf("%s: %s path must be a relative directory", file, app.Name)
 		case app.Path != "":
-			path, err := clientDir(filepath.Join(dir, app.Path))
-			if err != nil {
-				return nil, fmt.Errorf("%s: %s: %w", file, app.Name, err)
-			}
-			apps[app.Name] = typegen.Source{Path: path}
+			var path string
+			path, err = clientDir(filepath.Join(dir, app.Path))
+			apps[app.Name] = typegen.Path(path)
 		case app.Remote != nil:
-			apps[app.Name] = typegen.Source{Endpoint: app.Remote.URL}
+			apps[app.Name], err = typegen.NewEndpoint(app.Remote.URL)
 		case app.Registry != nil:
-			apps[app.Name] = typegen.Source{Registry: app.Registry}
+			apps[app.Name], err = typegen.NewRegistry(*app.Registry)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s: %s: %w", file, app.Name, err)
 		}
 	}
 	var consumers []typegen.Consumer
@@ -72,20 +73,15 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 		if app.Path == "" {
 			continue
 		}
-		c, err := appConsumer(app.Name, apps[app.Name].Path)
-		if err != nil {
+		path, _ := apps[app.Name].(typegen.Path)
+		switch c, err := appConsumer(app.Name, string(path), apps, resolve); {
+		case err != nil:
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
+		case c != nil && app.Name == "":
+			return nil, fmt.Errorf("%s: path app %s has no name", file, app.Path)
+		case c != nil:
+			consumers = append(consumers, *c)
 		}
-		if c == nil {
-			continue
-		}
-		for i, source := range c.Sources {
-			if sibling, declared := apps[source.Alias]; declared {
-				sibling.Alias = source.Alias
-				c.Sources[i] = sibling
-			}
-		}
-		consumers = append(consumers, *c)
 	}
 	if len(consumers) == 0 {
 		return nil, fmt.Errorf("%s: no path app declares a Holon SDK runtime or keeps an MCP server", file)

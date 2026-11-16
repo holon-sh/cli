@@ -19,14 +19,12 @@ import (
 // DockerCredential looks registry credentials up in the Docker config, by the host being contacted.
 // DOCKER_CONFIG and HOME entries in env override this process's own.
 func DockerCredential(env []string) (auth.CredentialFunc, error) {
-	env, err := commandenv.Environ(env)
-	if err != nil {
-		return nil, err
-	}
+	env = commandenv.Environ(env)
 	configDir := commandenv.Value(env, "DOCKER_CONFIG")
 	if configDir == "" {
 		home := commandenv.Value(env, "HOME")
 		if home == "" {
+			var err error
 			if home, err = os.UserHomeDir(); err != nil {
 				return nil, err
 			}
