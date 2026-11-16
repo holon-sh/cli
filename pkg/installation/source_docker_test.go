@@ -163,7 +163,6 @@ func sourceRegistry(t *testing.T) (protocol.UploadGrant, buildOptions) {
 	registry.bearer = true
 	registry.credentials["apps"] = registryCredential{protocol.UploadUsername, "grant-secret"}
 	name := fmt.Sprintf("holon-source-contract-%d", time.Now().UnixNano())
-	mark("builder create " + t.Name())
 	dockerTest(t, "buildx", "create", "--name", name, "--driver", "docker-container",
 		"--driver-opt", "image=moby/buildkit:v0.33.1")
 	t.Cleanup(func() {
