@@ -1,6 +1,7 @@
 package mcptype
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,22 +10,11 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
-// contractTool is one tool's schemas. Output is nil when the tool declares no outputSchema.
-type contractTool struct {
-	Input  Object
-	Output Object
-}
+// contractTool is the schemas of one tool, resource or event. A resource has no Input, and Output is
+// nil when a tool declares no outputSchema.
+type contractTool struct{ Input, Output Object }
 
-type contractEvent struct {
-	Input   Object
-	Payload Object
-}
-
-type contract struct {
-	Tools     map[string]contractTool
-	Resources map[string]Object
-	Events    map[string]contractEvent
-}
+type contract struct{ Tools, Resources, Events map[string]contractTool }
 
 // checkIdentity requires what names a published app.
 func checkIdentity(identity mcpcontract.Identity) error {
@@ -38,15 +28,17 @@ func decodeSchema(member string, raw json.RawMessage) (Object, error) {
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("missing field `%s`", member)
 	}
-	value, err := decodeJSON(raw)
-	if err != nil {
-		return nil, err
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var object Object
+	if err := decoder.Decode(&object); err != nil || object == nil {
+		return nil, fmt.Errorf("%s must be an object", member)
 	}
-	return asObject(value)
+	return object, nil
 }
 
 func decodeContract(source mcpcontract.Contract) (contract, error) {
-	result := contract{Tools: map[string]contractTool{}, Resources: map[string]Object{}, Events: map[string]contractEvent{}}
+	result := contract{Tools: map[string]contractTool{}, Resources: map[string]contractTool{}, Events: map[string]contractTool{}}
 	for _, tool := range source.Tools {
 		input, err := decodeSchema("inputSchema", tool.Input)
 		if err != nil {
@@ -74,7 +66,7 @@ func decodeContract(source mcpcontract.Contract) (contract, error) {
 		if _, exists := result.Resources[resource.URI]; resource.URI == "" || exists {
 			return contract{}, errors.New("resource URIs must be nonempty and unique")
 		}
-		result.Resources[resource.URI] = output
+		result.Resources[resource.URI] = contractTool{Output: output}
 	}
 	for _, event := range source.Events {
 		input, err := decodeSchema("inputSchema", event.Input)
@@ -91,7 +83,7 @@ func decodeContract(source mcpcontract.Contract) (contract, error) {
 		if _, exists := result.Events[event.Name]; event.Name == "" || exists {
 			return contract{}, errors.New("event names must be nonempty and unique")
 		}
-		result.Events[event.Name] = contractEvent{Input: input, Payload: payload}
+		result.Events[event.Name] = contractTool{Input: input, Output: payload}
 	}
 	return result, nil
 }
@@ -133,14 +125,14 @@ func (c contract) MarshalJSON() ([]byte, error) {
 	if len(c.Resources) > 0 {
 		resources := make([]Value, 0, len(c.Resources))
 		for _, uri := range sortedKeys(c.Resources) {
-			resources = append(resources, Object{"uri": uri, "outputSchema": c.Resources[uri]})
+			resources = append(resources, Object{"uri": uri, "outputSchema": c.Resources[uri].Output})
 		}
 		wire["resources"] = resources
 	}
 	if len(c.Events) > 0 {
 		events := make([]Value, 0, len(c.Events))
 		for _, name := range sortedKeys(c.Events) {
-			events = append(events, Object{"name": name, "inputSchema": c.Events[name].Input, "payloadSchema": c.Events[name].Payload})
+			events = append(events, Object{"name": name, "inputSchema": c.Events[name].Input, "payloadSchema": c.Events[name].Output})
 		}
 		wire["events"] = events
 	}

@@ -115,7 +115,7 @@ func TestEndpointToken(t *testing.T) {
 				signedIn = true
 				return test.signedIn, test.signInErr
 			}
-			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Endpoint: server.URL}, Options{Env: []string{test.env}, SignIn: signIn})
+			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Server: Endpoint(server.URL)}, Options{Env: []string{test.env}, SignIn: signIn})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), "-value") {
 					t.Fatalf("ResolveDocument = %v, want %q without the token", err, test.want)
@@ -132,13 +132,9 @@ func TestEndpointToken(t *testing.T) {
 func TestEndpointTokenFollowsEachAlias(t *testing.T) {
 	server := liveServerBehind(t, func(authorization string) bool { return authorization == "Bearer good-value" })
 	consumer := func(alias string) Consumer {
-		return Consumer{Name: alias, Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Alias: alias, Endpoint: server.URL}}}
+		return Consumer{Name: alias, Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Alias: alias, Server: Endpoint(server.URL)}}}
 	}
-	prepared, err := Prepare(t.Context(), []Consumer{consumer("signed"), consumer("unsigned")}, Options{Env: []string{"SIGNED_MCP_TOKEN=good-value"}})
-	if prepared != nil {
-		prepared.Close()
-	}
-	if err == nil || !strings.Contains(err.Error(), "set UNSIGNED_MCP_TOKEN") {
+	if _, err := Prepare(t.Context(), []Consumer{consumer("signed"), consumer("unsigned")}, Options{Env: []string{"SIGNED_MCP_TOKEN=good-value"}}); err == nil || !strings.Contains(err.Error(), "set UNSIGNED_MCP_TOKEN") {
 		t.Fatalf("Prepare = %v, want the alias without a token refused", err)
 	}
 }
@@ -154,7 +150,7 @@ func TestEndpointTokenStaysWithItsOrigin(t *testing.T) {
 	defer redirecting.Close()
 	// The process environment is where the CLI's token comes from.
 	t.Setenv("DOCS_MCP_TOKEN", "secret")
-	if _, err := ResolveDocument(t.Context(), Source{Alias: "docs", Endpoint: redirecting.URL}, Options{}); err != nil {
+	if _, err := ResolveDocument(t.Context(), Source{Alias: "docs", Server: Endpoint(redirecting.URL)}, Options{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -202,7 +198,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 				"images.example":                           image.Transport,
 			}}
 			ref := protocol.RegistryRef{Name: identity.Name, Version: identity.Version, Registry: server.URL}
-			metadata, err := ResolveDocument(t.Context(), Source{Alias: "orders", Registry: &ref}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir(), "ORDERS_MCP_TOKEN=secret"}})
+			metadata, err := ResolveDocument(t.Context(), Source{Alias: "orders", Server: Registry(ref)}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir(), "ORDERS_MCP_TOKEN=secret"}})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {
 					t.Fatalf("ResolveDocument = %v, want %q", err, test.want)
@@ -219,7 +215,7 @@ func TestRegistrySourceResolution(t *testing.T) {
 func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	live := liveServer(t, "Orders Live", "99", true)
 	defer live.Close()
-	metadata, err := ResolveDocument(t.Context(), Source{Endpoint: live.URL}, Options{HTTPClient: live.Client()})
+	metadata, err := ResolveDocument(t.Context(), Source{Server: Endpoint(live.URL)}, Options{HTTPClient: live.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +224,7 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	}
 	bareServer := liveServer(t, "bare", "", false)
 	defer bareServer.Close()
-	bare, err := ResolveDocument(t.Context(), Source{Endpoint: bareServer.URL}, Options{HTTPClient: bareServer.Client()})
+	bare, err := ResolveDocument(t.Context(), Source{Server: Endpoint(bareServer.URL)}, Options{HTTPClient: bareServer.Client()})
 	if err != nil || bare.Identity != (mcpcontract.Identity{Name: "bare", Version: "0.0.0"}) {
 		t.Fatalf("unversioned contract = %+v, %v", bare, err)
 	}
@@ -244,12 +240,11 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 		t.Fatalf("events = %s, a server without them %v", events, bare.Schema.Events)
 	}
 	// As a consumer source the alias derives from that name.
-	c := Consumer{Name: "app", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Endpoint: live.URL}}}
+	c := Consumer{Name: "app", Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Server: Endpoint(live.URL)}}}
 	prepared, err := Prepare(t.Context(), []Consumer{c}, Options{HTTPClient: live.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
 	if reference := prepared.Metadata()["app"].Requires["orders-live"]; prepared.Documents()[reference] == nil {
 		t.Fatalf("alias not derived from serverInfo: %+v", prepared.Metadata()["app"].Requires)
 	}

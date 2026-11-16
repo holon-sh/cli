@@ -72,7 +72,7 @@ const openFileTree = `{"$ref":"#/$defs/FileInfo",` + openFileInfo + `}`
 // theirs, so the two declarations would take the same name.
 func generateFiles(t *testing.T, app, target string) {
 	t.Helper()
-	source := Source{Document: document(t, &mcpcontract.Metadata{
+	source := Source{Server: document(t, &mcpcontract.Metadata{
 		Identity: mcpcontract.Identity{Name: "example.com/files", Version: "1.0.0"},
 		Schema: &mcpcontract.Contract{
 			Tools: []mcpcontract.Tool{
@@ -104,7 +104,8 @@ func declaredOnce(t *testing.T, types, field string) {
 // check runs holon types check on app.
 func check(t *testing.T, app string) (string, error) {
 	var output bytes.Buffer
-	err := Check(t.Context(), app, Options{Stdout: &output, Stderr: &output})
+	c, _ := AppConsumer("app", app)
+	err := Check(t.Context(), *c, Options{Stdout: &output, Stderr: &output})
 	return output.String(), err
 }
 
@@ -142,7 +143,7 @@ func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 	t.Run("typescript", func(t *testing.T) {
 		t.Parallel()
 		app := typeScriptApp(t)
-		c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Document: document(t, orders)}}}
+		c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{{Server: document(t, orders)}}}
 		if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 			t.Fatal(err)
 		}
@@ -183,7 +184,7 @@ export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch 
 			t.Skip("mypy is not installed in tooling/python/.venv")
 		}
 		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
-		c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetPy}, Sources: []Source{{Document: document(t, orders)}}}
+		c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetPy}, Sources: []Source{{Server: document(t, orders)}}}
 		if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 			t.Fatal(err)
 		}
