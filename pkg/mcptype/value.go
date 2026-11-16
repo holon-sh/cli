@@ -1,7 +1,6 @@
 package mcptype
 
 import (
-	"bytes"
 	"encoding/json"
 	"maps"
 	"slices"
@@ -15,15 +14,6 @@ type Value = any
 
 // Object is a JSON object.
 type Object = map[string]Value
-
-// decodeJSON parses one JSON document.
-func decodeJSON(data []byte) (Value, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var value Value
-	err := decoder.Decode(&value)
-	return value, err
-}
 
 // encode writes compact JSON with sorted object keys using the standard encoder.
 func encode(value Value) []byte {

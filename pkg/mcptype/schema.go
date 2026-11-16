@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -369,8 +368,8 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 				return typ{}, err
 			}
 			count, _ := object["minItems"].(json.Number)
-			min, _ := strconv.Atoi(string(count))
-			return typ{kind: kindTuple, items: items, min: max(min, 0), extra: extra}, nil
+			min, _ := count.Int64()
+			return typ{kind: kindTuple, items: items, min: int(max(min, 0)), extra: extra}, nil
 		}
 		items, declared := object["items"]
 		if !declared {
