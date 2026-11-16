@@ -78,7 +78,7 @@ func share(shapes []*shape, declares func(typ) bool) {
 
 type sharing struct {
 	shapes   []*shape
-	declares func(typ) bool         // Whether the target declares an object that nothing names.
+	declares func(typ) bool
 	current  int                    // The shape being counted.
 	types    map[string]*sharedType // By structure.
 	keys     map[*declaration]string
