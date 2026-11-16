@@ -33,8 +33,8 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		}
 	}
 	c, extract := checkoutConsumer(t, TargetTS)
-	python, page := t.TempDir(), t.TempDir()
-	for _, dir := range []string{python, page} {
+	python, page, elsewhere := t.TempDir(), t.TempDir(), t.TempDir()
+	for _, dir := range []string{python, page, elsewhere} {
 		put(t, dir, "pyproject.toml", "[project]\nname = \"app\"\nversion = \"1\"\nrequires-python = \">=3.12\"\ndependencies = [\"holon-sh\"]\n")
 		put(t, dir, "uv.lock", "version = 1\nrequires-python = \">=3.12\"\n")
 	}
@@ -63,5 +63,9 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Run: extract}); err != nil {
 			t.Fatalf("%s: installed runtime was reinstalled: %v", test.installed, err)
 		}
+	}
+	stand(elsewhere, "", "")
+	if err := Generate(t.Context(), []Consumer{{Name: "app", Dir: elsewhere, Targets: []string{TargetPy}}}, Options{Run: extract}); err != nil {
+		t.Fatalf("an environment kept outside the project: %v", err)
 	}
 }

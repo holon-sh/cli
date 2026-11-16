@@ -12,6 +12,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
@@ -50,22 +51,21 @@ func projectConsumers(dir string, resolve bool) ([]typegen.Consumer, error) {
 	}
 	// The apps a dependency can name: each path app's resolved directory, a remote app's endpoint or a
 	// registry app's version.
-	apps := map[string]typegen.Server{}
+	paths, remotes := map[string]typegen.Path{}, map[string]mcpregistry.Requirement{}
 	for _, app := range project.Apps {
 		switch {
 		case filepath.IsAbs(app.Path):
 			return nil, fmt.Errorf("%s: %s path must be a relative directory", file, app.Name)
 		case app.Path != "":
-			var path string
-			path, err = clientDir(filepath.Join(dir, app.Path))
-			apps[app.Name] = typegen.Path(path)
+			path, err := clientDir(filepath.Join(dir, app.Path))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %s: %w", file, app.Name, err)
+			}
+			paths[app.Name] = typegen.Path(path)
 		case app.Remote != nil:
-			apps[app.Name], err = typegen.NewEndpoint(app.Remote.URL)
+			remotes[app.Name] = mcpregistry.Requirement{URL: app.Remote.URL}
 		case app.Registry != nil:
-			apps[app.Name], err = typegen.NewRegistry(*app.Registry)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("%s: %s: %w", file, app.Name, err)
+			remotes[app.Name] = mcpregistry.Requirement{RegistryRef: *app.Registry}
 		}
 	}
 	var consumers []typegen.Consumer
@@ -73,12 +73,11 @@ func projectConsumers(dir string, resolve bool) ([]typegen.Consumer, error) {
 		if app.Path == "" {
 			continue
 		}
-		path, _ := apps[app.Name].(typegen.Path)
-		switch c, err := appConsumer(app.Name, string(path), apps, resolve); {
+		switch c, err := appConsumer(app.Name, string(paths[app.Name]), paths, remotes, resolve); {
 		case err != nil:
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
-		case c != nil && app.Name == "":
-			return nil, fmt.Errorf("%s: path app %s has no name", file, app.Path)
+		case c != nil && app.Name == "" && resolve:
+			return nil, errors.New("consumer name is required")
 		case c != nil:
 			consumers = append(consumers, *c)
 		}

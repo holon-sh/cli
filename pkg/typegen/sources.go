@@ -87,13 +87,12 @@ func ParseSource(arg string) (Source, error) {
 	if alias, rest, ok := strings.Cut(arg, "="); ok && appName.MatchString(alias) {
 		source.Alias, arg = alias, rest
 	}
-	if len(source.Alias) > 49 {
-		return source, fmt.Errorf("alias %q must be a DNS label of at most 49 characters", source.Alias)
-	}
 	if arg == "" {
 		return source, errors.New("a server path or URL is required")
 	}
-	if u, err := url.Parse(arg); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+	path, err := filepath.Abs(arg)
+	source.Server = Path(path)
+	if u, parseErr := url.Parse(arg); parseErr == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
 			name, _ := url.PathUnescape(m[1])
 			version, _ := url.PathUnescape(m[2])
@@ -101,10 +100,10 @@ func ParseSource(arg string) (Source, error) {
 		} else {
 			source.Server, err = NewEndpoint(arg)
 		}
-		return source, err
 	}
-	path, err := filepath.Abs(arg)
-	source.Server = Path(path)
+	if len(source.Alias) > 49 {
+		err = fmt.Errorf("alias %q must be a DNS label of at most 49 characters", source.Alias)
+	}
 	return source, err
 }
 

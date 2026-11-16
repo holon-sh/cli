@@ -291,3 +291,17 @@ func TestAServedSourceAnswersForItself(t *testing.T) {
 		})
 	}
 }
+
+func TestASourceThatLinksOutsideItselfIsRefused(t *testing.T) {
+	orders, outside := t.TempDir(), t.TempDir()
+	writeProvider(t, orders, "orders", pythonProvider)
+	put(t, outside, "hosts", "")
+	if err := os.Symlink(filepath.Join(outside, "hosts"), filepath.Join(orders, "hosts")); err != nil {
+		t.Fatal(err)
+	}
+	answers := json.RawMessage(`{"serverInfo":{"name":"example.com/orders","version":"1.0.0"},"lists":{}}`)
+	_, err := ResolveDocument(t.Context(), Source{Server: Path(orders)}, Options{Served: map[string]json.RawMessage{orders: answers}})
+	if err == nil || !strings.Contains(err.Error(), "source symlink escapes application: hosts") {
+		t.Fatalf("ResolveDocument = %v, want the escaping link refused", err)
+	}
+}
