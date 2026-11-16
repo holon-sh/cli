@@ -17,19 +17,6 @@ export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: E
 // keeps it an ES module in a CommonJS project.
 const TypeScriptModule = "index.mjs"
 
-// resourceContracts compiles resources as tools named by URI, so a resource's output is its contents.
-func resourceContracts(contracts map[string]contract) map[string]contract {
-	result := make(map[string]contract, len(contracts))
-	for alias, source := range contracts {
-		tools := make(map[string]contractTool, len(source.Resources))
-		for uri, resource := range source.Resources {
-			tools[uri] = contractTool{Input: Object{"type": "object", "additionalProperties": false}, Output: resource}
-		}
-		result[alias] = contract{Tools: tools}
-	}
-	return result
-}
-
 const eventTypes = "export type Events = { readonly [A in keyof EventArguments]: { [K in keyof EventArguments[A]]: { arguments: EventArguments[A][K]; data: K extends keyof EventData[A] ? EventData[A][K] : unknown } } };\n"
 
 // runtimes are the modules each TypeScript target's clients import their runtime and its declarations from.
@@ -39,12 +26,12 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	// Resources take names that tools left free, in the same declarations.
 	names := map[string]bool{}
 	tools := generateTypeScript(catalogs, names, [4]string{"Inputs", "Outputs", "InputTypes", "OutputTypes"})
-	catalogs, err := compileCatalogs(ctx, resourceContracts(request.contracts), true)
+	catalogs, err := compileCatalogs(ctx, request.contracts, func(c contract) map[string]contractTool { return c.Resources }, false)
 	if err != nil {
 		return nil, err
 	}
 	resources := generateTypeScript(catalogs, names, [4]string{1: "Resources"})
-	catalogs, err = compileCatalogs(ctx, eventContracts(request.contracts), false)
+	catalogs, err = compileCatalogs(ctx, request.contracts, contractEvents, false)
 	if err != nil {
 		return nil, err
 	}

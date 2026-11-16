@@ -16,12 +16,12 @@ type compiledTool struct {
 	structured    bool
 }
 
-func parseCatalog(ctx context.Context, contract contract, files bool) (catalog, error) {
-	names := sortedKeys(contract.Tools)
+func parseCatalog(ctx context.Context, entries map[string]contractTool, files bool) (catalog, error) {
+	names := sortedKeys(entries)
 	tools := make([]compiledTool, len(names))
 	inputs, outputs := make([]*shape, len(names)), make([]*shape, len(names))
 	for i, name := range names {
-		tool := contract.Tools[name]
+		tool := entries[name]
 		input, err := parseShape(ctx, tool.Input, files)
 		if err != nil {
 			return catalog{}, err
@@ -279,10 +279,10 @@ func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
 	}
 }
 
-func compileCatalogs(ctx context.Context, contracts map[string]contract, files bool) (map[string]catalog, error) {
+func compileCatalogs(ctx context.Context, contracts map[string]contract, entries func(contract) map[string]contractTool, files bool) (map[string]catalog, error) {
 	catalogs := make(map[string]catalog, len(contracts))
 	for _, name := range sortedKeys(contracts) {
-		compiled, err := parseCatalog(ctx, contracts[name], files)
+		compiled, err := parseCatalog(ctx, entries(contracts[name]), files)
 		if err != nil {
 			return nil, err
 		}
