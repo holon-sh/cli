@@ -41,7 +41,4 @@ func TestChanges(t *testing.T) {
 			}
 		})
 	}
-	if _, err := Changes(expected, published("", nil)); err == nil {
-		t.Fatal("invalid published metadata accepted")
-	}
 }

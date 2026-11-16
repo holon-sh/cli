@@ -2,6 +2,7 @@ package mcptype
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"reflect"
@@ -96,16 +97,11 @@ func pythonTypedDict(value typ) bool {
 	return value.kind == kindObject && value.extra.kind == extraClosed
 }
 
-// pythonDeclares reports whether a type is declared, which a shared dict that nothing names is not.
-func pythonDeclares(ref *declaration) bool {
-	return ref.cyclic || ref.definition != "" || pythonTypedDict(ref.value)
-}
-
 // declare writes a shape's recursive types.
 func (e *pythonEmitter) declare(s shape) {
 	e.declaring = true
 	defer func() { e.declaring = false }()
-	for _, ref := range s.declarations(pythonDeclares) {
+	for _, ref := range s.declared {
 		if ref.cyclic {
 			e.emit(ref)
 		}
@@ -127,9 +123,6 @@ func (e *pythonEmitter) emit(ref *declaration) {
 func (e *pythonEmitter) render(value typ, name string) string {
 	switch value.kind {
 	case kindDeclared:
-		if !pythonDeclares(value.ref) {
-			return e.render(value.ref.value, name)
-		}
 		if !value.ref.cyclic && !e.emitted[value.ref] {
 			e.emit(value.ref)
 		}
@@ -163,15 +156,15 @@ func (e *pythonEmitter) render(value typ, name string) string {
 			return "_typing.Literal[False]"
 		case nil:
 			return "None"
-		case Number:
-			if literal.isInteger() {
+		case json.Number:
+			if literal != "-0" && !strings.ContainsAny(string(literal), ".eE") {
 				return fmt.Sprintf("_typing.Literal[%s]", literal)
 			}
 			return "_builtins.float"
 		}
 		return "_builtins.object"
 	case kindArray:
-		return fmt.Sprintf("_builtins.list[%s]", e.render(*value.item, name+"Item"))
+		return fmt.Sprintf("_builtins.list[%s]", e.render(value.items[0], name+"Item"))
 	case kindTuple:
 		return "_builtins.list[_builtins.object]"
 	case kindUnion:
@@ -273,7 +266,7 @@ func generatePython(contracts, events map[string]catalog) string {
 		var methods, calls []string
 		appExports := make([][]string, 4)
 		tools := contracts[binding]
-		nameDeclarations(emitter.names, binding, tools, pythonDeclares)
+		nameDeclarations(emitter.names, binding, tools)
 		toolMethods := pythonMethods(tools)
 		for _, name := range sortedKeys(tools) {
 			tool, method := tools[name], toolMethods[name]
@@ -313,7 +306,7 @@ func generatePython(contracts, events map[string]catalog) string {
 		eventsName := unique(emitter.names, typeIdentifier(binding)+"Events")
 		extName := unique(emitter.names, typeIdentifier(binding)+"Ext")
 		appEvents := events[binding]
-		nameDeclarations(emitter.names, binding, appEvents, pythonDeclares)
+		nameDeclarations(emitter.names, binding, appEvents)
 		var subscriptions []string
 		for _, name := range sortedKeys(appEvents) {
 			event := appEvents[name]

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/holon-sh/cli/internal/testfiles"
 )
 
 var updateSnapshots = flag.Bool("update", false, "rewrite expected compiler package snapshots")
@@ -32,7 +34,7 @@ func TestSnapshots(t *testing.T) {
 				if err := os.RemoveAll(directory); err != nil {
 					t.Fatal(err)
 				}
-				writeFiles(t, directory, got)
+				testfiles.Write(t, directory, got)
 				return
 			}
 			want := map[string][]byte{}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
@@ -42,7 +43,7 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 		files["node_modules/"+pkg+"/runtime.js"] = runtime
 	}
 	root := t.TempDir()
-	writeFiles(t, root, files)
+	testfiles.Write(t, root, files)
 	command := exec.CommandContext(t.Context(), node, "main.mjs")
 	command.Dir = root
 	output, err := command.CombinedOutput()

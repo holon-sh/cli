@@ -2,23 +2,8 @@ package mcptype
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 )
-
-func writeFiles(t *testing.T, root string, files map[string][]byte) {
-	t.Helper()
-	for name, content := range files {
-		path := filepath.Join(root, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, content, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
 
 // generationCase is one package-generation request in its JSON wire form.
 type generationCase struct {
@@ -119,7 +104,7 @@ func sinkContracts() string {
 func generationCases(t *testing.T) []generationCase {
 	t.Helper()
 	var cases []generationCase
-	for _, target := range []string{"browser", "go"} {
+	for _, target := range []string{"node", "browser", "python", "go"} {
 		cases = append(cases, generationCase{name: "sink-" + target, input: `{"target": "` + target + `", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": ` + sinkRequires + `, "contracts": ` + sinkContracts() + `, "go_module": "example.com/é/runtime", "own": "orders", "app": "chéck\"out"}`})
 	}
 	for _, test := range []struct{ name, patch string }{

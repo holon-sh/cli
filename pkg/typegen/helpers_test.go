@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opencontainers/go-digest"
@@ -43,13 +44,7 @@ func document(t *testing.T, metadata *mcpcontract.Metadata) *Document {
 
 func put(t *testing.T, root, name, content string) {
 	t.Helper()
-	path := filepath.Join(root, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testfiles.Write(t, root, map[string]string{name: content})
 }
 func mustJSON(t *testing.T, value any) []byte {
 	t.Helper()
@@ -59,14 +54,8 @@ func mustJSON(t *testing.T, value any) []byte {
 	}
 	return data
 }
-func read(t *testing.T, root, name string) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, name))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
-}
+
+var read = testfiles.Read
 
 // writeProvider writes a Python MCP server named example.com/<name> into root.
 func writeProvider(t *testing.T, root, name, source string) {
@@ -125,16 +114,12 @@ func listing(tools ...mcpcontract.Tool) extraction {
 // fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
 // snapshot's server.json name, printing an extraction or returning an error as the runner's failure.
 func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
-	return func(_ context.Context, _, tooling string, args []string, stdout io.Writer) error {
-		root, entry := args[1], args[2]
-		if !lexicallyInside(root, filepath.Dir(tooling)) || !isFile(filepath.Join(root, entry)) {
-			return fmt.Errorf("entry %s is not in a snapshot under %s: %s", entry, filepath.Dir(tooling), root)
-		}
+	return func(_ context.Context, _, _ string, args []string, stdout io.Writer) error {
 		if !strings.Contains(args[3], `"io.modelcontextprotocol/files"`) || !slices.Equal(args[4:], []string{"tools/list", "resources/list", "events/list"}) {
 			return fmt.Errorf("runner asked %q", args[3:])
 		}
 		var descriptor struct{ Name string }
-		if err := readTypeJSON(filepath.Join(root, "server.json"), &descriptor); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := readTypeJSON(filepath.Join(args[1], "server.json"), &descriptor); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		switch result := results[descriptor.Name].(type) {

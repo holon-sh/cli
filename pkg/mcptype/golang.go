@@ -2,20 +2,11 @@ package mcptype
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 )
-
-// goBinding is one contract's generated Go client: its variable name and method per tool.
-type goBinding struct {
-	name  string
-	tools map[string]goTool
-}
-
-type goTool struct {
-	name, input, output string
-}
 
 var asciiWords = regexp.MustCompile(`[a-zA-Z0-9]+`)
 
@@ -50,26 +41,6 @@ func goRecursive(value typ) bool {
 	return value.kind == kindArray || value.kind == kindObject
 }
 
-// goStruct reports whether an object decodes as a struct: one that names fields with valid tags and
-// declares no schema for other properties.
-func goStruct(value typ) bool {
-	if value.kind != kindObject || len(value.fields) == 0 || value.extra.kind == extraOpen {
-		return false
-	}
-	for name := range value.fields {
-		if name == "-" || !goTagName.MatchString(name) {
-			return false
-		}
-	}
-	return true
-}
-
-// goDeclares reports whether a type is declared. A shared map that nothing names is not, since maps
-// of one type are interchangeable anyway.
-func goDeclares(ref *declaration) bool {
-	return ref.cyclic || ref.definition != "" || goStruct(ref.value)
-}
-
 // goRawJSON reports whether a type decodes as raw JSON, by whatever name.
 func goRawJSON(value typ) bool {
 	for value.kind == kindDeclared && !value.ref.cyclic {
@@ -81,9 +52,6 @@ func goRawJSON(value typ) bool {
 func renderGo(value typ) string {
 	switch value.kind {
 	case kindDeclared:
-		if !goDeclares(value.ref) {
-			return renderGo(value.ref.value)
-		}
 		if value.ref.cyclic && !goRecursive(value.ref.value) {
 			return "json.RawMessage"
 		}
@@ -100,11 +68,11 @@ func renderGo(value typ) string {
 			return "string"
 		case bool:
 			return "bool"
-		case Number:
+		case json.Number:
 			return "json.Number"
 		}
 	case kindArray:
-		return "[]" + renderGo(*value.item)
+		return "[]" + renderGo(value.items[0])
 	case kindObject:
 		if len(value.fields) == 0 {
 			item := "json.RawMessage"
@@ -113,13 +81,16 @@ func renderGo(value typ) string {
 			}
 			return "map[string]" + item
 		}
-		if !goStruct(value) {
+		if value.extra.kind == extraOpen {
 			return "map[string]json.RawMessage"
 		}
 		names := map[string]bool{}
 		var out strings.Builder
 		out.WriteString("struct {\n")
 		for _, name := range sortedKeys(value.fields) {
+			if name == "-" || !goTagName.MatchString(name) {
+				return "map[string]json.RawMessage"
+			}
 			member := value.fields[name]
 			rendered := renderGo(member.value)
 			tagName := name
@@ -136,48 +107,4 @@ func renderGo(value typ) string {
 		return out.String()
 	}
 	return "json.RawMessage"
-}
-
-// generateGo writes the type declarations and names each binding's client and methods.
-func generateGo(contracts map[string]catalog) (string, map[string]goBinding) {
-	names := map[string]bool{}
-	var declarations strings.Builder
-	bindings := make(map[string]goBinding, len(contracts))
-	for _, binding := range sortedKeys(contracts) {
-		client := unique(names, typeIdentifier(binding))
-		methods := map[string]bool{"CallTool": true}
-		tools := map[string]goTool{}
-		catalog := contracts[binding]
-		nameDeclarations(names, binding, catalog, goDeclares)
-		for _, name := range sortedKeys(catalog) {
-			tool := catalog[name]
-			method := unique(methods, typeIdentifier(name))
-			var symbols []string
-			for _, part := range []struct {
-				suffix string
-				shape  shape
-			}{{"Input", tool.input}, {"Output", tool.output}} {
-				symbol := unique(names, client+method+part.suffix)
-				root := part.shape.value
-				for _, ref := range part.shape.declarations(goDeclares) {
-					// Only a defined type can contain itself, but one defined from json.RawMessage would
-					// lose its methods.
-					format := "type %s = %s\n\n"
-					if ref.cyclic && goRecursive(ref.value) {
-						format = "type %s %s\n\n"
-					}
-					fmt.Fprintf(&declarations, format, ref.name, renderGo(ref.value))
-				}
-				fmt.Fprintf(&declarations, "type %s = %s\n\n", symbol, renderGo(root))
-				symbols = append(symbols, symbol)
-			}
-			tools[name] = goTool{name: method, input: symbols[0], output: symbols[1]}
-		}
-		bindings[binding] = goBinding{name: client, tools: tools}
-	}
-	text := declarations.String()
-	if strings.Contains(text, "json.") {
-		text = "import \"encoding/json\"\n\n" + text
-	}
-	return text, bindings
 }
