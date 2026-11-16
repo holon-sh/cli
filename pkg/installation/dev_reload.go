@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -88,6 +89,11 @@ func (d *devLoop) generate(ctx context.Context) error {
 		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), d.waiting)
 		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, options)
 		if err != nil {
+			seeded := len(d.sent)
+			maps.DeleteFunc(d.sent, func(_, sent string) bool { return sent == "" })
+			if len(d.sent) != seeded {
+				return d.generate(ctx)
+			}
 			return err
 		}
 		cleanup()
