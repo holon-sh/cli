@@ -23,7 +23,7 @@ VARIABLES
     armed,    \* the debounce timer is running
     offer,    \* the watcher offers pending on its changes channel
     \* devLoop
-    pc,       \* where the loop is: select, pack, send, record
+    pc,       \* where the loop is: select, pack, send, record, finish
     packed,   \* the source the loop last packed
     sent,     \* d.sent for the app: the overlay the loop believes is served, or "none"
     shown,    \* the app's status line: working, ready, failed, unrecorded
@@ -127,8 +127,7 @@ SendRefused ==
     /\ pc' = "select"
     /\ UNCHANGED <<disk, saves, pending, armed, offer, packed, rec, gen, tag, wire>>
 
-\* record cancels the previous recording as superseded and starts a new one,
-\* then finish shows the app ready.
+\* record cancels the previous recording as superseded and starts a new one.
 Record ==
     /\ pc = "record"
     /\ gen' = gen + 1
@@ -141,9 +140,17 @@ Record ==
                         ELSE rec[i]]
          /\ wire' = IF CancelledTagMayLand THEN wire
                     ELSE {i \in wire : ~superseded(i)}
-    /\ shown' = "ready"
+    /\ pc' = "finish"
+    /\ UNCHANGED <<disk, saves, pending, armed, offer, packed, sent, shown, served, tag, tried, triedOk>>
+
+\* regenerate has run, and finish calls output.ready, which leaves an error on
+\* the app's row.
+Finish ==
+    /\ pc = "finish"
+    /\ shown' = IF shown = "unrecorded" /\ Fault # "ready_over_warning" THEN shown ELSE "ready"
     /\ pc' = "select"
-    /\ UNCHANGED <<disk, saves, pending, armed, offer, packed, sent, served, tag, tried, triedOk>>
+    /\ UNCHANGED <<disk, saves, pending, armed, offer, packed, sent, rec, gen, served, tag,
+                   wire, tried, triedOk>>
 
 ----------------------------------------------------------------------------
 \* The goroutine devLoop.record starts, running packedSource.publish.
@@ -183,14 +190,16 @@ RecTimesOut(i) ==
     /\ UNCHANGED <<disk, saves, pending, armed, offer, pc, packed, sent, shown, gen,
                    served, tag, tried, triedOk>>
 
-\* publish returns an error: a failed request, or the cancelled context. The
-\* goroutine reports it unless the cause is errSourceSuperseded.
+\* publish returns an error: a failed request, or the cancelled context. Unless
+\* the cause is errSourceSuperseded the goroutine calls output.unrecorded, which
+\* leaves an error on the app's row.
 RecEndsWithError(i) ==
     /\ InFlight(i)
     /\ rec' = [rec EXCEPT ![i].stage = "ended"]
     /\ wire' = IF CancelledTagMayLand THEN wire ELSE wire \ {i}
     /\ LET silent == \/ rec[i].cancel = "superseded"
-                     \/ rec[i].cancel = "unrecorded" /\ Fault = "silent_unrecorded" IN
+                     \/ rec[i].cancel = "unrecorded" /\ Fault = "silent_unrecorded"
+                     \/ shown = "failed" /\ Fault # "warn_over_any_status" IN
          shown' = IF silent THEN shown ELSE "unrecorded"
     /\ UNCHANGED <<disk, saves, pending, armed, offer, pc, packed, sent, gen,
                    served, tag, tried, triedOk>>
@@ -225,6 +234,7 @@ Next ==
     \/ SendServed
     \/ SendRefused
     \/ Record
+    \/ Finish
     \/ \E i \in Ids :
             \/ RecSendsTag(i)
             \/ RegistryTags(i)

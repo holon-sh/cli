@@ -3,6 +3,7 @@ const loop = {
   pack: "packing the source",
   send: "sending the source",
   record: "served, about to record",
+  finish: "served and recording, finishing the save",
 };
 
 const shown = {
@@ -39,7 +40,8 @@ const steps = {
   Pack: "the loop packs the source",
   SendServed: "the runtime serves the new source",
   SendRefused: "the runtime refuses the new source",
-  Record: "the loop starts the upload and shows the app ready",
+  Record: "the loop starts the upload",
+  Finish: "the loop finishes the save",
   RecSendsTag: "an upload sends its tag request",
   RegistryTags: "the registry moves the tag",
   RecSucceeds: "an upload ends in success",
