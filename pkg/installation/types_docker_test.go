@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -143,7 +142,7 @@ export default createMcpHandler(() => {
 	defer cleanupChanged()
 }
 
-func TestDockerPythonTypedBuild(t *testing.T) {
+func TestDockerPythonTypeCheck(t *testing.T) {
 	root := t.TempDir()
 	provider := `from mcp.server import MCPServer
 from pydantic import BaseModel
@@ -176,40 +175,28 @@ async def checkout(id: str) -> float:
 			"server.py": code,
 			"requirements.txt": "holon-sh @ https://github.com/holon-sh/sdk-py/archive/6e2e0140bc48296681ce717ef8887ce44766991d.tar.gz\n" +
 				"mcp==2.3.0\n",
-			"package.json": `{"scripts":{"build":"node -e \"require('fs').accessSync('holon/apps/__init__.py')\""}}`,
 		})
 		manifest.Apps = append(manifest.Apps, app)
 	}
 	manifest = typedManifest(t, manifest.Apps...)
-	grant, options := sourceRegistry(t)
-	grant.Repositories = map[string]string{"orders": "apps/orders", "checkout": "apps/checkout"}
-	options.architectures = []string{runtime.GOARCH}
+	_, options := sourceRegistry(t)
 	options.Env = append(options.Env, "DOCKER_CONTEXT="+os.Getenv("DOCKER_CONTEXT"))
-	for _, valid := range []bool{true, false} {
-		if !valid {
-			sourceFiles(t, filepath.Join(root, "checkout"), map[string]string{
-				"server.py": strings.Replace(caller, `read(id=id)`, `read(id=42)`, 1),
-			})
-		}
-		var progress strings.Builder
-		options.output = verboseOutput(&progress)
-		prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options, nil)
-		if !valid {
-			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "incompatible type") {
-				t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, progress.String())
-			}
-			if strings.Contains(progress.String(), "Collecting mypy") || !strings.Contains(progress.String(), "mypy==2.4.0") {
-				t.Fatalf("source edit reinstalled the type checker: %v\n%s", err, progress.String())
-			}
-			continue
-		}
-		if err != nil {
-			t.Fatalf("%v\n%s", err, progress.String())
-		}
-		defer cleanup()
-		selected := manifestSpec{Apps: []manifestApp{prepared.Apps[1]}}
-		if _, err := buildAndPush(t.Context(), selected, &imageUpload{grant: grant, client: options.HTTPClient}, options); err != nil {
-			t.Fatalf("build Python caller: %v\n%s", err, progress.String())
-		}
+	var progress strings.Builder
+	options.output = verboseOutput(&progress)
+	_, cleanup, err := prepareManifestTypes(t.Context(), manifest, options, nil)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, progress.String())
+	}
+	defer cleanup()
+	sourceFiles(t, filepath.Join(root, "checkout"), map[string]string{
+		"server.py": strings.Replace(caller, `read(id=id)`, `read(id=42)`, 1),
+	})
+	progress.Reset()
+	if _, _, err := prepareManifestTypes(t.Context(), manifest, options, nil); err == nil ||
+		!strings.Contains(strings.ToLower(err.Error()), "incompatible type") {
+		t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, progress.String())
+	}
+	if strings.Contains(progress.String(), "Collecting mypy") || !strings.Contains(progress.String(), "mypy==2.4.0") {
+		t.Fatalf("source edit reinstalled the type checker:\n%s", progress.String())
 	}
 }

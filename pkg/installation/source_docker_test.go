@@ -7,17 +7,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
@@ -162,18 +159,10 @@ func sourceRegistry(t *testing.T) (protocol.UploadGrant, buildOptions) {
 	registry, server := buildRegistry(t)
 	registry.bearer = true
 	registry.credentials["apps"] = registryCredential{protocol.UploadUsername, "grant-secret"}
-	name := fmt.Sprintf("holon-source-contract-%d", time.Now().UnixNano())
-	dockerTest(t, "buildx", "create", "--name", name, "--driver", "docker-container",
-		"--driver-opt", "image=moby/buildkit:v0.33.1")
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = exec.CommandContext(ctx, "docker", "buildx", "rm", "--force", name).Run()
-	})
 	builders := new(builderConnections)
 	t.Cleanup(builders.close)
 	return protocol.UploadGrant{Grant: "grant-secret", Registry: strings.TrimPrefix(server.URL, "https://"), Repositories: map[string]string{"alpha": "apps/alpha"}}, buildOptions{
-		Env: append(os.Environ(), "BUILDX_BUILDER="+name), output: verboseOutput(os.Stderr), HTTPClient: server.Client(), builders: builders,
+		Env: os.Environ(), output: verboseOutput(os.Stderr), HTTPClient: server.Client(), builders: builders,
 	}
 }
 
