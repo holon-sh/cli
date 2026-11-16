@@ -18,8 +18,8 @@ import (
 	"golang.org/x/mod/modfile"
 
 	"github.com/holon-sh/cli/internal/commandenv"
-	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/cli/pkg/mcptype"
+	"github.com/holon-sh/cli/pkg/recipe"
 )
 
 // PackageJSON is what Holon reads of a package.json.
@@ -76,35 +76,35 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 	return installedRuntime(dir, pkg)
 }
 
-// Install runs, in dir, the development install Kiln plans for the app there, and returns the app's development steps.
-func Install(ctx context.Context, dir string, options Options) (kiln.Steps, error) {
+// Install runs, in dir, the install of the project's recipe, and returns the recipe.
+func Install(ctx context.Context, dir string, options Options) (recipe.Recipe, error) {
 	o := options.defaults()
-	steps, err := developmentSteps(ctx, dir)
+	steps, err := projectRecipe(dir)
 	if err != nil {
-		return kiln.Steps{}, fmt.Errorf("%s: %w", dir, err)
+		return recipe.Recipe{}, fmt.Errorf("%s: %w", dir, err)
 	}
 	env, err := commandenv.Environ(o.Env)
 	if err != nil {
-		return kiln.Steps{}, err
+		return recipe.Recipe{}, err
 	}
 	return steps, commandenv.RunEach(ctx, dir, filepath.Base(dir), steps.Install, env, o.Stderr)
 }
 
-func developmentSteps(ctx context.Context, dir string) (kiln.Steps, error) {
+func projectRecipe(dir string) (recipe.Recipe, error) {
 	source, err := os.MkdirTemp("", "holon-install-")
 	if err != nil {
-		return kiln.Steps{}, err
+		return recipe.Recipe{}, err
 	}
 	defer func() { _ = os.RemoveAll(source) }()
 	root := filepath.Join(source, "source")
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return kiln.Steps{}, err
+		return recipe.Recipe{}, err
 	}
 	if _, err := SnapshotSource(filepath.Base(dir), resolved, root); err != nil {
-		return kiln.Steps{}, err
+		return recipe.Recipe{}, err
 	}
-	return kiln.Development(ctx, root)
+	return recipe.Read(os.DirFS(root))
 }
 
 // mapClients gives a Node.js target's clients the import name #holon-sh or #holon-ui in the package.json

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path"
@@ -23,7 +24,7 @@ import (
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 
-	"github.com/holon-sh/cli/internal/kiln"
+	"github.com/holon-sh/cli/pkg/recipe"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
 )
@@ -238,7 +239,7 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 		return packedSource{}, err
 	}
 	// A page is built once the clients it may import are in the source.
-	plan, err := overlayPlan(ctx, root, entry, accepted != nil && !accepted.unserved)
+	plan, err := overlayPlan(root, entry, accepted != nil && !accepted.unserved)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}
@@ -287,22 +288,20 @@ func devEntry(app manifestApp, root string) (string, error) {
 	return entry, err
 }
 
-func overlayPlan(ctx context.Context, root, entry string, page bool) (runtimecontract.Plan, error) {
-	steps, err := kiln.Development(ctx, root)
+func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
+	source := os.DirFS(root)
+	steps, err := recipe.Read(source)
 	if err != nil {
 		return runtimecontract.Plan{}, err
 	}
 	read := map[string][]byte{}
 	for _, name := range steps.Inputs {
-		if read[name], err = os.ReadFile(filepath.Join(root, name)); err != nil {
+		if read[name], err = fs.ReadFile(source, name); err != nil {
 			return runtimecontract.Plan{}, err
 		}
 	}
 	inputs, _ := json.Marshal(read)
-	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: digest.FromBytes(inputs).String(), Commands: steps.Install}, Start: serveCommand(entry)}
-	if filepath.Ext(entry) == ".py" {
-		plan.Start = append([]string{"uv", "run", "--no-sync"}, plan.Start...)
-	}
+	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: digest.FromBytes(inputs).String(), Commands: steps.Install}, Start: recipe.Start(entry)}
 	if page {
 		plan.Prepare = steps.Build
 	}

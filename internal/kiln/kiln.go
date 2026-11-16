@@ -23,49 +23,23 @@ type Command struct {
 	Packages []string          `json:"packages,omitempty"`
 }
 
-// Steps are what a development environment runs in an app's source: Install whenever a file in Inputs
-// changes, then Build.
-type Steps struct {
-	Inputs  []string   `json:"inputs"`
-	Install [][]string `json:"install"`
-	Build   [][]string `json:"build"`
-}
-
 type startup struct {
 	Start []string `json:"start,omitempty"`
 }
 
 // Image is the Dockerfile that builds the image of the app request names.
 func Image(ctx context.Context, request Request) (string, error) {
-	return dockerfile(ctx, struct {
+	return plan(ctx, struct {
 		Source string  `json:"source"`
 		Image  startup `json:"image"`
 	}{request.Source, startup{request.Start}})
 }
 
-// Development is what a development environment runs for the app in source.
-func Development(ctx context.Context, source string) (Steps, error) {
-	var steps Steps
-	err := plan(ctx, struct {
-		Source      string   `json:"source"`
-		Development struct{} `json:"development"`
-	}{Source: source}, &steps)
-	return steps, err
-}
-
 // Run is the Dockerfile of an image that runs command in the app in source and holds only the command's stdout,
 // stderr and exit status, as the files stdout, stderr and status.
 func Run(ctx context.Context, source string, command Command) (string, error) {
-	return dockerfile(ctx, struct {
+	return plan(ctx, struct {
 		Source string  `json:"source"`
 		Run    Command `json:"run"`
 	}{source, command})
-}
-
-func dockerfile(ctx context.Context, request any) (string, error) {
-	var result struct {
-		Dockerfile string `json:"dockerfile"`
-	}
-	err := plan(ctx, request, &result)
-	return result.Dockerfile, err
 }

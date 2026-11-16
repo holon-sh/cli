@@ -16,7 +16,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/holon-sh/cli/internal/commandenv"
-	"github.com/holon-sh/cli/internal/kiln"
+	"github.com/holon-sh/cli/pkg/recipe"
 	"github.com/holon-sh/cli/pkg/scaffold"
 	"github.com/holon-sh/cli/pkg/typegen"
 )
@@ -132,7 +132,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	}
 	fmt.Fprintf(stderr, "%s: added to %s\n", app, scaffold.Relative(manifestPath))
 
-	install := func() (kiln.Steps, error) {
+	install := func() (recipe.Recipe, error) {
 		var commands [][]string
 		switch language {
 		case typegen.TargetGo:
@@ -143,16 +143,16 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 				append([]string{"uv", "add", "--frozen", "--dev"}, dev...), []string{"uv", "lock"})
 		}
 		if err := commandenv.RunEach(cmd.Context(), dir, app, commands, nil, stderr); err != nil {
-			return kiln.Steps{}, err
+			return recipe.Recipe{}, err
 		}
 		options := typegen.Options{Stdout: io.Discard, Stderr: stderr}
 		steps, err := typegen.Install(cmd.Context(), dir, options)
 		if err != nil {
-			return kiln.Steps{}, err
+			return recipe.Recipe{}, err
 		}
 		c, err := consumer(dir, nil)
 		if err != nil {
-			return kiln.Steps{}, err
+			return recipe.Recipe{}, err
 		}
 		return steps, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, options)
 	}
