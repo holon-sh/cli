@@ -228,16 +228,12 @@ func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Op
 }
 
 func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
-	env, err := commandenv.Environ(env)
-	if err != nil {
-		return err
-	}
 	l := typeLanguages[language]
 	run := func(program string) error {
 		limited, cancel := context.WithTimeout(ctx, serverTimeout)
 		defer cancel()
 		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
-		command.Env = env
+		command.Env = commandenv.Environ(env)
 		var stderr bytes.Buffer
 		command.Stdout, command.Stderr = stdout, &stderr
 		err := command.Run()

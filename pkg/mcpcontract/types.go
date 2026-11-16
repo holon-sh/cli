@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
-	"os"
 	"time"
 )
 
@@ -24,14 +23,6 @@ const (
 func StableTime(data []byte) time.Time {
 	sum := sha256.Sum256(data)
 	return time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(binary.BigEndian.Uint64(sum[:]) >> 11))
-}
-
-// WriteStable writes data to path with mode and StableTime(data) as its mtime.
-func WriteStable(path string, data []byte, mode os.FileMode) error {
-	if err := os.WriteFile(path, data, mode); err != nil {
-		return err
-	}
-	return os.Chtimes(path, StableTime(data), StableTime(data))
 }
 
 type Tool struct {
@@ -58,16 +49,6 @@ type Contract struct {
 	Tools     []Tool     `json:"tools"`
 	Resources []Resource `json:"resources,omitempty"`
 	Events    []Event    `json:"events,omitempty"`
-}
-
-// MarshalJSON writes "tools" as an array even when there are none, as the v1
-// contract document requires.
-func (c Contract) MarshalJSON() ([]byte, error) {
-	type wire Contract
-	if c.Tools == nil {
-		c.Tools = []Tool{}
-	}
-	return json.Marshal(wire(c))
 }
 
 type Identity struct {

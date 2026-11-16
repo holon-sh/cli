@@ -1,7 +1,6 @@
 package commandenv
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,14 +16,7 @@ func Value(env []string, key string) string {
 	return ""
 }
 
-func Environ(extra []string) ([]string, error) {
-	for _, entry := range extra {
-		if !strings.Contains(entry, "=") {
-			return nil, fmt.Errorf("environment entry %q must be KEY=VALUE", entry)
-		}
-	}
-	return append(os.Environ(), extra...), nil
-}
+func Environ(extra []string) []string { return append(os.Environ(), extra...) }
 
 func TLSDirectory() (string, error) {
 	dir, err := os.UserConfigDir()

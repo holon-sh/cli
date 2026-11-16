@@ -70,10 +70,7 @@ func (o buildOptions) checkInImage(ctx context.Context, p *preparedTypes, entry,
 }
 
 func (o buildOptions) runInImage(ctx context.Context, source, toolingDir, generated string, checker bool, command []string, stdout io.Writer) error {
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
-		return err
-	}
+	env := commandenv.Environ(o.Env)
 	run := kiln.Command{Argv: command, Mounts: map[string]string{"tooling": "/holon-tooling"}}
 	args := []string{"--build-context", "tooling=" + toolingDir}
 	if generated != "" {
