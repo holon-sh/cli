@@ -7,26 +7,25 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/holon-sh/protocol"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 )
 
-func TestDeclaredSources(t *testing.T) {
+func TestRequiredSources(t *testing.T) {
 	const descriptor = `{"name":"example.com/checkout","version":"1.0.0","description":"Checkout"`
 	const metadata = `,"_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":`
 	for _, test := range []struct {
 		name string
 		data string
-		want []Source
+		want map[string]Source
 		err  string
 	}{
 		{
-			name: "sorted aliases, registry references, urls and project apps",
-			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"},"chat":{"url":"https://mcp.example/mcp"},"agent":{}}}}}}`,
-			want: []Source{
-				{Alias: "agent"},
-				{Alias: "chat", Endpoint: "https://mcp.example/mcp"},
-				{Alias: "docs", Registry: &protocol.RegistryRef{Name: "example.com/documentation", Version: "4.4.4", Registry: "https://registry.example"}},
-				{Alias: "orders", Registry: &protocol.RegistryRef{Name: "example.com/orders", Version: "1.0.0"}},
+			name: "registry references and urls",
+			data: descriptor + metadata + `{"requires":{"orders":{"name":"example.com/orders","version":"1.0.0"},"docs":{"name":"example.com/documentation","version":"4.4.4","registry":"https://registry.example"},"chat":{"url":"https://mcp.example/mcp"}}}}}}`,
+			want: map[string]Source{
+				"chat":   {Alias: "chat", Server: Endpoint("https://mcp.example/mcp")},
+				"docs":   {Alias: "docs", Server: Registry{Name: "example.com/documentation", Version: "4.4.4", Registry: "https://registry.example"}},
+				"orders": {Alias: "orders", Server: Registry{Name: "example.com/orders", Version: "1.0.0"}},
 			},
 		},
 		{name: "invalid descriptor", data: `{"name":"checkout","version":"1.0.0","description":"Checkout"}`, err: "namespace/name"},
@@ -37,23 +36,26 @@ func TestDeclaredSources(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			put(t, root, "server.json", test.data)
-			got, err := DeclaredSources(root)
+			requires, err := Requires(root)
 			if test.err != "" {
 				if err == nil || !strings.Contains(err.Error(), filepath.Join(root, "server.json")) || !strings.Contains(err.Error(), test.err) {
-					t.Fatalf("DeclaredSources error = %v, want server.json and %q", err, test.err)
+					t.Fatalf("Requires error = %v, want server.json and %q", err, test.err)
 				}
 				return
 			}
-			if err != nil || !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("DeclaredSources = %#v, %v; want %#v", got, err, test.want)
+			got := map[string]Source{}
+			for alias, requirement := range requires {
+				if got[alias], err = RequiredSource(alias, requirement); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("required sources = %#v, %v; want %#v", got, err, test.want)
 			}
 		})
 	}
-}
-
-func TestEmptyDependencyOutsideAProject(t *testing.T) {
-	if _, err := ResolveDocument(t.Context(), Source{Alias: "docs"}, Options{}); err == nil || !strings.Contains(err.Error(), "dependency docs has no server to read") {
-		t.Fatalf("ResolveDocument = %v, want the dependency named", err)
+	if _, err := RequiredSource("docs", mcpregistry.Requirement{}); err == nil || !strings.Contains(err.Error(), "dependency docs has no server to read") {
+		t.Fatalf("RequiredSource = %v, want the dependency named", err)
 	}
 }
 
@@ -73,7 +75,7 @@ func TestServerDescribesItself(t *testing.T) {
 			root := t.TempDir()
 			put(t, root, entry, source)
 			want := mcpcontract.Identity{Name: "example.com/checkout", Version: "1.2.3"}
-			document, err := ResolveDocument(t.Context(), Source{Path: root}, Options{})
+			document, err := ResolveDocument(t.Context(), Source{Server: Path(root)}, Options{})
 			if err != nil || document.Identity != want || len(document.Schema.Tools) != 1 || document.Schema.Tools[0].Name != "read" {
 				t.Fatalf("document = %+v, %v; want %+v with the tool read", document, err, want)
 			}
@@ -105,7 +107,7 @@ func TestAppConsumerFindsTheOwnServer(t *testing.T) {
 			}
 			var got string
 			if c != nil {
-				got, _ = filepath.Rel(dir, c.Server.Path)
+				got, _ = filepath.Rel(dir, string(c.Server))
 			}
 			if got != test.want {
 				t.Fatalf("own server = %q, want %q", got, test.want)
