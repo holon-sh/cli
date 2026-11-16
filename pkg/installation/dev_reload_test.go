@@ -126,8 +126,9 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		tool := "lookup_" + string(overlayEntries(t, running)["tools.py"])
-		installationtest.WriteJSON(w, json.RawMessage(strings.Replace(servedContract, "lookup", tool, 1)))
+		tools := string(overlayEntries(t, running)["tools.py"])
+		contract := strings.NewReplacer(`"lookup"`, `"lookup_`+tools+`"`, `"description":"alpha"`, `"description":"`+tools+`"`).Replace(servedContract)
+		installationtest.WriteJSON(w, json.RawMessage(contract))
 	})
 	f.files = &h.files
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
@@ -408,13 +409,20 @@ func TestDevResumesTheAppsAnEarlierRunStarted(t *testing.T) {
 	if before, after := resume("first"); len(after) != 1 || after[0].Digest != before[len(before)-1].Digest {
 		t.Fatalf("an unchanged source was sent %d times, not as it runs", len(after))
 	}
-	resume("second")
-	f.mu.Lock()
-	runs := overlayEntries(t, f.running["alpha"])
-	f.mu.Unlock()
-	if client := string(runs["generated/holon-ui/index.mjs"]); string(runs["tools.py"]) != "second" || !strings.Contains(client, "lookup_second") {
-		t.Fatalf("after an edit alpha runs %q with the clients %q", runs["tools.py"], client)
+	runs := func(tools string) {
+		t.Helper()
+		resume(tools)
+		f.mu.Lock()
+		running := overlayEntries(t, f.running["alpha"])
+		f.mu.Unlock()
+		if client := string(running["generated/holon-ui/index.mjs"]); string(running["tools.py"]) != tools || !strings.Contains(client, "lookup_"+tools) {
+			t.Fatalf("after an edit to %q alpha runs %q with the clients %q", tools, running["tools.py"], client)
+		}
 	}
+	runs("second")
+	const undescribed = ""
+	resume(undescribed)
+	runs("third")
 }
 
 func TestDevAppliesProjectChanges(t *testing.T) {
