@@ -410,8 +410,9 @@ func TestRunDevLifecycle(t *testing.T) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if len(updates) != 0 || !slices.Equal(reloads, []string{"alpha", "beta", "alpha"}) || created[0].Image != "" || created[1].Image != "" {
-			t.Fatalf("source edit updates = %#v, reloads = %v, created = %#v", updates, reloads, created)
+		if len(updates) != 0 || !slices.Equal(reloads, []string{"alpha", "beta", "alpha"}) || created[0].Image != "" || created[1].Image != "" ||
+			strings.Count(stdout.String(), "Ready\n") != 1 {
+			t.Fatalf("source edit updates = %#v, reloads = %v, created = %#v, stdout=%q", updates, reloads, created, stdout.String())
 		}
 		output := stdout.String() + stderr.String()
 		for _, hidden := range []string{"grant-secret", "alpha starting up", "tools/call"} {
