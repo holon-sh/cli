@@ -2,6 +2,7 @@ package mcptype
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -68,7 +69,7 @@ func renderGo(value typ) string {
 			return "string"
 		case bool:
 			return "bool"
-		case Number:
+		case json.Number:
 			return "json.Number"
 		}
 	case kindArray:
