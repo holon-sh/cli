@@ -16,7 +16,7 @@ type compiledTool struct {
 	structured    bool
 }
 
-func parseCatalog(ctx context.Context, entries map[string]contractTool, files bool) (catalog, error) {
+func parseCatalog(ctx context.Context, entries map[string]contractTool, files bool, declares func(typ) bool) (catalog, error) {
 	names := sortedKeys(entries)
 	tools := make([]compiledTool, len(names))
 	inputs, outputs := make([]*shape, len(names)), make([]*shape, len(names))
@@ -36,8 +36,8 @@ func parseCatalog(ctx context.Context, entries map[string]contractTool, files bo
 		inputs[i], outputs[i] = &tools[i].input, &tools[i].output
 	}
 	// Inputs and outputs are named apart, so each shares only with its own kind.
-	share(inputs)
-	share(outputs)
+	share(inputs, declares)
+	share(outputs, declares)
 	result := make(catalog, len(names))
 	for i, name := range names {
 		result[name] = tools[i]
@@ -46,10 +46,10 @@ func parseCatalog(ctx context.Context, entries map[string]contractTool, files bo
 }
 
 // share declares each type that a definition or title names, each object that several places in
-// shapes have in common, and each recursive type, once however many shapes mention it. Every other
-// type stays where it is used.
-func share(shapes []*shape) {
-	s := &sharing{shapes: shapes, types: map[string]*sharedType{}, keys: map[*declaration]string{}}
+// shapes have in common and declares accepts, and each recursive type, once however many shapes
+// mention it. Every other type stays where it is used.
+func share(shapes []*shape, declares func(typ) bool) {
+	s := &sharing{shapes: shapes, declares: declares, types: map[string]*sharedType{}, keys: map[*declaration]string{}}
 	for i, shape := range shapes {
 		s.current = i
 		s.count(shape.value, false)
@@ -77,10 +77,11 @@ func share(shapes []*shape) {
 }
 
 type sharing struct {
-	shapes  []*shape
-	current int                    // The shape being counted.
-	types   map[string]*sharedType // By structure.
-	keys    map[*declaration]string
+	shapes   []*shape
+	declares func(typ) bool         // Whether the target declares an object that nothing names.
+	current  int                    // The shape being counted.
+	types    map[string]*sharedType // By structure.
+	keys     map[*declaration]string
 }
 
 // sharedType is a recursive or named type, or an object that might be shared.
@@ -97,8 +98,8 @@ type sharedType struct {
 }
 
 // declared reports whether the type is declared rather than written where it is used.
-func (t *sharedType) declared() bool {
-	return t.declaration.cyclic || t.declaration.definition != "" || t.values > 1 || t.uses > 1 && t.several
+func (s *sharing) declared(t *sharedType) bool {
+	return t.declaration.cyclic || t.declaration.definition != "" || (t.values > 1 || t.uses > 1 && t.several) && s.declares(t.source)
 }
 
 // candidate reports whether a type that is not recursive might be declared.
@@ -175,7 +176,7 @@ func (s *sharing) rewrite(value typ) typ {
 		return s.reference(s.types[s.recursiveKey(value.ref)])
 	}
 	if candidate(value) {
-		if shared := s.types[s.key(value)]; shared.declared() {
+		if shared := s.types[s.key(value)]; s.declared(shared) {
 			return s.reference(shared)
 		}
 	}
@@ -270,10 +271,10 @@ func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
 	}
 }
 
-func compileCatalogs(ctx context.Context, contracts map[string]contract, entries func(contract) map[string]contractTool, files bool) (map[string]catalog, error) {
+func compileCatalogs(ctx context.Context, contracts map[string]contract, entries func(contract) map[string]contractTool, files bool, declares func(typ) bool) (map[string]catalog, error) {
 	catalogs := make(map[string]catalog, len(contracts))
 	for _, name := range sortedKeys(contracts) {
-		compiled, err := parseCatalog(ctx, entries(contracts[name]), files)
+		compiled, err := parseCatalog(ctx, entries(contracts[name]), files, declares)
 		if err != nil {
 			return nil, err
 		}

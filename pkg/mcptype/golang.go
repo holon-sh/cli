@@ -41,6 +41,20 @@ func goRecursive(value typ) bool {
 	return value.kind == kindArray || value.kind == kindObject
 }
 
+// goStruct reports whether an object decodes as a struct: one that names fields with valid tags and
+// declares no schema for other properties.
+func goStruct(value typ) bool {
+	if value.kind != kindObject || len(value.fields) == 0 || value.extra.kind == extraOpen {
+		return false
+	}
+	for name := range value.fields {
+		if name == "-" || !goTagName.MatchString(name) {
+			return false
+		}
+	}
+	return true
+}
+
 // goRawJSON reports whether a type decodes as raw JSON, by whatever name.
 func goRawJSON(value typ) bool {
 	for value.kind == kindDeclared && !value.ref.cyclic {
@@ -81,16 +95,13 @@ func renderGo(value typ) string {
 			}
 			return "map[string]" + item
 		}
-		if value.extra.kind == extraOpen {
+		if !goStruct(value) {
 			return "map[string]json.RawMessage"
 		}
 		names := map[string]bool{}
 		var out strings.Builder
 		out.WriteString("struct {\n")
 		for _, name := range sortedKeys(value.fields) {
-			if name == "-" || !goTagName.MatchString(name) {
-				return "map[string]json.RawMessage"
-			}
 			member := value.fields[name]
 			rendered := renderGo(member.value)
 			tagName := name

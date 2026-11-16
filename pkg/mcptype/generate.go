@@ -34,7 +34,7 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 		}
 		request.contracts[alias] = decoded
 	}
-	catalogs, err := compileCatalogs(ctx, request.contracts, func(c contract) map[string]contractTool { return c.Tools }, request.Target != "go")
+	catalogs, err := compileCatalogs(ctx, request.contracts, func(c contract) map[string]contractTool { return c.Tools }, request.Target != "go", sharedObjects[request.Target])
 	if err != nil {
 		return nil, err
 	}
@@ -61,8 +61,14 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	return files, nil
 }
 
+// sharedObjects is, for each target, whether it declares an untitled object that several places
+// share rather than writing it where it is used.
+var sharedObjects = map[string]func(typ) bool{"node": anyObject, "browser": anyObject, "python": pythonTypedDict, "go": goStruct}
+
+func anyObject(typ) bool { return true }
+
 func (r GenerateRequest) validate() error {
-	if !slices.Contains([]string{"node", "browser", "python", "go"}, r.Target) {
+	if sharedObjects[r.Target] == nil {
 		return fmt.Errorf("unknown target %q", r.Target)
 	}
 	for _, identity := range slices.AppendSeq([]mcpcontract.Identity{r.Identity}, maps.Values(r.Requires)) {
