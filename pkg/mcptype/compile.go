@@ -109,21 +109,14 @@ func candidate(value typ) bool {
 // count records the uses of value and the types it contains. A shape's named definitions are not
 // values.
 func (s *sharing) count(value typ, named bool) {
-	switch {
-	case value.kind == kindDeclared:
-		if s.mention(s.recursiveKey(value.ref), value.ref.value, value.ref.definition, true, named) {
-			s.countWithin(value.ref.value)
-		}
-		return
-	case candidate(value):
-		if !s.mention(s.key(value), value, value.definition, false, named) {
+	if value.kind == kindDeclared {
+		if !s.mention(s.recursiveKey(value.ref), value.ref.value, value.ref.definition, true, named) {
 			return
 		}
+		value = value.ref.value
+	} else if candidate(value) && !s.mention(s.key(value), value, value.definition, false, named) {
+		return
 	}
-	s.countWithin(value)
-}
-
-func (s *sharing) countWithin(value typ) {
 	for _, item := range value.items {
 		s.count(item, false)
 	}
@@ -178,14 +171,12 @@ func structuralLabel(value typ) string {
 
 // rewrite copies value, naming each shared type it contains.
 func (s *sharing) rewrite(value typ) typ {
-	switch value.kind {
-	case kindDeclared:
+	if value.kind == kindDeclared {
 		return s.reference(s.types[s.recursiveKey(value.ref)])
-	default:
-		if candidate(value) {
-			if shared := s.types[s.key(value)]; shared.declared() {
-				return s.reference(shared)
-			}
+	}
+	if candidate(value) {
+		if shared := s.types[s.key(value)]; shared.declared() {
+			return s.reference(shared)
 		}
 	}
 	return s.rewriteWithin(value)

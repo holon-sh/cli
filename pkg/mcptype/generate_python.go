@@ -33,7 +33,7 @@ const pythonClients = `def _clients(bindings: _typing.Mapping[str, _Binding] | N
     return _typing.cast(_Clients, apps)`
 
 func generatePythonPackage(ctx context.Context, request generateRequest, catalogs map[string]catalog) (map[string]string, error) {
-	events, err := compileCatalogs(ctx, request.contracts, contractEvents, false)
+	events, err := compileCatalogs(ctx, request.contracts, func(c contract) map[string]contractTool { return c.Events }, false)
 	if err != nil {
 		return nil, err
 	}

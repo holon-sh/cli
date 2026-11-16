@@ -31,7 +31,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 		return nil, err
 	}
 	resources := generateTypeScript(catalogs, names, [4]string{1: "Resources"})
-	catalogs, err = compileCatalogs(ctx, request.contracts, contractEvents, false)
+	catalogs, err = compileCatalogs(ctx, request.contracts, func(c contract) map[string]contractTool { return c.Events }, false)
 	if err != nil {
 		return nil, err
 	}

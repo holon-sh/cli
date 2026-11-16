@@ -61,8 +61,6 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	return files, nil
 }
 
-func contractEvents(c contract) map[string]contractTool { return c.Events }
-
 func (r GenerateRequest) validate() error {
 	if !slices.Contains([]string{"node", "browser", "python", "go"}, r.Target) {
 		return fmt.Errorf("unknown target %q", r.Target)
