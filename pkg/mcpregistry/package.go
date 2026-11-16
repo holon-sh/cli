@@ -61,7 +61,7 @@ func (p Package) environmentInputs() (map[string]protocol.Input, map[string]stri
 	for _, spec := range specs {
 		input, variables, err := spec.Parse()
 		if err == nil {
-			err = mergeInputs(inputs, variables)
+			err = MergeInputs(inputs, variables)
 		}
 		switch {
 		case err != nil:
@@ -117,7 +117,7 @@ func (p Package) App(values map[string]Value, run RunConfig) (protocol.App, erro
 	for index, spec := range p.PackageArguments {
 		input, variables, err := spec.Parse()
 		if err == nil {
-			err = mergeInputs(env, variables)
+			err = MergeInputs(env, variables)
 		}
 		if err != nil {
 			return protocol.App{}, err

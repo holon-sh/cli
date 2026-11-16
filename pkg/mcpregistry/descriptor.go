@@ -75,6 +75,7 @@ func ValidateEndpoint(location string) error {
 type Package struct {
 	Version          string            `json:"version"`
 	RegistryType     string            `json:"registryType"`
+	RegistryBaseURL  string            `json:"registryBaseUrl"`
 	Identifier       string            `json:"identifier"`
 	Transport        Transport         `json:"transport"`
 	Environment      []DescriptorInput `json:"environmentVariables"`
