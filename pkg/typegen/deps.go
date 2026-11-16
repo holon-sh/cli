@@ -14,13 +14,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/holon-sh/protocol/runtimecontract"
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/modfile"
 
 	"github.com/holon-sh/cli/internal/commandenv"
-	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/cli/pkg/mcptype"
+	"github.com/holon-sh/cli/pkg/recipe"
 )
 
 // PackageJSON is what Holon reads of a package.json.
@@ -54,31 +53,31 @@ func MapClients(consumers []Consumer, options Options) error {
 	return nil
 }
 
-// Install runs, in dir, the development install Kiln plans for the app there, and returns the commands that prepare it.
+// Install runs, in dir, the install of the project's recipe, and returns the commands that build it.
 func Install(ctx context.Context, dir string, options Options) ([][]string, error) {
 	o := options.defaults()
-	plan, err := developmentPlan(ctx, dir)
+	steps, err := projectRecipe(dir)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", dir, err)
 	}
-	return plan.Prepare, commandenv.RunEach(ctx, dir, filepath.Base(dir), plan.Install.Commands, commandenv.Environ(o.Env), o.Stderr)
+	return steps.Build, commandenv.RunEach(ctx, dir, filepath.Base(dir), steps.Install, commandenv.Environ(o.Env), o.Stderr)
 }
 
-func developmentPlan(ctx context.Context, dir string) (runtimecontract.Plan, error) {
+func projectRecipe(dir string) (recipe.Recipe, error) {
 	source, err := os.MkdirTemp("", "holon-install-")
 	if err != nil {
-		return runtimecontract.Plan{}, err
+		return recipe.Recipe{}, err
 	}
 	defer func() { _ = os.RemoveAll(source) }()
 	root := filepath.Join(source, "source")
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return runtimecontract.Plan{}, err
+		return recipe.Recipe{}, err
 	}
 	if _, err := SnapshotSource(filepath.Base(dir), resolved, root); err != nil {
-		return runtimecontract.Plan{}, err
+		return recipe.Recipe{}, err
 	}
-	return kiln.Development(ctx, root, nil)
+	return recipe.Read(os.DirFS(root))
 }
 
 // mapClients gives a Node.js target's clients the import name #holon-sh or #holon-ui in the package.json

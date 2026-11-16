@@ -1,5 +1,3 @@
-//go:build kiln
-
 package typegen
 
 import (
@@ -14,16 +12,16 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	bin := t.TempDir()
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stand := func(dir, first, last string) {
-		plan, err := developmentPlan(t.Context(), dir)
+		steps, err := projectRecipe(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for i, command := range plan.Install.Commands {
+		for i, command := range steps.Install {
 			script := "#!/bin/sh\n"
 			if i == 0 {
 				script += first + "\n"
 			}
-			if i == len(plan.Install.Commands)-1 {
+			if i == len(steps.Install)-1 {
 				script += last + "\n"
 			}
 			put(t, bin, command[0], script)

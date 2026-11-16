@@ -3,8 +3,6 @@ package kiln
 import (
 	"context"
 	"errors"
-
-	"github.com/holon-sh/protocol/runtimecontract"
 )
 
 var ErrNotLinked = errors.New("this holon was built without Kiln, which plans how an app installs, builds and starts; " +
@@ -22,33 +20,14 @@ type Command struct {
 
 // Image is the Dockerfile that builds the image of the app in source, started by start.
 func Image(ctx context.Context, source string, start []string) (string, error) {
-	return dockerfile(ctx, started(source, "image", start))
-}
-
-// Development is the plan the development runtime follows for the app in source, started by start.
-func Development(ctx context.Context, source string, start []string) (runtimecontract.Plan, error) {
-	var development runtimecontract.Plan
-	err := plan(ctx, started(source, "development", start), &development)
-	return development, err
-}
-
-func started(source, kind string, start []string) map[string]any {
-	return map[string]any{"source": source, kind: map[string][]string{"start": start}}
+	return plan(ctx, map[string]any{"source": source, "image": map[string][]string{"start": start}})
 }
 
 // Run is the Dockerfile of an image that runs command in the app in source and holds only the command's stdout,
 // stderr and exit status, as the files stdout, stderr and status.
 func Run(ctx context.Context, source string, command Command) (string, error) {
-	return dockerfile(ctx, struct {
+	return plan(ctx, struct {
 		Source string  `json:"source"`
 		Run    Command `json:"run"`
 	}{source, command})
-}
-
-func dockerfile(ctx context.Context, request any) (string, error) {
-	var result struct {
-		Dockerfile string `json:"dockerfile"`
-	}
-	err := plan(ctx, request, &result)
-	return result.Dockerfile, err
 }
