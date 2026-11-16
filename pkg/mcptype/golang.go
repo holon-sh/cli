@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -38,20 +39,6 @@ func unique(names map[string]bool, preferred string) string {
 // do. The others are unions, intersections and tuples, which decode as raw JSON as usual.
 func goRecursive(value typ) bool {
 	return value.kind == kindArray || value.kind == kindObject
-}
-
-// goStruct reports whether an object decodes as a struct: one that names fields with valid tags and
-// declares no schema for other properties.
-func goStruct(value typ) bool {
-	if value.kind != kindObject || len(value.fields) == 0 || value.extra.kind == extraOpen {
-		return false
-	}
-	for name := range value.fields {
-		if name == "-" || !goTagName.MatchString(name) {
-			return false
-		}
-	}
-	return true
 }
 
 // goRawJSON reports whether a type decodes as raw JSON, by whatever name.
@@ -94,7 +81,7 @@ func renderGo(value typ) string {
 			}
 			return "map[string]" + item
 		}
-		if !goStruct(value) {
+		if value.extra.kind == extraOpen || slices.ContainsFunc(sortedKeys(value.fields), func(name string) bool { return name == "-" || !goTagName.MatchString(name) }) {
 			return "map[string]json.RawMessage"
 		}
 		names := map[string]bool{}
