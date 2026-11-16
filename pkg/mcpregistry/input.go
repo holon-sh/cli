@@ -36,8 +36,7 @@ func mergeInput(env map[string]protocol.Input, name string, input protocol.Input
 	return nil
 }
 
-// MergeInputs adds inputs to env, failing on a conflicting redeclaration.
-func MergeInputs(env, inputs map[string]protocol.Input) error {
+func mergeInputs(env, inputs map[string]protocol.Input) error {
 	for name, input := range inputs {
 		if err := mergeInput(env, name, input); err != nil {
 			return err
