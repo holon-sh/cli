@@ -17,6 +17,7 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/typegen"
+	"github.com/holon-sh/protocol"
 	"k8s.io/utils/ptr"
 )
 
@@ -32,43 +33,19 @@ type preparedTypes struct {
 	unserved    bool
 }
 
-type typeWorkspace struct {
-	accepted map[string]*preparedTypes
-	release  func()
-}
-
-func (w *typeWorkspace) close() {
-	if w.release != nil {
-		w.release()
-		w.release = nil
-	}
-}
-
-func (w *typeWorkspace) accept(manifest manifestSpec) {
-	for _, app := range manifest.Apps {
-		if p := app.resolved.types; p != nil {
-			w.accepted[app.Name] = p
-		}
-	}
-}
-
-func (w *typeWorkspace) acquire(manifest manifestSpec) error {
-	w.close()
-	if w.accepted == nil {
-		w.accepted = map[string]*preparedTypes{}
-	}
+func lockSources(manifest manifestSpec) (func(), error) {
 	var consumers []typegen.Consumer
 	for _, app := range manifest.Apps {
 		if app.Path != "" {
 			consumers = append(consumers, typegen.Consumer{Name: app.Name, Dir: app.Path})
 		}
 	}
-	var err error
-	w.release, err = typegen.AcquireLocks(consumers)
-	return err
+	return typegen.AcquireLocks(consumers)
 }
 
-func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options buildOptions) (_ manifestSpec, _ func(), err error) {
+func prepareManifestTypes(
+	ctx context.Context, manifest manifestSpec, options buildOptions, served map[string]json.RawMessage,
+) (_ manifestSpec, _ func(), err error) {
 	finish := options.output.measure("apps", "prepare contracts")
 	defer finish()
 	parent, err := os.MkdirTemp("", "holon-types-")
@@ -85,11 +62,10 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	byApp := map[string]typegen.Server{}
 	var consumers []typegen.Consumer
 	needed := map[string]bool{}
-	logs := options.output.logs(options.Stderr)
-	typeOptions := typegen.Options{Env: options.Env, HTTPClient: options.HTTPClient, Stderr: logs}
+	typeOptions := typegen.Options{Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.output.logs()}
 	prepareOptions := typeOptions
 	prepareOptions.Run = options.extractTypes
-	if options.served != nil {
+	if served != nil {
 		prepareOptions.Run, prepareOptions.Served = nil, map[string]json.RawMessage{}
 	}
 	var pathApps []*manifestApp
@@ -100,8 +76,8 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			if clientutil.PathInside(parent, app.Path) {
 				return manifestSpec{}, nil, fmt.Errorf("%s: build metadata must be outside application source", app.Name)
 			}
-			contract, served := options.served[app.Name]
-			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name), unserved: options.served != nil && !served}
+			contract, ok := served[app.Name]
+			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name), unserved: served != nil && !ok}
 			app.resolved.types = p
 			consumer, err := typegen.AppConsumer(app.Name, app.Path)
 			if err != nil {
@@ -109,7 +85,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			}
 			pathApps = append(pathApps, app)
 			byApp[app.Name] = typegen.Path(app.Path)
-			if served {
+			if ok {
 				prepareOptions.Served[app.Path] = contract
 			}
 			if consumer != nil {
@@ -160,7 +136,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			consumers[i].Sources = append(consumers[i].Sources, typegen.Source{Alias: name, Server: server})
 		}
 	}
-	if options.types != nil {
+	if options.plane == protocol.DevPlane {
 		if err := typegen.MapClients(consumers, typeOptions); err != nil {
 			return manifestSpec{}, nil, err
 		}
@@ -171,7 +147,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			return manifestSpec{}, nil, err
 		}
 	}
-	if options.development && options.served == nil {
+	if options.plane == protocol.DevPlane && served == nil {
 		consumers = nil
 	}
 	prepared, err := typegen.Prepare(ctx, consumers, prepareOptions)
@@ -198,7 +174,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		}
 		metadata[app.Name] = p.metadata
 	}
-	if options.types != nil {
+	if options.plane == protocol.DevPlane {
 		if err := prepared.Write(io.Discard); err != nil {
 			return manifestSpec{}, nil, err
 		}
@@ -222,7 +198,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 			}
 		}
 	}
-	if !options.development {
+	if options.plane != protocol.DevPlane {
 		if err := options.checkTypes(ctx, pathApps); err != nil {
 			return manifestSpec{}, nil, err
 		}

@@ -166,7 +166,7 @@ func newDeployCommand(config *commandConfig) *cobra.Command {
   # Deploy an app outside holon.yaml that anyone can call
   holon deploy notes --public`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDeploy(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
+			return runDeploy(cmd.Context(), config.apps, cmd.OutOrStdout(), *config)
 		},
 	}
 	return withProject(withProgress(cmd, config, "Deployment ready"), config)

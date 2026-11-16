@@ -1,12 +1,9 @@
 package installation
 
 import (
-	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"os"
@@ -27,23 +24,17 @@ import (
 )
 
 type buildOptions struct {
-	importPackage func(context.Context, manifestApp) (protocol.ResolvedAppBuild, error)
+	manager       *Client
 	plane         protocol.Plane
-	types         *typeWorkspace
 	architectures []string
 	builder       buildApplication
 	builders      *builderConnections
-	origin        string
-	Stderr        io.Writer
 	Env           []string
 	HTTPClient    *http.Client
 	output        *progressOutput
-	development   bool
-	served        map[string]json.RawMessage
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
-	stderr := &buildLog{writer: cmp.Or(options.Stderr, io.Discard)}
 	apps := make([]protocol.App, len(manifest.Apps))
 	group, ctx := errgroup.WithContext(ctx)
 	group.SetLimit(3)
@@ -53,7 +44,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			apps[index] = declaration
 			continue
 		}
-		if app.Path != "" && options.development {
+		if app.Path != "" && options.plane == protocol.DevPlane {
 			if _, err := devEntry(app, app.resolved.types.root); err != nil {
 				return nil, err
 			}
@@ -67,16 +58,14 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			options := options
-			logs := options.output.logs(stderr)
-			options.Stderr = logs
+			logs := options.output.logs()
 			defer func() {
 				if err != nil {
 					err = logs.explain(err)
 				}
 			}()
 			if app.resolved.registryPackage != nil {
-				build, err := options.importPackage(ctx, app)
+				build, err := importRegistryBuild(ctx, options.manager, options.plane, app)
 				if err != nil {
 					return err
 				}
@@ -86,7 +75,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			}
 			var built ocispec.Descriptor
 			if app.resolved.Image == "" {
-				if built, err = buildSource(ctx, app, upload, options); err != nil {
+				if built, err = buildSource(ctx, app, upload, options, logs); err != nil {
 					return err
 				}
 			}
@@ -98,11 +87,11 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 					}
 				}
 				if app.resolved.stdio {
-					if image, err = adaptStdio(ctx, repository, image, options.origin); err != nil {
+					if image, err = adaptStdio(ctx, repository, image, options.manager.client.baseURL); err != nil {
 						return fmt.Errorf("adapt stdio app %s: %w", app.Name, err)
 					}
 				}
-				if options.plane != "" && grant.Grant != "" {
+				if options.plane == protocol.AdminPlane && grant.Grant != "" {
 					ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 					defer cancel()
 					record := mcpregistry.BuildRecord(app.resolved.App, app.resolved.catalogEnv, app.resolved.descriptor)
@@ -146,23 +135,9 @@ func regularNoSymlink(path, label string) error {
 	return nil
 }
 
-func buildManifestImages(
-	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions,
-) ([]protocol.App, error) {
-	upload := newImageUpload(manager, name, manifest, options.HTTPClient)
-	options.importPackage = func(ctx context.Context, app manifestApp) (protocol.ResolvedAppBuild, error) {
-		return importRegistryBuild(ctx, manager, ControlPlane(name), app)
-	}
-	options.origin = manager.client.baseURL
-	if name == protocol.ProductionName {
-		options.plane = ControlPlane(name)
-	}
-	return buildAndPush(ctx, manifest, upload, options)
-}
-
-func newImageUpload(manager *Client, name string, manifest manifestSpec, client *http.Client) *imageUpload {
-	return &imageUpload{client: client, load: func(ctx context.Context) (protocol.UploadGrant, error) {
-		grant, err := imageDestination(ctx, manager, name, manifest)
+func newImageUpload(options buildOptions, manifest manifestSpec) *imageUpload {
+	return &imageUpload{client: options.HTTPClient, load: func(ctx context.Context) (protocol.UploadGrant, error) {
+		grant, err := imageDestination(ctx, options.manager, options.plane, manifest)
 		if err == nil {
 			err = validateUploadGrant(grant, manifest)
 		}

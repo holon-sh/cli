@@ -77,7 +77,7 @@ func buildManifest(t *testing.T, root string) manifestSpec {
 
 func prepareBuild(t *testing.T, manifest manifestSpec) manifestSpec {
 	t.Helper()
-	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{})
+	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,9 +129,9 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	if err := os.Symlink("script", filepath.Join(root, "link")); err != nil {
 		t.Fatal(err)
 	}
-	_, server := buildRegistry(t)
+	fixture, server := buildRegistry(t)
 	build := buildImage(t, "source")
-	options := buildOptions{HTTPClient: server.Client(), plane: protocol.DevPlane}
+	options := buildOptions{HTTPClient: server.Client(), plane: protocol.AdminPlane}
 	options.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
 		snapshot := request.Source
 		if err := os.WriteFile(filepath.Join(root, "main.mjs"), []byte("console.log(2)"), 0o600); err != nil {
@@ -187,10 +187,14 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	descriptor, err := repository.Resolve(t.Context(), appartifact.DevelopmentTag)
-	if err != nil {
-		t.Fatal(err)
+	var descriptor ocispec.Descriptor
+	fixture.mu.Lock()
+	for key, item := range fixture.items {
+		if strings.Contains(key, "/manifests/"+appartifact.ReleasePrefix) {
+			descriptor = content.NewDescriptorFromBytes(item.mediaType, item.data)
+		}
 	}
+	fixture.mu.Unlock()
 	record, executable, err := appartifact.Read(t.Context(), repository, descriptor)
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +243,7 @@ func TestSourceRejectsEscapingSymlinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(outside, "file"), filepath.Join(root, "outside")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}); err == nil || !strings.Contains(err.Error(), "symlink escapes application") {
+	if _, _, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}, nil); err == nil || !strings.Contains(err.Error(), "symlink escapes application") {
 		t.Fatalf("escaping symlink: %v", err)
 	}
 }

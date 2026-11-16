@@ -51,10 +51,10 @@ type commandConfig struct {
 	output             *progressOutput
 }
 
-func (c commandConfig) buildOptions(manager *Client, stderr io.Writer) buildOptions {
+func (c commandConfig) buildOptions(manager *Client, plane protocol.Plane) buildOptions {
 	return buildOptions{
-		builder: c.builder, HTTPClient: c.RegistryHTTPClient, Stderr: stderr, Env: c.Auth.Env, output: c.output,
-		architectures: manager.info.BuildArchitectures, builders: new(builderConnections),
+		manager: manager, plane: plane, builder: c.builder, HTTPClient: c.RegistryHTTPClient,
+		Env: c.Auth.Env, output: c.output, architectures: manager.info.BuildArchitectures, builders: new(builderConnections),
 	}
 }
 
@@ -110,15 +110,13 @@ func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec
 	return resolved, protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil)
 }
 
-func uploadManifest(
-	ctx context.Context, manager *Client, name string, resolved manifestSpec, options buildOptions,
-) (protocol.AppsRequest, error) {
-	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options)
+func uploadManifest(ctx context.Context, resolved manifestSpec, options buildOptions) (protocol.AppsRequest, error) {
+	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options, nil)
 	if err != nil {
 		return protocol.AppsRequest{}, err
 	}
 	defer cleanup()
-	built, err := buildManifestImages(ctx, manager, name, prepared, options)
+	built, err := buildAndPush(ctx, prepared, newImageUpload(options, prepared), options)
 	if err != nil {
 		return protocol.AppsRequest{}, err
 	}
@@ -128,7 +126,7 @@ func uploadManifest(
 	return protocol.AppsRequest{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
 }
 
-func imageDestination(ctx context.Context, manager *Client, name string, manifest manifestSpec) (protocol.UploadGrant, error) {
+func imageDestination(ctx context.Context, manager *Client, plane protocol.Plane, manifest manifestSpec) (protocol.UploadGrant, error) {
 	names := make([]string, 0, len(manifest.Apps))
 	for _, app := range manifest.Apps {
 		names = append(names, app.Name)
@@ -143,7 +141,7 @@ func imageDestination(ctx context.Context, manager *Client, name string, manifes
 	}
 	var grant protocol.UploadGrant
 	upload := protocol.UploadRequest{Apps: names}
-	err := manager.Call(ctx, ControlPlane(name), protocol.ToolUploadGrant, upload, &grant)
+	err := manager.Call(ctx, plane, protocol.ToolUploadGrant, upload, &grant)
 	return grant, err
 }
 
@@ -157,23 +155,22 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
-	options := config.buildOptions(manager, stderr)
-	options.types, options.development = new(typeWorkspace), true
-	defer options.types.close()
+	options := config.buildOptions(manager, protocol.DevPlane)
 	defer options.builders.close()
 	resolved, err := resolveManifest(ctx, manager, config.manifest, apps...)
 	if err != nil {
-		return err
-	}
-	if err := options.types.acquire(resolved); err != nil {
 		return err
 	}
 	recordPath := manager.sessionRecordPath(config.manifest, apps)
 	dev := &devLoop{
 		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), watch: config.watch, started: config.clock().Now(), options: options,
 		updating: sets.New[string](), sent: map[string]string{},
-		background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{},
+		background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{}, accepted: map[string]*preparedTypes{},
 	}
+	if dev.unlock, err = lockSources(resolved); err != nil {
+		return err
+	}
+	defer func() { dev.unlock() }()
 	defer dev.records.Wait()
 	if config.devTTLSeconds == nil {
 		dev.session = previousSession(ctx, manager, recordPath)
@@ -188,7 +185,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 			return err
 		}
 	}
-	request, err := uploadManifest(ctx, manager, "", resolved, options)
+	request, err := uploadManifest(ctx, resolved, options)
 	if err != nil {
 		return err
 	}
@@ -313,7 +310,7 @@ func terminalCondition(condition protocol.Condition) bool {
 	}, condition.Reason)
 }
 
-func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer, config commandConfig) error {
+func runDeploy(ctx context.Context, selection []string, stdout io.Writer, config commandConfig) error {
 	finish := config.output.measure("production", "deploy")
 	defer finish()
 	config.output.headline(deployingApps, progressWorking)
@@ -330,13 +327,13 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	for _, app := range current.Apps {
 		manifest.deployed[app.Name] = app.Access
 	}
-	options := config.buildOptions(manager, stderr)
+	options := config.buildOptions(manager, protocol.AdminPlane)
 	defer options.builders.close()
 	resolved, err := resolveManifest(ctx, manager, manifest, selection...)
 	if err != nil {
 		return err
 	}
-	desired, err := uploadManifest(ctx, manager, protocol.ProductionName, resolved, options)
+	desired, err := uploadManifest(ctx, resolved, options)
 	if err != nil {
 		return err
 	}

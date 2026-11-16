@@ -3,7 +3,6 @@ package installation
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/internal/kiln"
-	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/hookartifact"
 )
 
@@ -32,10 +30,7 @@ type buildRequest struct {
 	output     *progressOutput
 }
 
-func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (ocispec.Descriptor, error) {
-	if !protocol.ValidBuildArchitectures(options.architectures) {
-		return ocispec.Descriptor{}, errors.New("invalid build architectures")
-	}
+func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions, logs io.Writer) (ocispec.Descriptor, error) {
 	request, err := options.planSource(ctx, app, app.resolved.types)
 	if err != nil {
 		return ocispec.Descriptor{}, err
@@ -45,7 +40,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	if build == nil {
 		build = publishSource
 	}
-	image, err := build(ctx, request, options.Stderr)
+	image, err := build(ctx, request, logs)
 	if err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("build %s: %w", app.Name, err)
 	}
