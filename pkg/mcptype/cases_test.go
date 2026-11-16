@@ -98,7 +98,11 @@ const sinkRequires = `{"orders": {"name": "orders", "version": "1.0.0"}, "orders
 
 // The second orders alias exercises identifier collisions without repeating every schema case.
 func sinkContracts() string {
-	return `{"orders": ` + kitchenSink + `, "orders!": {"tools": [{"name": "kitchen-sink", "inputSchema": {"type":"object", "properties":{"id":{"type":"string"}}, "required":["id"], "additionalProperties":false}, "outputSchema":{"type":"boolean"}}]}, "123": {"tools": []}, "for": {"tools": [{"name": "x", "inputSchema": {"type": "object"}}]}, "with-hyphen": {"tools": [{"name": "y", "inputSchema": {"type": "object"}}], "resources": []}, "_private": {"tools": []}, "ünï": {"tools": [{"name": "z", "inputSchema": {"type": "object"}}]}}`
+	shared := `"a": {"type": "object", "additionalProperties": true, "properties": {"filter-input": {"type": "string"}}}, "headers": {"type": "object", "additionalProperties": true, "properties": {"if-match": {"type": "string"}}}, "labels": {"type": "object", "additionalProperties": false, "properties": {"ünï": {"type": "string"}}}, "condition": {"$ref": "#/$defs/IfMatch"}`
+	tool := func(name, extra string) string {
+		return `{"name": "` + name + `", "inputSchema": {"type": "object", "additionalProperties": false, "properties": {` + shared + extra + `}, "$defs": {"IfMatch": {"type": "object", "additionalProperties": false, "properties": {"etag": {"type": "string"}}}}}, "outputSchema": {"anyOf": [{"type": "object", "additionalProperties": true, "properties": {"note": {"type": "string"}}}, {"type": "null"}]}}`
+	}
+	return `{"shared": {"tools": [{"name": "input_filter", "inputSchema": {"type": "object", "additionalProperties": false, "properties": {"q": {"type": "string"}}}}, ` + tool("save", `, "content": {"type": "string"}`) + `, ` + tool("remove", "") + `]}, "orders": ` + kitchenSink + `, "orders!": {"tools": [{"name": "kitchen-sink", "inputSchema": {"type":"object", "properties":{"id":{"type":"string"}}, "required":["id"], "additionalProperties":false}, "outputSchema":{"type":"boolean"}}]}, "123": {"tools": []}, "for": {"tools": [{"name": "x", "inputSchema": {"type": "object"}}]}, "with-hyphen": {"tools": [{"name": "y", "inputSchema": {"type": "object"}}], "resources": []}, "_private": {"tools": []}, "ünï": {"tools": [{"name": "z", "inputSchema": {"type": "object"}}]}}`
 }
 
 func generationCases(t *testing.T) []generationCase {

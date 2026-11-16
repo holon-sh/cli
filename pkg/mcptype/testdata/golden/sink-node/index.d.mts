@@ -11,6 +11,11 @@ export type OrdersInputLegacy = number;
 export type OrdersInputPrivate = boolean;
 export type OrdersInputFor = string;
 export type OrdersInputList = [string?, ...unknown[]];
+export type SharedInputFilterInput = { "filter-input"?: string; [key: string]: unknown; };
+export type SharedInputIfMatch2 = { "etag"?: string; };
+export type SharedInputIfMatch = { "if-match"?: string; [key: string]: unknown; };
+export type SharedInputN = { "ünï"?: string; };
+export type SharedOutputNote = { "note"?: string; [key: string]: unknown; };
 export interface Inputs {
   "123": {
   };
@@ -38,6 +43,11 @@ export interface Inputs {
   "orders!": {
     "kitchen-sink": { "id": string; };
   };
+  "shared": {
+    "input_filter": { "q"?: string; };
+    "remove": { "a"?: SharedInputFilterInput; "condition"?: SharedInputIfMatch2; "headers"?: SharedInputIfMatch; "labels"?: SharedInputN; };
+    "save": { "a"?: SharedInputFilterInput; "condition"?: SharedInputIfMatch2; "content"?: string; "headers"?: SharedInputIfMatch; "labels"?: SharedInputN; };
+  };
   "with-hyphen": {
     "y": { [key: string]: unknown; };
   };
@@ -61,6 +71,10 @@ export interface Outputs {
   };
   "orders!": {
     "kitchen-sink": boolean;
+  };
+  "shared": {
+    "remove": (SharedOutputNote | null);
+    "save": (SharedOutputNote | null);
   };
   "with-hyphen": {
   };
@@ -94,6 +108,11 @@ export interface InputTypes {
   "orders!": {
     "kitchen-sink": {  };
   };
+  "shared": {
+    "input_filter": {  };
+    "remove": { "IfMatch": SharedInputIfMatch2; };
+    "save": { "IfMatch": SharedInputIfMatch2; };
+  };
   "with-hyphen": {
     "y": {  };
   };
@@ -118,6 +137,10 @@ export interface OutputTypes {
   "orders!": {
     "kitchen-sink": {  };
   };
+  "shared": {
+    "remove": {  };
+    "save": {  };
+  };
   "with-hyphen": {
   };
   "ünï": {
@@ -138,6 +161,8 @@ export interface Resources {
   };
   "orders!": {
   };
+  "shared": {
+  };
   "with-hyphen": {
   };
   "ünï": {
@@ -154,6 +179,8 @@ export interface EventArguments {
   };
   "orders!": {
   };
+  "shared": {
+  };
   "with-hyphen": {
   };
   "ünï": {
@@ -169,6 +196,8 @@ export interface EventData {
   "orders": {
   };
   "orders!": {
+  };
+  "shared": {
   };
   "with-hyphen": {
   };
