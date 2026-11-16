@@ -54,7 +54,7 @@ export default createMcpHandler(() => {
 		var packageJSON string
 		lockName := "package-lock.json"
 		if name == "checkout" {
-			packageJSON = strings.Replace(pkg, `"type":"module"`, `"type":"module","packageManager":"pnpm@10.13.1"`, 1)
+			packageJSON = strings.Replace(pkg, `"type":"module"`, `"type":"module","packageManager":"pnpm@10.13.1","imports":{"#holon-sh":"./generated/holon-sh/index.mjs"}`, 1)
 			lockName = "pnpm-lock.yaml"
 		} else {
 			var document map[string]any
