@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/holon-sh/cli/internal/kiln"
 )
 
 func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
@@ -16,7 +14,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	bin := t.TempDir()
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stand := func(dir, first, last string) {
-		steps, err := kiln.Development(t.Context(), dir)
+		steps, err := developmentSteps(t.Context(), dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -42,6 +40,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		put(t, dir, "uv.lock", "version = 1\nrequires-python = \">=3.12\"\n")
 	}
 	put(t, page, "package.json", `{"packageManager":"pnpm@11.25.0","dependencies":{"holon-ui":"^0.0.1"}}`)
+	put(t, page, ".venv/.gitignore", "*")
 	if err := os.MkdirAll(filepath.Join(page, ".venv", "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}

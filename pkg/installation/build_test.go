@@ -116,10 +116,8 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	sourceFiles(t, root, map[string]string{
 		"main.mjs": "console.log(1)", ".holon/app.txt": "application file",
 		"package.json":      `{"main":"main.mjs"}`,
-		".dockerignore":     "excluded/\n!excluded/keep.txt\n!node_modules/forbidden\n",
-		"excluded/keep.txt": "yes", "excluded/no.txt": "no",
-		"node_modules/forbidden": "no", ".git/config": "no", "script": "hello",
-		".venv/pyvenv.cfg": "no", "__pycache__/server.pyc": "no",
+		".dockerignore":     "excluded/\n!excluded/keep.txt\n",
+		"excluded/keep.txt": "yes", "excluded/no.txt": "no", "script": "hello",
 	})
 	if err := os.Chmod(filepath.Join(root, "script"), 0o755); err != nil {
 		t.Fatal(err)
@@ -150,7 +148,7 @@ func TestSourceBuildAndUpload(t *testing.T) {
 					t.Fatalf("build input %s = %q, want %q: %v", name, got, want, err)
 				}
 			}
-			for _, name := range []string{"excluded/no.txt", "node_modules/forbidden", ".git/config", ".dockerignore", ".venv", "__pycache__"} {
+			for _, name := range []string{"excluded/no.txt", ".dockerignore"} {
 				if _, err := os.Lstat(filepath.Join(snapshot, name)); !os.IsNotExist(err) {
 					t.Fatalf("excluded file reached builder: %s: %v", name, err)
 				}

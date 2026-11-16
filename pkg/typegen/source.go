@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,13 +13,93 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/go-git/go-git/v5/plumbing/format/config"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/moby/patternmatcher"
 	"github.com/moby/patternmatcher/ignorefile"
 )
 
-// SourceMatcher reads the project's .dockerignore rules, or returns an empty matcher when absent.
-func SourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
+// SourceRules decide which files in an application directory are its source.
+type SourceRules struct {
+	root, top  string
+	docker     *patternmatcher.PatternMatcher
+	submodules []string
+	patterns   map[string][]gitignore.Pattern
+}
+
+// ReadSourceRules reads the source rules of the application at root.
+func ReadSourceRules(root string) (*SourceRules, error) {
+	docker, err := sourceMatcher(root)
+	if err != nil {
+		return nil, err
+	}
+	s := &SourceRules{root: root, top: root, docker: docker, patterns: map[string][]gitignore.Pattern{}}
+	for dir := root; filepath.Dir(dir) != dir; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			s.top = dir
+			break
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(s.top, ".gitmodules"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	modules := config.New()
+	if err := config.NewDecoder(bytes.NewReader(data)).Decode(modules); err != nil {
+		return nil, err
+	}
+	for _, module := range modules.Section("submodule").Subsections {
+		s.submodules = append(s.submodules, module.Option("path"))
+	}
+	return s, nil
+}
+
+// Ignored reports whether path is left out of the source, and whether everything below it is too.
+func (s *SourceRules) Ignored(path string, dir bool) (ignored, below bool, err error) {
+	relative, err := filepath.Rel(s.root, path)
+	if !filepath.IsLocal(relative) {
+		return true, true, err
+	}
+	if relative == "." || relative == dockerignoreFile {
+		return false, false, nil
+	}
+	if slices.Contains(strings.Split(filepath.ToSlash(relative), "/"), ".git") || generatedSource(s.root, path) {
+		return true, true, nil
+	}
+	if ignored, err := s.gitignored(path, dir); ignored || err != nil {
+		return ignored, true, err
+	}
+	ignored, err = s.docker.MatchesOrParentMatches(filepath.ToSlash(relative))
+	return ignored, ignored && !s.docker.Exclusions(), err
+}
+
+func (s *SourceRules) gitignored(path string, dir bool) (bool, error) {
+	relative, _ := filepath.Rel(s.top, path)
+	parts := strings.Split(filepath.ToSlash(relative), "/")
+	if _, err := os.Lstat(filepath.Join(path, ".git")); dir && err == nil && !slices.Contains(s.submodules, filepath.ToSlash(relative)) {
+		return true, nil
+	}
+	var patterns []gitignore.Pattern
+	for i := range parts {
+		folder := filepath.Join(s.top, filepath.Join(parts[:i]...))
+		if _, read := s.patterns[folder]; !read {
+			data, err := os.ReadFile(filepath.Join(folder, ".gitignore"))
+			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return false, err
+			}
+			for line := range strings.Lines(string(data)) {
+				if line = strings.TrimRight(line, "\r\n"); strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "#") {
+					s.patterns[folder] = append(s.patterns[folder], gitignore.ParsePattern(line, parts[:i]))
+				}
+			}
+		}
+		patterns = append(patterns, s.patterns[folder]...)
+	}
+	return gitignore.NewMatcher(patterns).Match(parts, dir), nil
+}
+
+func sourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
 	file, err := os.Open(filepath.Join(root, dockerignoreFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return patternmatcher.New(nil)
@@ -34,12 +115,10 @@ func SourceMatcher(root string) (*patternmatcher.PatternMatcher, error) {
 	return patternmatcher.New(patterns)
 }
 
-// GeneratedSource reports dependency directories, generated clients and the directories they are
-// written through, which source snapshots leave out.
-func GeneratedSource(root, path string) bool {
+func generatedSource(root, path string) bool {
 	relative, _ := filepath.Rel(root, path)
 	if slices.ContainsFunc(strings.Split(filepath.ToSlash(relative), "/"), func(part string) bool {
-		return slices.Contains([]string{".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}, part) || strings.HasPrefix(part, generatedTemp)
+		return strings.HasPrefix(part, generatedTemp)
 	}) {
 		return true
 	}
@@ -48,8 +127,8 @@ func GeneratedSource(root, path string) bool {
 	})
 }
 
-// SnapshotSource copies dir into destination (or only fingerprints it when destination is empty),
-// honouring .dockerignore and skipping generated and dependency directories.
+// SnapshotSource copies dir's source into destination, or only fingerprints it when destination is
+// empty.
 func SnapshotSource(name, dir, destination string) (string, error) {
 	info, err := os.Lstat(dir)
 	if err != nil {
@@ -62,7 +141,7 @@ func SnapshotSource(name, dir, destination string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	matcher, err := SourceMatcher(root)
+	rules, err := ReadSourceRules(root)
 	if err != nil {
 		return "", err
 	}
@@ -71,12 +150,12 @@ func SnapshotSource(name, dir, destination string) (string, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		ignored, err := IgnoredSource(root, path, matcher)
+		ignored, below, err := rules.Ignored(path, item.IsDir())
 		if err != nil {
 			return err
 		}
 		if ignored {
-			if item.IsDir() && (GeneratedSource(root, path) || !matcher.Exclusions()) {
+			if item.IsDir() && below {
 				return filepath.SkipDir
 			}
 			return nil
@@ -107,7 +186,11 @@ func SnapshotSource(name, dir, destination string) (string, error) {
 			if !clientutil.PathInside(resolved, root) {
 				return fmt.Errorf("source symlink escapes application: %s", relative)
 			}
-			excluded, err := IgnoredSource(root, resolved, matcher)
+			linked, err := os.Stat(resolved)
+			if err != nil {
+				return err
+			}
+			excluded, _, err := rules.Ignored(resolved, linked.IsDir())
 			if err != nil {
 				return err
 			}
@@ -178,23 +261,4 @@ func SourceEntry(root string) (string, error) {
 		entry = name
 	}
 	return entry, nil
-}
-
-// IgnoredSource applies the snapshot exclusions to path, including generated slots and dependency
-// directories. The root and .dockerignore remain observable so watchers can refresh their rules.
-func IgnoredSource(root, path string, matcher *patternmatcher.PatternMatcher) (bool, error) {
-	if path == filepath.Join(root, dockerignoreFile) {
-		return false, nil
-	}
-	relative, err := filepath.Rel(root, path)
-	if !filepath.IsLocal(relative) {
-		return true, err
-	}
-	if relative == "." {
-		return false, nil
-	}
-	if GeneratedSource(root, path) {
-		return true, nil
-	}
-	return matcher.MatchesOrParentMatches(filepath.ToSlash(relative))
 }

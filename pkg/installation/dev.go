@@ -86,7 +86,7 @@ func newDevWatcher(manifest manifestSpec, watch func() (fileWatcher, error), clk
 }
 
 func (w *devWatcher) refresh(root string) error {
-	matcher, err := typegen.SourceMatcher(root)
+	rules, err := typegen.ReadSourceRules(root)
 	if err != nil {
 		return err
 	}
@@ -100,11 +100,11 @@ func (w *devWatcher) refresh(root string) error {
 		if !item.IsDir() {
 			return nil
 		}
-		ignored, matchErr := typegen.IgnoredSource(root, path, matcher)
+		_, below, matchErr := rules.Ignored(path, true)
 		if matchErr != nil {
 			return matchErr
 		}
-		if typegen.GeneratedSource(root, path) || ignored && !matcher.Exclusions() {
+		if below {
 			return filepath.SkipDir
 		}
 		if err := w.watcher.Add(path); !errors.Is(err, fs.ErrNotExist) {
@@ -115,18 +115,21 @@ func (w *devWatcher) refresh(root string) error {
 }
 
 func (w *devWatcher) observe(root, path string, op fsnotify.Op) (bool, error) {
-	matcher, err := typegen.SourceMatcher(root)
+	rules, err := typegen.ReadSourceRules(root)
 	if err != nil {
 		return false, err
 	}
-	ignored, err := typegen.IgnoredSource(root, path, matcher)
+	info, statErr := os.Stat(path)
+	dir := statErr == nil && info.IsDir()
+	ignored, _, err := rules.Ignored(path, dir)
 	if err != nil {
 		return false, err
 	}
-	if info, statErr := os.Stat(path); filepath.Base(path) == dockerignoreFile || op.Has(fsnotify.Create) && statErr == nil && info.IsDir() {
+	rule := slices.Contains([]string{dockerignoreFile, ".gitignore"}, filepath.Base(path))
+	if rule || op.Has(fsnotify.Create) && dir {
 		err = w.refresh(root)
 	}
-	return !ignored, err
+	return !ignored || rule, err
 }
 
 // editorFiles are what editors write beside a file while saving it: backups, vim's write test and swap

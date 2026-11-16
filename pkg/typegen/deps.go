@@ -79,7 +79,7 @@ func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
 // Install runs, in dir, the development install Kiln plans for the app there, and returns the app's development steps.
 func Install(ctx context.Context, dir string, options Options) (kiln.Steps, error) {
 	o := options.defaults()
-	steps, err := kiln.Development(ctx, dir)
+	steps, err := developmentSteps(ctx, dir)
 	if err != nil {
 		return kiln.Steps{}, fmt.Errorf("%s: %w", dir, err)
 	}
@@ -88,6 +88,23 @@ func Install(ctx context.Context, dir string, options Options) (kiln.Steps, erro
 		return kiln.Steps{}, err
 	}
 	return steps, commandenv.RunEach(ctx, dir, filepath.Base(dir), steps.Install, env, o.Stderr)
+}
+
+func developmentSteps(ctx context.Context, dir string) (kiln.Steps, error) {
+	source, err := os.MkdirTemp("", "holon-install-")
+	if err != nil {
+		return kiln.Steps{}, err
+	}
+	defer func() { _ = os.RemoveAll(source) }()
+	root := filepath.Join(source, "source")
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return kiln.Steps{}, err
+	}
+	if _, err := SnapshotSource(filepath.Base(dir), resolved, root); err != nil {
+		return kiln.Steps{}, err
+	}
+	return kiln.Development(ctx, root)
 }
 
 // mapClients gives a Node.js target's clients the import name #holon-sh or #holon-ui in the package.json
