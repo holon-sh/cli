@@ -31,7 +31,6 @@ import (
 )
 
 func TestDockerTransportContract(t *testing.T) {
-	t.Parallel()
 	binary := filepath.Join(t.TempDir(), "server")
 	build := exec.CommandContext(t.Context(), "go", "build", "-trimpath", "-o", binary, "./testdata/mcp")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
