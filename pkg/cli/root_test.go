@@ -181,8 +181,6 @@ func TestAppInsideAProject(t *testing.T) {
 	// holon check reaches that app's clients; it needs no registry.
 	t.Chdir(view)
 	run(t, filepath.Join(view, "generated/holon-sh")+" has no generated clients; run holon types generate", "check")
-	t.Chdir("..")
-	t.Chdir("..")
 
 	// The nearest manifest decides: a directory it does not keep and one beside no manifest are left to the
 	// app's own server.json, and -s still replaces the declared dependencies rather than the manifest's.
