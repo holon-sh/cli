@@ -215,7 +215,7 @@ type devLoop struct {
 	records            sync.WaitGroup
 }
 
-func (d *devLoop) renew(ctx context.Context) {
+func (d *devLoop) renew(ctx context.Context, session string) {
 	ticker := d.clock.NewTicker(renewalInterval)
 	defer ticker.Stop()
 	for {
@@ -224,7 +224,7 @@ func (d *devLoop) renew(ctx context.Context) {
 			return
 		case <-ticker.C():
 			// A failed renewal needs no report: poll ends the session when the lease expires or credentials are lost.
-			_ = d.manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: d.session.Name}, nil)
+			_ = d.manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: session}, nil)
 		}
 	}
 }
@@ -239,11 +239,12 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	defer func() { _ = watcher.Close() }()
 	ctx, cancel := context.WithCancel(ctx)
 	var background sync.WaitGroup
-	background.Go(func() { d.renew(ctx) })
+	session := d.session.Name
+	background.Go(func() { d.renew(ctx, session) })
 	if d.options.output.verbose {
 		background.Go(func() {
 			input := protocol.SessionLogsRequest{Since: d.started.Format(time.RFC3339Nano)}
-			input.Session = d.session.Name
+			input.Session = session
 			if err := d.manager.StreamLogs(ctx, input, stdout); ctx.Err() == nil {
 				d.options.output.problem("log stream", fmt.Errorf("stopped: %w", err))
 			}
@@ -320,10 +321,10 @@ type sessionRead struct {
 // answers at once, so it is reported only after workflowPoll, which paces reads through an outage.
 func (d *devLoop) readSession(ctx context.Context) (<-chan sessionRead, context.CancelFunc) {
 	ctx, stop := context.WithCancel(ctx)
-	revision := d.session.Revision
+	name, revision := d.session.Name, d.session.Revision
 	result := make(chan sessionRead, 1)
 	go func() {
-		session, err := d.manager.awaitSession(ctx, d.session.Name, revision)
+		session, err := d.manager.awaitSession(ctx, name, revision)
 		if err != nil {
 			select {
 			case <-ctx.Done():
