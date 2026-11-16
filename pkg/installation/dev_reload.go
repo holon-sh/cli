@@ -27,12 +27,6 @@ import (
 	"github.com/holon-sh/protocol/runtimecontract"
 )
 
-const toolGetAppContract = "get_app_contract"
-
-type reloadAppResult struct {
-	Output string `json:"output"`
-}
-
 type packedSource struct {
 	overlay ocispec.Descriptor
 	file    string
@@ -48,7 +42,7 @@ func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error
 		}
 		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.session.Name}, App: app.Name}
 		var contract json.RawMessage
-		if err := d.manager.Call(ctx, d.options.plane, toolGetAppContract, request, &contract); err == nil {
+		if err := d.manager.Call(ctx, d.options.plane, protocol.ToolGetAppContract, request, &contract); err == nil {
 			served[app.Name] = contract
 		} else if sent != "" {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
@@ -185,7 +179,7 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 	if err != nil {
 		return err
 	}
-	var result reloadAppResult
+	var result protocol.ReloadAppResult
 	request := apiRequest{Plane: d.options.plane, Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
 	if err := d.manager.client.send(ctx, path.Join(protocol.APIPathSessions, d.session.Name, "apps", app, "source"), request, &result); err != nil {
 		return err

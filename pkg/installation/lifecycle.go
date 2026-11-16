@@ -16,12 +16,12 @@ import (
 
 func lifecyclePending(s protocol.SessionResponse) bool {
 	lifecycle := ptr.Deref(s.Lifecycle, protocol.LifecycleStatus{})
-	return s.Operation != nil && (lifecycle.ID != s.Operation.ID || lifecycle.Phase != "Succeeded")
+	return s.Operation != nil && (lifecycle.ID != s.Operation.ID || lifecycle.Phase != protocol.PhaseSucceeded)
 }
 
 func lifecycleFailed(s protocol.SessionResponse) bool {
 	lifecycle := ptr.Deref(s.Lifecycle, protocol.LifecycleStatus{})
-	return s.Operation != nil && lifecycle.Phase == "Failed" && lifecycle.Retry == s.Operation.Retry
+	return s.Operation != nil && lifecycle.Phase == protocol.PhaseFailed && lifecycle.Retry == s.Operation.Retry
 }
 
 func (m *Client) authorizeOperation(ctx context.Context, s protocol.SessionResponse) error {
@@ -30,7 +30,7 @@ func (m *Client) authorizeOperation(ctx context.Context, s protocol.SessionRespo
 		m.info.OAuth == nil ||
 		lifecycle.ID != s.Operation.ID ||
 		lifecycle.Hook == "" ||
-		lifecycle.Phase == "Failed" {
+		lifecycle.Phase == protocol.PhaseFailed {
 		return nil
 	}
 	key := s.UID + "/" + s.Operation.ID

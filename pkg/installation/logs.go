@@ -13,8 +13,6 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-const toolGetLogs = "get_logs"
-
 func newLogsCommand(config *commandConfig) *cobra.Command {
 	var since string
 	var follow bool
@@ -50,12 +48,8 @@ func newLogsCommand(config *commandConfig) *cobra.Command {
 			if follow {
 				return manager.StreamLogs(cmd.Context(), input, cmd.OutOrStdout())
 			}
-			var logs struct {
-				Records []struct {
-					Time, Severity, App, Body, TraceID string
-				}
-			}
-			if err := manager.Call(cmd.Context(), ControlPlane(input.Session), toolGetLogs, input, &logs); err != nil {
+			var logs protocol.SessionLogs
+			if err := manager.Call(cmd.Context(), ControlPlane(input.Session), protocol.ToolGetLogs, input, &logs); err != nil {
 				return err
 			}
 			var lines strings.Builder
@@ -63,11 +57,7 @@ func newLogsCommand(config *commandConfig) *cobra.Command {
 				if at, err := time.Parse(time.RFC3339Nano, r.Time); err == nil {
 					r.Time = logTime(at)
 				}
-				lines.WriteString(r.Time + " " + r.Severity + " " + r.App + " " + r.Body)
-				if r.TraceID != "" {
-					lines.WriteString(" trace_id=" + r.TraceID)
-				}
-				lines.WriteByte('\n')
+				lines.WriteString(r.Line())
 			}
 			_, err = io.WriteString(cmd.OutOrStdout(), lines.String())
 			return err

@@ -184,7 +184,7 @@ func newRunHarness(t *testing.T) *runHarness {
 const servedContract = `{"serverInfo":{"name":"example.com/alpha","version":"1","description":"alpha"},"capabilities":{"tools":{}},"lists":{"tools/list":{"pages":[{"tools":[{"name":"lookup","inputSchema":{"type":"object"}}]}]}}}`
 
 func (h *runHarness) serveContract() {
-	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, _ *http.Request) {
+	h.control.Handle([]string{protocol.ToolGetAppContract}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, json.RawMessage(servedContract))
 	})
 }
@@ -321,7 +321,7 @@ func TestRunDevLifecycle(t *testing.T) {
 		mu.Lock()
 		reloads = append(reloads, r.PathValue("app"))
 		mu.Unlock()
-		installationtest.WriteJSON(w, reloadAppResult{})
+		installationtest.WriteJSON(w, protocol.ReloadAppResult{})
 	})
 	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession},
 		map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {

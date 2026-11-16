@@ -118,7 +118,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	}))
 	t.Cleanup(registry.Close)
 	h := newRunHarness(t)
-	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, r *http.Request) {
+	h.control.Handle([]string{protocol.ToolGetAppContract}, nil, func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		running, ok := f.running[installationtest.ToolArguments(r)["app"].(string)]
 		f.mu.Unlock()
@@ -213,7 +213,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 			return
 		}
 		f.running[r.PathValue("app")] = body
-		installationtest.WriteJSON(w, reloadAppResult{Output: installed})
+		installationtest.WriteJSON(w, protocol.ReloadAppResult{Output: installed})
 	})
 	h.start(t, nil)
 	fc := testingclock.NewFakeClock(time.Now())

@@ -256,22 +256,14 @@ func ControlPlane(name string) protocol.Plane {
 }
 
 func (m *Client) Session(ctx context.Context, name string) (protocol.SessionResponse, error) {
-	var session protocol.SessionResponse
-	err := m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, protocol.SessionRequest{Session: name}, &session)
-	return session, err
-}
-
-type sessionWaitRequest struct {
-	protocol.SessionRequest
-
-	Revision string `json:"revision,omitempty"`
+	return m.awaitSession(ctx, name, "")
 }
 
 // awaitSession reads a session once it has moved past revision, the last one the caller saw, which the
 // server waits for up to sessionWait. Without a revision it answers at once.
 func (m *Client) awaitSession(ctx context.Context, name, revision string) (protocol.SessionResponse, error) {
 	var session protocol.SessionResponse
-	request := sessionWaitRequest{SessionRequest: protocol.SessionRequest{Session: name}, Revision: revision}
+	request := protocol.GetSessionRequest{SessionRequest: protocol.SessionRequest{Session: name}, Revision: revision}
 	return session, m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, request, &session)
 }
 
@@ -283,7 +275,7 @@ func SessionReady(session protocol.SessionResponse) (bool, error) {
 		return false, nil
 	}
 	condition := session.Condition(protocol.ConditionReady)
-	if condition.Status == "True" {
+	if condition.Status == protocol.ConditionTrue {
 		return true, nil
 	}
 	if terminalCondition(condition) {
@@ -293,7 +285,7 @@ func SessionReady(session protocol.SessionResponse) (bool, error) {
 }
 
 func terminalCondition(condition protocol.Condition) bool {
-	return condition.Status == "False" && slices.Contains([]string{
+	return condition.Status == protocol.ConditionFalse && slices.Contains([]string{
 		protocol.ReasonInvalidIdentity, protocol.ReasonInvalidExpiry, protocol.ReasonInvalidSpec,
 		protocol.ReasonLeaseExpired, protocol.ReasonDeleting, protocol.ReasonProgressDeadline,
 	}, condition.Reason)
