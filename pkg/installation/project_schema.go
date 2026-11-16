@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	validator "github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 	"github.com/swaggest/jsonschema-go"
+	"github.com/swaggest/refl"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 
@@ -94,4 +96,27 @@ func validateProject(data []byte) []string {
 	}
 	describe(invalid)
 	return problems
+}
+
+func configurationReflector() jsonschema.Reflector {
+	return jsonschema.Reflector{DefaultOptions: []func(*jsonschema.ReflectContext){
+		jsonschema.InterceptProp(func(p jsonschema.InterceptPropParams) error {
+			if p.Processed && p.PropertySchema.Items != nil {
+				return refl.PopulateFieldsFromTags(p.PropertySchema.Items.SchemaOrBool.TypeObject, p.Field.Tag, func(o *refl.FieldsFromTagsOptions) {
+					o.TagPrefix = "items."
+				})
+			}
+			return nil
+		}),
+		jsonschema.InterceptSchema(func(p jsonschema.InterceptSchemaParams) (bool, error) {
+			if !p.Processed {
+				return false, nil
+			}
+			t := refl.DeepIndirect(p.Value.Type())
+			if t.Kind() == reflect.Struct && (t.Name() != "" || len(p.Schema.Properties) == 0) {
+				p.Schema.AdditionalProperties = &jsonschema.SchemaOrBool{TypeBoolean: new(false)}
+			}
+			return false, nil
+		}),
+	}}
 }
