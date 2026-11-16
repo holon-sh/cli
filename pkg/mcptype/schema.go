@@ -3,6 +3,7 @@ package mcptype
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -19,22 +20,11 @@ type shape struct {
 	declared []*declaration
 }
 
-// declarations returns the declarations the shape introduces that declares accepts.
-func (s shape) declarations(declares func(*declaration) bool) []*declaration {
-	var result []*declaration
-	for _, ref := range s.declared {
-		if declares(ref) {
-			result = append(result, ref)
-		}
-	}
-	return result
-}
-
-// nameDeclarations names each declaration of a binding's tools that declares accepts after its
-// contents, so that a name never depends on which tools share it. Inputs and outputs are named
-// apart, each as the binding's name, Input or Output, and the declaration's label. Declarations with
-// one label take it in the order of their keys, the second and later ones with a number.
-func nameDeclarations(names map[string]bool, binding string, tools catalog, declares func(*declaration) bool) {
+// nameDeclarations names each declaration of a binding's tools after its contents, so that a name
+// never depends on which tools share it. Inputs and outputs are named apart, each as the binding's
+// name, Input or Output, and the declaration's label. Declarations with one label take it in the
+// order of their keys, the second and later ones with a number.
+func nameDeclarations(names map[string]bool, binding string, tools catalog) {
 	for _, direction := range []string{"Input", "Output"} {
 		var refs []*declaration
 		for _, name := range sortedKeys(tools) {
@@ -42,7 +32,7 @@ func nameDeclarations(names map[string]bool, binding string, tools catalog, decl
 			if direction == "Output" {
 				declared = tools[name].output
 			}
-			refs = append(refs, declared.declarations(declares)...)
+			refs = append(refs, declared.declared...)
 		}
 		slices.SortFunc(refs, func(a, b *declaration) int { return cmp.Or(cmp.Compare(a.label, b.label), cmp.Compare(a.key, b.key)) })
 		for _, ref := range refs {
@@ -89,13 +79,11 @@ const (
 type typ struct {
 	kind       typeKind
 	literal    Value            // kindLiteral
-	item       *typ             // kindArray
-	prefix     []typ            // kindTuple
 	min        int              // kindTuple: required prefix length
 	fields     map[string]field // kindObject
 	definition string           // The definition or title that names it, until shared
 	extra      extra            // kindTuple rest, kindObject additional properties
-	items      []typ            // kindUnion, kindIntersection
+	items      []typ            // kindArray item, kindTuple prefix, kindUnion, kindIntersection
 	ref        *declaration     // kindDeclared
 }
 
@@ -379,11 +367,9 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 			if err != nil {
 				return typ{}, err
 			}
-			var min int
-			if count, ok := object["minItems"].(Number); ok && count.kind == posInt {
-				min = int(count.u)
-			}
-			return typ{kind: kindTuple, prefix: items, min: min, extra: extra}, nil
+			count, _ := object["minItems"].(json.Number)
+			min, _ := count.Int64()
+			return typ{kind: kindTuple, items: items, min: int(max(min, 0)), extra: extra}, nil
 		}
 		items, declared := object["items"]
 		if !declared {
@@ -393,7 +379,7 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 		if err != nil {
 			return typ{}, err
 		}
-		return typ{kind: kindArray, item: &item}, nil
+		return typ{kind: kindArray, items: []typ{item}}, nil
 	}
 	_, hasProperties := object["properties"]
 	if kind == "object" || !isString && hasProperties {
