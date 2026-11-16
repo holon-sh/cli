@@ -64,7 +64,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 					err = logs.explain(err)
 				}
 			}()
-			if app.resolved.registryPackage != nil {
+			if app.resolved.pkg != nil {
 				build, err := importRegistryBuild(ctx, options.manager, options.plane, app)
 				if err != nil {
 					return err

@@ -85,18 +85,7 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 	if err != nil {
 		return manifestSpec{}, fmt.Errorf("read manifest %s: %w", absolute, err)
 	}
-	manifest, err := parseManifest(data, absolute)
-	if err != nil {
-		return manifestSpec{}, err
-	}
-	manifest.file = absolute
-	for i := range manifest.Apps {
-		app := &manifest.Apps[i]
-		if app.Path != "" {
-			app.Path = filepath.Join(filepath.Dir(absolute), app.Path)
-		}
-	}
-	return manifest, nil
+	return parseManifest(data, absolute)
 }
 
 func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec, apps ...string) (manifestSpec, error) {
