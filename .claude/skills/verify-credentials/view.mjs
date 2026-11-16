@@ -60,7 +60,7 @@ const steps = {
   LoginCheck: "compares the version on disk with the one it noted",
   LoginWrite: "saves the new sign-in",
   LogoutLock: "takes the lock for holon logout",
-  LogoutRevoke: "revokes the tokens in the file",
+  LogoutRevoke: "asks the identity provider to revoke the tokens in the file",
   LogoutRemove: "removes the file",
   Unlock: "releases the lock",
   Restart: "exits, and a new holon starts",

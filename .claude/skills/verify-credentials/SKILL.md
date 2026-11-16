@@ -91,7 +91,7 @@ After the model passes and its faults fail as listed, update the tables here, an
 
 A pass covers this much and no more.
 
-- Two processes, two audiences (`admin` and one session audience), at most three completed sign-ins (a sign-in may begin until two have completed), and four refresh tokens issued. A one-off run with three processes and three tokens, under symmetry, also held on the sync commit (997,776 distinct states).
+- Two processes, two audiences (`admin` and one session audience), at most three completed sign-ins (a sign-in may begin until two have completed), and four refresh tokens issued.
 - The `flock` excludes every other process, a rename replaces the file in one step, and a reader sees the old file or the new one.
 - No process dies, and no write fails, between the provider's answer to a renewal and the rename that saves it. If that happens the file keeps a spent token and `StoredTokensAreLive` no longer holds. The code cannot make those two steps one.
 - The provider answers every renewal it performs, always replaces the refresh token, and stops accepting a token only when it replaces or revokes it. A provider that expires tokens by age is not modeled.

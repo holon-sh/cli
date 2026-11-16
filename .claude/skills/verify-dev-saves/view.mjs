@@ -16,7 +16,9 @@ const flying = (v) => Object.values(v.rec).filter((r) => r.stage === "uploading"
 
 const uploads = (v) => {
   const live = flying(v).map((r) => (r.cancel === "none" ? `save ${r.content}` : `save ${r.content} (cancelled)`));
-  const late = v.wire.length > live.length ? ", a cancelled tag request still on its way" : "";
+  const late = v.wire.some((i) => v.rec[i].stage === "ended" || v.rec[i].cancel !== "none")
+    ? ", a cancelled tag request still on its way"
+    : "";
   return live.length || late ? `uploading ${live.join(" and ") || "nothing"}${late}` : "none in flight";
 };
 
