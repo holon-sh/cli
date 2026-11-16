@@ -62,8 +62,7 @@ func prepareManifestTypes(
 	byApp := map[string]typegen.Server{}
 	var consumers []typegen.Consumer
 	needed := map[string]bool{}
-	logs := options.output.logs()
-	typeOptions := typegen.Options{Env: options.Env, HTTPClient: options.HTTPClient, Stderr: logs}
+	typeOptions := typegen.Options{Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.output.logs()}
 	prepareOptions := typeOptions
 	prepareOptions.Run = options.extractTypes
 	if served != nil {

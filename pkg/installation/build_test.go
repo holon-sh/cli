@@ -187,18 +187,14 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var release string
+	var descriptor ocispec.Descriptor
 	fixture.mu.Lock()
-	for key := range fixture.items {
-		if _, tag, ok := strings.Cut(key, "/manifests/"+appartifact.ReleasePrefix); ok {
-			release = appartifact.ReleasePrefix + tag
+	for key, item := range fixture.items {
+		if strings.Contains(key, "/manifests/"+appartifact.ReleasePrefix) {
+			descriptor = content.NewDescriptorFromBytes(item.mediaType, item.data)
 		}
 	}
 	fixture.mu.Unlock()
-	descriptor, err := repository.Resolve(t.Context(), release)
-	if err != nil {
-		t.Fatal(err)
-	}
 	record, executable, err := appartifact.Read(t.Context(), repository, descriptor)
 	if err != nil {
 		t.Fatal(err)

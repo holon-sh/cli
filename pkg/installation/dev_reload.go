@@ -48,7 +48,7 @@ func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error
 		}
 		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.session.Name}, App: app.Name}
 		var contract json.RawMessage
-		if err := d.manager.Call(ctx, ControlPlane(d.session.Name), toolGetAppContract, request, &contract); err == nil {
+		if err := d.manager.Call(ctx, d.options.plane, toolGetAppContract, request, &contract); err == nil {
 			served[app.Name] = contract
 		} else if sent != "" {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
@@ -152,7 +152,7 @@ func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func
 	if _, err := snapshotSource(app, root); err != nil {
 		return packedSource{}, cleanup, err
 	}
-	packed, err := d.options.packSource(ctx, app, root, d.accepted[app.Name])
+	packed, err := packSource(ctx, app, root, d.accepted[app.Name])
 	packed.upload = newImageUpload(d.options, manifestSpec{Apps: []manifestApp{app}})
 	return packed, cleanup, err
 }
@@ -186,7 +186,7 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 		return err
 	}
 	var result reloadAppResult
-	request := apiRequest{Plane: ControlPlane(d.session.Name), Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
+	request := apiRequest{Plane: d.options.plane, Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
 	if err := d.manager.client.send(ctx, path.Join(protocol.APIPathSessions, d.session.Name, "apps", app, "source"), request, &result); err != nil {
 		return err
 	}
@@ -216,7 +216,7 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 	})
 }
 
-func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string, accepted *preparedTypes) (packedSource, error) {
+func packSource(ctx context.Context, app manifestApp, root string, accepted *preparedTypes) (packedSource, error) {
 	if accepted != nil {
 		staged := *accepted
 		staged.root = root
