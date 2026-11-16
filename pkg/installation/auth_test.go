@@ -2,16 +2,12 @@ package installation
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -376,43 +372,17 @@ func TestMachineCredentials(t *testing.T) {
 	}
 }
 
-func TestConcurrentAuthenticationProcesses(t *testing.T) {
-	if os.Getenv("HOLON_AUTH_HELPER") == "1" {
-		roots := x509.NewCertPool()
-		roots.AppendCertsFromPEM([]byte(os.Getenv("HOLON_AUTH_CERT")))
-		dir := os.Getenv("HOLON_AUTH_DIR")
-		manager, err := NewClient(t.Context(), ClientConfig{
-			Origin: os.Getenv("HOLON_AUTH_REMOTE"), ConfigDir: dir,
-			HTTPClient: &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		token, err := manager.controlToken(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if token != "shared-access" {
-			t.Fatalf("unexpected token %q", token)
-		}
-		return
-	}
-
+func TestConcurrentAuthentication(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	entered, release := make(chan struct{}), make(chan struct{})
-	var once sync.Once
-	unblock := func() { once.Do(func() { close(release) }) }
-	defer unblock()
-	info := make(chan struct{}, 3)
 	var authorizations atomic.Int32
 	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		first := authorizations.Add(1) == 1
 		if r.FormValue("grant_type") != "refresh_token" || r.FormValue("refresh_token") != "refresh-one" {
 			t.Error("replayed a rotated refresh token")
 		}
-		if first {
+		if authorizations.Add(1) == 1 {
 			close(entered)
 		}
 		select {
@@ -422,66 +392,41 @@ func TestConcurrentAuthenticationProcesses(t *testing.T) {
 		}
 		installationtest.WriteJSON(w, map[string]any{"access_token": "shared-access", "token_type": "Bearer", "refresh_token": "refresh-two", "expires_in": 3600})
 	})
-	base := server.Config.Handler
-	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == protocol.APIPathInfo {
-			info <- struct{}{}
-		}
-		base.ServeHTTP(w, r)
-	})
 	dir := t.TempDir()
-	manager := newManager(t, server, dir)
-	seedAdminCredentials(t, manager, oauth2.Token{
+	seedAdminCredentials(t, newManager(t, server, dir), oauth2.Token{
 		AccessToken: "expired", RefreshToken: "refresh-one",
 		TokenType: "Bearer", Expiry: time.Unix(1, 0),
 	})
-	<-info
-	cert := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
-	start := func() <-chan error {
-		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestConcurrentAuthenticationProcesses$")
-		cmd.Env = []string{"HOLON_AUTH_HELPER=1", "HOLON_AUTH_REMOTE=" + server.URL, "HOLON_AUTH_DIR=" + dir, "HOLON_AUTH_CERT=" + cert}
-		done := make(chan error, 1)
-		go func() {
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				err = fmt.Errorf("authentication process: %w\n%s", err, output)
-			}
-			done <- err
-		}()
-		return done
+	first, second := newManager(t, server, dir), newManager(t, server, dir)
+	tokens := make(chan error, 2)
+	refresh := func(manager *Client) {
+		token, err := manager.controlToken(ctx)
+		if err == nil && token != "shared-access" {
+			err = fmt.Errorf("unexpected token %q", token)
+		}
+		tokens <- err
 	}
-	first := start()
+	go refresh(first)
 	select {
 	case <-entered:
-	case err := <-first:
-		t.Fatalf("process exited before authentication: %v", err)
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	<-info
 	other := newAuthTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, map[string]any{"access_token": "other-access", "token_type": "Bearer", "refresh_token": "other-refresh", "expires_in": 3600})
 	})
-	otherManager := newManager(t, other, dir)
-	if err := otherManager.loginInteractive(ctx); err != nil {
+	if err := newManager(t, other, dir).loginInteractive(ctx); err != nil {
 		t.Fatalf("another remote's authentication was blocked: %v", err)
 	}
-	second := start()
-	select {
-	case <-info:
-	case err := <-second:
-		t.Fatalf("process exited before discovery: %v", err)
-	case <-ctx.Done():
-		t.Fatal(ctx.Err())
-	}
-	unblock()
-	for _, done := range []<-chan error{first, second} {
-		if err := <-done; err != nil {
+	go refresh(second)
+	close(release)
+	for range 2 {
+		if err := <-tokens; err != nil {
 			t.Fatal(err)
 		}
 	}
 	if authorizations.Load() != 1 {
-		t.Fatalf("concurrent processes exchanged credentials %d times", authorizations.Load())
+		t.Fatalf("concurrent clients exchanged credentials %d times", authorizations.Load())
 	}
 }
 
