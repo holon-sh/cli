@@ -66,6 +66,8 @@ func RequiredSource(alias string, r mcpregistry.Requirement) (Source, error) {
 	source := Source{Alias: alias}
 	var err error
 	switch {
+	case !appName.MatchString(alias):
+		err = fmt.Errorf("alias %q must be a DNS label of at most 49 characters", alias)
 	case r.URL != "":
 		source.Server, err = NewEndpoint(r.URL)
 	case r.Name != "":
