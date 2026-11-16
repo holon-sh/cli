@@ -46,7 +46,7 @@ jobs:
       fail-fast: false
       matrix:
         # Pull requests run Linux only; main pushes and releases add macOS.
-        runner: ${{ fromJSON(false && '["ubuntu-24.04"]' || '["ubuntu-24.04","macos-15"]') }}
+        runner: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04"]' || '["ubuntu-24.04","macos-15"]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -78,7 +78,7 @@ jobs:
       fail-fast: false
       matrix:
         # Pull requests run Linux only; main pushes and releases add macOS.
-        target: ${{ fromJSON(false && '["linux_amd64","linux_arm64"]' || '["linux_amd64","linux_arm64","darwin_arm64","darwin_amd64"]') }}
+        target: ${{ fromJSON(github.event_name == 'pull_request' && '["linux_amd64","linux_arm64"]' || '["linux_amd64","linux_arm64","darwin_arm64","darwin_amd64"]') }}
     runs-on: ${{ fromJSON('{"linux_amd64":"ubuntu-24.04","linux_arm64":"ubuntu-24.04-arm","darwin_arm64":"macos-15","darwin_amd64":"macos-15-intel"}')[matrix.target] }}
     timeout-minutes: 90
     env:
