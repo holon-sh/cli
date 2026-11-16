@@ -106,8 +106,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 					ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 					defer cancel()
 					record := mcpregistry.BuildRecord(app.resolved.App, app.resolved.catalogEnv, app.resolved.descriptor)
-					plain := ocispec.Descriptor{MediaType: image.MediaType, Digest: image.Digest, Size: image.Size}
-					if _, err = appartifact.Publish(ctx, repository, plain, record, options.plane); err != nil {
+					if _, err = appartifact.Publish(ctx, repository, image, record, options.plane); err != nil {
 						return err
 					}
 				}
