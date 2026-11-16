@@ -194,7 +194,6 @@ func TestAppInsideAProject(t *testing.T) {
 	if c, err := enclosingConsumer(other, true); c != nil || err != nil {
 		t.Fatalf("no manifest above = %v, %v", c, err)
 	}
-	t.Chdir(view)
 	run(t, "view: https://mcp.example/mcp", "types", "generate", "-s", "docs=https://mcp.example/mcp")
 }
 
