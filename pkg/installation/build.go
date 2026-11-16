@@ -93,7 +93,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			return upload.repository(ctx, app.Name, func(repository *remote.Repository, grant protocol.UploadGrant) (err error) {
 				image := built
 				if app.resolved.Image != "" {
-					if image, err = importImage(ctx, app.resolved.Image, repository, options.HTTPClient); err != nil {
+					if image, err = importImage(ctx, app.resolved.Image, repository, upload.client); err != nil {
 						return fmt.Errorf("import %s: %w", app.Name, err)
 					}
 				}
@@ -106,8 +106,8 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 					ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 					defer cancel()
 					record := mcpregistry.BuildRecord(app.resolved.App, app.resolved.catalogEnv, app.resolved.descriptor)
-					image := ocispec.Descriptor{MediaType: image.MediaType, Digest: image.Digest, Size: image.Size}
-					if _, err := appartifact.Publish(ctx, repository, image, record, options.plane); err != nil {
+					plain := ocispec.Descriptor{MediaType: image.MediaType, Digest: image.Digest, Size: image.Size}
+					if _, err = appartifact.Publish(ctx, repository, plain, record, options.plane); err != nil {
 						return err
 					}
 				}
