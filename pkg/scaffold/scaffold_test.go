@@ -96,16 +96,14 @@ func read(t *testing.T, dir, name string) string {
 }
 
 func TestResolve(t *testing.T) {
-	npm := map[string]string{
-		"/holon-ui": `{"versions": {"0.0.1-dev.9": {}, "0.0.1-dev.10": {}, "0.0.1-dev.11": {}}}`,
-		"/holon-sh": `{"versions": {"0.0.1-dev.6": {}}}`,
+	bodies := map[string]string{
+		"/holon-ui":              `{"dist-tags": {"latest": "0.0.1-dev.11"}}`,
+		"/holon-sh":              `{"dist-tags": {"latest": "0.0.1-dev.6"}}`,
+		"/pypi/holon-sh/json":    `{"info": {"version": "0.0.1.dev5"}}`,
+		"/pypi/holon-types/json": `{"info": {"version": "0.0.1.dev20"}}`,
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/pypi/holon-sh/json" {
-			_, _ = w.Write([]byte(`{"info": {"version": "0.0.1.dev5"}}`))
-		} else if r.URL.Path == "/pypi/holon-types/json" {
-			_, _ = w.Write([]byte(`{"info": {"version": "0.0.1.dev20"}}`))
-		} else if body, ok := npm[r.URL.Path]; ok {
+		if body, ok := bodies[r.URL.Path]; ok {
 			_, _ = w.Write([]byte(body))
 		} else {
 			http.NotFound(w, r)
@@ -119,12 +117,12 @@ func TestResolve(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := (Versions{HolonUI: "0.0.1-dev.11", HolonPy: "0.0.1.dev5", HolonTypes: holonTypes}); versions != want {
+		if want := (Versions{UI: "0.0.1-dev.11", SDK: "0.0.1.dev5", CLI: holonTypes}); versions != want {
 			t.Errorf("py versions from holon %s = %+v, want %+v", cli, versions, want)
 		}
 	}
 	versions, err := local.resolve(context.Background(), "ts", "0.0.1-dev.19")
-	if want := (Versions{HolonUI: "0.0.1-dev.11", HolonSH: "0.0.1-dev.6", HolonTypes: "0.0.1-dev.19"}); err != nil || versions != want {
+	if want := (Versions{UI: "0.0.1-dev.11", SDK: "0.0.1-dev.6", CLI: "0.0.1-dev.19"}); err != nil || versions != want {
 		t.Errorf("ts versions = %+v, %v, want %+v", versions, err, want)
 	}
 }
