@@ -206,7 +206,7 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 		err := packed.publish(ctx, app, session)
 		uploaded()
 		if cause := cmp.Or(context.Cause(ctx), err); err != nil && cause != errSourceSuperseded {
-			d.options.output.problem(app, fmt.Errorf("serves this save, but a restart loses it: %w", cause))
+			d.options.output.unrecorded(app, cause)
 		}
 	})
 }

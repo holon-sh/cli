@@ -49,6 +49,7 @@ type reloadFixture struct {
 	stdout   *installationtest.ObservedOutput
 	stderr   *installationtest.ObservedOutput
 	await    func(check func() bool)
+	step     func(time.Duration)
 	start    func(args ...string)
 	stop     func() error
 
@@ -237,6 +238,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	h.start(t, nil)
 	fc := testingclock.NewFakeClock(time.Now())
 	h.run.Clock, f.clock = fc, fc
+	f.step = fc.Step
 	f.await = func(check func() bool) {
 		t.Helper()
 		stepUntil(t, fc, devDebounce, check)
@@ -339,6 +341,21 @@ func TestDevSaves(t *testing.T) {
 				t.Fatalf("a replaced source was reported: %q", f.stderr.String())
 			}
 		})
+	}
+}
+
+func TestDevKeepsARefusedSaveReported(t *testing.T) {
+	f := startReloadFixture(t, true)
+	f.update(func() { f.unsaved = true })
+	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha ready in")
+	f.update(func() { f.failNext = true })
+	f.save(map[string]string{"alpha/tools.py": "third"}, "alpha failed")
+	f.step(time.Minute)
+	if err := f.stop(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(f.stderr.String(), "a restart loses it") {
+		t.Fatalf("the upload of an earlier save replaced the failure: %q", f.stderr.String())
 	}
 }
 

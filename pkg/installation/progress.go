@@ -100,9 +100,21 @@ func (o *progressOutput) removed(app string) {
 	o.status(app, "removed", progressDone)
 }
 
+func (o *progressOutput) unrecorded(app string, cause error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.statuses[app].State == progressDone {
+		o.show(app, fmt.Sprintf("serves this save, but a restart loses it: %v", cause), progressError)
+	}
+}
+
 func (o *progressOutput) status(name, message string, state progressState) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.show(name, message, state)
+}
+
+func (o *progressOutput) show(name, message string, state progressState) {
 	status := tea.ProgramStatus{App: "holon", ID: progressStatusID(name), Title: name, Message: message, State: state}
 	previous, shown := o.statuses[name]
 	if shown && previous == status {
