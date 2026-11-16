@@ -126,6 +126,9 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 		if a.Port != nil && a.Image == "" {
 			errs = append(errs, label+".port requires image")
 		}
+		if err := a.OAuth.client().Validate(nil); err != nil {
+			errs = append(errs, label+".oauth: "+err.Error())
+		}
 		if err := protocol.ValidateAccess(a.Access); err != nil {
 			errs = append(errs, label+": "+err.Error())
 		}

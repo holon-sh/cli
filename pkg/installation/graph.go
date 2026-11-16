@@ -45,7 +45,7 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 		}
 		app.resolved = resolvedApp{App: protocol.App{
 			Name: app.Name, Mount: app.Mount, Image: app.Image, Access: access,
-			OAuth: (*protocol.OAuthClient)(app.OAuth),
+			OAuth: app.OAuth.client(),
 		}}
 		if app.Path != "" {
 			info, statErr := os.Stat(app.Path)

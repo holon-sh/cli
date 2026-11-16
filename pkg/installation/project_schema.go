@@ -17,18 +17,11 @@ import (
 	"golang.org/x/text/message"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
-	"github.com/holon-sh/protocol"
 )
 
 func ProjectJSONSchema() ([]byte, error) {
-	type secretReference mcpregistry.Value
 	reflector := configurationReflector()
 	reflector.AddTypeMapping(mcpregistry.Value{}, jsonschema.OneOf("", secretReference{}))
-	type oauthFields struct {
-		ClientID     protocol.Template `description:"Client ID; {NAME} stands for a configuration input." json:"clientID" required:"true"`
-		ClientSecret secretReference   `json:"clientSecret,omitempty"`
-	}
-	reflector.AddTypeMapping(manifestOAuth{}, oauthFields{})
 	reflected, err := reflector.Reflect(manifestSpec{}, jsonschema.InterceptNullability(func(p jsonschema.InterceptNullabilityParams) {
 		p.Schema.RemoveType(jsonschema.Null)
 	}))

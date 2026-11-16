@@ -1,26 +1,20 @@
 package installation
 
 import (
-	"errors"
-
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/protocol"
 )
 
-type manifestOAuth protocol.OAuthClient
+type secretReference mcpregistry.Value
 
-func (c *manifestOAuth) UnmarshalJSON(data []byte) error {
-	var fields struct {
-		ClientID     protocol.Template `json:"clientID"`
-		ClientSecret mcpregistry.Value `json:"clientSecret,omitempty"`
+type manifestOAuth struct {
+	ClientID     protocol.Template `description:"Client ID; {NAME} stands for a configuration input." json:"clientID" required:"true"`
+	ClientSecret secretReference   `json:"clientSecret,omitempty"`
+}
+
+func (c *manifestOAuth) client() *protocol.OAuthClient {
+	if c == nil {
+		return nil
 	}
-	if err := protocol.DecodeJSONNonNull(data, &fields); err != nil {
-		return err
-	}
-	c.ClientID = fields.ClientID
-	if fields.ClientSecret.Value != nil {
-		return errors.New("oauth.clientSecret requires a secret reference")
-	}
-	c.ClientSecret = fields.ClientSecret.Secret
-	return (*protocol.OAuthClient)(c).Validate(nil)
+	return &protocol.OAuthClient{ClientID: c.ClientID, ClientSecret: c.ClientSecret.Secret}
 }
