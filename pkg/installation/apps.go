@@ -17,11 +17,7 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-const (
-	toolListSessions          = "list_sessions"
-	conditionEgressRestricted = "EgressRestricted"
-	everyDevelopmentSession   = "Without --env or --session, it acts on the app in every development session that has it."
-)
+const everyDevelopmentSession = "Without --env or --session, it acts on the app in every development session that has it."
 
 func newAppCommand(config *commandConfig) *cobra.Command {
 	return commandGroup("app", "Inspect and remove deployed apps",
@@ -211,10 +207,8 @@ func scopeSessions(ctx context.Context, manager *Client, scope configurationScop
 		session, err := manager.Session(ctx, string(scope))
 		return []protocol.SessionResponse{session}, err
 	}
-	var list struct {
-		Items []protocol.SessionResponse `json:"items"`
-	}
-	err := manager.Call(ctx, protocol.DevPlane, toolListSessions, struct{}{}, &list)
+	var list protocol.Sessions
+	err := manager.Call(ctx, protocol.DevPlane, protocol.ToolListSessions, struct{}{}, &list)
 	return list.Items, err
 }
 
@@ -325,8 +319,8 @@ func egressSummary(app protocol.App) string {
 }
 
 func egressCut(session protocol.SessionResponse, app string) string {
-	condition := session.Condition(conditionEgressRestricted)
-	if condition.Status != "True" {
+	condition := session.Condition(protocol.ConditionEgressRestricted)
+	if condition.Status != protocol.ConditionTrue {
 		return ""
 	}
 	_, cuts, _ := strings.Cut(condition.Message, " cuts ")
