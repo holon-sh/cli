@@ -19,22 +19,11 @@ type shape struct {
 	declared []*declaration
 }
 
-// declarations returns the declarations the shape introduces that declares accepts.
-func (s shape) declarations(declares func(*declaration) bool) []*declaration {
-	var result []*declaration
-	for _, ref := range s.declared {
-		if declares(ref) {
-			result = append(result, ref)
-		}
-	}
-	return result
-}
-
-// nameDeclarations names each declaration of a binding's tools that declares accepts after its
-// contents, so that a name never depends on which tools share it. Inputs and outputs are named
-// apart, each as the binding's name, Input or Output, and the declaration's label. Declarations with
-// one label take it in the order of their keys, the second and later ones with a number.
-func nameDeclarations(names map[string]bool, binding string, tools catalog, declares func(*declaration) bool) {
+// nameDeclarations names each declaration of a binding's tools after its contents, so that a name
+// never depends on which tools share it. Inputs and outputs are named apart, each as the binding's
+// name, Input or Output, and the declaration's label. Declarations with one label take it in the
+// order of their keys, the second and later ones with a number.
+func nameDeclarations(names map[string]bool, binding string, tools catalog) {
 	for _, direction := range []string{"Input", "Output"} {
 		var refs []*declaration
 		for _, name := range sortedKeys(tools) {
@@ -42,7 +31,7 @@ func nameDeclarations(names map[string]bool, binding string, tools catalog, decl
 			if direction == "Output" {
 				declared = tools[name].output
 			}
-			refs = append(refs, declared.declarations(declares)...)
+			refs = append(refs, declared.declared...)
 		}
 		slices.SortFunc(refs, func(a, b *declaration) int { return cmp.Or(cmp.Compare(a.label, b.label), cmp.Compare(a.key, b.key)) })
 		for _, ref := range refs {

@@ -54,12 +54,6 @@ func goStruct(value typ) bool {
 	return true
 }
 
-// goDeclares reports whether a type is declared. A shared map that nothing names is not, since maps
-// of one type are interchangeable anyway.
-func goDeclares(ref *declaration) bool {
-	return ref.cyclic || ref.definition != "" || goStruct(ref.value)
-}
-
 // goRawJSON reports whether a type decodes as raw JSON, by whatever name.
 func goRawJSON(value typ) bool {
 	for value.kind == kindDeclared && !value.ref.cyclic {
@@ -71,9 +65,6 @@ func goRawJSON(value typ) bool {
 func renderGo(value typ) string {
 	switch value.kind {
 	case kindDeclared:
-		if !goDeclares(value.ref) {
-			return renderGo(value.ref.value)
-		}
 		if value.ref.cyclic && !goRecursive(value.ref.value) {
 			return "json.RawMessage"
 		}

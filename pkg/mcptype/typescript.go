@@ -88,8 +88,6 @@ func renderTypeScript(value typ) string {
 	return "unknown"
 }
 
-func declaresAll(*declaration) bool { return true }
-
 func joinTypeScript(items []typ, separator string) string {
 	rendered := make([]string, len(items))
 	for i, item := range items {
@@ -112,14 +110,14 @@ func generateTypeScript(contracts map[string]catalog, names map[string]bool, int
 			fmt.Fprintf(&exports[i], "  %s: {\n", quoted(binding))
 		}
 		tools := contracts[binding]
-		nameDeclarations(names, binding, tools, declaresAll)
+		nameDeclarations(names, binding, tools)
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
 			for index, shape := range []shape{tool.input, tool.output} {
 				if index == 1 && !tool.structured {
 					continue
 				}
-				for _, ref := range shape.declarations(declaresAll) {
+				for _, ref := range shape.declared {
 					fmt.Fprintf(&out, "export type %s = %s;\n", ref.name, renderTypeScript(ref.value))
 				}
 				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value))
