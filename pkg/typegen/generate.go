@@ -167,7 +167,8 @@ func prepareSource(name, path string) (*preparedSource, error) {
 	case language == "go":
 		return nil, fmt.Errorf("%s: a Go server source needs a server.json beside its entry", origin)
 	}
-	return s, nil
+	_, err = SnapshotSource(name, origin, "")
+	return s, err
 }
 
 // Prepare extracts every path source once, resolves every other source once, and
@@ -349,7 +350,10 @@ func Generate(ctx context.Context, consumers []Consumer, options Options) error 
 				continue
 			}
 			_, err := Install(ctx, c.Dir, options)
-			if err := cmp.Or(err, c.installed(target)); err != nil {
+			if target != TargetPy {
+				err = cmp.Or(err, c.installed(target))
+			}
+			if err != nil {
 				return fmt.Errorf("%s: %w", c.Name, err)
 			}
 		}

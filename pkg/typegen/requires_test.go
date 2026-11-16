@@ -46,7 +46,7 @@ func TestRequiredSources(t *testing.T) {
 			}
 			got := map[string]Source{}
 			for alias, requirement := range requires {
-				if got[alias], err = RequiredSource(alias, requirement); err != nil {
+				if got[alias], err = RequiredSource(alias, requirement, ""); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -55,7 +55,7 @@ func TestRequiredSources(t *testing.T) {
 			}
 		})
 	}
-	if _, err := RequiredSource("docs", mcpregistry.Requirement{}); err == nil || !strings.Contains(err.Error(), "dependency docs has no server to read") {
+	if _, err := RequiredSource("docs", mcpregistry.Requirement{}, ""); err == nil || !strings.Contains(err.Error(), "dependency docs has no server to read") {
 		t.Fatalf("RequiredSource = %v, want the dependency named", err)
 	}
 }

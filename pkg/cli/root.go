@@ -14,6 +14,7 @@ import (
 	"slices"
 
 	"github.com/holon-sh/cli/internal/clientutil"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/spf13/cobra"
 )
@@ -80,21 +81,28 @@ func selectConsumers(cmd *cobra.Command, servers []string, resolve bool) ([]type
 // consumer is the app kept in dir, with -s in place of its declared dependencies. A -s path inside
 // dir names the app's own server instead, which supplies its identity and contract.
 func consumer(dir string, servers []string, resolve bool) (typegen.Consumer, error) {
-	c, err := appConsumer(filepath.Base(dir), dir, nil, resolve && len(servers) == 0)
-	if err == nil && (c == nil || len(c.Targets) == 0) {
-		err = fmt.Errorf("%s %w", dir, typegen.ErrNoRuntime)
-	}
-	if err != nil {
+	c, err := appConsumer(filepath.Base(dir), dir, nil, nil, resolve && len(servers) == 0)
+	switch {
+	case c == nil && err == nil, c != nil && len(c.Targets) == 0:
+		return typegen.Consumer{}, fmt.Errorf("%s %w", dir, typegen.ErrNoRuntime)
+	case c != nil && err != nil:
+		return typegen.Consumer{}, fmt.Errorf("%s: %w", c.Name, err)
+	case err != nil:
 		return typegen.Consumer{}, err
 	}
 	named := false
 	for _, arg := range servers {
 		source, err := typegen.ParseSource(arg)
 		path, isPath := source.Server.(typegen.Path)
+		own := isPath && clientutil.PathInside(string(path), dir)
 		switch {
-		case err != nil:
+		case err != nil && source.Server == nil:
 			return typegen.Consumer{}, fmt.Errorf("%s: %w", arg, err)
-		case !isPath || !clientutil.PathInside(string(path), dir):
+		case err != nil && own:
+			return typegen.Consumer{}, fmt.Errorf("%s: %w", c.Name, err)
+		case err != nil:
+			return typegen.Consumer{}, fmt.Errorf("%s: %s: %w", c.Name, source.Server, err)
+		case !own:
 			c.Sources = append(c.Sources, source)
 		case named:
 			return typegen.Consumer{}, fmt.Errorf("%s: a project has one own server", arg)
@@ -107,7 +115,9 @@ func consumer(dir string, servers []string, resolve bool) (typegen.Consumer, err
 
 // appConsumer is the app kept in dir (see typegen.AppConsumer) with the dependencies sh.holon.requires
 // declares beside it and beside its own server, read always and resolved when resolve is set.
-func appConsumer(name, dir string, siblings map[string]typegen.Server, resolve bool) (*typegen.Consumer, error) {
+func appConsumer(
+	name, dir string, paths map[string]typegen.Path, remotes map[string]mcpregistry.Requirement, resolve bool,
+) (*typegen.Consumer, error) {
 	c, err := typegen.AppConsumer(name, dir)
 	if err != nil || c == nil {
 		return c, err
@@ -125,11 +135,12 @@ func appConsumer(name, dir string, siblings map[string]typegen.Server, resolve b
 			continue
 		}
 		for _, alias := range slices.Sorted(maps.Keys(requires)) {
-			source := typegen.Source{Alias: alias, Server: siblings[alias]}
-			if source.Server == nil {
-				if source, err = typegen.RequiredSource(alias, requires[alias]); err != nil {
-					return nil, err
-				}
+			source, err := typegen.RequiredSource(alias, cmp.Or(remotes[alias], requires[alias]), paths[alias])
+			if err != nil && source.Server != nil {
+				err = fmt.Errorf("%s: %w", source.Server, err)
+			}
+			if err != nil {
+				return c, err
 			}
 			c.Sources = append(c.Sources, source)
 		}

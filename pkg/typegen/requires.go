@@ -61,19 +61,22 @@ func Requires(dir string) (map[string]mcpregistry.Requirement, error) {
 	return d.Requires, nil
 }
 
-// RequiredSource is the source an sh.holon.requires entry names: its URL or its registry version.
-func RequiredSource(alias string, r mcpregistry.Requirement) (Source, error) {
+// RequiredSource is the source an sh.holon.requires entry names: path when given, else its URL or registry version.
+func RequiredSource(alias string, r mcpregistry.Requirement, path Path) (Source, error) {
 	source := Source{Alias: alias}
 	var err error
 	switch {
-	case !appName.MatchString(alias):
-		err = fmt.Errorf("alias %q must be a DNS label of at most 49 characters", alias)
+	case path != "":
+		source.Server = path
 	case r.URL != "":
 		source.Server, err = NewEndpoint(r.URL)
 	case r.Name != "":
 		source.Server, err = NewRegistry(r.RegistryRef)
 	default:
-		err = fmt.Errorf("dependency %s has no server to read: make it a path, remote or registry app in holon.yaml, or give it a published version or url in server.json", alias)
+		return source, fmt.Errorf("dependency %s has no server to read: make it a path, remote or registry app in holon.yaml, or give it a published version or url in server.json", alias)
+	}
+	if !appName.MatchString(alias) {
+		err = fmt.Errorf("alias %q must be a DNS label of at most 49 characters", alias)
 	}
 	return source, err
 }

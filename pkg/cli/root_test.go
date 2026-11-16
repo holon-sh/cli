@@ -144,6 +144,37 @@ func TestProjectRunsForEachApp(t *testing.T) {
 	run(t, "-s names one app's dependencies; pass that app's DIR", "types", "generate", "-s", "x")
 }
 
+func TestErrorsNameTheAppAndItsServer(t *testing.T) {
+	root := t.TempDir()
+	view := filepath.Join(root, "view")
+	unused := "  - {name: private, remote: {url: \"https://user:secret@private.example/mcp\"}, access: {server: {}}}\n  - {path: nameless, access: {server: {}}}\n"
+	testfiles.Write(t, root, map[string]string{
+		"holon.yaml":            "apps:\n  - {name: view, path: view, access: {server: {}}}\n  - {name: 9docs, remote: {url: \"https://docs.example/mcp\"}, access: {server: {}}}\n" + unused,
+		"view/package.json":     `{"dependencies":{"holon-sh":"^0.0.1"}}`,
+		"view/server.json":      `{"name":"example.com/view","version":"1.0.0","description":"View","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"9docs":{}}}}}}`,
+		"nameless/package.json": `{"dependencies":{"holon-sh":"^0.0.1"}}`,
+	})
+	if _, err := projectConsumers(root, false); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if _, err := projectConsumers(root, true); err == nil || !strings.HasPrefix(err.Error(), `view: https://docs.example/mcp: alias "9docs" must be a DNS label`) {
+		t.Errorf("generate with a sibling alias that is no client name = %v", err)
+	}
+	for want, servers := range map[string][]string{
+		"view: dependency 9docs has no server to read":             nil,
+		"view: https://user:secret@x.example/mcp: MCP URL must be": {"docs=https://user:secret@x.example/mcp"},
+		`view: alias "aaaaa`: {strings.Repeat("a", 50) + "=" + view},
+	} {
+		if _, err := consumer(view, servers, true); err == nil || !strings.HasPrefix(err.Error(), want) {
+			t.Errorf("consumer(%q) = %v, want %q", servers, err, want)
+		}
+	}
+	writeCLIFile(t, root, "holon.yaml", "apps:\n"+unused)
+	if _, err := projectConsumers(root, true); err == nil || err.Error() != "consumer name is required" {
+		t.Fatalf("generate with a nameless app = %v", err)
+	}
+}
+
 func TestUsageErrors(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
