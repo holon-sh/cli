@@ -97,7 +97,11 @@ func developmentSteps(ctx context.Context, dir string) (kiln.Steps, error) {
 	}
 	defer func() { _ = os.RemoveAll(source) }()
 	root := filepath.Join(source, "source")
-	if _, err := SnapshotSource(filepath.Base(dir), dir, root); err != nil {
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return kiln.Steps{}, err
+	}
+	if _, err := SnapshotSource(filepath.Base(dir), resolved, root); err != nil {
 		return kiln.Steps{}, err
 	}
 	return kiln.Development(ctx, root)
