@@ -27,7 +27,6 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	}
 	resolved := manifest
 	resolved.Apps = nil
-	requiredBy := map[string]*manifestApp{}
 	for len(apps) > 0 {
 		name := apps[0]
 		apps = apps[1:]
@@ -35,9 +34,10 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 			continue
 		}
 		app, err := manifest.app(name)
-		if requirer := requiredBy[name]; err != nil && requirer != nil {
-			return manifestSpec{}, undeclaredDependency(requirer, name)
-		} else if err != nil {
+		if err != nil {
+			if i := slices.IndexFunc(resolved.Apps, func(a manifestApp) bool { return slices.Contains(a.resolved.Requires, name) }); i >= 0 {
+				err = undeclaredDependency(&resolved.Apps[i], name)
+			}
 			return manifestSpec{}, err
 		}
 		access := cmp.Or(app.Access, manifest.access, manifest.deployed[name])
@@ -73,14 +73,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 		if err := resolveApp(&app); err != nil {
 			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
 		}
-		declaration := app.resolved.App
-		if err := cmp.Or(declaration.OAuth.Validate(declaration.Env), declaration.Egress.Validate(declaration.Env)); err != nil {
-			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
-		}
 		resolved.Apps = append(resolved.Apps, app)
-		for _, dependency := range app.resolved.Requires {
-			requiredBy[dependency] = cmp.Or(requiredBy[dependency], &app)
-		}
 		apps = append(apps, app.resolved.Requires...)
 	}
 	slices.SortFunc(resolved.Apps, func(a, b manifestApp) int { return strings.Compare(a.Name, b.Name) })
@@ -114,13 +107,13 @@ func resolveApp(app *manifestApp) error {
 		}
 		var err error
 		app.resolved.Remote, app.resolved.Env, err = remoteApp(app.Remote.URL, app.Headers)
-		return err
+		return cmp.Or(err, app.resolved.OAuth.Validate(app.resolved.Env))
 	}
 	if len(app.Headers) != 0 {
 		return errors.New("headers require a remote server")
 	}
 	d := app.resolved.descriptor
-	var pkg mcpregistry.Package
+	pkg, port := mcpregistry.Package{}, 0
 	if d != nil && (len(d.Packages) != 0 || app.Registry != nil) {
 		selection := protocol.PackageSelection{RegistryType: "oci"}
 		if app.Registry != nil {
@@ -136,7 +129,7 @@ func resolveApp(app *manifestApp) error {
 				Transport: mcpregistry.Transport{Type: app.Run.Transport.Type, URL: app.Run.Transport.URL},
 			}
 		}
-		if _, err = pkg.Port(); err != nil {
+		if port, err = pkg.Port(); err != nil {
 			return err
 		}
 	}
@@ -151,7 +144,6 @@ func resolveApp(app *manifestApp) error {
 		app.resolved.Egress = d.Egress
 	}
 	app.resolved.stdio = pkg.Transport.Type == "stdio"
-	port, _ := pkg.Port()
 	catalog, err := pkg.App(nil, mcpregistry.RunConfig{})
 	if err != nil {
 		return err
@@ -168,7 +160,7 @@ func resolveApp(app *manifestApp) error {
 		return errors.New("oauth requires an HTTP MCP server")
 	}
 	app.resolved.Port = int32(cmp.Or(port, ptr.Deref(app.Port, 0), 3000))
-	return nil
+	return cmp.Or(app.resolved.OAuth.Validate(app.resolved.Env), app.resolved.Egress.Validate(app.resolved.Env))
 }
 
 func remoteApp(url string, headers map[string]mcpregistry.Value) (*protocol.Remote, map[string]protocol.Input, error) {

@@ -92,9 +92,8 @@ type manifestApp struct {
 	resolved  resolvedApp
 }
 
-func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
-	dir := filepath.Dir(sourceName)
-	sourceName = scaffold.Relative(sourceName)
+func parseManifest(data []byte, file string) (manifestSpec, error) {
+	sourceName := scaffold.Relative(file)
 	document, err := yaml.YAMLToJSONStrict(data)
 	if err != nil {
 		return manifestSpec{}, fmt.Errorf("%s: %w", sourceName, err)
@@ -102,7 +101,7 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 	if problems := validateProject(document); len(problems) != 0 {
 		return manifestSpec{}, fmt.Errorf("%s: %s", sourceName, strings.Join(problems, "\n"+sourceName+": "))
 	}
-	var p manifestSpec
+	p := manifestSpec{file: file}
 	if err := json.Unmarshal(document, &p); err != nil {
 		return manifestSpec{}, fmt.Errorf("%s: %w", sourceName, err)
 	}
@@ -163,7 +162,7 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 		if filepath.IsAbs(a.Path) {
 			errs = append(errs, label+".path must be a relative directory")
 		} else if a.Path != "" {
-			a.Path = filepath.Join(dir, a.Path)
+			a.Path = filepath.Join(filepath.Dir(file), a.Path)
 		}
 	}
 	if len(errs) > 0 {
