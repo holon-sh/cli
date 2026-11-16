@@ -11,10 +11,9 @@ import (
 
 func TestRead(t *testing.T) {
 	page := `{"scripts":{"build":"vite build"}}`
-	npm := Deploy{Install: [][]string{{"npm", "install"}}, Freeze: runtimecontract.Freeze{Dependencies: []string{"node_modules"}}}
-	pnpmFreeze := runtimecontract.Freeze{
-		Dependencies: []string{"node_modules"}, Omit: []string{"node_modules/.modules.yaml", "node_modules/.pnpm-workspace-state-v1.json"},
-	}
+	modules := runtimecontract.Freeze{Dependencies: []string{"node_modules"}}
+	npm := Deploy{Install: [][]string{{"npm", "install"}}, Freeze: modules}
+	pnpmState := []string{"rm", "-f", "node_modules/.modules.yaml", "node_modules/.pnpm-workspace-state-v1.json"}
 	for _, test := range []struct {
 		name  string
 		files map[string]string
@@ -29,7 +28,7 @@ func TestRead(t *testing.T) {
 			},
 			want: Recipe{
 				Inputs: []string{"package.json"}, Install: [][]string{{"pnpm", "install"}},
-				Deploy: Deploy{Install: [][]string{{"pnpm", "install"}}, Freeze: pnpmFreeze},
+				Deploy: Deploy{Install: [][]string{{"pnpm", "install"}}, Build: [][]string{pnpmState}, Freeze: modules},
 			},
 		},
 		{
@@ -37,7 +36,9 @@ func TestRead(t *testing.T) {
 			files: map[string]string{"package.json": `{"engines":{"node":">=99"},"scripts":{"build":"vite build"}}`, "pnpm-lock.yaml": ""},
 			want: Recipe{
 				Inputs: []string{"package.json", "pnpm-lock.yaml"}, Install: [][]string{{"pnpm", "install"}}, Build: [][]string{{"pnpm", "run", "build"}},
-				Deploy: Deploy{Install: [][]string{{"pnpm", "install", "--frozen-lockfile"}}, Freeze: pnpmFreeze},
+				Deploy: Deploy{
+					Install: [][]string{{"pnpm", "install", "--frozen-lockfile"}}, Build: [][]string{{"pnpm", "run", "build"}, pnpmState}, Freeze: modules,
+				},
 			},
 		},
 		{
@@ -61,7 +62,8 @@ func TestRead(t *testing.T) {
 				Install: [][]string{{"uv", "sync"}, {"npm", "install"}}, Build: [][]string{{"npm", "run", "build"}},
 				Deploy: Deploy{
 					Install: [][]string{{"uv", "sync", "--locked", "--no-dev"}, {"npm", "install"}},
-					Freeze:  runtimecontract.Freeze{Dependencies: []string{".venv"}, Omit: []string{"node_modules"}},
+					Build:   [][]string{{"npm", "run", "build"}, {"rm", "-rf", "node_modules"}},
+					Freeze:  runtimecontract.Freeze{Dependencies: []string{".venv"}},
 				},
 			},
 		},

@@ -14,7 +14,9 @@ import (
 	"testing"
 
 	"github.com/opencontainers/go-digest"
+	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/content"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
@@ -156,18 +158,32 @@ func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 			}
 		}
 		if call.build.Freeze != nil {
-			reply.Frozen = &runtimecontract.Frozen{Architecture: "amd64", Directory: "/app/source"}
-			for _, layer := range []string{"dependencies", "source"} {
-				data := []byte(layer + " of " + call.app)
-				reply.Frozen.Layers = append(reply.Frozen.Layers, runtimecontract.Layer{
-					MediaType: ocispec.MediaTypeImageLayerZstd, Digest: digest.FromBytes(data).String(),
-					DiffID: digest.FromString("tar " + string(data)).String(), Size: int64(len(data)),
-				})
-			}
+			reply.Image = h.registry.addFrozenImage(call.app).String()
 		}
 		installationtest.WriteJSON(w, reply)
 	})
 	return f
+}
+
+func (r *imageRegistry) addFrozenImage(app string) digest.Digest {
+	image := ocispec.Image{Platform: ocispec.Platform{OS: "linux", Architecture: "amd64"}, Config: ocispec.ImageConfig{WorkingDir: "/app/source"}}
+	var layers []ocispec.Descriptor
+	for _, layer := range []string{"dependencies", "source"} {
+		data := []byte(layer + " of " + app)
+		layers = append(layers, ocispec.Descriptor{MediaType: ocispec.MediaTypeImageLayerZstd, Digest: digest.FromBytes(data), Size: int64(len(data))})
+		image.RootFS.DiffIDs = append(image.RootFS.DiffIDs, digest.FromString("tar "+string(data)))
+	}
+	config, _ := json.Marshal(image)
+	configDescriptor := content.NewDescriptorFromBytes(ocispec.MediaTypeImageConfig, config)
+	manifest, _ := json.Marshal(ocispec.Manifest{
+		Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageManifest, Config: configDescriptor, Layers: layers,
+	})
+	manifestDigest := digest.FromBytes(manifest)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.items["holon/upload/"+app+"/blobs/"+configDescriptor.Digest.String()] = registryItem{data: config}
+	r.items["holon/upload/"+app+"/manifests/"+manifestDigest.String()] = registryItem{mediaType: ocispec.MediaTypeImageManifest, data: manifest}
+	return manifestDigest
 }
 
 func addTestBase(t *testing.T, registry *imageRegistry) digest.Digest {
@@ -180,7 +196,7 @@ func addTestBase(t *testing.T, registry *imageRegistry) digest.Digest {
 	return addTestIndex(registry, child).Digest
 }
 
-func frozenImage(t *testing.T, registry *imageRegistry, image string) (ocispec.Index, ocispec.Manifest, ocispec.Image) {
+func assembledImage(t *testing.T, registry *imageRegistry, image string) (ocispec.Index, ocispec.Manifest, ocispec.Image) {
 	t.Helper()
 	repository, reference, _ := strings.Cut(image, "@")
 	var index ocispec.Index

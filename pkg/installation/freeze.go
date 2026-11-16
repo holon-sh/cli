@@ -22,6 +22,7 @@ import (
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry/remote"
+	"oras.land/oras-go/v2/registry/remote/auth"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/ociimage"
@@ -172,7 +173,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		build.Run = slices.Concat(runner.check, []string{path.Join(".holon", runner.checker), "check", checked})
 	}
 	built := options.output.measure(app.Name, "build")
-	reply, err := options.build.build(ctx, app.Name, p.root, source.plan(source.recipe.Build), build)
+	reply, err := options.build.build(ctx, app.Name, p.root, source.plan(source.recipe.Deploy.Build), build)
 	built()
 	if err != nil {
 		return "", err
@@ -180,13 +181,24 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	if reply.Ran != nil && reply.Ran.ExitCode != 0 {
 		return "", fmt.Errorf("%s does not type-check against its typed contracts:\n%s", app.Name, strings.TrimSpace(reply.Ran.Stdout+reply.Ran.Stderr))
 	}
-	if reply.Frozen == nil {
-		return "", fmt.Errorf("build %s: the build froze no layers", app.Name)
+	frozen, err := digest.Parse(reply.Image)
+	if err != nil {
+		return "", fmt.Errorf("build %s: the build froze no image: %w", app.Name, err)
 	}
 	defer options.output.measure(app.Name, "assemble")()
 	var image string
 	err = upload.publish(ctx, app.Name, options.HTTPClient, func(repository *remote.Repository, grant protocol.UploadGrant) error {
-		manifest, err := assembleImage(ctx, repository, grant.Base, *reply.Frozen, recipe.Start(source.entry), sourceLabels(app))
+		development, err := remote.NewRepository(grant.Base)
+		if err == nil {
+			err = development.Reference.ValidateReferenceAsDigest()
+		}
+		if err != nil {
+			return fmt.Errorf("upload grant names no development image: %w", err)
+		}
+		development.Client = repository.Client
+		ctx := auth.AppendRepositoryScope(ctx, repository.Reference, auth.ActionPull, auth.ActionPush)
+		ctx = auth.AppendRepositoryScope(ctx, development.Reference, auth.ActionPull)
+		manifest, err := assembleImage(ctx, repository, development, frozen, recipe.Start(source.entry), sourceLabels(app))
 		if err != nil {
 			return err
 		}
@@ -212,36 +224,34 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 }
 
 func assembleImage(
-	ctx context.Context, repository *remote.Repository, base string, frozen runtimecontract.Frozen, start []string, labels map[string]string,
+	ctx context.Context, repository, development *remote.Repository, frozen digest.Digest, start []string, labels map[string]string,
 ) (ocispec.Descriptor, error) {
-	development, err := remote.NewRepository(base)
-	if err == nil {
-		err = development.Reference.ValidateReferenceAsDigest()
+	var frozenManifest ocispec.Manifest
+	if err := fetchReference(ctx, repository, frozen.String(), &frozenManifest); err != nil {
+		return ocispec.Descriptor{}, err
 	}
-	if err != nil {
-		return ocispec.Descriptor{}, fmt.Errorf("upload grant names no development image: %w", err)
+	var frozenConfig ocispec.Image
+	if err := ociimage.FetchJSON(ctx, repository, frozenManifest.Config, &frozenConfig); err != nil {
+		return ocispec.Descriptor{}, err
 	}
-	development.Client = repository.Client
-	missing := fmt.Errorf("the registry does not hold the development image %s yet; it is copied there after each upgrade, so deploy again in a minute", base)
-	_, data, err := oras.FetchBytes(ctx, development, development.Reference.Reference, oras.FetchBytesOptions{MaxBytes: 4 << 20})
+	missing := fmt.Errorf("the registry does not hold the development image %s yet; it is copied there after each upgrade, so deploy again in a minute", development.Reference)
+	var index ocispec.Index
+	err := fetchReference(ctx, development, development.Reference.Reference, &index)
 	if errors.Is(err, errdef.ErrNotFound) {
 		return ocispec.Descriptor{}, missing
 	}
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	var index ocispec.Index
-	if err := json.Unmarshal(data, &index); err != nil {
-		return ocispec.Descriptor{}, err
-	}
 	i := slices.IndexFunc(index.Manifests, func(child ocispec.Descriptor) bool {
-		return child.Platform != nil && child.Platform.OS == "linux" && child.Platform.Architecture == frozen.Architecture
+		return child.Platform != nil && child.Platform.OS == frozenConfig.OS && child.Platform.Architecture == frozenConfig.Architecture
 	})
 	if i < 0 {
-		return ocispec.Descriptor{}, fmt.Errorf("the development image has no linux/%s image", frozen.Architecture)
+		return ocispec.Descriptor{}, fmt.Errorf("the development image has no %s/%s image", frozenConfig.OS, frozenConfig.Architecture)
 	}
 	child := index.Manifests[i]
-	if data, err = content.FetchAll(ctx, development, child); err != nil {
+	data, err := content.FetchAll(ctx, development, child)
+	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	var manifest ocispec.Manifest
@@ -258,10 +268,9 @@ func assembleImage(
 		return ocispec.Descriptor{}, err
 	}
 	assembled, err := ociimage.Edit(ctx, development, repository, child.MediaType, data, func(image *ociimage.Image) error {
-		configureImage(image, frozen.Directory, start, labels)
-		for _, layer := range frozen.Layers {
-			descriptor := ocispec.Descriptor{MediaType: layer.MediaType, Digest: digest.Digest(layer.Digest), Size: layer.Size}
-			image.AppendLayer(descriptor, digest.Digest(layer.DiffID), "holon deploy")
+		configureImage(image, frozenConfig.Config.WorkingDir, start, labels)
+		for i, layer := range frozenManifest.Layers {
+			image.AppendLayer(layer, frozenConfig.RootFS.DiffIDs[i], "holon deploy")
 		}
 		return nil
 	})
@@ -270,6 +279,14 @@ func assembleImage(
 	}
 	assembled.Platform = child.Platform
 	return assembled, nil
+}
+
+func fetchReference(ctx context.Context, target oras.ReadOnlyTarget, reference string, value any) error {
+	_, data, err := oras.FetchBytes(ctx, target, reference, oras.FetchBytesOptions{MaxBytes: 4 << 20})
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, value)
 }
 
 func configureImage(image *ociimage.Image, directory string, start []string, labels map[string]string) {

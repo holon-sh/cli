@@ -23,6 +23,7 @@ type Recipe struct {
 
 type Deploy struct {
 	Install [][]string
+	Build   [][]string
 	Freeze  runtimecontract.Freeze
 }
 
@@ -56,7 +57,7 @@ func Read(source fs.FS) (Recipe, error) {
 			},
 		}
 		if page.Install != nil {
-			recipe.Deploy.Freeze.Omit = []string{"node_modules"}
+			recipe.Deploy.Build = slices.Concat(page.Build, [][]string{{"rm", "-rf", "node_modules"}})
 		}
 		return recipe, err
 	}
@@ -146,14 +147,15 @@ func node(source fs.FS, files []string) (Recipe, error) {
 		Inputs: keep(files, nodeInput), Install: [][]string{{manager, "install"}},
 		Deploy: Deploy{Install: [][]string{{manager, "install"}}, Freeze: runtimecontract.Freeze{Dependencies: []string{"node_modules"}}},
 	}
+	if manifest.Scripts["build"] != "" {
+		recipe.Build = [][]string{{manager, "run", "build"}}
+	}
+	recipe.Deploy.Build = recipe.Build
 	if manager == "pnpm" {
-		recipe.Deploy.Freeze.Omit = []string{"node_modules/.modules.yaml", "node_modules/.pnpm-workspace-state-v1.json"}
+		recipe.Deploy.Build = slices.Concat(recipe.Build, [][]string{{"rm", "-f", "node_modules/.modules.yaml", "node_modules/.pnpm-workspace-state-v1.json"}})
 		if slices.Contains(files, "pnpm-lock.yaml") {
 			recipe.Deploy.Install = [][]string{{"pnpm", "install", "--frozen-lockfile"}}
 		}
-	}
-	if manifest.Scripts["build"] != "" {
-		recipe.Build = [][]string{{manager, "run", "build"}}
 	}
 	return recipe, nil
 }

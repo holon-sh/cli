@@ -34,6 +34,7 @@ import (
 	"github.com/holon-sh/cli/pkg/appartifact"
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/recipe"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
 )
@@ -754,28 +755,30 @@ func TestRunDeployLifecycle(t *testing.T) {
 	if slices.ContainsFunc(initial, func(app protocol.App) bool { return app.Source }) {
 		t.Fatalf("deploy carries an overlay: %+v", initial)
 	}
+	steps, err := recipe.Read(os.DirFS(root))
+	if err != nil {
+		t.Fatal(err)
+	}
 	builds.mu.Lock()
-	install := [][]string{{"pnpm", "install", "--frozen-lockfile"}}
 	if !reflect.DeepEqual(builds.apps, []protocol.App{{Name: "prod", Source: true, Access: &protocol.AppAccess{Server: &protocol.AccessRule{Callers: []string{}}}}}) ||
 		builds.sessions != 1 || builds.deleted != 1 || len(builds.calls) != 2 {
 		t.Fatalf("build session apps %+v, %d sessions, deleted %d times, %d build calls", builds.apps, builds.sessions, builds.deleted, len(builds.calls))
 	}
 	contract, build := builds.calls[0], builds.calls[1]
-	if !reflect.DeepEqual(contract.plan, runtimecontract.Plan{Install: runtimecontract.Install{Commands: install}}) || contract.build.Freeze != nil ||
+	if !reflect.DeepEqual(contract.plan, runtimecontract.Plan{Install: runtimecontract.Install{Commands: steps.Deploy.Install}}) || contract.build.Freeze != nil ||
 		contract.files[".holon/tooling/typescript/runner.mjs"] == nil {
 		t.Fatalf("contract call: %+v %+v", contract.plan, contract.build)
 	}
-	if !reflect.DeepEqual(build.plan, runtimecontract.Plan{Install: runtimecontract.Install{Commands: install}, Prepare: [][]string{{"pnpm", "run", "build"}}}) ||
+	if !reflect.DeepEqual(build.plan, runtimecontract.Plan{Install: runtimecontract.Install{Commands: steps.Deploy.Install}, Prepare: steps.Deploy.Build}) ||
 		build.build.Freeze == nil || !slices.Contains(build.build.Run, ".holon/check.mjs") ||
 		string(build.files[".holon/app.txt"]) != "application file" || build.files[".holon/tooling/typescript/runner.mjs"] != nil {
 		t.Fatalf("build call: %+v %+v", build.plan, build.build)
 	}
 	builds.mu.Unlock()
-	index, manifest, config := frozenImage(t, h.registry, initial[slices.IndexFunc(initial, func(app protocol.App) bool { return app.Name == "prod" })].Image)
+	index, manifest, config := assembledImage(t, h.registry, initial[slices.IndexFunc(initial, func(app protocol.App) bool { return app.Name == "prod" })].Image)
 	frozen := manifest.Layers[1:]
 	if len(manifest.Layers) != 3 || manifest.Layers[0].MediaType != ocispec.MediaTypeImageLayer ||
-		frozen[0].MediaType != ocispec.MediaTypeImageLayerZstd || frozen[0].Digest != digest.FromString("dependencies of prod") ||
-		frozen[1].MediaType != ocispec.MediaTypeImageLayerZstd || frozen[1].Digest != digest.FromString("source of prod") ||
+		frozen[0].Digest != digest.FromString("dependencies of prod") || frozen[1].Digest != digest.FromString("source of prod") ||
 		len(config.RootFS.DiffIDs) != 3 || config.RootFS.DiffIDs[2] != digest.FromString("tar source of prod") {
 		t.Fatalf("image layers %+v, diff IDs %v", manifest.Layers, config.RootFS.DiffIDs)
 	}
