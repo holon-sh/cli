@@ -89,7 +89,8 @@ func TestPrepareResolvesRegistryPackages(t *testing.T) {
 
 func TestLocalDependencyDocumentsAreComplete(t *testing.T) {
 	checkout, extract := checkoutConsumer(t, TargetPy)
-	orders := Consumer{Name: "orders", Dir: checkout.Sources[0].Path, Server: &Source{Path: checkout.Sources[0].Path}, Targets: []string{TargetPy}, Sources: []Source{{Alias: "inventory", Document: document(t, ordersMetadata())}}}
+	path := checkout.Sources[0].Server.(Path)
+	orders := Consumer{Name: "orders", Dir: string(path), Server: path, Targets: []string{TargetPy}, Sources: []Source{{Alias: "inventory", Server: document(t, ordersMetadata())}}}
 	prepared, err := Prepare(t.Context(), []Consumer{checkout, orders}, Options{Run: extract})
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +105,7 @@ func TestLocalDependencyDocumentsAreComplete(t *testing.T) {
 	if err != nil || own.Digest != reference {
 		t.Fatalf("consumer did not pin provider's published document: %v", err)
 	}
-	orders.Sources = []Source{{Path: checkout.Dir}}
+	orders.Sources = []Source{{Server: Path(checkout.Dir)}}
 	if p, err := Prepare(t.Context(), []Consumer{checkout, orders}, Options{Run: extract}); err == nil || !strings.Contains(err.Error(), "contract dependency cycle") {
 		if p != nil {
 			p.Close()

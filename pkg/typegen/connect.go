@@ -2,11 +2,11 @@ package typegen
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -16,25 +16,20 @@ import (
 // such as a tool call that runs for minutes, are bounded by ctx alone. The caller closes the session.
 func Connect(ctx context.Context, source Source, options Options) (*mcp.ClientSession, error) {
 	o := options.defaults()
-	if err := source.validate(); err != nil {
-		return nil, err
-	}
-	location, client := source.Endpoint, o.HTTPClient
-	switch {
-	case source.Endpoint != "":
-		client = endpointClient(source, o)
-	case source.Registry != nil:
-		d, err := mcpregistry.Fetch(ctx, o.HTTPClient, *source.Registry)
+	location, client := "", o.HTTPClient
+	switch server := source.Server.(type) {
+	case Endpoint:
+		location, client = string(server), endpointClient(source.Alias, server, o)
+	case Registry:
+		d, err := mcpregistry.Fetch(ctx, o.HTTPClient, protocol.RegistryRef(server))
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", source, err)
+			return nil, fmt.Errorf("%s: %w", server, err)
 		}
 		if location = d.StreamableRemote(); location == "" {
-			return nil, fmt.Errorf("%s publishes no streamable-http remote to connect to", source)
+			return nil, fmt.Errorf("%s publishes no streamable-http remote to connect to", server)
 		}
 		// The remote serves whatever version is deployed there now, not necessarily this record's.
-		fmt.Fprintf(o.Stderr, "%s: connecting to its remote %s\n", source, location)
-	default:
-		return nil, errors.New("only an endpoint or a registry version has a running server to connect to")
+		fmt.Fprintf(o.Stderr, "%s: connecting to its remote %s\n", server, location)
 	}
 	session := *client
 	session.Timeout = 0

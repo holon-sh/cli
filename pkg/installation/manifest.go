@@ -191,16 +191,14 @@ func (p *manifestSpec) selectApps(args []string) ([]string, error) {
 		if slices.ContainsFunc(slices.Concat(p.Apps, p.sources), func(app manifestApp) bool { return app.Name == source.Alias }) {
 			return nil, fmt.Errorf("app %s is declared twice", source.Alias)
 		}
-		app := manifestApp{Name: source.Alias, Path: source.Path}
-		switch {
-		case source.Registry != nil:
-			app.Registry = &protocol.RegistrySource{RegistryRef: *source.Registry}
-			err = app.Registry.Validate()
-		case source.Endpoint != "":
-			app.Remote = &manifestRemote{URL: source.Endpoint}
-		}
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", arg, err)
+		app := manifestApp{Name: source.Alias}
+		switch server := source.Server.(type) {
+		case typegen.Path:
+			app.Path = string(server)
+		case typegen.Registry:
+			app.Registry = &protocol.RegistrySource{RegistryRef: protocol.RegistryRef(server)}
+		case typegen.Endpoint:
+			app.Remote = &manifestRemote{URL: string(server)}
 		}
 		p.sources = append(p.sources, app)
 		names = append(names, app.Name)

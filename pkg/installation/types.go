@@ -87,7 +87,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		}
 	}()
 	manifest.Apps = slices.Clone(manifest.Apps)
-	byApp := map[string]typegen.Source{}
+	byApp := map[string]typegen.Server{}
 	var consumers []typegen.Consumer
 	needed := map[string]bool{}
 	logs := options.output.logs(options.Stderr)
@@ -113,17 +113,16 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 				return manifestSpec{}, nil, fmt.Errorf("%s: %w", app.Name, err)
 			}
 			pathApps = append(pathApps, app)
-			byApp[app.Name] = typegen.Source{Path: app.Path}
+			byApp[app.Name] = typegen.Path(app.Path)
 			if served {
 				prepareOptions.Served[app.Path] = contract
 			}
 			if consumer != nil {
 				if p.unserved {
-					consumer.Server = nil
+					consumer.Server = ""
 				}
 				for _, name := range app.resolved.Requires {
 					needed[name] = true
-					consumer.Sources = append(consumer.Sources, typegen.Source{Alias: name})
 				}
 				consumers = append(consumers, *consumer)
 			}
@@ -138,7 +137,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 					"%s descriptor identity does not match the retained image contract; use the original release identity or a new image tag", app.Name)
 			}
 			if document != nil {
-				byApp[app.Name] = typegen.Source{Document: document}
+				byApp[app.Name] = document
 				for name := range document.Requires {
 					needed[name] = true
 				}
@@ -149,21 +148,21 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		if app.resolved.Remote == nil || !needed[app.Name] {
 			continue
 		}
-		document, err := typegen.ResolveDocument(ctx, typegen.Source{Endpoint: app.resolved.Remote.URL}, typeOptions)
+		document, err := typegen.ResolveDocument(ctx, typegen.Source{Server: typegen.Endpoint(app.resolved.Remote.URL)}, typeOptions)
 		if err != nil {
 			return manifestSpec{}, nil, err
 		}
-		byApp[app.Name] = typegen.Source{Document: document}
+		byApp[app.Name] = document
 	}
 
-	for _, consumer := range consumers {
-		for i, dependency := range consumer.Sources {
-			source, ok := byApp[dependency.Alias]
+	for i := range consumers {
+		app, _ := manifest.app(consumers[i].Name)
+		for _, name := range app.resolved.Requires {
+			server, ok := byApp[name]
 			if !ok {
-				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s carries no MCP contract to type calls against", consumer.Name, dependency.Alias)
+				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s carries no MCP contract to type calls against", consumers[i].Name, name)
 			}
-			source.Alias = dependency.Alias
-			consumer.Sources[i] = source
+			consumers[i].Sources = append(consumers[i].Sources, typegen.Source{Alias: name, Server: server})
 		}
 	}
 	if options.types != nil {
@@ -187,8 +186,8 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	metadata := prepared.Metadata()
 	documents := prepared.Documents()
 	servers := prepared.Servers()
-	for name, source := range byApp {
-		if document := source.Document; document != nil {
+	for name, server := range byApp {
+		if document, ok := server.(*typegen.Document); ok {
 			metadata[name] = document.Metadata
 			documents[document.Digest] = document
 		}
