@@ -13,16 +13,11 @@ var (
 )
 
 func canonicalContract(contract contract) {
-	for _, tool := range contract.Tools {
-		normalizeObject(tool.Input)
-		normalizeObject(tool.Output)
-	}
-	for _, resource := range contract.Resources {
-		normalizeObject(resource)
-	}
-	for _, event := range contract.Events {
-		normalizeObject(event.Input)
-		normalizeObject(event.Payload)
+	for _, entries := range []map[string]contractTool{contract.Tools, contract.Resources, contract.Events} {
+		for _, entry := range entries {
+			normalizeObject(entry.Input)
+			normalizeObject(entry.Output)
+		}
 	}
 }
 

@@ -100,7 +100,7 @@ func installed() (string, error) {
 }
 
 func newestRelease(ctx context.Context) (string, error) {
-	body, err := get(ctx, releases)
+	body, err := clientutil.Get(ctx, client, releases, maxBytes)
 	if err != nil {
 		return "", err
 	}
@@ -118,11 +118,11 @@ func newestRelease(ctx context.Context) (string, error) {
 
 func install(ctx context.Context, base, version, path string) error {
 	archive := fmt.Sprintf("holon_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
-	sums, err := get(ctx, base+"/v"+version+"/SHA256SUMS")
+	sums, err := clientutil.Get(ctx, client, base+"/v"+version+"/SHA256SUMS", maxBytes)
 	if err != nil {
 		return err
 	}
-	data, err := get(ctx, base+"/v"+version+"/"+archive)
+	data, err := clientutil.Get(ctx, client, base+"/v"+version+"/"+archive, maxBytes)
 	if err != nil {
 		return err
 	}
@@ -166,24 +166,4 @@ func replace(path string, binary io.Reader) error {
 		err = os.Rename(file.Name(), path)
 	}
 	return err
-}
-
-func get(ctx context.Context, url string) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: %s", url, response.Status)
-	}
-	body, err := clientutil.ReadLimited(response.Body, maxBytes)
-	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", url, err)
-	}
-	return body, nil
 }
