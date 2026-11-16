@@ -1,7 +1,6 @@
 package installation
 
 import (
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
@@ -65,11 +63,11 @@ func (c *manifestOAuth) client() *protocol.OAuthClient {
 type resolvedApp struct {
 	protocol.App
 
-	registryPackage *mcpregistry.Package
-	types           *preparedTypes
-	descriptor      *mcpregistry.Descriptor
-	stdio           bool
-	catalogEnv      map[string]protocol.Input
+	pkg        *protocol.RegistrySource
+	types      *preparedTypes
+	descriptor *mcpregistry.Descriptor
+	stdio      bool
+	catalogEnv map[string]protocol.Input
 }
 
 type manifestApp struct {
@@ -94,29 +92,8 @@ type manifestApp struct {
 	resolved  resolvedApp
 }
 
-func resolveAppMetadata(app *manifestApp, pkg mcpregistry.Package) error {
-	app.resolved.stdio = pkg.Transport.Type == "stdio"
-	port, _ := pkg.Port()
-	catalog, err := pkg.App(nil, mcpregistry.RunConfig{})
-	if err != nil {
-		return err
-	}
-	app.resolved.catalogEnv = catalog.Env
-	run := ptr.Deref(app.Run, packageRun{})
-	declared, err := pkg.App(app.Arguments, mcpregistry.RunConfig{Args: run.Args, Env: run.Env})
-	if err != nil {
-		return err
-	}
-	app.resolved.Env, app.resolved.EnvTemplates, app.resolved.Args = declared.Env, declared.EnvTemplates, declared.Args
-	app.resolved.Imported = app.Registry != nil
-	if app.resolved.stdio && app.OAuth != nil {
-		return errors.New("oauth requires an HTTP MCP server")
-	}
-	app.resolved.Port = int32(cmp.Or(port, ptr.Deref(app.Port, 0), 3000))
-	return nil
-}
-
 func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
+	dir := filepath.Dir(sourceName)
 	sourceName = scaffold.Relative(sourceName)
 	document, err := yaml.YAMLToJSONStrict(data)
 	if err != nil {
@@ -185,6 +162,8 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 		names.Insert(a.Name)
 		if filepath.IsAbs(a.Path) {
 			errs = append(errs, label+".path must be a relative directory")
+		} else if a.Path != "" {
+			a.Path = filepath.Join(dir, a.Path)
 		}
 	}
 	if len(errs) > 0 {

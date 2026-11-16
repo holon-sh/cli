@@ -90,12 +90,6 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 		return manifestSpec{}, err
 	}
 	manifest.file = absolute
-	for i := range manifest.Apps {
-		app := &manifest.Apps[i]
-		if app.Path != "" {
-			app.Path = filepath.Join(filepath.Dir(absolute), app.Path)
-		}
-	}
 	return manifest, nil
 }
 

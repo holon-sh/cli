@@ -19,29 +19,30 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ...string) (map[string]*manifestApp, error) {
+func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...string) (manifestSpec, error) {
 	if len(apps) == 0 {
 		for _, app := range slices.Concat(manifest.Apps, manifest.sources) {
 			apps = append(apps, app.Name)
 		}
 	}
-	nodes := map[string]*manifestApp{}
+	resolved := manifest
+	resolved.Apps = nil
 	requiredBy := map[string]*manifestApp{}
 	for len(apps) > 0 {
 		name := apps[0]
 		apps = apps[1:]
-		if nodes[name] != nil {
+		if slices.ContainsFunc(resolved.Apps, func(app manifestApp) bool { return app.Name == name }) {
 			continue
 		}
 		app, err := manifest.app(name)
 		if requirer := requiredBy[name]; err != nil && requirer != nil {
-			return nil, undeclaredDependency(requirer, name)
+			return manifestSpec{}, undeclaredDependency(requirer, name)
 		} else if err != nil {
-			return nil, err
+			return manifestSpec{}, err
 		}
 		access := cmp.Or(app.Access, manifest.access, manifest.deployed[name])
 		if access == nil {
-			return nil, fmt.Errorf("app %s needs an access rule: pass --public or --oauth", name)
+			return manifestSpec{}, fmt.Errorf("app %s needs an access rule: pass --public or --oauth", name)
 		}
 		app.resolved = resolvedApp{App: protocol.App{
 			Name: app.Name, Mount: app.Mount, Image: app.Image, Access: access,
@@ -50,10 +51,10 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 		if app.Path != "" {
 			info, statErr := os.Stat(app.Path)
 			if statErr != nil {
-				return nil, fmt.Errorf("%s path: %w", app.Name, statErr)
+				return manifestSpec{}, fmt.Errorf("%s path: %w", app.Name, statErr)
 			}
 			if !info.IsDir() {
-				return nil, fmt.Errorf("%s path must be a directory", app.Name)
+				return manifestSpec{}, fmt.Errorf("%s path must be a directory", app.Name)
 			}
 			app.resolved.descriptor, err = readServerDescriptor(filepath.Join(app.Path, "server.json"))
 			if errors.Is(err, os.ErrNotExist) {
@@ -63,19 +64,33 @@ func readManifestDescriptors(ctx context.Context, manifest manifestSpec, apps ..
 			app.resolved.descriptor, err = mcpregistry.Fetch(ctx, nil, app.Registry.RegistryRef)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s descriptor: %w", app.Name, err)
+			return manifestSpec{}, fmt.Errorf("%s descriptor: %w", app.Name, err)
 		}
 		if app.resolved.descriptor != nil {
 			app.resolved.Icons = app.resolved.descriptor.Icons
 			app.resolved.Requires = slices.Sorted(maps.Keys(app.resolved.descriptor.Requires))
 		}
-		nodes[app.Name] = &app
+		if err := resolveApp(&app); err != nil {
+			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
+		}
+		declaration := app.resolved.App
+		if err := cmp.Or(declaration.OAuth.Validate(declaration.Env), declaration.Egress.Validate(declaration.Env)); err != nil {
+			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
+		}
+		resolved.Apps = append(resolved.Apps, app)
 		for _, dependency := range app.resolved.Requires {
 			requiredBy[dependency] = cmp.Or(requiredBy[dependency], &app)
 		}
 		apps = append(apps, app.resolved.Requires...)
 	}
-	return nodes, nil
+	slices.SortFunc(resolved.Apps, func(a, b manifestApp) int { return strings.Compare(a.Name, b.Name) })
+	if err := protocol.ValidateAppMounts(resolved.declarations()); err != nil {
+		return manifestSpec{}, err
+	}
+	if problems := protocol.Dependencies(resolved.declarations()); len(problems) != 0 {
+		return manifestSpec{}, errors.New(strings.Join(problems, "; "))
+	}
+	return resolved, nil
 }
 
 func undeclaredDependency(requirer *manifestApp, name string) error {
@@ -90,33 +105,6 @@ func undeclaredDependency(requirer *manifestApp, name string) error {
 	}
 	data, _ := json.Marshal(value)
 	return fmt.Errorf("%w:\n  - name: %s\n    %s: %s\n    access: {server: {oauth: {}}}", missing, name, source, data)
-}
-
-func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...string) (manifestSpec, error) {
-	nodes, err := readManifestDescriptors(ctx, manifest, apps...)
-	if err != nil {
-		return manifestSpec{}, err
-	}
-	resolved := manifest
-	resolved.Apps = nil
-	for _, name := range slices.Sorted(maps.Keys(nodes)) {
-		app := nodes[name]
-		if err := resolveApp(app); err != nil {
-			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
-		}
-		declaration := app.resolved.App
-		if err := cmp.Or(declaration.OAuth.Validate(declaration.Env), declaration.Egress.Validate(declaration.Env)); err != nil {
-			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
-		}
-		resolved.Apps = append(resolved.Apps, *app)
-	}
-	if err := protocol.ValidateAppMounts(resolved.declarations()); err != nil {
-		return manifestSpec{}, err
-	}
-	if problems := protocol.Dependencies(resolved.declarations()); len(problems) != 0 {
-		return manifestSpec{}, errors.New(strings.Join(problems, "; "))
-	}
-	return resolved, nil
 }
 
 func resolveApp(app *manifestApp) error {
@@ -156,13 +144,31 @@ func resolveApp(app *manifestApp) error {
 		if pkg.RegistryType == "oci" {
 			app.resolved.Image = pkg.Identifier
 		} else {
-			app.resolved.registryPackage = &pkg
+			app.resolved.pkg = &protocol.RegistrySource{RegistryRef: app.Registry.RegistryRef, Package: &protocol.PackageSelection{RegistryType: pkg.RegistryType, Identifier: pkg.Identifier}}
 		}
 	}
 	if d != nil {
 		app.resolved.Egress = d.Egress
 	}
-	return resolveAppMetadata(app, pkg)
+	app.resolved.stdio = pkg.Transport.Type == "stdio"
+	port, _ := pkg.Port()
+	catalog, err := pkg.App(nil, mcpregistry.RunConfig{})
+	if err != nil {
+		return err
+	}
+	app.resolved.catalogEnv = catalog.Env
+	run := ptr.Deref(app.Run, packageRun{})
+	declared, err := pkg.App(app.Arguments, mcpregistry.RunConfig{Args: run.Args, Env: run.Env})
+	if err != nil {
+		return err
+	}
+	app.resolved.Env, app.resolved.EnvTemplates, app.resolved.Args = declared.Env, declared.EnvTemplates, declared.Args
+	app.resolved.Imported = app.Registry != nil
+	if app.resolved.stdio && app.OAuth != nil {
+		return errors.New("oauth requires an HTTP MCP server")
+	}
+	app.resolved.Port = int32(cmp.Or(port, ptr.Deref(app.Port, 0), 3000))
+	return nil
 }
 
 func remoteApp(url string, headers map[string]mcpregistry.Value) (*protocol.Remote, map[string]protocol.Input, error) {
