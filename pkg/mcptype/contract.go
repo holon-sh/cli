@@ -1,6 +1,7 @@
 package mcptype
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,11 +28,13 @@ func decodeSchema(member string, raw json.RawMessage) (Object, error) {
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("missing field `%s`", member)
 	}
-	value, err := decodeJSON(raw)
-	if object, ok := value.(Object); ok || err != nil {
-		return object, err
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var object Object
+	if err := decoder.Decode(&object); err != nil || object == nil {
+		return nil, fmt.Errorf("%s must be an object", member)
 	}
-	return nil, fmt.Errorf("%s must be an object", member)
+	return object, nil
 }
 
 func decodeContract(source mcpcontract.Contract) (contract, error) {

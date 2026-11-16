@@ -3,6 +3,7 @@ package mcptype
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -366,11 +367,9 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 			if err != nil {
 				return typ{}, err
 			}
-			var min int
-			if count, ok := object["minItems"].(Number); ok && count.kind == posInt {
-				min = int(count.u)
-			}
-			return typ{kind: kindTuple, items: items, min: min, extra: extra}, nil
+			count, _ := object["minItems"].(json.Number)
+			min, _ := count.Int64()
+			return typ{kind: kindTuple, items: items, min: int(max(min, 0)), extra: extra}, nil
 		}
 		items, declared := object["items"]
 		if !declared {

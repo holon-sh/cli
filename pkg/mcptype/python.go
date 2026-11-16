@@ -2,6 +2,7 @@ package mcptype
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"reflect"
@@ -155,8 +156,8 @@ func (e *pythonEmitter) render(value typ, name string) string {
 			return "_typing.Literal[False]"
 		case nil:
 			return "None"
-		case Number:
-			if literal.isInteger() {
+		case json.Number:
+			if literal != "-0" && !strings.ContainsAny(string(literal), ".eE") {
 				return fmt.Sprintf("_typing.Literal[%s]", literal)
 			}
 			return "_builtins.float"
