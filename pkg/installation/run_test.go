@@ -104,7 +104,7 @@ func TestRunPreparationFailures(t *testing.T) {
 		files                                          map[string]string
 		failure                                        func(buildCall) string
 		ran                                            func(buildCall) runtimecontract.Ran
-		missingBase                                    bool
+		base                                           *digest.Digest
 		session                                        bool
 	}{
 		{name: "oauth without identity", command: "dev", access: "--oauth", want: "requires a configured identity provider"},
@@ -124,7 +124,8 @@ func TestRunPreparationFailures(t *testing.T) {
 			ran:  exited(false, runtimecontract.Ran{ExitCode: 2, Stdout: "server.js(1,7): error TS2322: Type 'string' is not assignable to type 'number'.\n"}),
 			want: "alpha does not type-check against its typed contracts:\nserver.js(1,7): error TS2322",
 		},
-		{name: "missing base", command: "deploy", session: true, missingBase: true, want: "does not hold the development image"},
+		{name: "missing base", command: "deploy", session: true, base: new(digest.FromString("missing")), want: "does not hold the development image"},
+		{name: "unnamed base", command: "deploy", session: true, base: new(digest.Digest("")), want: "has no " + ocispec.AnnotationBaseImageDigest + " annotation"},
 		{name: "source changed", command: "deploy", session: true, edit: "logic.ts", want: "source changed during preparation"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,9 +141,8 @@ func TestRunPreparationFailures(t *testing.T) {
 					sourceFiles(t, root, map[string]string{tc.edit: "edited"})
 				}
 			}
-			base := builds.base
-			if tc.missingBase {
-				base = "registry.example/source@" + digest.FromString("missing").String()
+			if tc.base != nil {
+				builds.base = *tc.base
 			}
 			h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, protocol.Info{
@@ -155,7 +155,7 @@ func TestRunPreparationFailures(t *testing.T) {
 			})
 			h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, map[string]any{
-					"grant": "grant-secret", "registry": "registry.example", "base": base,
+					"grant": "grant-secret", "registry": "registry.example", "base": baseRepository,
 					"repositories": map[string]string{"alpha": "holon/upload/alpha"}, "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339),
 				})
 			})
@@ -473,6 +473,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 		})
 	})
 	builds := serveBuilds(t, h)
+	current := addTestBase(t, h.registry, "current")
 	builds.during = func(call buildCall) {
 		if call.build.Freeze != nil {
 			buildClock.Step(2 * time.Second)
@@ -489,7 +490,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 			map[string]any{
 				"grant":        "grant-secret",
 				"registry":     "registry.example",
-				"base":         builds.base,
+				"base":         baseRepository + "@" + current.String(),
 				"repositories": map[string]string{"prod": "holon/upload/prod", "hosted": "unused"},
 				"expiresAt":    time.Now().Add(time.Hour).Format(time.RFC3339),
 			},

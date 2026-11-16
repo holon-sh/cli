@@ -190,11 +190,8 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	var image ocispec.Descriptor
 	err = upload.repository(ctx, app.Name, func(repository *remote.Repository, grant protocol.UploadGrant) error {
 		development, err := remote.NewRepository(grant.Base)
-		if err == nil {
-			err = development.Reference.ValidateReferenceAsDigest()
-		}
 		if err != nil {
-			return fmt.Errorf("upload grant names no development image: %w", err)
+			return fmt.Errorf("upload grant names no development repository: %w", err)
 		}
 		development.Client = repository.Client
 		ctx := auth.AppendRepositoryScope(ctx, repository.Reference, auth.ActionPull, auth.ActionPush)
@@ -230,13 +227,19 @@ func assembleImage(
 	if err := fetchReference(ctx, repository, frozen.String(), &frozenManifest); err != nil {
 		return ocispec.Descriptor{}, err
 	}
+	base, err := digest.Parse(frozenManifest.Annotations[ocispec.AnnotationBaseImageDigest])
+	if err != nil {
+		return ocispec.Descriptor{}, fmt.Errorf("the image the build pushed has no %s annotation naming its base image", ocispec.AnnotationBaseImageDigest)
+	}
 	var frozenConfig ocispec.Image
 	if err := ociimage.FetchJSON(ctx, repository, frozenManifest.Config, &frozenConfig); err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	missing := fmt.Errorf("the registry does not hold the development image %s yet; it is copied there after each upgrade, so deploy again in a minute", development.Reference)
+	named := development.Reference
+	named.Reference = base.String()
+	missing := fmt.Errorf("the registry does not hold the development image %s yet; it is copied there after each upgrade, so deploy again in a minute", named)
 	var index ocispec.Index
-	err := fetchReference(ctx, development, development.Reference.Reference, &index)
+	err = fetchReference(ctx, development, named.Reference, &index)
 	if errors.Is(err, errdef.ErrNotFound) {
 		return ocispec.Descriptor{}, missing
 	}

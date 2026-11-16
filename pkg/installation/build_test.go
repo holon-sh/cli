@@ -63,6 +63,8 @@ const sourcePackage = `{"private":true,"engines":{"node":">=22.20.0 <23"}}`
 
 const buildSessionName = "build-session"
 
+const baseRepository = "registry.example/source"
+
 type buildCall struct {
 	app   string
 	plan  runtimecontract.Plan
@@ -71,9 +73,8 @@ type buildCall struct {
 }
 
 type buildFixture struct {
-	base string
-
 	mu       sync.Mutex
+	base     digest.Digest
 	failure  func(buildCall) string
 	ran      func(buildCall) runtimecontract.Ran
 	during   func(buildCall)
@@ -85,7 +86,7 @@ type buildFixture struct {
 
 func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 	t.Helper()
-	f := &buildFixture{base: "registry.example/source@" + addTestBase(t, h.registry).String()}
+	f := &buildFixture{base: addTestBase(t, h.registry, "development")}
 	session := protocol.SessionResponse{
 		Name: buildSessionName, UID: "build-uid", Revision: "1", Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: "True"}},
 	}
@@ -125,7 +126,7 @@ func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 		}
 		f.mu.Lock()
 		f.calls = append(f.calls, call)
-		failure, ran, during := f.failure, f.ran, f.during
+		failure, ran, during, base := f.failure, f.ran, f.during, f.base
 		f.mu.Unlock()
 		if during != nil {
 			during(call)
@@ -148,14 +149,14 @@ func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 			}
 		}
 		if call.build.Freeze != nil {
-			reply.Image = h.registry.addFrozenImage(call.app).String()
+			reply.Image = h.registry.addFrozenImage(call.app, base).String()
 		}
 		installationtest.WriteJSON(w, reply)
 	})
 	return f
 }
 
-func (r *imageRegistry) addFrozenImage(app string) digest.Digest {
+func (r *imageRegistry) addFrozenImage(app string, base digest.Digest) digest.Digest {
 	image := ocispec.Image{Platform: ocispec.Platform{OS: "linux", Architecture: "amd64"}, Config: ocispec.ImageConfig{WorkingDir: "/app/source"}}
 	var layers []ocispec.Descriptor
 	for _, layer := range []string{"dependencies", "source"} {
@@ -167,6 +168,7 @@ func (r *imageRegistry) addFrozenImage(app string) digest.Digest {
 	configDescriptor := content.NewDescriptorFromBytes(ocispec.MediaTypeImageConfig, config)
 	manifest, _ := json.Marshal(ocispec.Manifest{
 		Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageManifest, Config: configDescriptor, Layers: layers,
+		Annotations: map[string]string{ocispec.AnnotationBaseImageDigest: base.String()},
 	})
 	manifestDigest := digest.FromBytes(manifest)
 	r.mu.Lock()
@@ -176,12 +178,12 @@ func (r *imageRegistry) addFrozenImage(app string) digest.Digest {
 	return manifestDigest
 }
 
-func addTestBase(t *testing.T, registry *imageRegistry) digest.Digest {
+func addTestBase(t *testing.T, registry *imageRegistry, label string) digest.Digest {
 	t.Helper()
 	child := addTestImage(t, registry, "amd64", ocispec.ImageConfig{
 		User: "10001:10001", WorkingDir: "/app", Entrypoint: []string{"/holon-mcp-runtime"},
 		Env:    []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/app", "HOLON_RELOAD_DIR=/app/source"},
-		Labels: map[string]string{"base": "development"},
+		Labels: map[string]string{"base": label},
 	}, map[string][]byte{"holon-mcp-runtime": []byte("runtime")})
 	return addTestIndex(registry, child).Digest
 }
