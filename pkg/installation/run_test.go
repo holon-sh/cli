@@ -23,6 +23,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/oauth2"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -100,13 +101,12 @@ func TestRunPreparationFailures(t *testing.T) {
 			h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, protocol.SessionResponse{})
 			})
-			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (string, error) {
+			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
 				if tc.edit != "" {
-					err := os.WriteFile(filepath.Join(root, tc.edit), []byte("edited"), 0o644)
-					return "superseded", err
+					return ocispec.Descriptor{}, os.WriteFile(filepath.Join(root, tc.edit), []byte("edited"), 0o644)
 				}
 				_, _ = io.WriteString(progress, tc.diagnostics+"\n")
-				return "", errors.New("fixture build failed")
+				return ocispec.Descriptor{}, errors.New("fixture build failed")
 			})
 			var stderr bytes.Buffer
 			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &stderr, h.run)
@@ -216,8 +216,8 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 	_, registry := buildRegistry(t)
 	registryHost := strings.TrimPrefix(registry.URL, "https://")
 	if build == nil {
-		build = func(context.Context, buildRequest, io.Writer) (string, error) {
-			return "", errors.New("fixture build failed")
+		build = func(context.Context, buildRequest, io.Writer) (ocispec.Descriptor, error) {
+			return ocispec.Descriptor{}, errors.New("fixture build failed")
 		}
 	}
 	h.run = commandConfig{
@@ -391,8 +391,9 @@ func TestRunDevLifecycle(t *testing.T) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if len(updates) != 0 || !slices.Equal(reloads, []string{"alpha", "beta", "alpha"}) || created[0].Image != "" || created[1].Image != "" {
-			t.Fatalf("source edit updates = %#v, reloads = %v, created = %#v", updates, reloads, created)
+		if len(updates) != 0 || !slices.Equal(reloads, []string{"alpha", "beta", "alpha"}) || created[0].Image != "" || created[1].Image != "" ||
+			strings.Count(stdout.String(), "Ready\n") != 1 {
+			t.Fatalf("source edit updates = %#v, reloads = %v, created = %#v, stdout=%q", updates, reloads, created, stdout.String())
 		}
 		output := stdout.String() + stderr.String()
 		for _, hidden := range []string{"grant-secret", "alpha starting up", "tools/call"} {
@@ -420,7 +421,7 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 	var stream bytes.Buffer
 	output, _, _ := newProgressOutput(io.Discard, &stream, false, h.run.clock())
 	dev := devLoop{
-		manager: manager, name: "gentle-otter-482", clock: h.run.clock(),
+		manager: manager, clock: h.run.clock(),
 		options: buildOptions{output: output},
 	}
 	for _, ready := range []string{"False", "True"} {
@@ -428,7 +429,7 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 			{Type: protocol.ConditionReady, Status: ready, Reason: protocol.ReasonProgressDeadline, Message: "rollout failed"},
 			{Type: protocol.ConditionAvailable, Status: "True"},
 		}}
-		if err := dev.poll(manager.Session(t.Context(), dev.name)); err != nil {
+		if err := dev.poll(manager.Session(t.Context(), "gentle-otter-482")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -454,8 +455,8 @@ func TestDevStopsWhenReauthenticationIsRequired(t *testing.T) {
 	if err := manager.loginInteractive(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	dev := devLoop{manager: manager, name: "gentle-otter-482"}
-	if err := dev.poll(manager.Session(t.Context(), dev.name)); !errors.Is(err, errReauthenticationRequired) {
+	dev := devLoop{manager: manager}
+	if err := dev.poll(manager.Session(t.Context(), "gentle-otter-482")); !errors.Is(err, errReauthenticationRequired) {
 		t.Fatalf("poll = %v, want %v", err, errReauthenticationRequired)
 	}
 }
@@ -554,7 +555,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildClock := testingclock.NewFakeClock(time.Unix(100, 0))
-	build := func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
+	build := func(ctx context.Context, request buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
 		if !slices.Equal(request.Platforms, []string{"linux/amd64"}) {
 			t.Errorf("production platforms = %v", request.Platforms)
 		}

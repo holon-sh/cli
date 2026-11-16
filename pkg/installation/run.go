@@ -171,21 +171,20 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	recordPath := manager.sessionRecordPath(config.manifest, apps)
 	dev := &devLoop{
 		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), watch: config.watch, started: config.clock().Now(), options: options,
-		updating: sets.New[string](), announce: true,
-		sent: map[string]string{}, background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{},
+		updating: sets.New[string](), sent: map[string]string{},
+		background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{},
 	}
 	defer dev.records.Wait()
 	if config.devTTLSeconds == nil {
 		dev.session = previousSession(ctx, manager, recordPath)
-		dev.name = dev.session.Name
 		for _, app := range dev.session.Apps {
 			if app.Source {
 				dev.sent[app.Name] = ""
 			}
 		}
 	}
-	if dev.name != "" {
-		if err := printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps); err != nil {
+	if dev.session.Name != "" {
+		if err := printStartingEndpoints(stdout, config.output, manager, dev.session.Name, resolved.Apps); err != nil {
 			return err
 		}
 	}
@@ -194,14 +193,14 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	request.TTLSeconds = config.devTTLSeconds
-	if dev.name != "" {
+	if dev.session.Name != "" {
 		err = dev.update(ctx, request, removedApps(dev.session.Apps, request.Apps)...)
 	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &dev.session); err == nil {
-		dev.name, dev.rollout = dev.session.Name, true
+		dev.rollout = true
 		for _, app := range request.Apps {
 			dev.begin(app.Name)
 		}
-		err = printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps)
+		err = printStartingEndpoints(stdout, config.output, manager, dev.session.Name, resolved.Apps)
 	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
 		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
 		err = fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
@@ -210,7 +209,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	if request.TTLSeconds != nil {
-		ready, err := waitSessionReady(ctx, manager, dev.name, dev.session, config.output)
+		ready, err := waitSessionReady(ctx, manager, dev.session, config.output)
 		if err == nil {
 			dev.session = ready
 			err = dev.generate(ctx)
@@ -218,26 +217,21 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		if err != nil {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 			defer cancel()
-			return errors.Join(err, manager.DeleteSession(cleanup, dev.name, dev.session.UID, true))
+			return errors.Join(err, manager.DeleteSession(cleanup, dev.session.Name, dev.session.UID, true))
 		}
 		dev.finish()
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(dev.session)
 		}
-		if err := config.output.endpoints(stdout, "Ready", manager, dev.name, resolved.Apps, false); err != nil {
+		if err := config.output.endpoints(stdout, "Ready", manager, dev.session.Name, resolved.Apps, false); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", dev.session.ExpiresAt)
 		return err
 	}
 	err = dev.run(ctx, stdout)
-	data, _ := json.Marshal(sessionRecord{Session: dev.name})
-	_ = writePrivateFile(recordPath, data)
+	_ = writePrivateFile(recordPath, []byte(dev.session.Name))
 	return err
-}
-
-type sessionRecord struct {
-	Session string `json:"session"`
 }
 
 func (m *Client) sessionRecordPath(manifest manifestSpec, selection []string) string {
@@ -250,11 +244,9 @@ func (m *Client) sessionRecordPath(manifest manifestSpec, selection []string) st
 }
 
 func previousSession(ctx context.Context, manager *Client, recordPath string) protocol.SessionResponse {
-	var record sessionRecord
 	var session protocol.SessionResponse
-	data, err := readPrivateFile(recordPath)
-	if err != nil || json.Unmarshal(data, &record) != nil ||
-		manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: record.Session}, &session) != nil {
+	name, err := readPrivateFile(recordPath)
+	if err != nil || manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: string(name)}, &session) != nil {
 		return protocol.SessionResponse{}
 	}
 	return session
@@ -355,7 +347,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
-	ready, err := waitSessionReady(ctx, manager, protocol.ProductionName, accepted, config.output)
+	ready, err := waitSessionReady(ctx, manager, accepted, config.output)
 	if err != nil {
 		return err
 	}
@@ -365,10 +357,8 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	return config.output.endpoints(stdout, "Ready", manager, ready.Name, resolved.Apps, false)
 }
 
-func waitSessionReady(
-	ctx context.Context, manager *Client, name string, accepted protocol.SessionResponse, output *progressOutput,
-) (protocol.SessionResponse, error) {
-	finish := output.measure(name, "rollout")
+func waitSessionReady(ctx context.Context, manager *Client, accepted protocol.SessionResponse, output *progressOutput) (protocol.SessionResponse, error) {
+	finish := output.measure(accepted.Name, "rollout")
 	defer finish()
 	session := accepted
 	for {
@@ -382,7 +372,7 @@ func waitSessionReady(
 		if ready, err := SessionReady(session); ready || err != nil {
 			return session, err
 		}
-		next, err := manager.awaitSession(ctx, name, session.Revision)
+		next, err := manager.awaitSession(ctx, accepted.Name, session.Revision)
 		if err != nil {
 			return session, err
 		}

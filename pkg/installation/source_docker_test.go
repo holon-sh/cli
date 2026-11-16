@@ -40,8 +40,8 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 		source.Add("value", &fstypes.Stat{Mode: 0o644}, []byte(value))
 		request := buildRequest{
 			Request: kiln.Request{Start: []string{"/serve"}},
-			app:     manifestApp{Name: "alpha", Path: value}, upload: &imageUpload{grant: grant},
-			Env: options.Env, httpClient: options.HTTPClient, builders: options.builders,
+			app:     manifestApp{Name: "alpha", Path: value}, upload: &imageUpload{grant: grant, client: options.HTTPClient},
+			Env: options.Env, builders: options.builders,
 			dockerfile: "FROM scratch\nCOPY value /value\nENV RECIPE=" + value + "\nCMD [\"/serve\"]\n",
 		}
 		descriptor, err := publishPlatform(t.Context(), "linux/"+runtime.GOARCH, request, source, io.Discard)
@@ -83,7 +83,7 @@ func TestDockerSourceBuild(t *testing.T) {
 	manifest := buildManifest(t, root)
 	grant, options := sourceRegistry(t)
 	options.architectures = []string{runtime.GOARCH}
-	upload := &imageUpload{grant: grant}
+	upload := &imageUpload{grant: grant, client: options.HTTPClient}
 
 	t.Run("shared layers", func(t *testing.T) {
 		beta := buildManifest(t, t.TempDir()).Apps[0]
@@ -102,7 +102,7 @@ func TestDockerSourceBuild(t *testing.T) {
 			}
 			return options.HTTPClient.Transport.RoundTrip(r)
 		})
-		apps, err := buildAndPush(t.Context(), prepareBuild(t, shared), &imageUpload{grant: sharedGrant}, observed)
+		apps, err := buildAndPush(t.Context(), prepareBuild(t, shared), &imageUpload{grant: sharedGrant, client: observed.HTTPClient}, observed)
 		if err != nil {
 			t.Fatal(err)
 		}

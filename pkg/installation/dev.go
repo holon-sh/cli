@@ -199,25 +199,23 @@ func (w *devWatcher) Close() error {
 }
 
 type devLoop struct {
-	manager             *Client
-	name                string
-	manifest            manifestSpec
-	apps                []string
-	clock               clock.WithTickerAndDelayedExecution
-	watch               func() (fileWatcher, error)
-	started             time.Time
-	options             buildOptions
-	session             protocol.SessionResponse
-	updating            sets.Set[string]
-	announce, unapplied bool
-	rollout             bool
-	sent                map[string]string
-	background          context.Context
-	recording           map[string]context.CancelCauseFunc
-	records             sync.WaitGroup
+	manager            *Client
+	manifest           manifestSpec
+	apps               []string
+	clock              clock.WithTickerAndDelayedExecution
+	watch              func() (fileWatcher, error)
+	started            time.Time
+	options            buildOptions
+	session            protocol.SessionResponse
+	updating           sets.Set[string]
+	unapplied, rollout bool
+	sent               map[string]string
+	background         context.Context
+	recording          map[string]context.CancelCauseFunc
+	records            sync.WaitGroup
 }
 
-func (d *devLoop) renew(ctx context.Context) {
+func (d *devLoop) renew(ctx context.Context, session string) {
 	ticker := d.clock.NewTicker(renewalInterval)
 	defer ticker.Stop()
 	for {
@@ -226,7 +224,7 @@ func (d *devLoop) renew(ctx context.Context) {
 			return
 		case <-ticker.C():
 			// A failed renewal needs no report: poll ends the session when the lease expires or credentials are lost.
-			_ = d.manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: d.name}, nil)
+			_ = d.manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: session}, nil)
 		}
 	}
 }
@@ -241,11 +239,12 @@ func (d *devLoop) run(ctx context.Context, stdout io.Writer) error {
 	defer func() { _ = watcher.Close() }()
 	ctx, cancel := context.WithCancel(ctx)
 	var background sync.WaitGroup
-	background.Go(func() { d.renew(ctx) })
+	session := d.session.Name
+	background.Go(func() { d.renew(ctx, session) })
 	if d.options.output.verbose {
 		background.Go(func() {
 			input := protocol.SessionLogsRequest{Since: d.started.Format(time.RFC3339Nano)}
-			input.Session = d.name
+			input.Session = session
 			if err := d.manager.StreamLogs(ctx, input, stdout); ctx.Err() == nil {
 				d.options.output.problem("log stream", fmt.Errorf("stopped: %w", err))
 			}
@@ -307,10 +306,9 @@ func (d *devLoop) settle(ctx context.Context, stdout io.Writer) error {
 	d.rollout = false
 	started := d.regenerate(ctx)
 	d.finish()
-	if !started || !d.announce {
+	if !started {
 		return nil
 	}
-	d.announce = false
 	return d.options.output.endpoints(stdout, "Ready", d.manager, d.session.Name, d.manifest.Apps, false)
 }
 
@@ -323,10 +321,10 @@ type sessionRead struct {
 // answers at once, so it is reported only after workflowPoll, which paces reads through an outage.
 func (d *devLoop) readSession(ctx context.Context) (<-chan sessionRead, context.CancelFunc) {
 	ctx, stop := context.WithCancel(ctx)
-	revision := d.session.Revision
+	name, revision := d.session.Name, d.session.Revision
 	result := make(chan sessionRead, 1)
 	go func() {
-		session, err := d.manager.awaitSession(ctx, d.name, revision)
+		session, err := d.manager.awaitSession(ctx, name, revision)
 		if err != nil {
 			select {
 			case <-ctx.Done():
@@ -405,7 +403,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 			return true
 		}
 	}
-	if change.contexts.Len() != 0 && d.reload(ctx, change.contexts) && !d.rollout {
+	if change.contexts.Len() != 0 && d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool { return !change.contexts.Has(app.Path) })) && !d.rollout {
 		d.regenerate(ctx)
 	}
 	if !d.rollout {
@@ -431,19 +429,19 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	if err := d.options.types.acquire(resolved); err != nil {
 		return false, err
 	}
-	request, err := uploadManifest(ctx, d.manager, d.name, resolved, d.options)
+	request, err := uploadManifest(ctx, d.manager, d.session.Name, resolved, d.options)
 	if err != nil {
 		return false, err
 	}
 	if err := d.update(ctx, request, removedApps(d.session.Apps, request.Apps)...); err != nil {
 		return false, err
 	}
-	d.manifest, d.announce = resolved, true
+	d.manifest = resolved
 	return true, nil
 }
 
 func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequest, remove ...string) error {
-	updated, err := replaceExecution(ctx, d.manager, d.name, d.session, desired, remove...)
+	updated, err := replaceExecution(ctx, d.manager, d.session.Name, d.session, desired, remove...)
 	if err != nil {
 		return err
 	}

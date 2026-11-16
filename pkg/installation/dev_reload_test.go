@@ -616,9 +616,13 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 			sends: []send{{}, {page: true}},
 		},
 		{
-			name: "a TypeScript server is first sent with the clients of the apps it requires", app: "gamma", client: "generated/holon-sh/index.mjs",
+			name: "a dependency chain starts each server with the clients of the apps it requires", app: "gamma", client: "generated/holon-sh/index.mjs",
 			files: map[string]string{
-				manifestFileName: gammaManifest, "gamma/server.json": requiresAlpha,
+				manifestFileName:     gammaManifest + "- name: beta\n  access: {server: {}}\n  path: ./beta\n",
+				"beta/server.json":   strings.ReplaceAll(requiresAlpha, "/gamma", "/beta"),
+				"beta/server.ts":     "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
+				"beta/package.json":  `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
+				"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha"`, `"beta"`),
 				"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
 				"gamma/package.json": `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-sh":"0.0.1","holon-ui":"0.0.1"}}`,
 			},

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,7 +18,7 @@ import (
 	"github.com/holon-sh/protocol/hookartifact"
 )
 
-type buildApplication func(context.Context, buildRequest, io.Writer) (string, error)
+type buildApplication func(context.Context, buildRequest, io.Writer) (ocispec.Descriptor, error)
 
 type buildRequest struct {
 	kiln.Request
@@ -29,18 +28,17 @@ type buildRequest struct {
 	app        manifestApp
 	dockerfile string
 	upload     *imageUpload
-	httpClient *http.Client
 	builders   *builderConnections
 	output     *progressOutput
 }
 
-func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, error) {
+func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (ocispec.Descriptor, error) {
 	if !protocol.ValidBuildArchitectures(options.architectures) {
-		return "", errors.New("invalid build architectures")
+		return ocispec.Descriptor{}, errors.New("invalid build architectures")
 	}
 	request, err := options.planSource(ctx, app, app.resolved.types)
 	if err != nil {
-		return "", err
+		return ocispec.Descriptor{}, err
 	}
 	request.upload = upload
 	build := options.builder
@@ -49,7 +47,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	}
 	image, err := build(ctx, request, options.Stderr)
 	if err != nil {
-		return "", fmt.Errorf("build %s: %w", app.Name, err)
+		return ocispec.Descriptor{}, fmt.Errorf("build %s: %w", app.Name, err)
 	}
 	return image, nil
 }
@@ -61,7 +59,7 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 	}
 	request := buildRequest{
 		Request: kiln.Request{Source: p.root, Start: start},
-		Env:     commandenv.Environ(o.Env), app: app, httpClient: o.HTTPClient, builders: o.builders, output: o.output,
+		Env:     commandenv.Environ(o.Env), app: app, builders: o.builders, output: o.output,
 	}
 	architectures := o.architectures
 	if len(architectures) == 0 {

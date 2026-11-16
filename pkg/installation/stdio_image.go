@@ -4,8 +4,10 @@ import (
 	"context"
 	"embed"
 	"io/fs"
-	"strings"
 	"sync"
+
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/pkg/ociimage"
 )
@@ -23,25 +25,12 @@ var loadBridges = sync.OnceValues(func() (ociimage.Bridges, error) {
 
 var checkedLayers sync.Map
 
-func prepareStdioImage(ctx context.Context, image, token string, options buildOptions) (string, error) {
-	name, _, _ := strings.Cut(image, "@")
-	repository, err := imageRepository(name, token, options.HTTPClient)
-	if err != nil {
-		return "", err
-	}
-	descriptor, err := repository.Resolve(ctx, image)
-	if err != nil {
-		return "", err
-	}
+func adaptStdio(ctx context.Context, repository *remote.Repository, image ocispec.Descriptor, origin string) (ocispec.Descriptor, error) {
 	bridges, err := loadBridges()
 	if err != nil {
-		return "", err
+		return ocispec.Descriptor{}, err
 	}
-	prepared, err := ociimage.AdaptImage(ctx, repository, descriptor, ociimage.AdaptOptions{
-		Origin: options.origin, Source: image, CheckedLayers: &checkedLayers, Bridges: bridges,
+	return ociimage.AdaptImage(ctx, repository, image, ociimage.AdaptOptions{
+		Origin: origin, Source: repository.Reference.String() + "@" + image.Digest.String(), CheckedLayers: &checkedLayers, Bridges: bridges,
 	})
-	if err != nil {
-		return "", err
-	}
-	return name + "@" + prepared.Digest.String(), nil
 }

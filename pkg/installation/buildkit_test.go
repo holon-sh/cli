@@ -58,7 +58,7 @@ func TestSharedSourceLayers(t *testing.T) {
 				})
 				grant := protocol.UploadGrant{Registry: "registry.example", Grant: "grant-secret",
 					Repositories: map[string]string{"alpha": "holon/alpha", "beta": "holon/beta"}}
-				upload := &imageUpload{grant: grant, load: func(context.Context) (protocol.UploadGrant, error) { return grant, nil }}
+				upload := &imageUpload{grant: grant, client: client, load: func(context.Context) (protocol.UploadGrant, error) { return grant, nil }}
 				data := []byte("shared application layer")
 				desc := content.NewDescriptorFromBytes(ocispec.MediaTypeImageLayer, data)
 				source := memory.New()
@@ -74,7 +74,7 @@ func TestSharedSourceLayers(t *testing.T) {
 						t.Fatal(err)
 					}
 					tokens.Store(0)
-					export := sourceExport{request: buildRequest{app: manifestApp{Name: "alpha"}, upload: upload, httpClient: client}}
+					export := sourceExport{request: buildRequest{app: manifestApp{Name: "alpha"}, upload: upload}}
 					for range 2 {
 						if _, err := export.Writer(t.Context(), containercontent.WithDescriptor(desc)); !errors.Is(err, cerrdefs.ErrAlreadyExists) {
 							t.Fatalf("existing source layer: %v", err)
@@ -97,9 +97,8 @@ func TestSharedSourceLayers(t *testing.T) {
 				pending = make(chan struct{})
 				var group errgroup.Group
 				for name := range grant.Repositories {
-					request := buildRequest{app: manifestApp{Name: name}, upload: upload, httpClient: client}
 					group.Go(func() error {
-						return request.publish(t.Context(), func(repo *remote.Repository, _ protocol.UploadGrant) error {
+						return upload.repository(t.Context(), name, func(repo *remote.Repository, _ protocol.UploadGrant) error {
 							return upload.pushLayer(t.Context(), repo, desc, source)
 						})
 					})

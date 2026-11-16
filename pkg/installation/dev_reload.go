@@ -19,7 +19,6 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/tonistiigi/fsutil"
 	fstypes "github.com/tonistiigi/fsutil/types"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 
@@ -37,7 +36,7 @@ type reloadAppResult struct {
 type packedSource struct {
 	overlay ocispec.Descriptor
 	file    string
-	request buildRequest
+	upload  *imageUpload
 }
 
 func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
@@ -47,9 +46,9 @@ func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error
 		if !running {
 			continue
 		}
-		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name}
+		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.session.Name}, App: app.Name}
 		var contract json.RawMessage
-		if err := d.manager.Call(ctx, ControlPlane(d.name), toolGetAppContract, request, &contract); err == nil {
+		if err := d.manager.Call(ctx, ControlPlane(d.session.Name), toolGetAppContract, request, &contract); err == nil {
 			served[app.Name] = contract
 		} else if sent != "" {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
@@ -74,9 +73,9 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
-	if !d.reload(ctx, d.paths(func(app manifestApp) bool {
+	if !d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool {
 		_, running := d.sent[app.Name]
-		return !running && len(app.resolved.Requires) == 0
+		return running || len(app.resolved.Requires) != 0
 	})) {
 		return errUnstarted
 	}
@@ -100,7 +99,7 @@ func (d *devLoop) generate(ctx context.Context) error {
 		}
 		cleanup()
 		d.options.types.accept(prepared)
-		if !d.reload(ctx, d.paths(func(app manifestApp) bool { return !d.waiting(app) })) {
+		if !d.reload(ctx, manifest.Apps) {
 			return errUnstarted
 		}
 		if last {
@@ -109,10 +108,10 @@ func (d *devLoop) generate(ctx context.Context) error {
 	}
 }
 
-func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
+func (d *devLoop) reload(ctx context.Context, apps []manifestApp) bool {
 	reloaded := true
-	for _, app := range d.manifest.Apps {
-		if !contexts.Has(app.Path) {
+	for _, app := range apps {
+		if app.Path == "" {
 			continue
 		}
 		if err := d.reloadApp(ctx, app); err != nil {
@@ -128,16 +127,6 @@ func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
 		}
 	}
 	return reloaded
-}
-
-func (d *devLoop) paths(include func(manifestApp) bool) sets.Set[string] {
-	paths := sets.New[string]()
-	for _, app := range d.manifest.Apps {
-		if app.Path != "" && include(app) {
-			paths.Insert(app.Path)
-		}
-	}
-	return paths
 }
 
 func (d *devLoop) unsent(app manifestApp) bool {
@@ -160,8 +149,8 @@ func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func
 	if _, err := snapshotSource(app, root); err != nil {
 		return packedSource{}, cleanup, err
 	}
-	upload := newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
-	packed, err := d.options.packSource(ctx, app, root, upload)
+	packed, err := d.options.packSource(ctx, app, root)
+	packed.upload = newImageUpload(d.manager, d.session.Name, manifestSpec{Apps: []manifestApp{app}}, d.options.HTTPClient)
 	return packed, cleanup, err
 }
 
@@ -194,8 +183,8 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 		return err
 	}
 	var result reloadAppResult
-	request := apiRequest{Plane: ControlPlane(d.name), Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
-	if err := d.manager.client.send(ctx, path.Join(protocol.APIPathSessions, d.name, "apps", app, "source"), request, &result); err != nil {
+	request := apiRequest{Plane: ControlPlane(d.session.Name), Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
+	if err := d.manager.client.send(ctx, path.Join(protocol.APIPathSessions, d.session.Name, "apps", app, "source"), request, &result); err != nil {
 		return err
 	}
 	d.sent[app] = packed.overlay.Digest.String()
@@ -216,7 +205,7 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 	d.records.Go(func() {
 		defer cleanup()
 		uploaded := d.options.output.measure(app, "source upload")
-		err := packed.publish(ctx, session)
+		err := packed.publish(ctx, app, session)
 		uploaded()
 		if cause := cmp.Or(context.Cause(ctx), err); err != nil && cause != errSourceSuperseded {
 			d.options.output.problem(app, fmt.Errorf("serves this save, but a restart loses it: %w", cause))
@@ -224,7 +213,7 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 	})
 }
 
-func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string, upload *imageUpload) (packedSource, error) {
+func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string) (packedSource, error) {
 	accepted := o.types.accepted[app.Name]
 	if accepted != nil {
 		staged := *accepted
@@ -257,10 +246,7 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	if err != nil {
 		return packedSource{}, err
 	}
-	packed := packedSource{
-		file:    root + ".tar.zst",
-		request: buildRequest{app: app, upload: upload, httpClient: o.HTTPClient},
-	}
+	packed := packedSource{file: root + ".tar.zst"}
 	file, err := os.Create(packed.file)
 	if err != nil {
 		return packedSource{}, err
@@ -309,13 +295,13 @@ func overlayPlan(ctx context.Context, root, entry string, page bool) (runtimecon
 	return plan, nil
 }
 
-func (p packedSource) publish(ctx context.Context, session string) error {
+func (p packedSource) publish(ctx context.Context, app, session string) error {
 	file, err := os.Open(p.file)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = file.Close() }()
-	return p.request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
+	return p.upload.repository(ctx, app, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
