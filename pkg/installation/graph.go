@@ -67,10 +67,10 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 			return manifestSpec{}, fmt.Errorf("%s descriptor: %w", app.Name, err)
 		}
 		if app.resolved.descriptor != nil {
-			app.resolved.Icons = app.resolved.descriptor.Icons
+			app.resolved.Icons, app.resolved.Egress = app.resolved.descriptor.Icons, app.resolved.descriptor.Egress
 			app.resolved.Requires = slices.Sorted(maps.Keys(app.resolved.descriptor.Requires))
 		}
-		if err := resolveApp(&app); err != nil {
+		if err := cmp.Or(resolveApp(&app), app.resolved.OAuth.Validate(app.resolved.Env), app.resolved.Egress.Validate(app.resolved.Env)); err != nil {
 			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
 		}
 		resolved.Apps = append(resolved.Apps, app)
@@ -107,7 +107,7 @@ func resolveApp(app *manifestApp) error {
 		}
 		var err error
 		app.resolved.Remote, app.resolved.Env, err = remoteApp(app.Remote.URL, app.Headers)
-		return cmp.Or(err, app.resolved.OAuth.Validate(app.resolved.Env))
+		return err
 	}
 	if len(app.Headers) != 0 {
 		return errors.New("headers require a remote server")
@@ -140,9 +140,6 @@ func resolveApp(app *manifestApp) error {
 			app.resolved.pkg = &protocol.RegistrySource{RegistryRef: app.Registry.RegistryRef, Package: &protocol.PackageSelection{RegistryType: pkg.RegistryType, Identifier: pkg.Identifier}}
 		}
 	}
-	if d != nil {
-		app.resolved.Egress = d.Egress
-	}
 	app.resolved.stdio = pkg.Transport.Type == "stdio"
 	catalog, err := pkg.App(nil, mcpregistry.RunConfig{})
 	if err != nil {
@@ -160,7 +157,7 @@ func resolveApp(app *manifestApp) error {
 		return errors.New("oauth requires an HTTP MCP server")
 	}
 	app.resolved.Port = int32(cmp.Or(port, ptr.Deref(app.Port, 0), 3000))
-	return cmp.Or(app.resolved.OAuth.Validate(app.resolved.Env), app.resolved.Egress.Validate(app.resolved.Env))
+	return nil
 }
 
 func remoteApp(url string, headers map[string]mcpregistry.Value) (*protocol.Remote, map[string]protocol.Input, error) {
