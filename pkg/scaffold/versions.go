@@ -34,91 +34,46 @@ func Resolve(ctx context.Context, language, cliVersion string) (Versions, error)
 
 func (r registries) resolve(ctx context.Context, language, cliVersion string) (Versions, error) {
 	var v Versions
-	release := semver.IsValid("v"+cliVersion) && semver.Build("v"+cliVersion) == ""
-	if release {
-		v.HolonTypes = cliVersion
+	if semver.IsValid("v"+cliVersion) && semver.Build("v"+cliVersion) == "" {
+		v.CLI = cliVersion
 	}
 	group, ctx := errgroup.WithContext(ctx)
-	group.Go(func() (err error) {
-		v.HolonUI, err = r.newestNPM(ctx, typegen.NodePackages[typegen.TargetUI])
-		return err
-	})
+	lookup := func(version *string, location string) {
+		if *version == "" {
+			group.Go(func() (err error) {
+				*version, err = newest(ctx, location)
+				return err
+			})
+		}
+	}
+	npm := func(pkg string) string { return r.npm + "/" + url.PathEscape(pkg) }
+	pypi := func(pkg string) string { return r.pypi + "/pypi/" + url.PathEscape(pkg) + "/json" }
+	lookup(&v.UI, npm(typegen.NodePackages[typegen.TargetUI]))
 	switch language {
 	case typegen.TargetTS:
-		group.Go(func() (err error) {
-			v.HolonSH, err = r.newestNPM(ctx, typegen.NodePackages[typegen.TargetTS])
-			return err
-		})
-		if !release {
-			group.Go(func() (err error) {
-				v.HolonTypes, err = r.newestNPM(ctx, cliPackage)
-				return err
-			})
-		}
+		lookup(&v.SDK, npm(typegen.NodePackages[typegen.TargetTS]))
+		lookup(&v.CLI, npm(cliPackage))
 	case typegen.TargetPy:
-		group.Go(func() (err error) {
-			v.HolonPy, err = r.newestPyPI(ctx, typegen.PythonRuntime)
-			return err
-		})
-		if !release {
-			group.Go(func() (err error) {
-				v.HolonTypes, err = r.newestPyPI(ctx, cliPackage)
-				return err
-			})
-		}
+		lookup(&v.SDK, pypi(typegen.PythonRuntime))
+		lookup(&v.CLI, pypi(cliPackage))
 	}
 	return v, group.Wait()
 }
 
-func (r registries) newestNPM(ctx context.Context, pkg string) (string, error) {
-	var packument struct {
-		Versions map[string]json.RawMessage
-	}
-	if err := get(ctx, r.npm+"/"+url.PathEscape(pkg), &packument); err != nil {
-		return "", fmt.Errorf("npm %s: %w", pkg, err)
-	}
-	newest := ""
-	for version := range packument.Versions {
-		if semver.IsValid("v"+version) &&
-			(newest == "" || semver.Compare("v"+version, "v"+newest) > 0) {
-			newest = version
-		}
-	}
-	if newest == "" {
-		return "", fmt.Errorf("npm %s: no release", pkg)
-	}
-	return newest, nil
-}
-
-func (r registries) newestPyPI(ctx context.Context, pkg string) (string, error) {
-	var project struct{ Info struct{ Version string } }
-	if err := get(ctx, r.pypi+"/pypi/"+url.PathEscape(pkg)+"/json", &project); err != nil {
-		return "", fmt.Errorf("PyPI %s: %w", pkg, err)
-	}
-	if project.Info.Version == "" {
-		return "", fmt.Errorf("PyPI %s: no release", pkg)
-	}
-	return project.Info.Version, nil
-}
-
-func get(ctx context.Context, location string, value any) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, location, nil)
+func newest(ctx context.Context, location string) (string, error) {
+	data, err := clientutil.Get(ctx, client, location, 16<<20)
 	if err != nil {
-		return err
+		return "", err
 	}
-	// The full document: npm's abbreviated one leaves out the holon field.
-	request.Header.Set("Accept", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return err
+	var document struct {
+		DistTags struct{ Latest string } `json:"dist-tags"`
+		Info     struct{ Version string }
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: %s", location, response.Status)
+	if err := json.Unmarshal(data, &document); err != nil {
+		return "", fmt.Errorf("%s: %w", location, err)
 	}
-	data, err := clientutil.ReadLimited(response.Body, 16<<20)
-	if err != nil {
-		return err
+	if version := cmp.Or(document.DistTags.Latest, document.Info.Version); version != "" {
+		return version, nil
 	}
-	return json.Unmarshal(data, value)
+	return "", fmt.Errorf("%s: no release", location)
 }

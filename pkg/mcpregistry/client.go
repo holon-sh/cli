@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -26,20 +25,7 @@ func Fetch(ctx context.Context, httpClient *http.Client, ref protocol.RegistryRe
 		return protocol.ValidateRegistry(req.URL.String())
 	}
 	address := ref.RegistryURL() + "/v0.1/servers/" + url.PathEscape(ref.Name) + "/versions/" + url.PathEscape(ref.Version)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Accept", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("MCP registry returned HTTP %d", response.StatusCode)
-	}
-	data, err := clientutil.ReadLimited(response.Body, MaxDescriptorBytes)
+	data, err := clientutil.Get(ctx, &client, address, MaxDescriptorBytes)
 	if err != nil {
 		return nil, err
 	}
