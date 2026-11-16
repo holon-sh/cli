@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"maps"
 	"math"
 	"slices"
@@ -80,9 +78,6 @@ func decodeJSON(data []byte) (Value, error) {
 	if err := decoder.Decode(&raw); err != nil {
 		return nil, err
 	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return nil, errors.New("trailing characters")
-	}
 	return fromAny(raw)
 }
 
@@ -129,33 +124,6 @@ func (n Number) MarshalJSON() ([]byte, error) { return []byte(n.String()), nil }
 
 func sortedKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
-}
-
-// describe names a value in serde's "invalid type" errors.
-func describe(value Value) string {
-	switch value := value.(type) {
-	case nil:
-		return "null"
-	case bool:
-		return fmt.Sprintf("boolean `%t`", value)
-	case Number:
-		if value.isInteger() {
-			return fmt.Sprintf("integer `%s`", value)
-		}
-		return fmt.Sprintf("floating point `%s`", value)
-	case string:
-		return fmt.Sprintf("string %s", quoted(value))
-	case []Value:
-		return "sequence"
-	}
-	return "map"
-}
-
-func asObject(value Value) (Object, error) {
-	if object, ok := value.(Object); ok {
-		return object, nil
-	}
-	return nil, fmt.Errorf("invalid type: %s, expected a map", describe(value))
 }
 
 // pointer resolves a JSON pointer as serde_json's Value::pointer does.

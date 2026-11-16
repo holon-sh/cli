@@ -89,13 +89,11 @@ const (
 type typ struct {
 	kind       typeKind
 	literal    Value            // kindLiteral
-	item       *typ             // kindArray
-	prefix     []typ            // kindTuple
 	min        int              // kindTuple: required prefix length
 	fields     map[string]field // kindObject
 	definition string           // The definition or title that names it, until shared
 	extra      extra            // kindTuple rest, kindObject additional properties
-	items      []typ            // kindUnion, kindIntersection
+	items      []typ            // kindArray item, kindTuple prefix, kindUnion, kindIntersection
 	ref        *declaration     // kindDeclared
 }
 
@@ -383,7 +381,7 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 			if count, ok := object["minItems"].(Number); ok && count.kind == posInt {
 				min = int(count.u)
 			}
-			return typ{kind: kindTuple, prefix: items, min: min, extra: extra}, nil
+			return typ{kind: kindTuple, items: items, min: min, extra: extra}, nil
 		}
 		items, declared := object["items"]
 		if !declared {
@@ -393,7 +391,7 @@ func (p *parser) parse(schema Value, depth int) (typ, error) {
 		if err != nil {
 			return typ{}, err
 		}
-		return typ{kind: kindArray, item: &item}, nil
+		return typ{kind: kindArray, items: []typ{item}}, nil
 	}
 	_, hasProperties := object["properties"]
 	if kind == "object" || !isString && hasProperties {

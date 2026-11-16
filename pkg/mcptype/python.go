@@ -171,7 +171,7 @@ func (e *pythonEmitter) render(value typ, name string) string {
 		}
 		return "_builtins.object"
 	case kindArray:
-		return fmt.Sprintf("_builtins.list[%s]", e.render(*value.item, name+"Item"))
+		return fmt.Sprintf("_builtins.list[%s]", e.render(value.items[0], name+"Item"))
 	case kindTuple:
 		return "_builtins.list[_builtins.object]"
 	case kindUnion:
