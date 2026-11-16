@@ -104,7 +104,7 @@ func renderGo(value typ) string {
 			return "json.Number"
 		}
 	case kindArray:
-		return "[]" + renderGo(*value.item)
+		return "[]" + renderGo(value.items[0])
 	case kindObject:
 		if len(value.fields) == 0 {
 			item := "json.RawMessage"

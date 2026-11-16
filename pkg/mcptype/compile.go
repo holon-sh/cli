@@ -3,6 +3,8 @@ package mcptype
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -122,21 +124,11 @@ func (s *sharing) count(value typ, named bool) {
 }
 
 func (s *sharing) countWithin(value typ) {
-	switch value.kind {
-	case kindArray:
-		s.count(*value.item, false)
-	case kindTuple:
-		for _, item := range value.prefix {
-			s.count(item, false)
-		}
-	case kindObject:
-		for _, name := range sortedKeys(value.fields) {
-			s.count(value.fields[name].value, false)
-		}
-	case kindUnion, kindIntersection:
-		for _, item := range value.items {
-			s.count(item, false)
-		}
+	for _, item := range value.items {
+		s.count(item, false)
+	}
+	for _, name := range sortedKeys(value.fields) {
+		s.count(value.fields[name].value, false)
 	}
 	if value.extra.value != nil {
 		s.count(*value.extra.value, false)
@@ -201,29 +193,14 @@ func (s *sharing) rewrite(value typ) typ {
 
 func (s *sharing) rewriteWithin(value typ) typ {
 	value.definition = ""
-	switch value.kind {
-	case kindArray:
-		item := s.rewrite(*value.item)
-		value.item = &item
-	case kindTuple:
-		prefix := make([]typ, len(value.prefix))
-		for i, item := range value.prefix {
-			prefix[i] = s.rewrite(item)
-		}
-		value.prefix = prefix
-	case kindObject:
-		fields := make(map[string]field, len(value.fields))
-		for _, name := range sortedKeys(value.fields) {
-			member := value.fields[name]
-			fields[name] = field{value: s.rewrite(member.value), required: member.required}
-		}
-		value.fields = fields
-	case kindUnion, kindIntersection:
-		items := make([]typ, len(value.items))
-		for i, item := range value.items {
-			items[i] = s.rewrite(item)
-		}
-		value.items = items
+	value.items = slices.Clone(value.items)
+	for i, item := range value.items {
+		value.items[i] = s.rewrite(item)
+	}
+	value.fields = maps.Clone(value.fields)
+	for _, name := range sortedKeys(value.fields) {
+		member := value.fields[name]
+		value.fields[name] = field{value: s.rewrite(member.value), required: member.required}
 	}
 	if value.extra.value != nil {
 		item := s.rewrite(*value.extra.value)
@@ -283,23 +260,16 @@ func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
 		spell(out, value.ref.value, seen)
 	case kindLiteral:
 		out.Write(encode(value.literal))
-	case kindArray:
-		spell(out, *value.item, seen)
 	case kindTuple:
 		fmt.Fprintf(out, "%d", value.min)
-		for _, item := range value.prefix {
-			spell(out, item, seen)
-		}
-	case kindObject:
-		for _, name := range sortedKeys(value.fields) {
-			member := value.fields[name]
-			fmt.Fprintf(out, "%s%t", quoted(name), member.required)
-			spell(out, member.value, seen)
-		}
-	case kindUnion, kindIntersection:
-		for _, item := range value.items {
-			spell(out, item, seen)
-		}
+	}
+	for _, item := range value.items {
+		spell(out, item, seen)
+	}
+	for _, name := range sortedKeys(value.fields) {
+		member := value.fields[name]
+		fmt.Fprintf(out, "%s%t", quoted(name), member.required)
+		spell(out, member.value, seen)
 	}
 	if value.kind == kindTuple || value.kind == kindObject {
 		fmt.Fprintf(out, "%d%t", value.extra.kind, value.extra.recursive)

@@ -30,7 +30,7 @@ func renderTypeScript(value typ) string {
 		}
 		return string(encode(value.literal))
 	case kindArray:
-		return fmt.Sprintf("Array<%s>", renderTypeScript(*value.item))
+		return fmt.Sprintf("Array<%s>", renderTypeScript(value.items[0]))
 	case kindUnion:
 		if len(value.items) == 0 {
 			return "never"
@@ -42,8 +42,8 @@ func renderTypeScript(value typ) string {
 		}
 		return "(" + joinTypeScript(value.items, " & ") + ")"
 	case kindTuple:
-		items := make([]string, 0, len(value.prefix)+1)
-		for i, item := range value.prefix {
+		items := make([]string, 0, len(value.items)+1)
+		for i, item := range value.items {
 			optional := ""
 			if i >= value.min {
 				optional = "?"
