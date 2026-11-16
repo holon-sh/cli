@@ -28,10 +28,10 @@ func decodeSchema(member string, raw json.RawMessage) (Object, error) {
 		return nil, fmt.Errorf("missing field `%s`", member)
 	}
 	value, err := decodeJSON(raw)
-	if err != nil {
-		return nil, err
+	if object, ok := value.(Object); ok || err != nil {
+		return object, err
 	}
-	return asObject(value)
+	return nil, fmt.Errorf("%s must be an object", member)
 }
 
 func decodeContract(source mcpcontract.Contract) (contract, error) {
