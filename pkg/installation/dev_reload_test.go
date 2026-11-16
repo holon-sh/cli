@@ -427,14 +427,15 @@ func TestDevResumesTheAppsAnEarlierRunStarted(t *testing.T) {
 
 func TestDevAppliesProjectChanges(t *testing.T) {
 	f := startReloadFixture(t, true)
+	f.update(func() { f.served = append(f.served, protocol.App{Name: "linear", Inherited: true}) })
 	for _, step := range []struct {
 		files        map[string]string
 		fail         bool
 		line, served string
 	}{
-		{files: map[string]string{manifestFileName: alphaManifest + betaRemote}, fail: true, line: "manifest replacement outcome conflicts", served: "alpha"},
-		{files: map[string]string{"alpha/tools.py": "second"}, line: "beta ready", served: "alpha beta"},
-		{files: map[string]string{manifestFileName: alphaManifest}, line: "beta removed", served: "alpha"},
+		{files: map[string]string{manifestFileName: alphaManifest + betaRemote}, fail: true, line: "manifest replacement outcome conflicts", served: "alpha linear"},
+		{files: map[string]string{"alpha/tools.py": "second"}, line: "beta ready", served: "alpha beta linear"},
+		{files: map[string]string{manifestFileName: alphaManifest}, line: "beta removed", served: "alpha linear"},
 	} {
 		f.update(func() { f.failSave = step.fail })
 		f.save(step.files, step.line)

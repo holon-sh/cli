@@ -460,7 +460,7 @@ func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequest, remo
 func removedApps(running, desired []protocol.App) []string {
 	var removed []string
 	for _, app := range running {
-		if !slices.ContainsFunc(desired, func(kept protocol.App) bool { return kept.Name == app.Name }) {
+		if !app.Inherited && !slices.ContainsFunc(desired, func(kept protocol.App) bool { return kept.Name == app.Name }) {
 			removed = append(removed, app.Name)
 		}
 	}
