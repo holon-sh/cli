@@ -38,6 +38,16 @@ func TestRegistryDeploymentSelection(t *testing.T) {
 		{name: "infer HTTP OCI", packages: []json.RawMessage{httpOCI}, want: &deployment{image: "ghcr.io/acme/example:1.0.0", port: 8082}},
 		{name: "HTTP endpoint Holon cannot reach", packages: []json.RawMessage{invalidHTTP}, rejected: "transport.url must be"},
 		{name: "invalid HTTP package is still a candidate", packages: []json.RawMessage{invalidHTTP, oci}, rejected: "ambiguous"},
+		{
+			name: "invalid input in unselected package", packages: []json.RawMessage{
+				json.RawMessage(`{"registryType":"npm","runtimeArguments":[{"name":"-e","value":1}]}`), oci,
+			}, selector: protocol.RegistrySource{Package: &protocol.PackageSelection{RegistryType: "oci"}}, rejected: "decode server.json",
+		},
+		{
+			name: "headers before invalid transport", packages: []json.RawMessage{
+				json.RawMessage(`{"registryType":"oci","transport":{"type":"streamable-http","url":"http://localhost:8082/mcp?tenant=west","headers":[{"name":"X-Key"}]}}`),
+			}, rejected: "package HTTP headers are unsupported",
+		},
 		{name: "remotes only", remotes: []mcpregistry.Transport{remote}, rejected: remote.URL},
 		{
 			name: "published identifier with replacement run", packages: []json.RawMessage{oci, secondOCI},

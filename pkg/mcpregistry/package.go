@@ -60,16 +60,13 @@ func (p Package) environmentInputs() (map[string]protocol.Input, map[string]stri
 	}
 	for _, spec := range specs {
 		input, variables, err := spec.Parse()
-		if err == nil {
-			err = MergeInputs(inputs, variables)
-		}
 		switch {
 		case err != nil:
 		case variables == nil:
 			err = mergeInput(inputs, spec.Name, input)
 		default:
 			templates[spec.Name] = *input.Value
-			err = validEnvironmentName(spec.Name)
+			err = cmp.Or(MergeInputs(inputs, variables), validEnvironmentName(spec.Name))
 		}
 		if err != nil {
 			return nil, nil, err
