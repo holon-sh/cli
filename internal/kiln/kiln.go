@@ -3,15 +3,12 @@ package kiln
 import (
 	"context"
 	"errors"
+
+	"github.com/holon-sh/protocol/runtimecontract"
 )
 
 var ErrNotLinked = errors.New("this holon was built without Kiln, which plans how an app installs, builds and starts; " +
 	"install a release build: curl -fsSL https://holonlabs.ai/install.sh | sh")
-
-type Request struct {
-	Source string
-	Start  []string
-}
 
 // Command is a command Kiln runs with no network in an app's image, without the app's build: Mounts names build
 // contexts mounted read-only at the paths given, Overlay a build context copied over the app first, and Packages
@@ -23,34 +20,20 @@ type Command struct {
 	Packages []string          `json:"packages,omitempty"`
 }
 
-// Steps are what a development environment runs in an app's source: Install whenever a file in Inputs
-// changes, then Build.
-type Steps struct {
-	Inputs  []string   `json:"inputs"`
-	Install [][]string `json:"install"`
-	Build   [][]string `json:"build"`
+// Image is the Dockerfile that builds the image of the app in source, started by start.
+func Image(ctx context.Context, source string, start []string) (string, error) {
+	return dockerfile(ctx, started(source, "image", start))
 }
 
-type startup struct {
-	Start []string `json:"start,omitempty"`
+// Development is the plan the development runtime follows for the app in source, started by start.
+func Development(ctx context.Context, source string, start []string) (runtimecontract.Plan, error) {
+	var development runtimecontract.Plan
+	err := plan(ctx, started(source, "development", start), &development)
+	return development, err
 }
 
-// Image is the Dockerfile that builds the image of the app request names.
-func Image(ctx context.Context, request Request) (string, error) {
-	return dockerfile(ctx, struct {
-		Source string  `json:"source"`
-		Image  startup `json:"image"`
-	}{request.Source, startup{request.Start}})
-}
-
-// Development is what a development environment runs for the app in source.
-func Development(ctx context.Context, source string) (Steps, error) {
-	var steps Steps
-	err := plan(ctx, struct {
-		Source      string   `json:"source"`
-		Development struct{} `json:"development"`
-	}{Source: source}, &steps)
-	return steps, err
+func started(source, kind string, start []string) map[string]any {
+	return map[string]any{"source": source, kind: map[string][]string{"start": start}}
 }
 
 // Run is the Dockerfile of an image that runs command in the app in source and holds only the command's stdout,

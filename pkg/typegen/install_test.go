@@ -14,16 +14,16 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 	bin := t.TempDir()
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stand := func(dir, first, last string) {
-		steps, err := developmentSteps(t.Context(), dir)
+		plan, err := developmentPlan(t.Context(), dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for i, command := range steps.Install {
+		for i, command := range plan.Install.Commands {
 			script := "#!/bin/sh\n"
 			if i == 0 {
 				script += first + "\n"
 			}
-			if i == len(steps.Install)-1 {
+			if i == len(plan.Install.Commands)-1 {
 				script += last + "\n"
 			}
 			put(t, bin, command[0], script)

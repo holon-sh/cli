@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/holon-sh/cli/internal/kiln"
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 	"github.com/klauspost/compress/zstd"
@@ -40,8 +39,7 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 		source := staticfs.NewFS()
 		source.Add("value", &fstypes.Stat{Mode: 0o644}, []byte(value))
 		request := buildRequest{
-			Request: kiln.Request{Start: []string{"/serve"}},
-			app:     manifestApp{Name: "alpha", Path: value}, upload: &imageUpload{grant: grant, client: options.HTTPClient},
+			app: manifestApp{Name: "alpha", Path: value}, upload: &imageUpload{grant: grant, client: options.HTTPClient},
 			Env: options.Env, builders: options.builders,
 			dockerfile: "FROM scratch\nCOPY value /value\nENV RECIPE=" + value + "\nCMD [\"/serve\"]\n",
 		}

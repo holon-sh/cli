@@ -27,12 +27,6 @@ import (
 	"github.com/holon-sh/protocol/runtimecontract"
 )
 
-const toolGetAppContract = "get_app_contract"
-
-type reloadAppResult struct {
-	Output string `json:"output"`
-}
-
 type packedSource struct {
 	overlay ocispec.Descriptor
 	file    string
@@ -48,7 +42,7 @@ func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error
 		}
 		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.session.Name}, App: app.Name}
 		var contract json.RawMessage
-		if err := d.manager.Call(ctx, d.options.plane, toolGetAppContract, request, &contract); err == nil {
+		if err := d.manager.Call(ctx, d.options.plane, protocol.ToolGetAppContract, request, &contract); err == nil {
 			served[app.Name] = contract
 		} else if sent != "" {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
@@ -185,7 +179,7 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 	if err != nil {
 		return err
 	}
-	var result reloadAppResult
+	var result protocol.ReloadAppResult
 	request := apiRequest{Plane: d.options.plane, Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
 	if err := d.manager.client.send(ctx, path.Join(protocol.APIPathSessions, d.session.Name, "apps", app, "source"), request, &result); err != nil {
 		return err
@@ -228,10 +222,13 @@ func packSource(ctx context.Context, app manifestApp, root string, accepted *pre
 	if err != nil {
 		return packedSource{}, err
 	}
-	// A page is built once the clients it may import are in the source.
-	plan, err := overlayPlan(ctx, root, entry, accepted != nil && !accepted.unserved)
+	plan, err := kiln.Development(ctx, root, serveCommand(entry))
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
+	}
+	// A page is built once the clients it may import are in the source.
+	if accepted == nil || accepted.unserved {
+		plan.Prepare = nil
 	}
 	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.PlanFile)), 0o755); err != nil {
 		return packedSource{}, err
@@ -273,28 +270,6 @@ func devEntry(app manifestApp, root string) (string, error) {
 		err = fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
 	return entry, err
-}
-
-func overlayPlan(ctx context.Context, root, entry string, page bool) (runtimecontract.Plan, error) {
-	steps, err := kiln.Development(ctx, root)
-	if err != nil {
-		return runtimecontract.Plan{}, err
-	}
-	read := map[string][]byte{}
-	for _, name := range steps.Inputs {
-		if read[name], err = os.ReadFile(filepath.Join(root, name)); err != nil {
-			return runtimecontract.Plan{}, err
-		}
-	}
-	inputs, _ := json.Marshal(read)
-	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: digest.FromBytes(inputs).String(), Commands: steps.Install}, Start: serveCommand(entry)}
-	if filepath.Ext(entry) == ".py" {
-		plan.Start = append([]string{"uv", "run", "--no-sync"}, plan.Start...)
-	}
-	if page {
-		plan.Prepare = steps.Build
-	}
-	return plan, nil
 }
 
 func (p packedSource) publish(ctx context.Context, app, session string) error {

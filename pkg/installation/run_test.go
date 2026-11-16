@@ -26,7 +26,6 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/oauth2"
 
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	testingclock "k8s.io/utils/clock/testing"
 
@@ -183,12 +182,6 @@ func newRunHarness(t *testing.T) *runHarness {
 
 const servedContract = `{"serverInfo":{"name":"example.com/alpha","version":"1","description":"alpha"},"capabilities":{"tools":{}},"lists":{"tools/list":{"pages":[{"tools":[{"name":"lookup","inputSchema":{"type":"object"}}]}]}}}`
 
-func (h *runHarness) serveContract() {
-	h.control.Handle([]string{toolGetAppContract}, nil, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, json.RawMessage(servedContract))
-	})
-}
-
 func (h *runHarness) start(t *testing.T, build buildApplication) {
 	t.Helper()
 	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
@@ -249,159 +242,6 @@ func startDev(t *testing.T, config commandConfig, args ...string) (stdout, stder
 		cancel()
 		return <-done
 	}
-}
-
-func TestRunDevLifecycle(t *testing.T) {
-	root := t.TempDir()
-	t.Chdir(root)
-	sourceFiles(t, root, map[string]string{
-		"alpha/server.js": "export default {}", "alpha/package.json": sourcePackage,
-		"beta/server.js": "export default {}", "beta/package.json": sourcePackage,
-	})
-	for _, name := range []string{"alpha", "beta"} {
-		writeDescriptor(t, filepath.Join(root, name, "server.json"), descriptorDocument(name))
-	}
-	var mu sync.Mutex
-	var ambiguous, unavailable bool
-	var creates int
-	var created, served []protocol.App
-	var updates [][]protocol.App
-	var reloads []string
-	outage := sets.New[string]()
-	h := newRunHarness(t)
-	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, protocol.Info{
-			Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"},
-			Version:      "test", OAuth: &protocol.OAuthInfo{
-				Issuer: h.server.URL + "/", AdminAudience: installationtest.AdminAudience(h.server.URL), CLIClientID: "cli-test",
-			},
-		})
-	})
-	session := func() map[string]any {
-		response := apiSession("alpha", "beta")
-		response["apps"] = served
-		return response
-	}
-	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
-		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
-		installationtest.WriteJSON(w, protocol.UploadGrant{
-			Grant: "grant-secret", Registry: "registry.example",
-			Repositories: map[string]string{"alpha": "holon/upload/alpha", "beta": "holon/upload/beta"},
-		})
-	})
-	h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
-		var input protocol.AppsRequest
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			t.Error(err)
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		creates++
-		created, served = input.Apps, slices.Clone(input.Apps)
-		if !ambiguous {
-			installationtest.WriteJSON(w, session())
-			return
-		}
-		connection, _, err := w.(http.Hijacker).Hijack()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		_ = connection.Close()
-	})
-	h.serveContract()
-	h.mux.HandleFunc("POST /sessions/gentle-otter-482/apps/{app}/source", func(w http.ResponseWriter, r *http.Request) {
-		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
-		mu.Lock()
-		reloads = append(reloads, r.PathValue("app"))
-		mu.Unlock()
-		installationtest.WriteJSON(w, reloadAppResult{})
-	})
-	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolRenewSession, protocol.ToolUpdateSession},
-		map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
-			installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
-			mu.Lock()
-			defer mu.Unlock()
-			switch tool := installationtest.ToolName(r); {
-			case tool == protocol.ToolUpdateSession:
-				var input protocol.UpdateSessionRequest
-				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-					t.Error(err)
-				}
-				for _, app := range input.Desired.Apps {
-					served[slices.IndexFunc(served, func(old protocol.App) bool { return old.Name == app.Name })] = app
-				}
-				updates = append(updates, input.Desired.Apps)
-			case unavailable:
-				outage.Insert(tool)
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
-			installationtest.WriteJSON(w, session())
-		})
-	const (
-		appOutput = "2026-11-09T10:00:00.1Z  alpha starting up\n"
-		callLine  = "2026-11-09T10:00:00.2Z INFO alpha tools/call lookup ok 22ms\n"
-	)
-	h.mux.HandleFunc("GET /sessions/gentle-otter-482/logs", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, appOutput+callLine)
-	})
-	h.start(t, nil)
-	t.Run("ambiguous creation is not retried or deleted", func(t *testing.T) {
-		mu.Lock()
-		ambiguous = true
-		mu.Unlock()
-		err := executeCommand(t.Context(), []string{"dev", "alpha=alpha", "beta", "--public"}, nil, nil, h.run)
-		mu.Lock()
-		defer mu.Unlock()
-		ambiguous = false
-		if err == nil || !strings.Contains(err.Error(), "outcome is unknown; inspect sessions at https://dev."+h.baseHost+" before retrying") ||
-			creates != 1 {
-			t.Fatalf("ambiguous creation: creates=%d error=%v", creates, err)
-		}
-	})
-	t.Run("session survives edits and outages", func(t *testing.T) {
-		fc := testingclock.NewFakeClock(time.Now())
-		config := h.run
-		config.Clock = fc
-		stdout, stderr, stop := startDev(t, config, "--public")
-		t.Cleanup(func() {
-			if t.Failed() {
-				t.Logf("stdout=%q\nstderr=%q", stdout.String(), stderr.String())
-			}
-		})
-		stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String(), watching) })
-		from := len(stderr.String())
-		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
-		h.files.save(t, root, map[string]string{"alpha/logic.txt": "edited"})
-		stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String()[from:], "alpha ready in") })
-		mu.Lock()
-		unavailable = true
-		mu.Unlock()
-		stepUntil(t, fc, renewalInterval, func() bool {
-			mu.Lock()
-			defer mu.Unlock()
-			return outage.HasAll(protocol.ToolGetSession, protocol.ToolRenewSession)
-		})
-		mu.Lock()
-		unavailable = false
-		mu.Unlock()
-		if err := stop(); err != nil {
-			t.Fatalf("run: %v stderr=%q", err, stderr.String())
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if len(updates) != 0 || !slices.Equal(reloads, []string{"alpha", "beta", "alpha"}) || created[0].Image != "" || created[1].Image != "" ||
-			strings.Count(stdout.String(), "Ready\n") != 1 {
-			t.Fatalf("source edit updates = %#v, reloads = %v, created = %#v, stdout=%q", updates, reloads, created, stdout.String())
-		}
-		output := stdout.String() + stderr.String()
-		for _, hidden := range []string{"grant-secret", "alpha starting up", "tools/call"} {
-			if strings.Contains(output, hidden) {
-				t.Errorf("quiet dev showed %q in %q", hidden, output)
-			}
-		}
-	})
 }
 
 func TestDevDeploymentStatusTransitions(t *testing.T) {

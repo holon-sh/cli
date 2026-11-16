@@ -22,7 +22,7 @@ func importRegistryBuild(
 			if err := manager.Call(ctx, plane, protocol.ToolGetImport, protocol.GetImportRequest{ID: imported.ID}, &imported); err != nil {
 				return false, err
 			}
-			if imported.Phase == "Failed" {
+			if imported.Phase == protocol.PhaseFailed {
 				return false, errors.New("import failed: " + imported.Message)
 			}
 			return imported.Build != nil, nil

@@ -357,14 +357,14 @@ func (d *devLoop) poll(current protocol.SessionResponse, err error) error {
 	if slices.Contains([]string{protocol.ReasonLeaseExpired, protocol.ReasonDeleting}, condition.Reason) {
 		return errors.New("development session is no longer active")
 	}
-	if condition.Status == "True" {
+	if condition.Status == protocol.ConditionTrue {
 		d.options.output.problem("remote deployment", nil)
 	}
 	if !terminalCondition(condition) {
 		return nil
 	}
 	message := "remote session unavailable"
-	if current.Condition(protocol.ConditionAvailable).Status == "True" {
+	if current.Condition(protocol.ConditionAvailable).Status == protocol.ConditionTrue {
 		message = "remote update failed; existing service remains available"
 	}
 	d.options.output.problem("remote deployment",

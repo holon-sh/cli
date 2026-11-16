@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/holon-sh/protocol/runtimecontract"
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/modfile"
 
@@ -53,31 +54,31 @@ func MapClients(consumers []Consumer, options Options) error {
 	return nil
 }
 
-// Install runs, in dir, the development install Kiln plans for the app there, and returns the app's development steps.
-func Install(ctx context.Context, dir string, options Options) (kiln.Steps, error) {
+// Install runs, in dir, the development install Kiln plans for the app there, and returns the commands that prepare it.
+func Install(ctx context.Context, dir string, options Options) ([][]string, error) {
 	o := options.defaults()
-	steps, err := developmentSteps(ctx, dir)
+	plan, err := developmentPlan(ctx, dir)
 	if err != nil {
-		return kiln.Steps{}, fmt.Errorf("%s: %w", dir, err)
+		return nil, fmt.Errorf("%s: %w", dir, err)
 	}
-	return steps, commandenv.RunEach(ctx, dir, filepath.Base(dir), steps.Install, commandenv.Environ(o.Env), o.Stderr)
+	return plan.Prepare, commandenv.RunEach(ctx, dir, filepath.Base(dir), plan.Install.Commands, commandenv.Environ(o.Env), o.Stderr)
 }
 
-func developmentSteps(ctx context.Context, dir string) (kiln.Steps, error) {
+func developmentPlan(ctx context.Context, dir string) (runtimecontract.Plan, error) {
 	source, err := os.MkdirTemp("", "holon-install-")
 	if err != nil {
-		return kiln.Steps{}, err
+		return runtimecontract.Plan{}, err
 	}
 	defer func() { _ = os.RemoveAll(source) }()
 	root := filepath.Join(source, "source")
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return kiln.Steps{}, err
+		return runtimecontract.Plan{}, err
 	}
 	if _, err := SnapshotSource(filepath.Base(dir), resolved, root); err != nil {
-		return kiln.Steps{}, err
+		return runtimecontract.Plan{}, err
 	}
-	return kiln.Development(ctx, root)
+	return kiln.Development(ctx, root, nil)
 }
 
 // mapClients gives a Node.js target's clients the import name #holon-sh or #holon-ui in the package.json
