@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,9 +31,7 @@ func TestAddApp(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			manifest := filepath.Join(t.TempDir(), "holon.yaml")
 			if test.before != "" {
-				if err := os.WriteFile(manifest, []byte(test.before), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				writeCLIFile(t, filepath.Dir(manifest), "holon.yaml", test.before)
 			}
 			if test.path == "" {
 				test.path = "orders"

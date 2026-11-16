@@ -24,13 +24,8 @@ import (
 //go:embed all:templates
 var templates embed.FS
 
-// Versions are the Holon SDK versions an app pins.
-type Versions struct {
-	HolonSH    string // holon-sh on npm, for a TypeScript server
-	HolonUI    string // holon-ui on npm, for the view
-	HolonPy    string // holon-sh on PyPI, for a Python server
-	HolonTypes string
-}
+// Versions are the Holon packages a new app pins: its server SDK, the view SDK and the CLI.
+type Versions struct{ SDK, UI, CLI string }
 
 // Languages are the languages an app can be written in, by their --lang names.
 var Languages = []string{typegen.TargetGo, typegen.TargetPy, typegen.TargetTS}
@@ -261,13 +256,13 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 	if err := json.Unmarshal(data, &pkg); err != nil {
 		return nil, "", err
 	}
-	dependencies := map[string]string{"@modelcontextprotocol/ext-apps": "^2.0.4", typegen.NodePackages[typegen.TargetUI]: p.Versions.HolonUI}
+	dependencies := map[string]string{"@modelcontextprotocol/ext-apps": "^2.0.4", typegen.NodePackages[typegen.TargetUI]: p.Versions.UI}
 	dev := map[string]string{"@types/node": "^26.6.6", "typescript": "^7.0.2", "vite": "^8.3.7"}
 	if p.Language == typegen.TargetTS {
 		dependencies["@modelcontextprotocol/server"] = "^2.4.0"
-		dependencies[typegen.NodePackages[typegen.TargetTS]] = p.Versions.HolonSH
+		dependencies[typegen.NodePackages[typegen.TargetTS]] = p.Versions.SDK
 		dependencies["zod"] = "^4.6.7"
-		dev[cliPackage] = p.Versions.HolonTypes
+		dev[cliPackage] = p.Versions.CLI
 	}
 	for _, section := range []struct {
 		name     string
@@ -300,7 +295,7 @@ func (p Project) addPackages(data []byte) ([]byte, string, error) {
 // PythonRequirements are the Python requirements the app needs: dependencies, which a project
 // declares directly, and development ones, which it only needs installed.
 func (p Project) PythonRequirements() (dependencies, dev []string) {
-	return []string{typegen.PythonRuntime + "==" + p.Versions.HolonPy, "mcp>=2.3,<3"}, []string{cliPackage + "==" + p.Versions.HolonTypes}
+	return []string{typegen.PythonRuntime + "==" + p.Versions.SDK, "mcp>=2.3,<3"}, []string{cliPackage + "==" + p.Versions.CLI}
 }
 
 // appendLines appends to a file's text each line of more it lacks.

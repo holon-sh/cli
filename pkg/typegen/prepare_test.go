@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
@@ -89,9 +90,7 @@ func TestConsumersAnnounceTheirManifestIdentity(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			for name, content := range test.files {
-				put(t, dir, name, content)
-			}
+			testfiles.Write(t, dir, test.files)
 			c := Consumer{Name: "app", Dir: dir, Targets: test.targets, Sources: []Source{{Server: document(t, ordersMetadata())}}}
 			prepared, err := Prepare(t.Context(), []Consumer{c}, Options{})
 			if err != nil {
