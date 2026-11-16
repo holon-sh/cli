@@ -178,6 +178,11 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if config.devTTLSeconds == nil {
 		dev.session = previousSession(ctx, manager, recordPath)
 		dev.name = dev.session.Name
+		for _, app := range dev.session.Apps {
+			if app.Source {
+				dev.sent[app.Name] = ""
+			}
+		}
 	}
 	if dev.name != "" {
 		if err := printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps); err != nil {
