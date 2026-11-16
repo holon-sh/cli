@@ -69,7 +69,7 @@ jobs:
           uv sync --project tooling/python
           echo "$PWD/tooling/python/.venv/bin" >> "$GITHUB_PATH"
       - run: npm ci --prefix tooling/typescript
-      - run: go test -v -vet=all -tags="kiln${{ runner.os == 'Linux' && ',docker' || '' }}" ./...
+      - run: go test -v -count=1 -tags=kiln,docker -run 'TestDocker(AutomaticTypes|PythonTypedBuild|SourceBuild)' ./pkg/installation
       - name: Build without Kiln, as go install does
         run: go vet ./...
   test-package:

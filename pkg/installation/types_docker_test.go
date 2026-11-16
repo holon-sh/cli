@@ -4,6 +4,9 @@ package installation
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"time"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -86,19 +89,22 @@ export default createMcpHandler(() => {
 	grant, options := sourceRegistry(t)
 	options.plane = protocol.AdminPlane
 	var diagnostics strings.Builder
-	options.output = verboseOutput(&diagnostics)
+	options.output = verboseOutput(io.MultiWriter(&diagnostics, stamped{}))
 	grant.Repositories = map[string]string{"orders": "apps/orders", "checkout": "apps/checkout"}
 	options.architectures = []string{"amd64", "arm64"}
 	options.Env = append(options.Env, "DOCKER_CONTEXT="+os.Getenv("DOCKER_CONTEXT"))
+	mark("ts prepare start")
 	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options, nil)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, &diagnostics)
 	}
 	defer cleanup()
+	mark("ts prepare done, build start")
 	apps, err := buildAndPush(t.Context(), prepared, &imageUpload{grant: grant, client: options.HTTPClient}, options)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, &diagnostics)
 	}
+	mark("ts build done")
 	for _, app := range apps {
 		repository, err := imageRepository(grant.Registry+"/"+grant.Repositories[app.Name], grant.Grant, options.HTTPClient)
 		if err != nil {
@@ -130,17 +136,20 @@ export default createMcpHandler(() => {
 			}
 		}
 	}
+	mark("ts reads done, failing prepare start")
 	sourceFiles(t, root, map[string]string{"orders/server.ts": strings.Replace(provider, "id:z.string()", "id:z.number()", 1)})
 	if _, _, err := prepareManifestTypes(t.Context(), manifest, options, nil); err == nil ||
 		!strings.Contains(err.Error(), "checkout does not type-check") || !strings.Contains(err.Error(), "error TS2322") {
 		t.Fatalf("expected incompatible argument diagnostic: %v", err)
 	}
+	mark("ts failing prepare done, passing prepare start")
 	sourceFiles(t, root, map[string]string{"checkout/server.ts": strings.Replace(caller, "get_order({id})", "get_order({id:Number(id)})", 1)})
 	_, cleanupChanged, err := prepareManifestTypes(t.Context(), manifest, options, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanupChanged()
+	mark("ts end")
 }
 
 func TestDockerPythonTypedBuild(t *testing.T) {
@@ -192,8 +201,10 @@ async def checkout(id: str) -> float:
 			})
 		}
 		var progress strings.Builder
-		options.output = verboseOutput(&progress)
+		options.output = verboseOutput(io.MultiWriter(&progress, stamped{}))
+		mark(fmt.Sprint("py prepare start valid=", valid))
 		prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options, nil)
+		mark("py prepare done")
 		if !valid {
 			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "incompatible type") {
 				t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, progress.String())
@@ -211,5 +222,15 @@ async def checkout(id: str) -> float:
 		if _, err := buildAndPush(t.Context(), selected, &imageUpload{grant: grant, client: options.HTTPClient}, options); err != nil {
 			t.Fatalf("build Python caller: %v\n%s", err, progress.String())
 		}
+		mark("py build done")
 	}
 }
+
+type stamped struct{}
+
+func (stamped) Write(data []byte) (int, error) {
+	fmt.Fprintf(os.Stderr, "@@ %s %s", time.Now().Format("15:04:05.0"), data)
+	return len(data), nil
+}
+
+func mark(what string) { fmt.Fprintf(os.Stderr, "@@ %s MARK %s\n", time.Now().Format("15:04:05.0"), what) }
