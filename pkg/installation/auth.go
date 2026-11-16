@@ -121,10 +121,7 @@ func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
 }
 
 func newLocalAuthManager(config ClientConfig) (*Client, error) {
-	env, err := commandenv.Environ(config.Env)
-	if err != nil {
-		return nil, err
-	}
+	env := commandenv.Environ(config.Env)
 	manager := &Client{
 		state:  authState{Tokens: map[string]*oauth2.Token{}},
 		output: cmp.Or(config.Output, io.Discard), interactive: config.Interactive, hookSent: map[string]time.Time{},
