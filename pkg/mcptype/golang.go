@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 )
 
@@ -82,13 +81,16 @@ func renderGo(value typ) string {
 			}
 			return "map[string]" + item
 		}
-		if value.extra.kind == extraOpen || slices.ContainsFunc(sortedKeys(value.fields), func(name string) bool { return name == "-" || !goTagName.MatchString(name) }) {
+		if value.extra.kind == extraOpen {
 			return "map[string]json.RawMessage"
 		}
 		names := map[string]bool{}
 		var out strings.Builder
 		out.WriteString("struct {\n")
 		for _, name := range sortedKeys(value.fields) {
+			if name == "-" || !goTagName.MatchString(name) {
+				return "map[string]json.RawMessage"
+			}
 			member := value.fields[name]
 			rendered := renderGo(member.value)
 			tagName := name
