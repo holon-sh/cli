@@ -69,7 +69,7 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		updates = append(updates, update)
 		installationtest.WriteJSON(w, protocol.SessionResponse{Name: input.Session, Revision: "2"})
 	})
-	h.start(t, nil)
+	h.start(t)
 	h.run.Clock = testingclock.NewFakeClock(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
 	for _, test := range []struct {
 		args    []string

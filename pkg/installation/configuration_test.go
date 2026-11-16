@@ -31,7 +31,7 @@ func TestConfigurationCommands(t *testing.T) {
 		_ = json.Unmarshal(body, &input)
 		installationtest.WriteJSON(w, protocol.EgressResponse{AppEgressPolicy: input.Policy, Revision: "1"})
 	})
-	h.start(t, nil)
+	h.start(t)
 	var out bytes.Buffer
 	for _, args := range [][]string{
 		{"config", "set", "alpha", "API_URL", "https://example.test"},

@@ -32,7 +32,7 @@ func TestLogs(t *testing.T) {
 			_, _ = io.WriteString(w, "2026-11-09T10:00:00.1Z  alpha "+session+"\n")
 		})
 	}
-	h.start(t, nil)
+	h.start(t)
 	var out bytes.Buffer
 	if err := executeCommand(t.Context(), []string{"logs", "alpha", "--env", "prod"}, &out, nil, h.run); err != nil {
 		t.Fatal(err)

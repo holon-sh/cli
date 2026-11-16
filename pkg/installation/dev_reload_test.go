@@ -213,7 +213,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		f.running[r.PathValue("app")] = body
 		installationtest.WriteJSON(w, reloadAppResult{Output: installed})
 	})
-	h.start(t, nil)
+	h.start(t)
 	fc := testingclock.NewFakeClock(time.Now())
 	h.run.Clock = fc
 	f.await = func(check func() bool) {

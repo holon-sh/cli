@@ -100,7 +100,6 @@ func (m *missingPackage) Error() string { return m.name + " is not installed" }
 func extractSources(ctx context.Context, root string, sources []*preparedSource, o Options, drift bool) error {
 	var run []*preparedSource
 	committed := map[*preparedSource]*Document{}
-	directories := map[*preparedSource]string{}
 	for _, s := range sources {
 		if s.language == "go" {
 			continue
@@ -119,20 +118,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 		if err != nil {
 			return err
 		}
-		committed[s], directories[s] = document, s.origin
-		if o.Run != nil {
-			// A hook may run servers where only root is visible, such as a container without network
-			// access, so it gets a snapshot there: a server that needs only its schema libraries
-			// extracts with the tooling's copies, and others report the package they miss.
-			directories[s] = filepath.Join(root, "sources", s.name)
-			fingerprint, err := SnapshotSource(s.name, s.origin, directories[s])
-			if err != nil {
-				return err
-			}
-			if fingerprint != s.fingerprint {
-				return fmt.Errorf("%s changed during preparation; discarding the superseded update", s.origin)
-			}
-		}
+		committed[s] = document
 		run = append(run, s)
 	}
 	if len(run) != 0 {
@@ -144,7 +130,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 	failures := make([]error, len(run))
 	var group sync.WaitGroup
 	for i, s := range run {
-		group.Go(func() { results[i], failures[i] = runServer(ctx, filepath.Join(root, "tooling"), directories[s], s, o) })
+		group.Go(func() { results[i], failures[i] = runServer(ctx, filepath.Join(root, "tooling"), s, o) })
 	}
 	group.Wait()
 	for i, s := range run {
@@ -200,9 +186,9 @@ func (s *preparedSource) committedContract() (*Document, error) {
 	return document, nil
 }
 
-func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Options) (*extraction, error) {
+func runServer(ctx context.Context, tooling string, s *preparedSource, o Options) (*extraction, error) {
 	extensions, _ := json.Marshal(clientExtensions)
-	args := append([]string{"contract", dir, s.entry, string(extensions)}, runtimecontract.CatalogMethods...)
+	args := append([]string{"contract", s.origin, s.entry, string(extensions)}, runtimecontract.CatalogMethods...)
 	var stdout bytes.Buffer
 	var err error
 	if o.Run != nil {

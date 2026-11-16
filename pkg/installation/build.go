@@ -14,8 +14,9 @@ import (
 	"sync"
 
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/singleflight"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/holon-sh/protocol"
@@ -25,9 +26,7 @@ type buildOptions struct {
 	importPackage func(context.Context, manifestApp) (protocol.ResolvedAppBuild, error)
 	plane         protocol.Plane
 	types         *typeWorkspace
-	architectures []string
-	builder       buildApplication
-	builders      *builderConnections
+	build         *buildSession
 	origin        string
 	Stderr        io.Writer
 	Env           []string
@@ -38,10 +37,8 @@ type buildOptions struct {
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
-	stderr := &buildLog{writer: cmp.Or(options.Stderr, io.Discard)}
 	apps := make([]protocol.App, len(manifest.Apps))
 	group, ctx := errgroup.WithContext(ctx)
-	group.SetLimit(3)
 	for index, app := range manifest.Apps {
 		declaration := app.resolved.App
 		if app.resolved.Remote != nil {
@@ -49,27 +46,19 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			continue
 		}
 		if app.Path != "" && options.development {
-			if _, err := devEntry(app, app.resolved.types.root); err != nil {
+			if _, err := sourceAppEntry(app, app.resolved.types.root); err != nil {
 				return nil, err
 			}
 			declaration.Port, declaration.Source = 0, true
 			apps[index] = declaration
 			continue
 		}
-		group.Go(func() (err error) {
+		group.Go(func() error {
 			finish := options.output.measure(app.Name, "build and upload")
 			defer finish()
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			options := options
-			logs := options.output.logs(stderr)
-			options.Stderr = logs
-			defer func() {
-				if err != nil {
-					err = logs.explain(err)
-				}
-			}()
 			if app.resolved.registryPackage != nil {
 				build, err := options.importPackage(ctx, app)
 				if err != nil {
@@ -81,11 +70,12 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			}
 			var image string
 			if app.resolved.Image == "" {
+				var err error
 				if image, err = buildSource(ctx, app, upload, options); err != nil {
 					return err
 				}
 			}
-			err = upload.run(ctx, func(grant protocol.UploadGrant) error {
+			err := upload.run(ctx, func(grant protocol.UploadGrant) error {
 				if image == "" {
 					imported, err := importImage(ctx, app.resolved.Image, grant.Registry, grant.Repositories[app.Name], grant.Grant, options.HTTPClient)
 					if err != nil {
@@ -168,13 +158,10 @@ func newImageUpload(manager *Client, name string, manifest manifestSpec) *imageU
 }
 
 type imageUpload struct {
-	mu           sync.Mutex
-	load         func(context.Context) (protocol.UploadGrant, error)
-	grant        protocol.UploadGrant
-	renewed      bool
-	repositories sync.Map
-	blobs        sync.Map
-	blobUploads  singleflight.Group
+	mu      sync.Mutex
+	load    func(context.Context) (protocol.UploadGrant, error)
+	grant   protocol.UploadGrant
+	renewed bool
 }
 
 func (u *imageUpload) destination(ctx context.Context, rejected string) (protocol.UploadGrant, error) {
@@ -211,4 +198,25 @@ func (u *imageUpload) run(ctx context.Context, operation func(protocol.UploadGra
 		}
 	}
 	return err
+}
+
+func (u *imageUpload) publish(ctx context.Context, app string, client *http.Client, operation func(*remote.Repository, protocol.UploadGrant) error) error {
+	return u.run(ctx, func(grant protocol.UploadGrant) error {
+		repository, err := imageRepository(grant.Registry+"/"+grant.Repositories[app], grant.Grant, client)
+		if err != nil {
+			return err
+		}
+		return operation(repository, grant)
+	})
+}
+
+func sourceLabels(app manifestApp) map[string]string {
+	if d := app.resolved.descriptor; d != nil {
+		return map[string]string{
+			"io.modelcontextprotocol.server.name": d.Name, ocispec.AnnotationTitle: cmp.Or(d.Title, d.Name),
+			ocispec.AnnotationVersion: d.Version, ocispec.AnnotationDescription: d.Description,
+			ocispec.AnnotationURL: d.WebsiteURL, ocispec.AnnotationSource: d.Repository.URL,
+		}
+	}
+	return nil
 }

@@ -7,8 +7,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"os/exec"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -224,8 +222,11 @@ func (o *progressOutput) finish(err error, message string) error {
 	return o.renderer.Wait()
 }
 
-func (o *progressOutput) logs(writer io.Writer) *buildLog {
-	return &buildLog{writer: writer, quiet: o != nil && !o.verbose}
+func (o *progressOutput) logs(writer io.Writer) io.Writer {
+	if o != nil && !o.verbose {
+		return io.Discard
+	}
+	return writer
 }
 
 func (o *progressOutput) measure(name, phase string) func() {
@@ -308,42 +309,10 @@ func (m progressModel) View() tea.View {
 type buildLog struct {
 	mu     sync.Mutex
 	writer io.Writer
-	quiet  bool
-	tail   []byte
 }
 
 func (l *buildLog) Write(data []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !l.quiet {
-		return l.writer.Write(data)
-	}
-	tail := data[max(0, len(data)-maxCommandOutput):]
-	l.tail = append(slices.Delete(l.tail, 0, max(0, len(l.tail)+len(tail)-maxCommandOutput)), tail...)
-	return len(data), nil
+	return l.writer.Write(data)
 }
-
-var stepTime = regexp.MustCompile(`(?m)^\d+\.\d+ ?`)
-
-func (l *buildLog) explain(err error) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	output := strings.TrimSpace(string(l.tail))
-	if _, step, ok := strings.Cut(output, "\n------\n > "); ok {
-		_, step, _ = strings.Cut(step, ":\n")
-		step, _, _ = strings.Cut(step, "\n------")
-		output = stepTime.ReplaceAllString(step, "")
-	} else if _, exited := errors.AsType[*exec.ExitError](err); exited {
-		output = output[strings.LastIndexByte(output, '\n')+1:]
-	} else {
-		return err
-	}
-	if output = strings.TrimSpace(output); output == "" {
-		return err
-	}
-	return fmt.Errorf("%w:\n%s", err, output)
-}
-
-type progressFunc func([]byte) (int, error)
-
-func (f progressFunc) Write(data []byte) (int, error) { return f(data) }

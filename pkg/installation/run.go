@@ -28,9 +28,8 @@ import (
 )
 
 const (
-	workflowPoll     = time.Second
-	renewalInterval  = time.Minute
-	maxCommandOutput = 64 << 10
+	workflowPoll    = time.Second
+	renewalInterval = time.Minute
 
 	// sessionWait is how long the server holds a get_session that names a revision.
 	sessionWait = 30 * time.Second
@@ -41,7 +40,6 @@ type commandConfig struct {
 	file               string
 	apps               []string
 	devTTLSeconds      *int64
-	builder            buildApplication
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
 	Clock              clock.WithTickerAndDelayedExecution
@@ -51,11 +49,8 @@ type commandConfig struct {
 	output             *progressOutput
 }
 
-func (c commandConfig) buildOptions(manager *Client, stderr io.Writer) buildOptions {
-	return buildOptions{
-		builder: c.builder, HTTPClient: c.RegistryHTTPClient, Stderr: stderr, Env: c.Auth.Env, output: c.output,
-		architectures: manager.info.BuildArchitectures, builders: new(builderConnections),
-	}
+func (c commandConfig) buildOptions(stderr io.Writer) buildOptions {
+	return buildOptions{HTTPClient: c.RegistryHTTPClient, Stderr: stderr, Env: c.Auth.Env, output: c.output}
 }
 
 func (c commandConfig) clock() clock.WithTickerAndDelayedExecution {
@@ -157,10 +152,9 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
-	options := config.buildOptions(manager, stderr)
+	options := config.buildOptions(stderr)
 	options.types, options.development = new(typeWorkspace), true
 	defer options.types.close()
-	defer options.builders.close()
 	resolved, err := resolveManifest(ctx, manager, config.manifest, apps...)
 	if err != nil {
 		return err
@@ -338,14 +332,14 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	for _, app := range current.Apps {
 		manifest.deployed[app.Name] = app.Access
 	}
-	options := config.buildOptions(manager, stderr)
-	defer options.builders.close()
+	options := config.buildOptions(stderr)
 	resolved, err := resolveManifest(ctx, manager, manifest, selection...)
 	if err != nil {
 		return err
 	}
+	options.build = &buildSession{manager: manager, output: config.output}
 	desired, err := uploadManifest(ctx, manager, protocol.ProductionName, resolved, options)
-	if err != nil {
+	if err = errors.Join(err, options.build.close(ctx)); err != nil {
 		return err
 	}
 	for _, app := range desired.Apps {

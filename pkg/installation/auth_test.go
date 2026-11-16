@@ -268,7 +268,6 @@ func TestLoginRejectsIncompatibleDiscovery(t *testing.T) {
 	const installation = `"installation":{"origin":"ORIGIN","uid":"test-installation"},`
 	for _, body := range []string{
 		`{"installation":{"origin":"https://other.example","uid":"installation"},"oauth":null}`,
-		`{` + installation + `"oauth":null,"buildArchitectures":["s390x"]}`,
 		`{` + installation + `"oauth":{"issuer":"ORIGIN/","cliClientID":"cli","adminAudience":"ADMIN","deviceFlowProfile":"unknown"}}`,
 	} {
 		t.Run(body, func(t *testing.T) {
