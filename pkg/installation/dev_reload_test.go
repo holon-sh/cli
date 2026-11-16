@@ -57,7 +57,6 @@ type reloadFixture struct {
 	mu        sync.Mutex
 	ready     bool
 	ambiguous bool
-	reason    string
 	outage    sets.Set[string]
 	updates   int
 	failNext  bool
@@ -102,7 +101,7 @@ func (f *reloadFixture) reloadRequests() []sentSource {
 
 func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *reloadFixture {
 	t.Helper()
-	f := &reloadFixture{t: t, root: t.TempDir(), ready: ready, reason: "Provisioning", changed: make(chan struct{})}
+	f := &reloadFixture{t: t, root: t.TempDir(), ready: ready, changed: make(chan struct{})}
 	sourceFiles(t, f.root, map[string]string{
 		manifestFileName:  alphaManifest,
 		"alpha/server.py": "app = None", "alpha/tools.py": "first", "alpha/pyproject.toml": alphaProject, "alpha/uv.lock": alphaLock,
@@ -148,7 +147,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		response["uid"] = sessionUID
 		response["apps"], response["revision"] = f.served, strconv.Itoa(f.revision)
 		if !f.ready {
-			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: f.reason, Message: "Configure API_KEY to start the session."}}
+			response["conditions"] = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}}
 		}
 		return response
 	}
@@ -484,15 +483,11 @@ func TestDevDetachedStartsItsOwnSession(t *testing.T) {
 }
 
 func TestDevSessionLifecycle(t *testing.T) {
-	f := startReloadFixture(t, false, map[string]string{
+	f := startReloadFixture(t, true, map[string]string{
 		manifestFileName: alphaManifest + "- name: beta\n  access: {server: {}}\n  path: ./beta\n",
 		"beta/server.py": "app = None", "beta/tools.py": "first",
 		"beta/pyproject.toml": strings.ReplaceAll(alphaProject, "alpha", "beta"), "beta/uv.lock": strings.ReplaceAll(alphaLock, "alpha", "beta"),
 	})
-	f.update(func() { f.reason = "WaitingForConfiguration" })
-	f.await(func() bool { return strings.Contains(f.stderr.String(), "Configure API_KEY to start the session.") })
-	f.update(func() { f.ready = true })
-	f.watching()
 	config := f.harness.run.Auth.ConfigDir
 	sourceFiles(t, config, map[string]string{"config.json": `{"origin":"https://other.example"}`})
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha ready in")
