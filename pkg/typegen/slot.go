@@ -38,8 +38,8 @@ func installedRuntime(root, pkg string) error {
 	return fmt.Errorf("%s is not installed for %s; install it before generating types", pkg, root)
 }
 
-// SlotDirectory is the directory a target's generated clients occupy in the project at dir.
-func SlotDirectory(dir, target string) string {
+// slotDirectory is the directory a target's generated clients occupy in the project at dir.
+func slotDirectory(dir, target string) string {
 	return filepath.Join(dir, filepath.FromSlash(slots[target]))
 }
 
@@ -62,7 +62,7 @@ func owned(data []byte) bool {
 // generatedSlot reports whether the project at dir holds a target's generated clients: regular files
 // that each carry the generated banner.
 func generatedSlot(dir, target string) bool {
-	directory := SlotDirectory(dir, target)
+	directory := slotDirectory(dir, target)
 	entries, err := slotEntries(directory)
 	if err != nil || len(entries) == 0 {
 		return false
@@ -110,7 +110,7 @@ func writeSlot(dir, target string, files map[string][]byte) error {
 	if err := validateSlot(dir, target); err != nil {
 		return err
 	}
-	directory := SlotDirectory(dir, target)
+	directory := slotDirectory(dir, target)
 	entries, err := slotEntries(directory)
 	if err == nil && len(entries) == len(files) && !slices.ContainsFunc(entries, func(entry os.DirEntry) bool {
 		old, err := os.ReadFile(filepath.Join(directory, entry.Name()))

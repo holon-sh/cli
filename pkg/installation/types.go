@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -74,13 +75,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	if err != nil {
 		return manifestSpec{}, nil, err
 	}
-	var prepared *typegen.Prepared
-	remove := func() {
-		if prepared != nil {
-			_ = prepared.Close()
-		}
-		_ = os.RemoveAll(parent)
-	}
+	remove := func() { _ = os.RemoveAll(parent) }
 	defer func() {
 		if err != nil {
 			remove()
@@ -179,7 +174,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 	if options.development && options.served == nil {
 		consumers = nil
 	}
-	prepared, err = typegen.Prepare(ctx, consumers, prepareOptions)
+	prepared, err := typegen.Prepare(ctx, consumers, prepareOptions)
 	if err != nil {
 		return manifestSpec{}, nil, err
 	}
@@ -204,7 +199,7 @@ func prepareManifestTypes(ctx context.Context, manifest manifestSpec, options bu
 		metadata[app.Name] = p.metadata
 	}
 	if options.types != nil {
-		if err := prepared.Write(); err != nil {
+		if err := prepared.Write(io.Discard); err != nil {
 			return manifestSpec{}, nil, err
 		}
 	}

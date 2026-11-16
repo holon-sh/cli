@@ -134,11 +134,7 @@ func TestEndpointTokenFollowsEachAlias(t *testing.T) {
 	consumer := func(alias string) Consumer {
 		return Consumer{Name: alias, Dir: t.TempDir(), Targets: []string{TargetPy}, Sources: []Source{{Alias: alias, Server: Endpoint(server.URL)}}}
 	}
-	prepared, err := Prepare(t.Context(), []Consumer{consumer("signed"), consumer("unsigned")}, Options{Env: []string{"SIGNED_MCP_TOKEN=good-value"}})
-	if prepared != nil {
-		prepared.Close()
-	}
-	if err == nil || !strings.Contains(err.Error(), "set UNSIGNED_MCP_TOKEN") {
+	if _, err := Prepare(t.Context(), []Consumer{consumer("signed"), consumer("unsigned")}, Options{Env: []string{"SIGNED_MCP_TOKEN=good-value"}}); err == nil || !strings.Contains(err.Error(), "set UNSIGNED_MCP_TOKEN") {
 		t.Fatalf("Prepare = %v, want the alias without a token refused", err)
 	}
 }
@@ -249,7 +245,6 @@ func TestEndpointSourcesAreNamedByTheServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Close()
 	if reference := prepared.Metadata()["app"].Requires["orders-live"]; prepared.Documents()[reference] == nil {
 		t.Fatalf("alias not derived from serverInfo: %+v", prepared.Metadata()["app"].Requires)
 	}
