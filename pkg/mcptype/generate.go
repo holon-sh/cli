@@ -34,7 +34,7 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 		}
 		request.contracts[alias] = decoded
 	}
-	catalogs, err := compileCatalogs(ctx, request.contracts, func(c contract) map[string]contractTool { return c.Tools }, request.Target != "go", declaresShared[request.Target])
+	catalogs, err := compileCatalogs(ctx, request, func(c contract) map[string]contractTool { return c.Tools }, request.Target != "go")
 	if err != nil {
 		return nil, err
 	}
@@ -61,9 +61,7 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	return files, nil
 }
 
-var declaresShared = map[string]func(typ) bool{"node": anyObject, "browser": anyObject, "python": pythonTypedDict, "go": goStruct}
-
-func anyObject(typ) bool { return true }
+var declaresShared = map[string]func(typ) bool{"node": candidate, "browser": candidate, "python": pythonTypedDict, "go": goStruct}
 
 func (r GenerateRequest) validate() error {
 	if declaresShared[r.Target] == nil {

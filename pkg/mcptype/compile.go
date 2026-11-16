@@ -98,8 +98,8 @@ type sharedType struct {
 }
 
 // declared reports whether the type is declared rather than written where it is used.
-func (s *sharing) declared(t *sharedType) bool {
-	return t.declaration.cyclic || t.declaration.definition != "" || (t.values > 1 || t.uses > 1 && t.several) && s.declares(t.source)
+func (t *sharedType) declared() bool {
+	return t.declaration.cyclic || t.declaration.definition != "" || t.values > 1 || t.uses > 1 && t.several
 }
 
 // candidate reports whether a type that is not recursive might be declared.
@@ -176,7 +176,7 @@ func (s *sharing) rewrite(value typ) typ {
 		return s.reference(s.types[s.recursiveKey(value.ref)])
 	}
 	if candidate(value) {
-		if shared := s.types[s.key(value)]; s.declared(shared) {
+		if shared := s.types[s.key(value)]; shared.declared() && (value.definition != "" || s.declares(value)) {
 			return s.reference(shared)
 		}
 	}
@@ -271,10 +271,10 @@ func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
 	}
 }
 
-func compileCatalogs(ctx context.Context, contracts map[string]contract, entries func(contract) map[string]contractTool, files bool, declares func(typ) bool) (map[string]catalog, error) {
-	catalogs := make(map[string]catalog, len(contracts))
-	for _, name := range sortedKeys(contracts) {
-		compiled, err := parseCatalog(ctx, entries(contracts[name]), files, declares)
+func compileCatalogs(ctx context.Context, request generateRequest, entries func(contract) map[string]contractTool, files bool) (map[string]catalog, error) {
+	catalogs := make(map[string]catalog, len(request.contracts))
+	for _, name := range sortedKeys(request.contracts) {
+		compiled, err := parseCatalog(ctx, entries(request.contracts[name]), files, declaresShared[request.Target])
 		if err != nil {
 			return nil, err
 		}

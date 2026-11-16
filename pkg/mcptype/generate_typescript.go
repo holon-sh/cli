@@ -26,12 +26,12 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	// Resources take names that tools left free, in the same declarations.
 	names := map[string]bool{}
 	tools := generateTypeScript(catalogs, names, [4]string{"Inputs", "Outputs", "InputTypes", "OutputTypes"})
-	catalogs, err := compileCatalogs(ctx, request.contracts, func(c contract) map[string]contractTool { return c.Resources }, false, anyObject)
+	catalogs, err := compileCatalogs(ctx, request, func(c contract) map[string]contractTool { return c.Resources }, false)
 	if err != nil {
 		return nil, err
 	}
 	resources := generateTypeScript(catalogs, names, [4]string{1: "Resources"})
-	catalogs, err = compileCatalogs(ctx, request.contracts, func(c contract) map[string]contractTool { return c.Events }, false, anyObject)
+	catalogs, err = compileCatalogs(ctx, request, func(c contract) map[string]contractTool { return c.Events }, false)
 	if err != nil {
 		return nil, err
 	}
