@@ -57,13 +57,9 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 	if err != nil {
 		return buildRequest{}, err
 	}
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
-		return buildRequest{}, err
-	}
 	request := buildRequest{
 		Request: kiln.Request{Source: p.root, Start: start},
-		Env:     env, app: app, builders: o.builders, output: o.output,
+		Env:     commandenv.Environ(o.Env), app: app, builders: o.builders, output: o.output,
 	}
 	architectures := o.architectures
 	if len(architectures) == 0 {
