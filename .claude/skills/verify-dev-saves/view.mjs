@@ -5,13 +5,6 @@ const loop = {
   record: "served, about to record",
 };
 
-const shown = {
-  working: "working",
-  ready: "ready",
-  failed: "failed",
-  unrecorded: "serves this save, but a restart loses it",
-};
-
 const flying = (v) => Object.values(v.rec).filter((r) => r.stage === "uploading" || r.stage === "tag_sent");
 
 const uploads = (v) => {
@@ -24,7 +17,7 @@ export const state = (v) => ({
   Disk: `source ${v.disk}`,
   Watcher: v.offer ? "offering a change" : v.pending ? "holding a change" : "nothing pending",
   Loop: loop[v.pc],
-  "Status line": shown[v.shown],
+  "Status line": v.shown === "unrecorded" ? "serves this save, but a restart loses it" : v.shown,
   Runtime: v.served === "none" ? "serves nothing" : `serves ${v.served}`,
   "Registry tag": `names ${v.tag}`,
   Uploads: uploads(v),
@@ -44,7 +37,6 @@ const steps = {
   RecTimesOut: "an upload passes its one minute",
   RecEndsWithError: "an upload ends with an error",
   Restart: "the app's pod restarts",
-  Settled: null,
 };
 
 export const step = (action) => steps[action] ?? null;

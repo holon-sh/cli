@@ -64,7 +64,6 @@ const steps = {
   LogoutRemove: "removes the file",
   Unlock: "releases the lock",
   Restart: "exits, and a new holon starts",
-  Exhausted: null,
 };
 
 export const step = (action, from, to) => {
@@ -73,9 +72,7 @@ export const step = (action, from, to) => {
   const who = Object.keys(from.pc).find(
     (p) =>
       from.pc[p] !== to.pc[p] ||
-      JSON.stringify(from.mem[p]) !== JSON.stringify(to.mem[p]) ||
-      from.identity[p] !== to.identity[p] ||
-      from.served[p] !== to.served[p],
+      JSON.stringify(from.mem[p]) !== JSON.stringify(to.mem[p]),
   );
   return who ? `holon ${who} ${label}` : label;
 };

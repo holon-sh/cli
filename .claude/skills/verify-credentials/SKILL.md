@@ -33,7 +33,7 @@ Each action in `Credentials.tla` is one file read, one atomic rename, or one req
 | `LogoutLock`, `LogoutRevoke`, `LogoutRemove` | `logout` and `revokeRefreshTokens` in `auth.go`, `removeCredentialFile` in `credentials.go` |
 | `Restart` | `NewClient`: a new process starts with an empty `Client.state` |
 
-The variables `identity`, `served`, `started`, `spent` and `stale` exist only so that the rules can be written. The code has no such fields.
+The variables `identity`, `served`, `spent` and `stale` exist only so that the rules can be written. The code has no such fields.
 
 ## Does a change need this
 
@@ -71,7 +71,7 @@ A model that cannot fail proves nothing. Each config in `faults/` sets `Fault` t
 ## Read a result
 
 - **Every rule holds.** The protocol keeps its promises within the bounds. Say so with the bounds, not as "the code is correct".
-- **A rule breaks.** The report gives the shortest path as numbered steps. Replay it against the real code, one step for each action, as a scratch Go test beside `TestConcurrentAuthenticationProcesses` in `pkg/installation/auth_test.go` or by reading the functions in the table above.
+- **A rule breaks.** The report gives the shortest path as numbered steps. Replay it against the real code, one step for each action, as a scratch Go test beside `TestConcurrentAuthentication` in `pkg/installation/auth_test.go` or by reading the functions in the table above.
   - If a step cannot happen in the code, the model is wrong. Fix the model and say what was wrong.
   - If every step can happen, it is a bug in the code. Report the path in the code's words, the harm from the table above, and the commit that introduced it. Do not weaken the rule, the bounds or the model to make it pass, and do not commit the scratch test.
 
