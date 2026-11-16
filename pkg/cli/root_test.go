@@ -144,6 +144,62 @@ func TestProjectRunsForEachApp(t *testing.T) {
 	run(t, "-s names one app's dependencies; pass that app's DIR", "types", "generate", "-s", "x")
 }
 
+func TestAppInsideAProject(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// broken depends on ghost, which nothing in the project or its server.json can resolve.
+	writeCLIFile(t, root, "holon.yaml", `apps:
+  - {name: view, path: apps/view, access: {server: {}}}
+  - {name: orders, path: apps/orders, access: {server: {}}}
+  - {name: broken, path: apps/broken, access: {server: {}}}
+`)
+	view := filepath.Join(root, "apps/view")
+	writeCLIFile(t, view, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
+	installCLIRuntime(t, view)
+	writeCLIFile(t, view, "server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"`+requiresOrders)
+	writeCLIFile(t, root, "apps/orders/server.py", pythonServer)
+	writeCLIFile(t, root, "apps/orders/server.json", `{"name":"example.com/orders","version":"1.0.0","description":"Orders"}`)
+	broken := filepath.Join(root, "apps/broken")
+	writeCLIFile(t, broken, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
+	writeCLIFile(t, broken, "server.json", `{"name":"example.com/broken","version":"1.0.0","description":"Broken","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"ghost":{}}}}}}`)
+
+	// From inside the app, a dependency is the manifest's app of that name, not the registry's
+	// (requiresOrders names an unreachable one), and the project's other apps are not read.
+	if _, err := projectConsumers(root, true); err == nil {
+		t.Fatal("the project's own run should fail on the broken app")
+	}
+	c, err := enclosingConsumer(view, true)
+	if err != nil || c == nil {
+		t.Fatalf("enclosingConsumer = %v, %v", c, err)
+	}
+	if c.Name != "view" || len(c.Sources) != 1 || c.Sources[0].Alias != "orders" ||
+		c.Sources[0].Server != (typegen.Path{Dir: filepath.Join(root, "apps/orders")}) {
+		t.Fatalf("consumer = %+v", c)
+	}
+	// holon check reaches that app's clients; it needs no registry.
+	t.Chdir(view)
+	run(t, filepath.Join(view, "generated/holon-sh")+" has no generated clients; run holon types generate", "check")
+	t.Chdir("..")
+	t.Chdir("..")
+
+	// The nearest manifest decides: a directory it does not keep and one beside no manifest are left to the
+	// app's own server.json, and -s still replaces the declared dependencies rather than the manifest's.
+	if c, err := enclosingConsumer(filepath.Join(root, "apps"), true); c != nil || err != nil {
+		t.Fatalf("a directory the manifest does not keep = %v, %v", c, err)
+	}
+	other, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := enclosingConsumer(other, true); c != nil || err != nil {
+		t.Fatalf("no manifest above = %v, %v", c, err)
+	}
+	t.Chdir(view)
+	run(t, "view: https://mcp.example/mcp", "types", "generate", "-s", "docs=https://mcp.example/mcp")
+}
+
 func TestErrorsNameTheAppAndItsServer(t *testing.T) {
 	root := t.TempDir()
 	view := filepath.Join(root, "view")
