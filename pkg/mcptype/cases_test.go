@@ -119,7 +119,7 @@ func sinkContracts() string {
 func generationCases(t *testing.T) []generationCase {
 	t.Helper()
 	var cases []generationCase
-	for _, target := range []string{"browser", "go"} {
+	for _, target := range []string{"node", "browser", "python", "go"} {
 		cases = append(cases, generationCase{name: "sink-" + target, input: `{"target": "` + target + `", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": ` + sinkRequires + `, "contracts": ` + sinkContracts() + `, "go_module": "example.com/é/runtime", "own": "orders", "app": "chéck\"out"}`})
 	}
 	for _, test := range []struct{ name, patch string }{

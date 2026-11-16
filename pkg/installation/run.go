@@ -389,8 +389,6 @@ func reportSessionProgress(session protocol.SessionResponse, output *progressOut
 		if lifecycle.Hook != "" {
 			headline = strings.TrimSuffix("Running "+lifecycle.Hook+" for "+lifecycle.App, " for ")
 		}
-	} else if condition := session.Condition(protocol.ConditionReady); condition.Reason == "WaitingForConfiguration" {
-		headline, state = condition.Message, progressBlocked
 	}
 	output.headline(headline, state)
 }
