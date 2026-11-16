@@ -29,7 +29,6 @@ const (
 	progressIdle    = tea.ProgramStateIdle
 	progressWorking = tea.ProgramStateWorking
 	progressDone    = tea.ProgramStateDone
-	progressBlocked = tea.ProgramStateBlocked
 	progressError   = tea.ProgramStateError
 )
 
@@ -269,25 +268,17 @@ func (m progressModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m progressModel) working() bool {
-	if m.status.State == progressBlocked {
-		return false
-	}
 	return m.status.State == progressWorking || slices.ContainsFunc(m.items, func(s tea.ProgramStatus) bool { return s.State == progressWorking })
 }
 
 func (m progressModel) indicator(state progressState) string {
 	switch state {
 	case progressWorking:
-		if m.status.State == progressBlocked {
-			return "·"
-		}
 		return m.spinner.View()
 	case progressDone:
 		return "✓"
 	case progressError:
 		return "✗"
-	case progressBlocked:
-		return "!"
 	default:
 		return " "
 	}
