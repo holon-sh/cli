@@ -189,7 +189,7 @@ func (p *manifestSpec) selectApps(args []string) ([]string, error) {
 		app := manifestApp{Name: source.Alias}
 		switch server := source.Server.(type) {
 		case typegen.Path:
-			app.Path = string(server)
+			app.Path = server.Dir
 		case typegen.Registry:
 			app.Registry = &protocol.RegistrySource{RegistryRef: protocol.RegistryRef(server)}
 		case typegen.Endpoint:

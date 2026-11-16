@@ -61,7 +61,7 @@ func projectConsumers(dir string, resolve bool) ([]typegen.Consumer, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%s: %s: %w", file, app.Name, err)
 			}
-			paths[app.Name] = typegen.Path(path)
+			paths[app.Name] = typegen.Path{Dir: path}
 		case app.Remote != nil:
 			remotes[app.Name] = mcpregistry.Requirement{URL: app.Remote.URL}
 		case app.Registry != nil:
@@ -73,7 +73,7 @@ func projectConsumers(dir string, resolve bool) ([]typegen.Consumer, error) {
 		if app.Path == "" {
 			continue
 		}
-		switch c, err := appConsumer(app.Name, string(paths[app.Name]), paths, remotes, resolve); {
+		switch c, err := appConsumer(app.Name, paths[app.Name].Dir, paths, remotes, resolve); {
 		case err != nil:
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		case c != nil && app.Name == "" && resolve:

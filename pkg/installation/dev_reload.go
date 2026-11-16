@@ -23,6 +23,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/internal/kiln"
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
 )
@@ -33,17 +34,17 @@ type packedSource struct {
 	upload  *imageUpload
 }
 
-func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
-	served := map[string]json.RawMessage{}
+func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error) {
+	served := map[string]*typegen.Served{}
 	for _, app := range d.manifest.Apps {
 		sent, running := d.sent[app.Name]
 		if !running {
 			continue
 		}
 		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.session.Name}, App: app.Name}
-		var contract json.RawMessage
-		if err := d.manager.Call(ctx, d.options.plane, protocol.ToolGetAppContract, request, &contract); err == nil {
-			served[app.Name] = contract
+		answer := &typegen.Served{}
+		if err := d.manager.Call(ctx, d.options.plane, protocol.ToolGetAppContract, request, answer); err == nil {
+			served[app.Name] = answer
 		} else if sent != "" {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}

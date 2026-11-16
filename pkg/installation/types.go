@@ -3,7 +3,6 @@ package installation
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,7 +43,7 @@ func lockSources(manifest manifestSpec) (func(), error) {
 }
 
 func prepareManifestTypes(
-	ctx context.Context, manifest manifestSpec, options buildOptions, served map[string]json.RawMessage,
+	ctx context.Context, manifest manifestSpec, options buildOptions, served map[string]*typegen.Served,
 ) (_ manifestSpec, _ func(), err error) {
 	finish := options.output.measure("apps", "prepare contracts")
 	defer finish()
@@ -64,9 +63,8 @@ func prepareManifestTypes(
 	needed := map[string]bool{}
 	typeOptions := typegen.Options{Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.output.logs()}
 	prepareOptions := typeOptions
-	prepareOptions.Run = options.extractTypes
-	if served != nil {
-		prepareOptions.Run, prepareOptions.Served = nil, map[string]json.RawMessage{}
+	if served == nil {
+		prepareOptions.Run = options.extractTypes
 	}
 	var pathApps []*manifestApp
 	for i := range manifest.Apps {
@@ -76,7 +74,7 @@ func prepareManifestTypes(
 			if clientutil.PathInside(parent, app.Path) {
 				return manifestSpec{}, nil, fmt.Errorf("%s: build metadata must be outside application source", app.Name)
 			}
-			contract, ok := served[app.Name]
+			answer, ok := served[app.Name]
 			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name), unserved: served != nil && !ok}
 			app.resolved.types = p
 			consumer, err := typegen.AppConsumer(app.Name, app.Path)
@@ -84,13 +82,12 @@ func prepareManifestTypes(
 				return manifestSpec{}, nil, fmt.Errorf("%s: %w", app.Name, err)
 			}
 			pathApps = append(pathApps, app)
-			byApp[app.Name] = typegen.Path(app.Path)
-			if ok {
-				prepareOptions.Served[app.Path] = contract
-			}
+			byApp[app.Name] = typegen.Path{Dir: app.Path, Served: answer}
 			if consumer != nil {
 				if p.unserved {
-					consumer.Server = ""
+					consumer.Server = typegen.Path{}
+				} else if consumer.Server.Dir == app.Path {
+					consumer.Server.Served = answer
 				}
 				for _, name := range app.resolved.Requires {
 					needed[name] = true

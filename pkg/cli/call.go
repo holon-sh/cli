@@ -128,7 +128,7 @@ func target(arg string) (typegen.Source, error) {
 		return typegen.Source{}, err
 	}
 	if requirement, ok := requires[arg]; ok {
-		return typegen.RequiredSource(arg, requirement, "")
+		return typegen.RequiredSource(arg, requirement, typegen.Path{})
 	}
 	return typegen.Source{}, fmt.Errorf("%s is not a URL or a dependency the server.json here declares (%s); for a server's source, pass the MCP URL it runs at, such as the one holon dev prints", arg, cmp.Or(strings.Join(slices.Sorted(maps.Keys(requires)), ", "), "none"))
 }

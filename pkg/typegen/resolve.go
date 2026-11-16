@@ -25,7 +25,7 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 	o := options.defaults()
 	switch server := source.Server.(type) {
 	case Path:
-		prepared, err := prepareSource("source", string(server))
+		prepared, err := prepareSource("source", server)
 		if err != nil {
 			return nil, err
 		}

@@ -41,12 +41,12 @@ func AppConsumer(name, dir string) (*Consumer, error) {
 		if !serverMention.Match(data) {
 			continue
 		}
-		if own != "" {
+		if own.Dir != "" {
 			return nil, fmt.Errorf("keep exactly one server entry (found them in %s and %s)", own, root)
 		}
-		own = Path(root)
+		own = Path{Dir: root}
 	}
-	if len(targets) == 0 && own == "" {
+	if len(targets) == 0 && own.Dir == "" {
 		return nil, nil
 	}
 	return &Consumer{Name: name, Dir: dir, Targets: targets, Server: own}, nil
@@ -66,7 +66,7 @@ func RequiredSource(alias string, r mcpregistry.Requirement, path Path) (Source,
 	source := Source{Alias: alias}
 	var err error
 	switch {
-	case path != "":
+	case path.Dir != "":
 		source.Server = path
 	case r.URL != "":
 		source.Server, err = NewEndpoint(r.URL)

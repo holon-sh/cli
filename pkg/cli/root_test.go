@@ -80,7 +80,7 @@ func TestConsumerSelectsTheOwnServer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			server, _ := filepath.Rel(root, string(c.Server))
+			server, _ := filepath.Rel(root, c.Server.Dir)
 			var sources []string
 			for _, source := range c.Sources {
 				sources = append(sources, source.Alias)
@@ -124,11 +124,11 @@ func TestProjectRunsForEachApp(t *testing.T) {
 	for _, c := range consumers {
 		names = append(names, c.Name)
 	}
-	if !slices.Equal(names, []string{"view", "orders"}) || consumers[1].Server == "" {
+	if !slices.Equal(names, []string{"view", "orders"}) || consumers[1].Server.Dir == "" {
 		t.Fatalf("consumers = %+v", consumers)
 	}
 	sources := consumers[0].Sources
-	if len(sources) != 3 || sources[0].Server != typegen.Endpoint("https://docs.example/mcp") || sources[1].Server != typegen.Path(filepath.Join(root, "orders")) ||
+	if len(sources) != 3 || sources[0].Server != typegen.Endpoint("https://docs.example/mcp") || sources[1].Server != (typegen.Path{Dir: filepath.Join(root, "orders")}) ||
 		sources[2].Server != (typegen.Registry{Name: "example.com/search", Version: "2.0.0"}) {
 		t.Fatalf("view sources = %+v", sources)
 	}
