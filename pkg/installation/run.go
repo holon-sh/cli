@@ -209,7 +209,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	if request.TTLSeconds != nil {
-		ready, err := waitSessionReady(ctx, manager, dev.session.Name, dev.session, config.output)
+		ready, err := waitSessionReady(ctx, manager, dev.session, config.output)
 		if err == nil {
 			dev.session = ready
 			err = dev.generate(ctx)
@@ -347,7 +347,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
-	ready, err := waitSessionReady(ctx, manager, protocol.ProductionName, accepted, config.output)
+	ready, err := waitSessionReady(ctx, manager, accepted, config.output)
 	if err != nil {
 		return err
 	}
@@ -357,10 +357,8 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	return config.output.endpoints(stdout, "Ready", manager, ready.Name, resolved.Apps, false)
 }
 
-func waitSessionReady(
-	ctx context.Context, manager *Client, name string, accepted protocol.SessionResponse, output *progressOutput,
-) (protocol.SessionResponse, error) {
-	finish := output.measure(name, "rollout")
+func waitSessionReady(ctx context.Context, manager *Client, accepted protocol.SessionResponse, output *progressOutput) (protocol.SessionResponse, error) {
+	finish := output.measure(accepted.Name, "rollout")
 	defer finish()
 	session := accepted
 	for {
@@ -374,7 +372,7 @@ func waitSessionReady(
 		if ready, err := SessionReady(session); ready || err != nil {
 			return session, err
 		}
-		next, err := manager.awaitSession(ctx, name, session.Revision)
+		next, err := manager.awaitSession(ctx, accepted.Name, session.Revision)
 		if err != nil {
 			return session, err
 		}
