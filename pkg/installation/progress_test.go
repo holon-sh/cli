@@ -69,3 +69,14 @@ func TestProgressTransitions(t *testing.T) {
 		})
 	}
 }
+
+func TestAnUploadThatFailsBeforeReadinessStaysReported(t *testing.T) {
+	var stream bytes.Buffer
+	output, _, _ := newProgressOutput(io.Discard, &stream, false, clock.RealClock{})
+	output.working("alpha")
+	output.unrecorded("alpha", errors.New("refused"))
+	output.ready("alpha")
+	if shown := stream.String(); !strings.Contains(shown, "a restart loses it: refused") || strings.Contains(shown, "ready") {
+		t.Fatalf("status lines = %q", shown)
+	}
+}

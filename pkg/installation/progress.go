@@ -87,9 +87,10 @@ func (o *progressOutput) working(app string) {
 
 func (o *progressOutput) ready(app string) {
 	o.mu.Lock()
-	elapsed := o.clock.Since(o.started[app]).Seconds()
-	o.mu.Unlock()
-	o.status(app, fmt.Sprintf("ready in %.1f s", elapsed), progressDone)
+	defer o.mu.Unlock()
+	if o.statuses[app].State != progressError {
+		o.show(app, fmt.Sprintf("ready in %.1f s", o.clock.Since(o.started[app]).Seconds()), progressDone)
+	}
 }
 
 func (o *progressOutput) failed(app, reason string) {
@@ -100,9 +101,21 @@ func (o *progressOutput) removed(app string) {
 	o.status(app, "removed", progressDone)
 }
 
+func (o *progressOutput) unrecorded(app string, cause error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.statuses[app].State != progressError {
+		o.show(app, fmt.Sprintf("serves this save, but a restart loses it: %v", cause), progressError)
+	}
+}
+
 func (o *progressOutput) status(name, message string, state progressState) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.show(name, message, state)
+}
+
+func (o *progressOutput) show(name, message string, state progressState) {
 	status := tea.ProgramStatus{App: "holon", ID: progressStatusID(name), Title: name, Message: message, State: state}
 	previous, shown := o.statuses[name]
 	if shown && previous == status {

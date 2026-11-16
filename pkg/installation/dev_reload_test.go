@@ -137,7 +137,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
 		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 		grant := buildGrant(registry)
-		grant.Repositories["beta"] = "holon/upload/beta"
+		grant.Repositories["beta"], grant.Repositories["gamma"] = "holon/upload/beta", "holon/upload/gamma"
 		installationtest.WriteJSON(w, grant)
 	})
 	session := func() map[string]any {
@@ -339,6 +339,21 @@ func TestDevSaves(t *testing.T) {
 				t.Fatalf("a replaced source was reported: %q", f.stderr.String())
 			}
 		})
+	}
+}
+
+func TestDevKeepsARefusedSaveReported(t *testing.T) {
+	f := startReloadFixture(t, true)
+	f.update(func() { f.unsaved = true })
+	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha ready in")
+	f.update(func() { f.failNext = true })
+	f.save(map[string]string{"alpha/tools.py": "third"}, "alpha failed")
+	f.clock.Step(time.Minute)
+	if err := f.stop(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(f.stderr.String(), "a restart loses it") {
+		t.Fatalf("the upload of an earlier save replaced the failure: %q", f.stderr.String())
 	}
 }
 
