@@ -30,6 +30,7 @@ import (
 )
 
 func TestDockerSourceCacheIsolation(t *testing.T) {
+	t.Parallel()
 	grant, options := sourceRegistry(t)
 	repository, err := imageRepository(grant.Registry+"/"+grant.Repositories["alpha"], grant.Grant, options.HTTPClient)
 	if err != nil {
@@ -78,6 +79,7 @@ func TestDockerSourceCacheIsolation(t *testing.T) {
 }
 
 func TestDockerSourceBuild(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	manifest := buildManifest(t, root)
 	grant, options := sourceRegistry(t)

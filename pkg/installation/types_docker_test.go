@@ -19,6 +19,7 @@ import (
 )
 
 func TestDockerAutomaticTypes(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	const pkg = `{"type":"module","engines":{"node":">=22.20.0 <23"},
 "dependencies":{"@modelcontextprotocol/server":"2.3.1","holon-sh":"^0.0.1-dev.11","holon-ui":"^0.0.1-dev.8","zod":"4.6.5"},
@@ -144,6 +145,7 @@ export default createMcpHandler(() => {
 }
 
 func TestDockerPythonTypedBuild(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	provider := `from mcp.server import MCPServer
 from pydantic import BaseModel
