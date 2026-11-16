@@ -6,11 +6,12 @@ runs:
     - name: Download the SDK
       shell: bash
       env:
-        KILN: 87f5c4c9770715483da12ce9f7250c2534413301
+        repository: hughhan1/kiln
+        ref: 87f5c4c9770715483da12ce9f7250c2534413301
         GH_TOKEN: ${{ github.token }}
       run: |
         archive="kiln-$(go env GOOS)_$(go env GOARCH).tar.gz"
-        gh run download 43935006410 --repo hughhan1/kiln --name "${archive%.tar.gz}" --dir "$RUNNER_TEMP"
+        gh run download 43935006410 --repo "$repository" --name "${archive%.tar.gz}" --dir "$RUNNER_TEMP"
         mkdir .kiln-sdk
         tar -xzf "$RUNNER_TEMP/$archive" -C .kiln-sdk
     - name: Install the musl compiler
