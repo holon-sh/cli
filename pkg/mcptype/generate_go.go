@@ -17,7 +17,7 @@ func generateGoPackage(request generateRequest, catalogs map[string]catalog) map
 		client := unique(names, typeIdentifier(binding))
 		taken := map[string]bool{"CallTool": true}
 		tools := catalogs[binding]
-		nameDeclarations(names, binding, tools, goDeclares)
+		nameDeclarations(names, binding, tools)
 		var methods strings.Builder
 		fmt.Fprintf(&source, "\nvar %s = _%s{&holon.Dependency{Name: %s, Tools: map[string]holon.ToolSchema{", client, client, strconv.Quote(binding))
 		if len(tools) > 0 {
@@ -29,7 +29,7 @@ func generateGoPackage(request generateRequest, catalogs map[string]catalog) map
 			method := unique(taken, typeIdentifier(name))
 			symbols := []string{unique(names, client+method+"Input"), unique(names, client+method+"Output")}
 			for i, shape := range []shape{tool.input, tool.output} {
-				for _, ref := range shape.declarations(goDeclares) {
+				for _, ref := range shape.declared {
 					// Only a defined type can contain itself, but one defined from json.RawMessage would
 					// lose its methods.
 					format := "type %s = %s\n\n"

@@ -40,26 +40,6 @@ func goRecursive(value typ) bool {
 	return value.kind == kindArray || value.kind == kindObject
 }
 
-// goStruct reports whether an object decodes as a struct: one that names fields with valid tags and
-// declares no schema for other properties.
-func goStruct(value typ) bool {
-	if value.kind != kindObject || len(value.fields) == 0 || value.extra.kind == extraOpen {
-		return false
-	}
-	for name := range value.fields {
-		if name == "-" || !goTagName.MatchString(name) {
-			return false
-		}
-	}
-	return true
-}
-
-// goDeclares reports whether a type is declared. A shared map that nothing names is not, since maps
-// of one type are interchangeable anyway.
-func goDeclares(ref *declaration) bool {
-	return ref.cyclic || ref.definition != "" || goStruct(ref.value)
-}
-
 // goRawJSON reports whether a type decodes as raw JSON, by whatever name.
 func goRawJSON(value typ) bool {
 	for value.kind == kindDeclared && !value.ref.cyclic {
@@ -71,9 +51,6 @@ func goRawJSON(value typ) bool {
 func renderGo(value typ) string {
 	switch value.kind {
 	case kindDeclared:
-		if !goDeclares(value.ref) {
-			return renderGo(value.ref.value)
-		}
 		if value.ref.cyclic && !goRecursive(value.ref.value) {
 			return "json.RawMessage"
 		}
@@ -103,13 +80,16 @@ func renderGo(value typ) string {
 			}
 			return "map[string]" + item
 		}
-		if !goStruct(value) {
+		if value.extra.kind == extraOpen {
 			return "map[string]json.RawMessage"
 		}
 		names := map[string]bool{}
 		var out strings.Builder
 		out.WriteString("struct {\n")
 		for _, name := range sortedKeys(value.fields) {
+			if name == "-" || !goTagName.MatchString(name) {
+				return "map[string]json.RawMessage"
+			}
 			member := value.fields[name]
 			rendered := renderGo(member.value)
 			tagName := name
