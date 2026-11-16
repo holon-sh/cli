@@ -4,11 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/holon-sh/cli/internal/testfiles"
 )
 
 func TestCheckRefusesToOverwrite(t *testing.T) {
@@ -27,9 +28,11 @@ func TestCheckRefusesToOverwrite(t *testing.T) {
 
 func TestWriteBesideAProject(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "billing")
-	put(t, dir, "pyproject.toml", "[project]\nname = \"billing\"\n")
-	put(t, dir, ".gitignore", ".venv\n")
-	put(t, dir, "package.json", "{\n  \"name\": \"billing\",\n  \"scripts\": {\n    \"build\": \"\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^7.0.0\"\n  }\n}\n")
+	testfiles.Write(t, dir, map[string]string{
+		"pyproject.toml": "[project]\nname = \"billing\"\n",
+		".gitignore":     ".venv\n",
+		"package.json":   "{\n  \"name\": \"billing\",\n  \"scripts\": {\n    \"build\": \"\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^7.0.0\"\n  }\n}\n",
+	})
 	project := Project{Dir: dir, Language: "py", Name: "com.example/billing"}
 	created, changed, notes, err := project.Write()
 	if err != nil {
@@ -38,10 +41,10 @@ func TestWriteBesideAProject(t *testing.T) {
 	if !slices.Contains(created, "server.py") || slices.Contains(created, ".python-version") || !slices.Equal(changed, []string{".gitignore", "package.json"}) {
 		t.Errorf("created %v, changed %v", created, changed)
 	}
-	if ignore := read(t, dir, ".gitignore"); !strings.HasPrefix(ignore, ".venv\n__pycache__/\n") || strings.Contains(ignore, ".venv/") {
+	if ignore := testfiles.Read(t, dir, ".gitignore"); !strings.HasPrefix(ignore, ".venv\n__pycache__/\n") || strings.Contains(ignore, ".venv/") {
 		t.Errorf(".gitignore:\n%s", ignore)
 	}
-	pkg := read(t, dir, "package.json")
+	pkg := testfiles.Read(t, dir, "package.json")
 	if !strings.Contains(pkg, `"vite": "^7.0.0"`) || !strings.Contains(pkg, `"build": ""`) {
 		t.Errorf("package.json:\n%s", pkg)
 	}
@@ -64,35 +67,13 @@ func TestCheckRefusesWhatHolonWouldNotRun(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			for name, data := range test.files {
-				put(t, dir, name, data)
-			}
+			testfiles.Write(t, dir, test.files)
 			err := Project{Dir: dir, Language: test.language, Name: "com.example/a"}.Check()
 			if err == nil || !strings.Contains(err.Error(), test.err) {
 				t.Errorf("Check = %v, want %q", err, test.err)
 			}
 		})
 	}
-}
-
-func put(t *testing.T, dir, name, data string) {
-	t.Helper()
-	path := filepath.Join(dir, filepath.FromSlash(name))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func read(t *testing.T, dir, name string) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
 }
 
 func TestResolve(t *testing.T) {

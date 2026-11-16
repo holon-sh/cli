@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/typegen"
 )
@@ -37,13 +38,7 @@ func run(t *testing.T, wantErr string, args ...string) string {
 
 func writeCLIFile(t *testing.T, root, name, content string) {
 	t.Helper()
-	path := filepath.Join(root, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testfiles.Write(t, root, map[string]string{name: content})
 }
 
 func installCLIRuntime(t *testing.T, root string) {
