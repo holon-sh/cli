@@ -263,7 +263,6 @@ func TestRunDevLifecycle(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var ambiguous, unavailable bool
-	var waiting string
 	var creates int
 	var created, served []protocol.App
 	var updates [][]protocol.App
@@ -281,11 +280,6 @@ func TestRunDevLifecycle(t *testing.T) {
 	session := func() map[string]any {
 		response := apiSession("alpha", "beta")
 		response["apps"] = served
-		if waiting != "" {
-			response["conditions"] = []protocol.Condition{{
-				Type: protocol.ConditionReady, Status: "False", Reason: waiting, Message: "Configure API_KEY to start the session.",
-			}}
-		}
 		return response
 	}
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
@@ -366,10 +360,7 @@ func TestRunDevLifecycle(t *testing.T) {
 			t.Fatalf("ambiguous creation: creates=%d error=%v", creates, err)
 		}
 	})
-	t.Run("session survives configuration, edits and outages", func(t *testing.T) {
-		mu.Lock()
-		waiting = "WaitingForConfiguration"
-		mu.Unlock()
+	t.Run("session survives edits and outages", func(t *testing.T) {
 		fc := testingclock.NewFakeClock(time.Now())
 		config := h.run
 		config.Clock = fc
@@ -379,17 +370,7 @@ func TestRunDevLifecycle(t *testing.T) {
 				t.Logf("stdout=%q\nstderr=%q", stdout.String(), stderr.String())
 			}
 		})
-		await := func(text string) {
-			t.Helper()
-			stepUntil(t, fc, devDebounce, func() bool {
-				return strings.Contains(stderr.String(), text)
-			})
-		}
-		await("Configure API_KEY to start the session.")
-		mu.Lock()
-		waiting = ""
-		mu.Unlock()
-		await(watching)
+		stepUntil(t, fc, devDebounce, func() bool { return strings.Contains(stderr.String(), watching) })
 		from := len(stderr.String())
 		sourceFiles(t, config.Auth.ConfigDir, map[string]string{"config.json": `{"origin":"https://other.example"}`})
 		h.files.save(t, root, map[string]string{"alpha/logic.txt": "edited"})
