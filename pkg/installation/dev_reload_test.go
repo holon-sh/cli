@@ -49,7 +49,6 @@ type reloadFixture struct {
 	stdout   *installationtest.ObservedOutput
 	stderr   *installationtest.ObservedOutput
 	await    func(check func() bool)
-	step     func(time.Duration)
 	start    func(args ...string)
 	stop     func() error
 
@@ -238,7 +237,6 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	h.start(t, nil)
 	fc := testingclock.NewFakeClock(time.Now())
 	h.run.Clock, f.clock = fc, fc
-	f.step = fc.Step
 	f.await = func(check func() bool) {
 		t.Helper()
 		stepUntil(t, fc, devDebounce, check)
@@ -350,7 +348,7 @@ func TestDevKeepsARefusedSaveReported(t *testing.T) {
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha ready in")
 	f.update(func() { f.failNext = true })
 	f.save(map[string]string{"alpha/tools.py": "third"}, "alpha failed")
-	f.step(time.Minute)
+	f.clock.Step(time.Minute)
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
