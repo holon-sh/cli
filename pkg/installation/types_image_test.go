@@ -35,10 +35,15 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	descriptor := &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"}
 	caller := &mcpcontract.Metadata{Identity: descriptor.Identity(), Requires: map[string]string{"orders": expected.Digest}}
 	image := publishTypeMetadata(t, fixture, host+"/checkout", caller, options, map[string]*typegen.Document{expected.Digest: expected})
-	copied, err := importImage(t.Context(), image, host, "destination/checkout", "", options.HTTPClient)
+	destination, err := imageRepository(host+"/destination/checkout", "", options.HTTPClient)
 	if err != nil {
 		t.Fatal(err)
 	}
+	imported, err := importImage(t.Context(), image, destination, options.HTTPClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := destination.Reference.String() + "@" + imported.Digest.String()
 	fixture.mu.Lock()
 	for key := range fixture.items {
 		if strings.HasPrefix(key, "checkout/") {

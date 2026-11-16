@@ -4,25 +4,18 @@ import (
 	"context"
 	"net/http"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/pkg/ociimage"
 )
 
-func importImage(ctx context.Context, image, registryHost, repository, grant string, client *http.Client) (string, error) {
+func importImage(ctx context.Context, image string, destination *remote.Repository, client *http.Client) (ocispec.Descriptor, error) {
 	source, err := sourceRepository(image, client)
 	if err != nil {
-		return "", err
+		return ocispec.Descriptor{}, err
 	}
-	destination, err := imageRepository(registryHost+"/"+repository, grant, client)
-	if err != nil {
-		return "", err
-	}
-	descriptor, err := ociimage.Copy(ctx, source, destination, image)
-	if err != nil {
-		return "", err
-	}
-	return registryHost + "/" + repository + "@" + descriptor.Digest.String(), nil
+	return ociimage.Copy(ctx, source, destination, image)
 }
 
 func sourceRepository(image string, client *http.Client) (*remote.Repository, error) {

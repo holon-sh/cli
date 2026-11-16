@@ -23,6 +23,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/oauth2"
 
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -100,13 +101,12 @@ func TestRunPreparationFailures(t *testing.T) {
 			h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, protocol.SessionResponse{})
 			})
-			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (string, error) {
+			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
 				if tc.edit != "" {
-					err := os.WriteFile(filepath.Join(root, tc.edit), []byte("edited"), 0o644)
-					return "superseded", err
+					return ocispec.Descriptor{}, os.WriteFile(filepath.Join(root, tc.edit), []byte("edited"), 0o644)
 				}
 				_, _ = io.WriteString(progress, tc.diagnostics+"\n")
-				return "", errors.New("fixture build failed")
+				return ocispec.Descriptor{}, errors.New("fixture build failed")
 			})
 			var stderr bytes.Buffer
 			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &stderr, h.run)
@@ -216,8 +216,8 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 	_, registry := buildRegistry(t)
 	registryHost := strings.TrimPrefix(registry.URL, "https://")
 	if build == nil {
-		build = func(context.Context, buildRequest, io.Writer) (string, error) {
-			return "", errors.New("fixture build failed")
+		build = func(context.Context, buildRequest, io.Writer) (ocispec.Descriptor, error) {
+			return ocispec.Descriptor{}, errors.New("fixture build failed")
 		}
 	}
 	h.run = commandConfig{
@@ -573,7 +573,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildClock := testingclock.NewFakeClock(time.Unix(100, 0))
-	build := func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
+	build := func(ctx context.Context, request buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
 		if !slices.Equal(request.Platforms, []string{"linux/amd64"}) {
 			t.Errorf("production platforms = %v", request.Platforms)
 		}

@@ -37,7 +37,8 @@ type reloadAppResult struct {
 type packedSource struct {
 	overlay ocispec.Descriptor
 	file    string
-	request buildRequest
+	upload  *imageUpload
+	app     string
 }
 
 func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
@@ -160,7 +161,7 @@ func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func
 	if _, err := snapshotSource(app, root); err != nil {
 		return packedSource{}, cleanup, err
 	}
-	upload := newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
+	upload := newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}}, d.options.HTTPClient)
 	packed, err := d.options.packSource(ctx, app, root, upload)
 	return packed, cleanup, err
 }
@@ -257,10 +258,7 @@ func (o buildOptions) packSource(ctx context.Context, app manifestApp, root stri
 	if err != nil {
 		return packedSource{}, err
 	}
-	packed := packedSource{
-		file:    root + ".tar.zst",
-		request: buildRequest{app: app, upload: upload, httpClient: o.HTTPClient},
-	}
+	packed := packedSource{file: root + ".tar.zst", upload: upload, app: app.Name}
 	file, err := os.Create(packed.file)
 	if err != nil {
 		return packedSource{}, err
@@ -315,7 +313,7 @@ func (p packedSource) publish(ctx context.Context, session string) error {
 		return err
 	}
 	defer func() { _ = file.Close() }()
-	return p.request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
+	return p.upload.repository(ctx, p.app, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}

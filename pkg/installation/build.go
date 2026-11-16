@@ -12,12 +12,17 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"time"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 
+	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
+	"github.com/holon-sh/cli/pkg/appartifact"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/protocol"
 )
 
@@ -79,38 +84,37 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 				apps[index] = declaration
 				return nil
 			}
-			var image string
+			var built ocispec.Descriptor
 			if app.resolved.Image == "" {
-				if image, err = buildSource(ctx, app, upload, options); err != nil {
+				if built, err = buildSource(ctx, app, upload, options); err != nil {
 					return err
 				}
 			}
-			err = upload.run(ctx, func(grant protocol.UploadGrant) error {
-				if image == "" {
-					imported, err := importImage(ctx, app.resolved.Image, grant.Registry, grant.Repositories[app.Name], grant.Grant, options.HTTPClient)
-					if err != nil {
+			return upload.repository(ctx, app.Name, func(repository *remote.Repository, grant protocol.UploadGrant) (err error) {
+				image := built
+				if app.resolved.Image != "" {
+					if image, err = importImage(ctx, app.resolved.Image, repository, options.HTTPClient); err != nil {
 						return fmt.Errorf("import %s: %w", app.Name, err)
 					}
-					image = imported
 				}
 				if app.resolved.stdio {
-					prepared, err := prepareStdioImage(ctx, image, grant.Grant, options)
-					if err != nil {
+					if image, err = adaptStdio(ctx, repository, image, options.origin); err != nil {
 						return fmt.Errorf("adapt stdio app %s: %w", app.Name, err)
 					}
-					image = prepared
 				}
 				if options.plane != "" && grant.Grant != "" {
-					return publishAppBuild(ctx, app, image, grant, options)
+					ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+					defer cancel()
+					record := mcpregistry.BuildRecord(app.resolved.App, app.resolved.catalogEnv, app.resolved.descriptor)
+					image := ocispec.Descriptor{MediaType: image.MediaType, Digest: image.Digest, Size: image.Size}
+					if _, err := appartifact.Publish(ctx, repository, image, record, options.plane); err != nil {
+						return err
+					}
 				}
+				declaration.Image = repository.Reference.String() + "@" + image.Digest.String()
+				apps[index] = declaration
 				return nil
 			})
-			if err != nil {
-				return err
-			}
-			declaration.Image = image
-			apps[index] = declaration
-			return nil
 		})
 	}
 	if err := group.Wait(); err != nil {
@@ -146,7 +150,7 @@ func regularNoSymlink(path, label string) error {
 func buildManifestImages(
 	ctx context.Context, manager *Client, name string, manifest manifestSpec, options buildOptions,
 ) ([]protocol.App, error) {
-	upload := newImageUpload(manager, name, manifest)
+	upload := newImageUpload(manager, name, manifest, options.HTTPClient)
 	options.importPackage = func(ctx context.Context, app manifestApp) (protocol.ResolvedAppBuild, error) {
 		return importRegistryBuild(ctx, manager, ControlPlane(name), app)
 	}
@@ -157,8 +161,8 @@ func buildManifestImages(
 	return buildAndPush(ctx, manifest, upload, options)
 }
 
-func newImageUpload(manager *Client, name string, manifest manifestSpec) *imageUpload {
-	return &imageUpload{load: func(ctx context.Context) (protocol.UploadGrant, error) {
+func newImageUpload(manager *Client, name string, manifest manifestSpec, client *http.Client) *imageUpload {
+	return &imageUpload{client: client, load: func(ctx context.Context) (protocol.UploadGrant, error) {
 		grant, err := imageDestination(ctx, manager, name, manifest)
 		if err == nil {
 			err = validateUploadGrant(grant, manifest)
@@ -169,6 +173,7 @@ func newImageUpload(manager *Client, name string, manifest manifestSpec) *imageU
 
 type imageUpload struct {
 	mu           sync.Mutex
+	client       *http.Client
 	load         func(context.Context) (protocol.UploadGrant, error)
 	grant        protocol.UploadGrant
 	renewed      bool
@@ -196,18 +201,31 @@ func (u *imageUpload) destination(ctx context.Context, rejected string) (protoco
 	return u.grant, nil
 }
 
-func (u *imageUpload) run(ctx context.Context, operation func(protocol.UploadGrant) error) error {
+func (u *imageUpload) repository(ctx context.Context, app string, operation func(*remote.Repository, protocol.UploadGrant) error) error {
+	attempt := func(grant protocol.UploadGrant) error {
+		name := grant.Registry + "/" + grant.Repositories[app]
+		key := name + " " + grant.Grant
+		repository, ok := u.repositories.Load(key)
+		if !ok {
+			created, err := imageRepository(name, grant.Grant, u.client)
+			if err != nil {
+				return err
+			}
+			repository, _ = u.repositories.LoadOrStore(key, created)
+		}
+		return operation(repository.(*remote.Repository), grant)
+	}
 	grant, err := u.destination(ctx, "")
 	if err != nil {
 		return err
 	}
-	err = operation(grant)
+	err = attempt(grant)
 	var response *errcode.ErrorResponse
 	if grant.Grant != "" && errors.As(err, &response) &&
 		slices.Contains([]int{http.StatusUnauthorized, http.StatusForbidden}, response.StatusCode) {
 		grant, err = u.destination(ctx, grant.Grant)
 		if err == nil {
-			err = operation(grant)
+			err = attempt(grant)
 		}
 	}
 	return err

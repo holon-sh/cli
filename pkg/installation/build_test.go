@@ -15,6 +15,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"k8s.io/utils/ptr"
 	"oras.land/oras-go/v2/content"
+	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/pkg/appartifact"
 	"github.com/holon-sh/protocol"
@@ -22,9 +23,9 @@ import (
 
 func buildImage(t *testing.T, marker string) buildApplication {
 	t.Helper()
-	return func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
+	return func(ctx context.Context, request buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
 		if _, err := io.WriteString(progress, "fixture build output\n"); err != nil {
-			return "", err
+			return ocispec.Descriptor{}, err
 		}
 		fixture, source := buildRegistry(t)
 		config := ocispec.ImageConfig{
@@ -36,10 +37,9 @@ func buildImage(t *testing.T, marker string) buildApplication {
 			children = append(children, addTestImage(t, fixture, strings.TrimPrefix(platform, "linux/"), config, nil))
 		}
 		descriptor := addTestIndex(fixture, children...)
-		var image string
-		err := request.upload.run(ctx, func(grant protocol.UploadGrant) (err error) {
-			image, err = importImage(ctx, strings.TrimPrefix(source.URL, "https://")+"/source@"+descriptor.Digest.String(),
-				grant.Registry, grant.Repositories[request.app.Name], grant.Grant, request.httpClient)
+		var image ocispec.Descriptor
+		err := request.upload.repository(ctx, request.app.Name, func(repository *remote.Repository, _ protocol.UploadGrant) (err error) {
+			image, err = importImage(ctx, strings.TrimPrefix(source.URL, "https://")+"/source@"+descriptor.Digest.String(), repository, request.upload.client)
 			return err
 		})
 		return image, err
@@ -132,10 +132,10 @@ func TestSourceBuildAndUpload(t *testing.T) {
 	_, server := buildRegistry(t)
 	build := buildImage(t, "source")
 	options := buildOptions{HTTPClient: server.Client(), plane: protocol.DevPlane}
-	options.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
+	options.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
 		snapshot := request.Source
 		if err := os.WriteFile(filepath.Join(root, "main.mjs"), []byte("console.log(2)"), 0o600); err != nil {
-			return "", err
+			return ocispec.Descriptor{}, err
 		}
 		t.Run("build input", func(t *testing.T) {
 			for name, want := range map[string]string{
@@ -176,7 +176,7 @@ func TestSourceBuildAndUpload(t *testing.T) {
 		"TOKEN":            {IsSecret: true, IsRequired: true},
 	}
 	manifest = prepareBuild(t, manifest)
-	apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant}, options)
+	apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant, client: options.HTTPClient}, options)
 	if err != nil {
 		t.Fatal(err)
 	}

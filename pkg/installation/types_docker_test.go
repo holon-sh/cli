@@ -111,7 +111,7 @@ export default createMcpHandler(() => {
 		t.Fatalf("%v\n%s", err, &diagnostics)
 	}
 	defer cleanup()
-	apps, err := buildAndPush(t.Context(), prepared, &imageUpload{grant: grant}, options)
+	apps, err := buildAndPush(t.Context(), prepared, &imageUpload{grant: grant, client: options.HTTPClient}, options)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, &diagnostics)
 	}
@@ -235,7 +235,7 @@ async def checkout(id: str) -> float:
 		}
 		defer cleanup()
 		selected := manifestSpec{Apps: []manifestApp{prepared.Apps[1]}}
-		if _, err := buildAndPush(t.Context(), selected, &imageUpload{grant: grant}, options); err != nil {
+		if _, err := buildAndPush(t.Context(), selected, &imageUpload{grant: grant, client: options.HTTPClient}, options); err != nil {
 			t.Fatalf("build Python caller: %v\n%s", err, progress.String())
 		}
 	}

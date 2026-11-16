@@ -271,7 +271,7 @@ func TestPrebuiltImageImports(t *testing.T) {
 			}}}}}
 			options := buildOptions{HTTPClient: server.Client()}
 			renewals := 0
-			upload := imageUpload{grant: grant, load: func(context.Context) (protocol.UploadGrant, error) {
+			upload := imageUpload{grant: grant, client: options.HTTPClient, load: func(context.Context) (protocol.UploadGrant, error) {
 				renewals++
 				return grant, nil
 			}}

@@ -47,10 +47,10 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-func publishSource(ctx context.Context, request buildRequest, progress io.Writer) (string, error) {
+func publishSource(ctx context.Context, request buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
 	source, err := fsutil.NewFS(request.Source)
 	if err != nil {
-		return "", err
+		return ocispec.Descriptor{}, err
 	}
 	manifests := make([]ocispec.Descriptor, len(request.Platforms))
 	group, buildCtx := errgroup.WithContext(ctx)
@@ -62,13 +62,13 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 		})
 	}
 	if err := group.Wait(); err != nil {
-		return "", err
+		return ocispec.Descriptor{}, err
 	}
 	slices.SortFunc(manifests, func(a, b ocispec.Descriptor) int {
 		return strings.Compare(a.Platform.Architecture, b.Platform.Architecture)
 	})
-	var image string
-	err = request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
+	var image ocispec.Descriptor
+	err = request.upload.repository(ctx, request.app.Name, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		entries := slices.Clone(manifests)
 		annotations := map[string]string{}
 		if p := request.app.resolved.types; p.metadata != nil {
@@ -83,10 +83,7 @@ func publishSource(ctx context.Context, request buildRequest, progress io.Writer
 			Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex,
 			Manifests: entries, Annotations: annotations,
 		})
-		descriptor, err := oras.PushBytes(ctx, repository, ocispec.MediaTypeImageIndex, data)
-		if err == nil {
-			image = repository.Reference.String() + "@" + descriptor.Digest.String()
-		}
+		image, err = oras.PushBytes(ctx, repository, ocispec.MediaTypeImageIndex, data)
 		return err
 	})
 	return image, err
@@ -262,7 +259,7 @@ func publishPlatform(
 	}
 	pushed := request.output.measure(name, "push")
 	defer pushed()
-	if err := request.publish(ctx, func(repository *remote.Repository, grant protocol.UploadGrant) error {
+	if err := request.upload.repository(ctx, request.app.Name, func(repository *remote.Repository, grant protocol.UploadGrant) error {
 		copyOptions.PreCopy = func(ctx context.Context, descriptor ocispec.Descriptor) error {
 			if len(grant.Repositories) < 2 || grant.Grant == "" ||
 				(descriptor.MediaType != ocispec.MediaTypeImageLayer && descriptor.MediaType != ocispec.MediaTypeImageLayerGzip && descriptor.MediaType != ocispec.MediaTypeImageLayerZstd) {
@@ -312,22 +309,6 @@ func (u *imageUpload) pushLayer(ctx context.Context, repository *remote.Reposito
 	}
 }
 
-func (r buildRequest) publish(ctx context.Context, operation func(*remote.Repository, protocol.UploadGrant) error) error {
-	return r.upload.run(ctx, func(grant protocol.UploadGrant) error {
-		name := grant.Registry + "/" + grant.Repositories[r.app.Name]
-		key := name + " " + grant.Grant
-		repository, ok := r.upload.repositories.Load(key)
-		if !ok {
-			created, err := imageRepository(name, grant.Grant, r.httpClient)
-			if err != nil {
-				return err
-			}
-			repository, _ = r.upload.repositories.LoadOrStore(key, created)
-		}
-		return operation(repository.(*remote.Repository), grant)
-	})
-}
-
 type sourceExport struct {
 	content.Store
 
@@ -341,7 +322,7 @@ func (s *sourceExport) Writer(ctx context.Context, options ...content.WriterOpt)
 			return nil, err
 		}
 	}
-	if err := s.request.publish(ctx, func(repository *remote.Repository, _ protocol.UploadGrant) error {
+	if err := s.request.upload.repository(ctx, s.request.app.Name, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		exists, err := repository.Blobs().Exists(ctx, settings.Desc)
 		if err == nil && exists {
 			s.request.upload.blobs.LoadOrStore(settings.Desc.Digest, repository.Reference.Repository)
