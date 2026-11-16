@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 )
@@ -98,9 +99,7 @@ func TestAppConsumerFindsTheOwnServer(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			for name, content := range test.files {
-				put(t, dir, name, content)
-			}
+			testfiles.Write(t, dir, test.files)
 			c, err := AppConsumer("app", dir)
 			if (err != nil) != test.fails {
 				t.Fatalf("AppConsumer error = %v, want failure %t", err, test.fails)

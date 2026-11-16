@@ -17,7 +17,7 @@ import (
 func notebookTools() []mcpcontract.Tool {
 	problem := `"Problem":{"type":"object","required":["title"],"properties":{"title":{"type":"string"},"detail":{"type":"string"}}}`
 	params := `"NotebookParams":{"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}`
-	headers := `"headers":{"type":"object","properties":{"if-match":{"type":"string"}}}`
+	headers := `"headers":{"type":"object","additionalProperties":true,"properties":{"if-match":{"type":"string"}}}`
 	reply := func(body string, defs ...string) json.RawMessage {
 		return json.RawMessage(`{"anyOf":[{"type":"object","required":["status","body"],"properties":{"status":{"const":200},"body":` + body + `}},` +
 			`{"type":"object","required":["status","body"],"properties":{"status":{"type":"integer","minimum":400},"body":{"$ref":"#/$defs/Problem"}}}],` +
@@ -74,7 +74,7 @@ func TestSharedTypeNamesDoNotDependOnOtherTools(t *testing.T) {
 	for _, target := range []string{"node", "python", "go"} {
 		t.Run(target, func(t *testing.T) {
 			before := declaredTypes(t, target, tools)
-			for _, name := range []string{"NotebooksInputCreateRequest", "NotebooksInputSaveRequest", "NotebooksOutputProblem"} {
+			for _, name := range []string{"NotebooksInputCreateRequest", "NotebooksInputSaveRequest", "NotebooksOutputProblem", "NotebooksInputIfMatch"} {
 				if _, ok := before[name]; !ok {
 					t.Errorf("%s is not declared; declared %v", name, slices.Sorted(maps.Keys(before)))
 				}

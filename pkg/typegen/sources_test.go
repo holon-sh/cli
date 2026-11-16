@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/holon-sh/cli/internal/testfiles"
 )
 
 func TestResolveDocumentFindsServerSources(t *testing.T) {
@@ -80,9 +82,7 @@ dependencies = ["holon-sh @ https://example.com/sdk.tar.gz"]`}, []string{TargetP
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			for name, data := range test.files {
-				put(t, dir, name, data)
-			}
+			testfiles.Write(t, dir, test.files)
 			got, err := DeclaredTargets(dir)
 			if !slices.Equal(got, test.want) || err != nil {
 				t.Fatalf("targets = %v, %v; want %v", got, err, test.want)
