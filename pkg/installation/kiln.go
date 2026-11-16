@@ -19,8 +19,7 @@ import (
 type buildApplication func(context.Context, buildRequest, io.Writer) (ocispec.Descriptor, error)
 
 type buildRequest struct {
-	kiln.Request
-
+	Source     string
 	Platforms  []string
 	Env        []string
 	app        manifestApp
@@ -53,8 +52,7 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 		return buildRequest{}, err
 	}
 	request := buildRequest{
-		Request: kiln.Request{Source: p.root, Start: start},
-		Env:     commandenv.Environ(o.Env), app: app, builders: o.builders, output: o.output,
+		Source: p.root, Env: commandenv.Environ(o.Env), app: app, builders: o.builders, output: o.output,
 	}
 	architectures := o.architectures
 	if len(architectures) == 0 {
@@ -64,7 +62,7 @@ func (o buildOptions) planSource(ctx context.Context, app manifestApp, p *prepar
 		request.Platforms = append(request.Platforms, "linux/"+arch)
 	}
 	planned := o.output.measure(app.Name, "plan")
-	request.dockerfile, err = kiln.Image(ctx, request.Request)
+	request.dockerfile, err = kiln.Image(ctx, p.root, start)
 	planned()
 	return request, err
 }

@@ -228,10 +228,13 @@ func packSource(ctx context.Context, app manifestApp, root string, accepted *pre
 	if err != nil {
 		return packedSource{}, err
 	}
-	// A page is built once the clients it may import are in the source.
-	plan, err := overlayPlan(ctx, root, entry, accepted != nil && !accepted.unserved)
+	plan, err := kiln.Development(ctx, root, serveCommand(entry))
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
+	}
+	// A page is built once the clients it may import are in the source.
+	if accepted == nil || accepted.unserved {
+		plan.Prepare = nil
 	}
 	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.PlanFile)), 0o755); err != nil {
 		return packedSource{}, err
@@ -273,28 +276,6 @@ func devEntry(app manifestApp, root string) (string, error) {
 		err = fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
 	}
 	return entry, err
-}
-
-func overlayPlan(ctx context.Context, root, entry string, page bool) (runtimecontract.Plan, error) {
-	steps, err := kiln.Development(ctx, root)
-	if err != nil {
-		return runtimecontract.Plan{}, err
-	}
-	read := map[string][]byte{}
-	for _, name := range steps.Inputs {
-		if read[name], err = os.ReadFile(filepath.Join(root, name)); err != nil {
-			return runtimecontract.Plan{}, err
-		}
-	}
-	inputs, _ := json.Marshal(read)
-	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: digest.FromBytes(inputs).String(), Commands: steps.Install}, Start: serveCommand(entry)}
-	if filepath.Ext(entry) == ".py" {
-		plan.Start = append([]string{"uv", "run", "--no-sync"}, plan.Start...)
-	}
-	if page {
-		plan.Prepare = steps.Build
-	}
-	return plan, nil
 }
 
 func (p packedSource) publish(ctx context.Context, app, session string) error {
