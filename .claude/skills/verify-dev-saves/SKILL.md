@@ -53,7 +53,7 @@ Changes to these do not alter anything the model describes: `apply`, `update`, `
 
 Check `DevSaves.tla` with the pstack `/statechart` skill, giving it `DevSaves.cfg` as the config and `view.mjs` as the view. Read `/statechart` for how to run it and how to read its report. It installs its own pinned TLC and Java on first use.
 
-On the sync commit the report lists `ReadyServesLastSave`, `RestartKeepsLastSave`, `FailureIsCurrent` and `NoDeadlock` under "Rules that hold", after 16,602 distinct states, in about ten seconds.
+On the sync commit the report lists `ReadyServesLastSave`, `RestartKeepsLastSave`, `FailureIsCurrent` and `NoDeadlock` under "Rules that hold", after 21,921 distinct states, in about ten seconds.
 
 ## Check that it can still fail
 

@@ -33,7 +33,7 @@ Each action in `Credentials.tla` is one file read, one atomic rename, or one req
 | `LogoutLock`, `LogoutRevoke`, `LogoutRemove` | `logout` and `revokeRefreshTokens` in `auth.go`, `removeCredentialFile` in `credentials.go` |
 | `Restart` | `NewClient`: a new process starts with an empty `Client.state` |
 
-The variables `identity`, `served`, `spent` and `stale` exist only so that the rules can be written. The code has no such fields.
+The variables `identity`, `served`, `started`, `spent` and `stale` exist only so that the rules can be written. The code has no such fields.
 
 ## Does a change need this
 

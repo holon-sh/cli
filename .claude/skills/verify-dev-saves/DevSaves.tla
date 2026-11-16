@@ -132,7 +132,7 @@ SendRefused ==
 Record ==
     /\ pc = "record"
     /\ gen' = gen + 1
-    /\ LET superseded(i) == i = gen /\ rec[i].cancel = "none"
+    /\ LET superseded(i) == i = gen /\ InFlight(i) /\ rec[i].cancel = "none"
                               /\ Fault # "no_supersede" IN
          /\ rec' = [i \in Ids |->
                       IF i = gen + 1
@@ -204,18 +204,17 @@ Uploading == pc = "record" \/ wire # {} \/ \E i \in Ids : InFlight(i)
 Restart ==
     /\ RestartWhileUploading \/ ~Uploading
     /\ pc # "send"
+    /\ served # tag
     /\ served' = tag
     /\ UNCHANGED <<disk, saves, pending, armed, offer, pc, packed, sent, shown, rec, gen,
                    tag, wire, tried, triedOk>>
 
 ----------------------------------------------------------------------------
 
-Quiet == pc = "select" /\ ~pending /\ ~armed /\ ~offer
-
 \* Every save is made and nothing is in motion: the end of a bounded run.
 Settled ==
     /\ saves = MaxSaves
-    /\ Quiet
+    /\ pc = "select" /\ ~pending /\ ~armed /\ ~offer
     /\ UNCHANGED vars
 
 Next ==
@@ -239,6 +238,8 @@ Spec == Init /\ [][Next]_vars
 
 ----------------------------------------------------------------------------
 \* The rules. Quiet is the loop waiting in select with nothing for it to take.
+
+Quiet == pc = "select" /\ ~pending /\ ~armed /\ ~offer
 
 RecordingsEnded == wire = {} /\ \A i \in Ids : ~InFlight(i)
 

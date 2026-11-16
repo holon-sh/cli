@@ -25,11 +25,12 @@ VARIABLES
     \* What the rules below are written against. The code has no such fields.
     identity,     \* the sign-in a process first loaded, or made itself
     served,       \* the sign-in whose token a process last handed to a caller
+    started,      \* the sign-in on disk when a process began holon login
     spent,        \* a process presented a refresh token that was already spent
     stale         \* a sign-in replaced credentials saved after it began
 
 vars == <<file, live, lock, mem, pc, aud, before, minted, nextVersion, nextToken,
-          identity, served, spent, stale>>
+          identity, served, started, spent, stale>>
 
 None == 0
 Empty == [version |-> None, tokens |-> [a \in Audiences |-> None]]
@@ -47,6 +48,7 @@ Init ==
     /\ nextToken = 1
     /\ identity = [p \in Procs |-> None]
     /\ served = [p \in Procs |-> None]
+    /\ started = [p \in Procs |-> None]
     /\ spent = FALSE
     /\ stale = FALSE
 
@@ -75,7 +77,7 @@ TokenLock(p, a) ==
     /\ aud' = [aud EXCEPT ![p] = a]
     /\ Go(p, "token_load")
     /\ UNCHANGED <<file, live, mem, before, minted, nextVersion, nextToken,
-                   identity, served, spent, stale>>
+                   identity, served, started, spent, stale>>
 
 \* token calls loadCredentials, then looks for the audience's token.
 TokenLoad(p) ==
@@ -88,7 +90,7 @@ TokenLoad(p) ==
                    THEN \E to \in {"unlock", "unlock_signin"} : Go(p, to)
                    ELSE Go(p, "token_use")
     /\ UNCHANGED <<file, live, lock, aud, before, minted, nextVersion, nextToken,
-                   served, spent, stale>>
+                   served, started, spent, stale>>
 
 \* token returns the cached access token, which has not expired.
 TokenCached(p) ==
@@ -96,7 +98,7 @@ TokenCached(p) ==
     /\ served' = [served EXCEPT ![p] = mem[p].version]
     /\ Go(p, "unlock")
     /\ UNCHANGED <<file, live, lock, mem, aud, before, minted, nextVersion, nextToken,
-                   identity, spent, stale>>
+                   identity, started, spent, stale>>
 
 \* renewToken presents the refresh token. The identity provider rotates it, or
 \* refuses one it has already rotated or revoked (errReauthenticationRequired).
@@ -114,7 +116,7 @@ TokenRenew(p) ==
                 /\ Go(p, "unlock")
                 /\ UNCHANGED <<live, nextToken, mem>>
     /\ UNCHANGED <<file, lock, aud, before, minted, nextVersion, identity, served,
-                   stale>>
+                   started, stale>>
 
 \* token saves the whole state with writeState, an atomic rename.
 TokenWrite(p) ==
@@ -123,34 +125,30 @@ TokenWrite(p) ==
     /\ served' = [served EXCEPT ![p] = mem[p].version]
     /\ Go(p, "unlock")
     /\ UNCHANGED <<live, lock, mem, aud, before, minted, nextVersion, nextToken,
-                   identity, spent, stale>>
+                   identity, started, spent, stale>>
 
 ----------------------------------------------------------------------------
 \* resourceToken's errNoAudienceToken branch: deviceToken outside the lock, then
 \* withLock around loadCredentials and writeState.
 
 \* deviceToken: the person approves, and the identity provider issues a token.
-Mint(p, from, to) ==
-    /\ pc[p] = from
+SigninDevice(p) ==
+    /\ pc[p] = "signin_device"
     /\ nextToken <= MaxTokens
     /\ live' = live \cup {nextToken}
     /\ minted' = [minted EXCEPT ![p] = nextToken]
     /\ nextToken' = nextToken + 1
-    /\ Go(p, to)
+    /\ Go(p, "signin_lock")
     /\ UNCHANGED <<file, lock, mem, aud, before, nextVersion, identity, served,
-                   spent, stale>>
+                   started, spent, stale>>
 
-SigninDevice(p) == Mint(p, "signin_device", "signin_lock")
-
-Acquire(p, from, to) ==
-    /\ pc[p] = from
+SigninLock(p) ==
+    /\ pc[p] = "signin_lock"
     /\ lock = "free"
     /\ lock' = p
-    /\ Go(p, to)
+    /\ Go(p, "signin_load")
     /\ UNCHANGED <<file, live, mem, aud, before, minted, nextVersion, nextToken,
-                   identity, served, spent, stale>>
-
-SigninLock(p) == Acquire(p, "signin_lock", "signin_load")
+                   identity, served, started, spent, stale>>
 
 \* loadCredentials again, under the lock, before the new token is added.
 SigninLoad(p) ==
@@ -161,7 +159,7 @@ SigninLoad(p) ==
                 THEN Go(p, "unlock") /\ UNCHANGED <<mem, identity>>
                 ELSE Load(p) /\ Go(p, "signin_write")
     /\ UNCHANGED <<file, live, lock, aud, before, minted, nextVersion, nextToken,
-                   served, spent, stale>>
+                   served, started, spent, stale>>
 
 \* m.state.Tokens[audience] = token, then writeState.
 SigninWrite(p) ==
@@ -172,7 +170,7 @@ SigninWrite(p) ==
          /\ served' = [served EXCEPT ![p] = next.version]
     /\ Go(p, "unlock")
     /\ UNCHANGED <<live, lock, aud, before, minted, nextVersion, nextToken,
-                   identity, spent, stale>>
+                   identity, started, spent, stale>>
 
 ----------------------------------------------------------------------------
 \* loginInteractive (holon login, or the sign-in a signed-out command starts).
@@ -182,14 +180,29 @@ LoginBefore(p) ==
     /\ pc[p] = "idle"
     /\ nextVersion <= MaxLogins
     /\ before' = [before EXCEPT ![p] = file.version]
+    /\ started' = [started EXCEPT ![p] = file.version]
     /\ Go(p, "login_device")
     /\ UNCHANGED <<file, live, lock, mem, aud, minted, nextVersion, nextToken,
                    identity, served, spent, stale>>
 
 \* deviceToken for the admin audience.
-LoginDevice(p) == Mint(p, "login_device", "login_lock")
+LoginDevice(p) ==
+    /\ pc[p] = "login_device"
+    /\ nextToken <= MaxTokens
+    /\ live' = live \cup {nextToken}
+    /\ minted' = [minted EXCEPT ![p] = nextToken]
+    /\ nextToken' = nextToken + 1
+    /\ Go(p, "login_lock")
+    /\ UNCHANGED <<file, lock, mem, aud, before, nextVersion, identity, served,
+                   started, spent, stale>>
 
-LoginLock(p) == Acquire(p, "login_lock", "login_check")
+LoginLock(p) ==
+    /\ pc[p] = "login_lock"
+    /\ lock = "free"
+    /\ lock' = p
+    /\ Go(p, "login_check")
+    /\ UNCHANGED <<file, live, mem, aud, before, minted, nextVersion, nextToken,
+                   identity, served, started, spent, stale>>
 
 \* saved.Version != before.Version is errCredentialChanged.
 LoginCheck(p) ==
@@ -198,7 +211,7 @@ LoginCheck(p) ==
          THEN Go(p, "unlock")
          ELSE Go(p, "login_write")
     /\ UNCHANGED <<file, live, lock, mem, aud, before, minted, nextVersion, nextToken,
-                   identity, served, spent, stale>>
+                   identity, served, started, spent, stale>>
 
 \* writeState(state) with a new Version and only the admin token; m.state = state.
 LoginWrite(p) ==
@@ -207,17 +220,23 @@ LoginWrite(p) ==
                    tokens |-> [a \in Audiences |-> IF a = Admin THEN minted[p] ELSE None]] IN
          /\ file' = new
          /\ mem' = [mem EXCEPT ![p] = new]
-    /\ stale' = (stale \/ (file.version # None /\ file.version # before[p]))
+    /\ stale' = (stale \/ (file.version # None /\ file.version # started[p]))
     /\ identity' = [identity EXCEPT ![p] = nextVersion]
     /\ served' = [served EXCEPT ![p] = None]
     /\ nextVersion' = nextVersion + 1
     /\ Go(p, "unlock")
-    /\ UNCHANGED <<live, lock, aud, before, minted, nextToken, spent>>
+    /\ UNCHANGED <<live, lock, aud, before, minted, nextToken, started, spent>>
 
 ----------------------------------------------------------------------------
 \* logout: withLock around revokeRefreshTokens and removeCredentialFile.
 
-LogoutLock(p) == Acquire(p, "idle", "logout_revoke")
+LogoutLock(p) ==
+    /\ pc[p] = "idle"
+    /\ lock = "free"
+    /\ lock' = p
+    /\ Go(p, "logout_revoke")
+    /\ UNCHANGED <<file, live, mem, aud, before, minted, nextVersion, nextToken,
+                   identity, served, started, spent, stale>>
 
 \* revokeRefreshTokens revokes every token in the file, or fails and revokes none.
 LogoutRevoke(p) ==
@@ -225,7 +244,7 @@ LogoutRevoke(p) ==
     /\ live' \in {live, live \ {file.tokens[a] : a \in Audiences}}
     /\ Go(p, "logout_remove")
     /\ UNCHANGED <<file, lock, mem, aud, before, minted, nextVersion, nextToken,
-                   identity, served, spent, stale>>
+                   identity, served, started, spent, stale>>
 
 \* removeCredentialFile.
 LogoutRemove(p) ==
@@ -233,7 +252,7 @@ LogoutRemove(p) ==
     /\ file' = Empty
     /\ Go(p, "unlock")
     /\ UNCHANGED <<live, lock, mem, aud, before, minted, nextVersion, nextToken,
-                   identity, served, spent, stale>>
+                   identity, served, started, spent, stale>>
 
 ----------------------------------------------------------------------------
 
@@ -242,21 +261,23 @@ Unlock(p) ==
     /\ pc[p] \in {"unlock", "unlock_signin"}
     /\ lock' = IF lock = p THEN "free" ELSE lock
     /\ IF pc[p] = "unlock_signin"
-         THEN Go(p, "signin_device") /\ UNCHANGED <<aud, before, minted>>
+         THEN Go(p, "signin_device") /\ UNCHANGED <<aud, before, minted, started>>
          ELSE /\ Go(p, "idle")
               /\ aud' = [aud EXCEPT ![p] = Admin]
               /\ before' = [before EXCEPT ![p] = None]
               /\ minted' = [minted EXCEPT ![p] = None]
+              /\ started' = [started EXCEPT ![p] = None]
     /\ UNCHANGED <<file, live, mem, nextVersion, nextToken, identity, served, spent, stale>>
 
 \* The process exits and a new holon starts: NewClient with an empty state.
 Restart(p) ==
     /\ pc[p] = "idle"
+    /\ mem[p] # Empty \/ identity[p] # None \/ served[p] # None
     /\ mem' = [mem EXCEPT ![p] = Empty]
     /\ identity' = [identity EXCEPT ![p] = None]
     /\ served' = [served EXCEPT ![p] = None]
     /\ UNCHANGED <<file, live, lock, pc, aud, before, minted, nextVersion, nextToken,
-                   spent, stale>>
+                   started, spent, stale>>
 
 \* The identity provider's budget of tokens is spent: the end of a bounded run.
 Exhausted == nextToken > MaxTokens /\ UNCHANGED vars
