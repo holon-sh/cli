@@ -150,7 +150,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 		if err != nil {
 			return kiln.Steps{}, err
 		}
-		c, err := consumer(dir, nil)
+		c, err := consumer(dir, nil, true)
 		if err != nil {
 			return kiln.Steps{}, err
 		}

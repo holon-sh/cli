@@ -39,9 +39,7 @@ func LoadBridges(payloads fs.FS) (Bridges, error) {
 		if err != nil {
 			return nil, err
 		}
-		if bridges[architecture], err = bridgeLayer(binary); err != nil {
-			return nil, err
-		}
+		bridges[architecture] = bridgeLayer(binary)
 	}
 	return bridges, nil
 }
@@ -100,11 +98,7 @@ func AdaptRuntime(ctx context.Context, repository oras.Target, image *Image, opt
 	return nil
 }
 
-func bridgeLayer(binary []byte) (bridgePayload, error) {
-	if len(binary) == 0 {
-		return bridgePayload{}, errors.New("stdio bridge is not bundled")
-	}
-
+func bridgeLayer(binary []byte) bridgePayload {
 	var compressed bytes.Buffer
 	zipper := gzip.NewWriter(&compressed)
 	diffID := digest.Canonical.Digester()
@@ -114,7 +108,7 @@ func bridgeLayer(binary []byte) (bridgePayload, error) {
 	_, _ = writer.Write(binary)
 	_ = writer.Close()
 	_ = zipper.Close()
-	return bridgePayload{layer: compressed.Bytes(), diffID: diffID.Digest(), binary: digest.FromBytes(binary)}, nil
+	return bridgePayload{layer: compressed.Bytes(), diffID: diffID.Digest(), binary: digest.FromBytes(binary)}
 }
 
 func checkLayer(ctx context.Context, repository oras.Target, checkedLayers *sync.Map, descriptor ocispec.Descriptor) error {
