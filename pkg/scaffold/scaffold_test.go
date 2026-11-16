@@ -106,4 +106,9 @@ func TestResolve(t *testing.T) {
 	if want := (Versions{UI: "0.0.1-dev.11", SDK: "0.0.1-dev.6", CLI: "0.0.1-dev.19"}); err != nil || versions != want {
 		t.Errorf("ts versions = %+v, %v, want %+v", versions, err, want)
 	}
+	for want, broken := range map[string]registries{"npm holon-ui: ": {npm: server.URL + "/missing", pypi: server.URL}, "PyPI holon-sh: ": {npm: server.URL, pypi: server.URL + "/missing"}} {
+		if _, err := broken.resolve(context.Background(), "py", "0.0.1-dev.19"); err == nil || !strings.HasPrefix(err.Error(), want) {
+			t.Errorf("resolve from a failing registry = %v, want an error starting %q", err, want)
+		}
+	}
 }

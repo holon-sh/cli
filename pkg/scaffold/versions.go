@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -38,24 +39,26 @@ func (r registries) resolve(ctx context.Context, language, cliVersion string) (V
 		v.CLI = cliVersion
 	}
 	group, ctx := errgroup.WithContext(ctx)
-	lookup := func(version *string, location string) {
+	lookup := func(version *string, name, location string) {
 		if *version == "" {
 			group.Go(func() (err error) {
-				*version, err = newest(ctx, location)
-				return err
+				if *version, err = newest(ctx, location); err != nil {
+					return fmt.Errorf("%s: %w", name, err)
+				}
+				return nil
 			})
 		}
 	}
-	npm := func(pkg string) string { return r.npm + "/" + url.PathEscape(pkg) }
-	pypi := func(pkg string) string { return r.pypi + "/pypi/" + url.PathEscape(pkg) + "/json" }
-	lookup(&v.UI, npm(typegen.NodePackages[typegen.TargetUI]))
+	npm := func(pin *string, pkg string) { lookup(pin, "npm "+pkg, r.npm+"/"+url.PathEscape(pkg)) }
+	pypi := func(pin *string, pkg string) { lookup(pin, "PyPI "+pkg, r.pypi+"/pypi/"+url.PathEscape(pkg)+"/json") }
+	npm(&v.UI, typegen.NodePackages[typegen.TargetUI])
 	switch language {
 	case typegen.TargetTS:
-		lookup(&v.SDK, npm(typegen.NodePackages[typegen.TargetTS]))
-		lookup(&v.CLI, npm(cliPackage))
+		npm(&v.SDK, typegen.NodePackages[typegen.TargetTS])
+		npm(&v.CLI, cliPackage)
 	case typegen.TargetPy:
-		lookup(&v.SDK, pypi(typegen.PythonRuntime))
-		lookup(&v.CLI, pypi(cliPackage))
+		pypi(&v.SDK, typegen.PythonRuntime)
+		pypi(&v.CLI, cliPackage)
 	}
 	return v, group.Wait()
 }
@@ -70,10 +73,10 @@ func newest(ctx context.Context, location string) (string, error) {
 		Info     struct{ Version string }
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
-		return "", fmt.Errorf("%s: %w", location, err)
+		return "", err
 	}
 	if version := cmp.Or(document.DistTags.Latest, document.Info.Version); version != "" {
 		return version, nil
 	}
-	return "", fmt.Errorf("%s: no release", location)
+	return "", errors.New("no release")
 }
