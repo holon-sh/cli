@@ -35,7 +35,7 @@ func Read(source fs.FS) (Recipe, error) {
 	}
 	if python := found("pyproject.toml", "requirements.txt", "poetry.lock", "pdm.lock", "uv.lock"); len(python) > 0 {
 		if !slices.Contains(files, "uv.lock") {
-			return Recipe{}, fmt.Errorf("found %s but no uv.lock: Python projects install with uv; run uv lock", strings.Join(python, ", "))
+			return Recipe{}, fmt.Errorf("found %s but no uv.lock: Python projects install with uv from a pyproject.toml and its uv.lock", strings.Join(python, ", "))
 		}
 		page, err := node(source, files)
 		return Recipe{
