@@ -26,6 +26,7 @@ import (
 	"github.com/moby/buildkit/util/staticfs"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	fstypes "github.com/tonistiigi/fsutil/types"
+	"k8s.io/utils/clock"
 	"oras.land/oras-go/v2/content"
 )
 
@@ -134,9 +135,8 @@ func TestDockerSourceBuild(t *testing.T) {
 
 	t.Run("progress failure", func(t *testing.T) {
 		want := errors.New("progress writer failed")
-		failed := options
-		failed.Stderr = progressFunc(func([]byte) (int, error) { return 0, want })
-		if _, err := buildSource(t.Context(), prepareBuild(t, manifest).Apps[0], upload, failed); !errors.Is(err, want) {
+		failing := progressFunc(func([]byte) (int, error) { return 0, want })
+		if _, err := buildSource(t.Context(), prepareBuild(t, manifest).Apps[0], upload, options, failing); !errors.Is(err, want) {
 			t.Fatalf("progress error: %v", err)
 		}
 	})
@@ -147,12 +147,12 @@ func TestDockerSourceBuild(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		canceled := options
-		canceled.Stderr = progressFunc(func(data []byte) (int, error) {
+		canceled.output = verboseOutput(progressFunc(func(data []byte) (int, error) {
 			if strings.Contains(string(data), "cancel-build") {
 				cancel()
 			}
 			return len(data), nil
-		})
+		}))
 		if _, err := buildAndPush(ctx, prepareBuild(t, manifest), upload, canceled); !errors.Is(err, context.Canceled) {
 			t.Fatalf("canceled build: %v", err)
 		}
@@ -175,6 +175,11 @@ func sourceRegistry(t *testing.T) (protocol.UploadGrant, buildOptions) {
 	builders := new(builderConnections)
 	t.Cleanup(builders.close)
 	return protocol.UploadGrant{Grant: "grant-secret", Registry: strings.TrimPrefix(server.URL, "https://"), Repositories: map[string]string{"alpha": "apps/alpha"}}, buildOptions{
-		Env: append(os.Environ(), "BUILDX_BUILDER="+name), Stderr: os.Stderr, HTTPClient: server.Client(), builders: builders,
+		Env: append(os.Environ(), "BUILDX_BUILDER="+name), output: verboseOutput(os.Stderr), HTTPClient: server.Client(), builders: builders,
 	}
+}
+
+func verboseOutput(writer io.Writer) *progressOutput {
+	output, _, _ := newProgressOutput(io.Discard, writer, true, clock.RealClock{})
+	return output
 }

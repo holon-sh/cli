@@ -7,13 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"github.com/holon-sh/cli/pkg/appartifact"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
 
@@ -86,27 +84,13 @@ export default createMcpHandler(() => {
 	}
 	manifest = typedManifest(t, manifest.Apps...)
 	grant, options := sourceRegistry(t)
-	options.plane = protocol.DevPlane
+	options.plane = protocol.AdminPlane
 	var diagnostics strings.Builder
-	options.Stderr = &buildLog{writer: &diagnostics}
+	options.output = verboseOutput(&diagnostics)
 	grant.Repositories = map[string]string{"orders": "apps/orders", "checkout": "apps/checkout"}
 	options.architectures = []string{"amd64", "arm64"}
 	options.Env = append(options.Env, "DOCKER_CONTEXT="+os.Getenv("DOCKER_CONTEXT"))
-	editor := func(app manifestApp, name string) string {
-		t.Helper()
-		data, err := os.ReadFile(filepath.Join(app.Path, "generated/holon-sh", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
-	}
-	workspace := new(typeWorkspace)
-	if err := workspace.acquire(manifest); err != nil {
-		t.Fatal(err)
-	}
-	defer workspace.close()
-	options.types = workspace
-	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options)
+	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options, nil)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, &diagnostics)
 	}
@@ -129,15 +113,10 @@ export default createMcpHandler(() => {
 			t.Fatalf("published metadata %s: %v, %v", app.Name, metadata, err)
 		}
 		if app.Name == "orders" {
-			tagged, err := repository.Resolve(t.Context(), appartifact.DevelopmentTag)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var build, platforms ocispec.Index
+			var platforms ocispec.Index
 			var image ocispec.Manifest
 			var config ocispec.Image
-			publishedJSON(t, repository, tagged, &build)
-			publishedJSON(t, repository, build.Manifests[0], &platforms)
+			publishedJSON(t, repository, descriptor, &platforms)
 			publishedJSON(t, repository, platforms.Manifests[0], &image)
 			publishedJSON(t, repository, image.Config, &config)
 			if labels := config.Config.Labels; labels["io.modelcontextprotocol.server.name"] != "io.github.example/orders" {
@@ -151,19 +130,13 @@ export default createMcpHandler(() => {
 			}
 		}
 	}
-	checkout := prepared.Apps[slices.IndexFunc(prepared.Apps, func(app manifestApp) bool { return app.Name == "checkout" })]
-	before := editor(checkout, "index.d.mts")
-	workspace.accept(prepared)
 	sourceFiles(t, root, map[string]string{"orders/server.ts": strings.Replace(provider, "id:z.string()", "id:z.number()", 1)})
-	if _, _, err := prepareManifestTypes(t.Context(), manifest, options); err == nil ||
+	if _, _, err := prepareManifestTypes(t.Context(), manifest, options, nil); err == nil ||
 		!strings.Contains(err.Error(), "checkout does not type-check") || !strings.Contains(err.Error(), "error TS2322") {
 		t.Fatalf("expected incompatible argument diagnostic: %v", err)
 	}
-	if editor(checkout, "index.d.mts") == before {
-		t.Fatal("editor declarations did not update")
-	}
 	sourceFiles(t, root, map[string]string{"checkout/server.ts": strings.Replace(caller, "get_order({id})", "get_order({id:Number(id)})", 1)})
-	_, cleanupChanged, err := prepareManifestTypes(t.Context(), manifest, options)
+	_, cleanupChanged, err := prepareManifestTypes(t.Context(), manifest, options, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,8 +192,8 @@ async def checkout(id: str) -> float:
 			})
 		}
 		var progress strings.Builder
-		options.Stderr = &progress
-		prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options)
+		options.output = verboseOutput(&progress)
+		prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options, nil)
 		if !valid {
 			if err == nil || !strings.Contains(strings.ToLower(err.Error()), "incompatible type") {
 				t.Fatalf("expected incompatible argument diagnostic: %v\n%s", err, progress.String())

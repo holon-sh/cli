@@ -81,14 +81,13 @@ func (d *devLoop) generate(ctx context.Context) error {
 	}
 	for {
 		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
-		options := d.options
-		var err error
-		if options.served, err = d.served(ctx); err != nil {
+		served, err := d.served(ctx)
+		if err != nil {
 			return err
 		}
 		manifest := d.manifest
 		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), d.waiting)
-		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, options)
+		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, d.options, served)
 		if err != nil {
 			seeded := len(d.sent)
 			maps.DeleteFunc(d.sent, func(_, sent string) bool { return sent == "" })
@@ -98,7 +97,11 @@ func (d *devLoop) generate(ctx context.Context) error {
 			return err
 		}
 		cleanup()
-		d.options.types.accept(prepared)
+		for _, app := range prepared.Apps {
+			if p := app.resolved.types; p != nil {
+				d.accepted[app.Name] = p
+			}
+		}
 		if !d.reload(ctx, manifest.Apps) {
 			return errUnstarted
 		}
@@ -149,8 +152,8 @@ func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func
 	if _, err := snapshotSource(app, root); err != nil {
 		return packedSource{}, cleanup, err
 	}
-	packed, err := d.options.packSource(ctx, app, root)
-	packed.upload = newImageUpload(d.manager, d.session.Name, manifestSpec{Apps: []manifestApp{app}}, d.options.HTTPClient)
+	packed, err := d.options.packSource(ctx, app, root, d.accepted[app.Name])
+	packed.upload = newImageUpload(d.options, manifestSpec{Apps: []manifestApp{app}})
 	return packed, cleanup, err
 }
 
@@ -213,8 +216,7 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 	})
 }
 
-func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string) (packedSource, error) {
-	accepted := o.types.accepted[app.Name]
+func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string, accepted *preparedTypes) (packedSource, error) {
 	if accepted != nil {
 		staged := *accepted
 		staged.root = root

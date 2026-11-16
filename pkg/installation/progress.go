@@ -87,9 +87,6 @@ func (o *progressOutput) working(app string) {
 }
 
 func (o *progressOutput) ready(app string) {
-	if o == nil {
-		return
-	}
 	o.mu.Lock()
 	elapsed := o.clock.Since(o.started[app]).Seconds()
 	o.mu.Unlock()
@@ -105,9 +102,6 @@ func (o *progressOutput) removed(app string) {
 }
 
 func (o *progressOutput) status(name, message string, state progressState) {
-	if o == nil {
-		return
-	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	status := tea.ProgramStatus{App: "holon", ID: progressStatusID(name), Title: name, Message: message, State: state}
@@ -127,9 +121,6 @@ func (o *progressOutput) status(name, message string, state progressState) {
 func (o *progressOutput) problem(name string, err error) {
 	if err != nil {
 		o.status(name, err.Error(), progressError)
-		return
-	}
-	if o == nil {
 		return
 	}
 	o.mu.Lock()
@@ -172,10 +163,6 @@ func (o *progressOutput) endpoints(
 		return err
 	}
 	text := "\n" + heading + "\n" + block
-	if o == nil {
-		_, err = io.WriteString(stdout, text)
-		return err
-	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.program != nil {
@@ -224,8 +211,11 @@ func (o *progressOutput) finish(err error, message string) error {
 	return o.renderer.Wait()
 }
 
-func (o *progressOutput) logs(writer io.Writer) *buildLog {
-	return &buildLog{writer: writer, quiet: o != nil && !o.verbose}
+func (o *progressOutput) logs() *buildLog {
+	if o == nil {
+		return &buildLog{writer: io.Discard}
+	}
+	return &buildLog{writer: o.writer, quiet: !o.verbose}
 }
 
 func (o *progressOutput) measure(name, phase string) func() {

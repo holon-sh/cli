@@ -213,6 +213,8 @@ type devLoop struct {
 	background         context.Context
 	recording          map[string]context.CancelCauseFunc
 	records            sync.WaitGroup
+	accepted           map[string]*preparedTypes
+	unlock             func()
 }
 
 func (d *devLoop) renew(ctx context.Context, session string) {
@@ -426,10 +428,12 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	d.options.output.headline(deployingApps, progressWorking)
-	if err := d.options.types.acquire(resolved); err != nil {
+	d.unlock()
+	if d.unlock, err = lockSources(resolved); err != nil {
+		d.unlock = func() {}
 		return false, err
 	}
-	request, err := uploadManifest(ctx, d.manager, d.session.Name, resolved, d.options)
+	request, err := uploadManifest(ctx, resolved, d.options)
 	if err != nil {
 		return false, err
 	}
