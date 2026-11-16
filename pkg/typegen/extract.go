@@ -125,12 +125,8 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			// access, so it gets a snapshot there: a server that needs only its schema libraries
 			// extracts with the tooling's copies, and others report the package they miss.
 			directories[s] = filepath.Join(root, "sources", s.name)
-			fingerprint, err := SnapshotSource(s.name, s.origin, directories[s])
-			if err != nil {
+			if _, err := SnapshotSource(s.name, s.origin, directories[s]); err != nil {
 				return err
-			}
-			if fingerprint != s.fingerprint {
-				return fmt.Errorf("%s changed during preparation; discarding the superseded update", s.origin)
 			}
 		}
 		run = append(run, s)
