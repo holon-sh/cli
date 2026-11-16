@@ -403,7 +403,7 @@ func (d *devLoop) rebuild(ctx context.Context, change devChange) bool {
 			return true
 		}
 	}
-	if change.contexts.Len() != 0 && d.reload(ctx, func(app manifestApp) bool { return change.contexts.Has(app.Path) }) && !d.rollout {
+	if change.contexts.Len() != 0 && d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool { return !change.contexts.Has(app.Path) })) && !d.rollout {
 		d.regenerate(ctx)
 	}
 	if !d.rollout {

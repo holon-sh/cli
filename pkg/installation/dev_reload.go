@@ -73,10 +73,10 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
-	if !d.reload(ctx, func(app manifestApp) bool {
+	if !d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool {
 		_, running := d.sent[app.Name]
-		return !running && len(app.resolved.Requires) == 0
-	}) {
+		return running || len(app.resolved.Requires) != 0
+	})) {
 		return errUnstarted
 	}
 	for {
@@ -99,7 +99,7 @@ func (d *devLoop) generate(ctx context.Context) error {
 		}
 		cleanup()
 		d.options.types.accept(prepared)
-		if !d.reload(ctx, func(app manifestApp) bool { return !d.waiting(app) }) {
+		if !d.reload(ctx, manifest.Apps) {
 			return errUnstarted
 		}
 		if last {
@@ -108,10 +108,10 @@ func (d *devLoop) generate(ctx context.Context) error {
 	}
 }
 
-func (d *devLoop) reload(ctx context.Context, include func(manifestApp) bool) bool {
+func (d *devLoop) reload(ctx context.Context, apps []manifestApp) bool {
 	reloaded := true
-	for _, app := range d.manifest.Apps {
-		if app.Path == "" || !include(app) {
+	for _, app := range apps {
+		if app.Path == "" {
 			continue
 		}
 		if err := d.reloadApp(ctx, app); err != nil {
