@@ -83,11 +83,7 @@ func Install(ctx context.Context, dir string, options Options) (kiln.Steps, erro
 	if err != nil {
 		return kiln.Steps{}, fmt.Errorf("%s: %w", dir, err)
 	}
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
-		return kiln.Steps{}, err
-	}
-	return steps, commandenv.RunEach(ctx, dir, filepath.Base(dir), steps.Install, env, o.Stderr)
+	return steps, commandenv.RunEach(ctx, dir, filepath.Base(dir), steps.Install, commandenv.Environ(o.Env), o.Stderr)
 }
 
 func developmentSteps(ctx context.Context, dir string) (kiln.Steps, error) {
