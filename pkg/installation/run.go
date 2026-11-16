@@ -53,7 +53,7 @@ type commandConfig struct {
 
 func (c commandConfig) buildOptions(manager *Client, plane protocol.Plane) buildOptions {
 	return buildOptions{
-		manager: manager, plane: plane, origin: manager.client.baseURL, builder: c.builder, HTTPClient: c.RegistryHTTPClient,
+		manager: manager, plane: plane, builder: c.builder, HTTPClient: c.RegistryHTTPClient,
 		Env: c.Auth.Env, output: c.output, architectures: manager.info.BuildArchitectures, builders: new(builderConnections),
 	}
 }

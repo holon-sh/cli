@@ -26,7 +26,6 @@ import (
 type buildOptions struct {
 	manager       *Client
 	plane         protocol.Plane
-	origin        string
 	architectures []string
 	builder       buildApplication
 	builders      *builderConnections
@@ -88,7 +87,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 					}
 				}
 				if app.resolved.stdio {
-					if image, err = adaptStdio(ctx, repository, image, options.origin); err != nil {
+					if image, err = adaptStdio(ctx, repository, image, options.manager.client.baseURL); err != nil {
 						return fmt.Errorf("adapt stdio app %s: %w", app.Name, err)
 					}
 				}

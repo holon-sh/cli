@@ -127,7 +127,7 @@ func TestDockerTransportContract(t *testing.T) {
 			grant := protocol.UploadGrant{Registry: host, Grant: "grant-secret", Repositories: map[string]string{"echo": "holon/upload/echo"}}
 			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant, client: server.Client()}, buildOptions{
 				HTTPClient: server.Client(),
-				origin:     "https://holon.example",
+				manager:    &Client{client: &apiClient{baseURL: "https://holon.example"}},
 				Env:        []string{"DOCKER_CONFIG=" + t.TempDir()},
 			})
 			if err != nil {
