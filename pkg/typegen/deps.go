@@ -42,9 +42,6 @@ func (p PackageJSON) Declares(pkg string) bool {
 func MapClients(consumers []Consumer, options Options) error {
 	o := options.defaults()
 	for _, c := range consumers {
-		if err := c.validate(); err != nil {
-			return err
-		}
 		for _, target := range c.Targets {
 			if _, ok := NodePackages[target]; ok {
 				if err := mapClients(c.Dir, target, o); err != nil {
@@ -56,38 +53,14 @@ func MapClients(consumers []Consumer, options Options) error {
 	return nil
 }
 
-func ensureNodeRuntime(ctx context.Context, dir, pkg string, o Options) error {
-	if installedRuntime(dir, pkg) == nil {
-		return nil
-	}
-	var manifest PackageJSON
-	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%s has no package.json; create one that depends on %s", dir, pkg)
-		}
-		return err
-	}
-	if !manifest.Declares(pkg) {
-		return fmt.Errorf("%s does not depend on %s; add it to package.json", dir, pkg)
-	}
-	if _, err := Install(ctx, dir, o); err != nil {
-		return err
-	}
-	return installedRuntime(dir, pkg)
-}
-
-// Install runs, in dir, the install of the project's recipe, and returns the recipe.
-func Install(ctx context.Context, dir string, options Options) (recipe.Recipe, error) {
+// Install runs, in dir, the install of the project's recipe, and returns the commands that build it.
+func Install(ctx context.Context, dir string, options Options) ([][]string, error) {
 	o := options.defaults()
 	steps, err := projectRecipe(dir)
 	if err != nil {
-		return recipe.Recipe{}, fmt.Errorf("%s: %w", dir, err)
+		return nil, fmt.Errorf("%s: %w", dir, err)
 	}
-	env, err := commandenv.Environ(o.Env)
-	if err != nil {
-		return recipe.Recipe{}, err
-	}
-	return steps, commandenv.RunEach(ctx, dir, filepath.Base(dir), steps.Install, env, o.Stderr)
+	return steps.Build, commandenv.RunEach(ctx, dir, filepath.Base(dir), steps.Install, commandenv.Environ(o.Env), o.Stderr)
 }
 
 func projectRecipe(dir string) (recipe.Recipe, error) {
@@ -192,7 +165,7 @@ var ErrNoRuntime = errors.New("declares no runtime: depend on holon-sh or holon-
 // GoRuntimeModule is the runtime module that generated Go clients import.
 const GoRuntimeModule = "github.com/holon-sh/sdk-go"
 
-// DeclaredTargets are the slots a project's SDK dependencies declare. None is an error.
+// DeclaredTargets are the slots a project's SDK dependencies declare.
 func DeclaredTargets(dir string) ([]string, error) {
 	var targets []string
 	var manifest PackageJSON
@@ -214,9 +187,6 @@ func DeclaredTargets(dir string) ([]string, error) {
 	if data, err := os.ReadFile(filepath.Join(dir, "go.mod")); err == nil && requiresGoRuntime(data) {
 		targets = append(targets, TargetGo)
 	}
-	if len(targets) == 0 {
-		return nil, fmt.Errorf("%s %w", dir, ErrNoRuntime)
-	}
 	return targets, nil
 }
 
@@ -227,21 +197,6 @@ func requiresGoRuntime(data []byte) bool {
 
 // PythonRuntime is the Python package that generated Python clients import.
 const PythonRuntime = "holon-sh"
-
-func ensurePythonRuntime(ctx context.Context, dir string, o Options) error {
-	if pythonEnvironment(dir) != "" {
-		return nil
-	}
-	declared, err := pythonDependencies(dir)
-	if err != nil {
-		return err
-	}
-	if !declared[PythonRuntime] {
-		return fmt.Errorf("%s does not depend on holon-sh; add it to pyproject.toml or requirements.txt", dir)
-	}
-	_, err = Install(ctx, dir, o)
-	return err
-}
 
 var requirementName = regexp.MustCompile(`^\s*([A-Za-z0-9][A-Za-z0-9._-]*)`)
 

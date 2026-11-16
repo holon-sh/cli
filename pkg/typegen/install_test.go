@@ -30,10 +30,9 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 			}
 		}
 	}
-	installs := func(dir, installed string) { stand(dir, "mkdir -p "+filepath.Dir(installed), "touch "+installed) }
 	c, extract := checkoutConsumer(t, TargetTS)
-	python, page := t.TempDir(), t.TempDir()
-	for _, dir := range []string{python, page} {
+	python, page, elsewhere := t.TempDir(), t.TempDir(), t.TempDir()
+	for _, dir := range []string{python, page, elsewhere} {
 		put(t, dir, "pyproject.toml", "[project]\nname = \"app\"\nversion = \"1\"\nrequires-python = \">=3.12\"\ndependencies = [\"holon-sh\"]\n")
 		put(t, dir, "uv.lock", "version = 1\nrequires-python = \">=3.12\"\n")
 	}
@@ -53,7 +52,7 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 		{".venv/bin/python", Consumer{Name: "app", Dir: python, Targets: []string{TargetPy}}},
 		{"node_modules/holon-ui/package.json", Consumer{Name: "page", Dir: page, Targets: []string{TargetUI}}},
 	} {
-		installs(test.consumer.Dir, test.installed)
+		stand(test.consumer.Dir, "mkdir -p "+filepath.Dir(test.installed), "touch "+test.installed)
 		var output bytes.Buffer
 		if err := Generate(t.Context(), []Consumer{test.consumer}, Options{Stdout: &output, Stderr: &output, Run: extract}); err != nil || !isFile(filepath.Join(test.consumer.Dir, test.installed)) {
 			t.Fatalf("%s: generate: %v\n%s", test.installed, err, &output)
@@ -63,12 +62,8 @@ func TestGenerateInstallsADeclaredRuntime(t *testing.T) {
 			t.Fatalf("%s: installed runtime was reinstalled: %v", test.installed, err)
 		}
 	}
-	if err := os.RemoveAll(filepath.Join(c.Dir, "node_modules")); err != nil {
-		t.Fatal(err)
-	}
-	put(t, c.Dir, "package.json", `{"type":"module"}`)
-	installs(c.Dir, "node_modules/holon-sh/package.json")
-	if err := Generate(t.Context(), []Consumer{c}, Options{Run: extract}); err == nil || isFile(filepath.Join(c.Dir, "node_modules/holon-sh/package.json")) {
-		t.Fatalf("undeclared runtime was installed: %v", err)
+	stand(elsewhere, "", "")
+	if err := Generate(t.Context(), []Consumer{{Name: "app", Dir: elsewhere, Targets: []string{TargetPy}}}, Options{Run: extract}); err != nil {
+		t.Fatalf("an environment kept outside the project: %v", err)
 	}
 }

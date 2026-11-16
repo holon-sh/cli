@@ -38,10 +38,10 @@ func registryPackageManifest(t *testing.T, registryType string) manifestSpec {
 	app.resolved.descriptor = &mcpregistry.Descriptor{
 		Name: app.Registry.Name, Version: app.Registry.Version, Description: "Echo tools", Packages: []mcpregistry.Package{{
 			RegistryType: registryType, Identifier: "echo", Version: "1.2.3", Transport: mcpregistry.Transport{Type: "stdio"},
-			Environment: []json.RawMessage{json.RawMessage(`{"name":"API_TOKEN","isSecret":true,"isRequired":true}`)},
-			PackageArguments: []json.RawMessage{
-				json.RawMessage(`{"type":"named","name":"--workspace","isRequired":true}`),
-				json.RawMessage(`{"type":"named","name":"--api-key","isRequired":true,"isSecret":true}`),
+			Environment: []mcpregistry.DescriptorInput{{Name: "API_TOKEN", InputFields: mcpregistry.InputFields{IsSecret: true, IsRequired: true}}},
+			PackageArguments: []mcpregistry.DescriptorInput{
+				{Type: "named", Name: "--workspace", InputFields: mcpregistry.InputFields{IsRequired: true}},
+				{Type: "named", Name: "--api-key", InputFields: mcpregistry.InputFields{IsRequired: true, IsSecret: true}},
 			},
 		}},
 	}
@@ -90,7 +90,7 @@ func TestRegistryPackagesImportOnTheServerAndBindArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apps, err := buildManifestImages(t.Context(), manager, "", manifest, buildOptions{})
+	apps, err := buildAndPush(t.Context(), manifest, nil, buildOptions{manager: manager, plane: protocol.DevPlane})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestRegistryPackageImportFailureAndCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = buildManifestImages(ctx, manager, "", manifest, buildOptions{})
+			_, err = buildAndPush(ctx, manifest, nil, buildOptions{manager: manager, plane: protocol.DevPlane})
 			if phase == "Failed" {
 				if err == nil || !strings.Contains(err.Error(), "native-package runs an install script") {
 					t.Fatalf("failure = %v", err)

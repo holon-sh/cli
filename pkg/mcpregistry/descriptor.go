@@ -75,11 +75,12 @@ func ValidateEndpoint(location string) error {
 type Package struct {
 	Version          string            `json:"version"`
 	RegistryType     string            `json:"registryType"`
+	RegistryBaseURL  string            `json:"registryBaseUrl"`
 	Identifier       string            `json:"identifier"`
 	Transport        Transport         `json:"transport"`
-	Environment      []json.RawMessage `json:"environmentVariables"`
-	RuntimeArguments []json.RawMessage `json:"runtimeArguments"`
-	PackageArguments []json.RawMessage `json:"packageArguments"`
+	Environment      []DescriptorInput `json:"environmentVariables"`
+	RuntimeArguments []DescriptorInput `json:"runtimeArguments"`
+	PackageArguments []DescriptorInput `json:"packageArguments"`
 }
 
 type Transport struct {
@@ -152,15 +153,6 @@ type DescriptorInput struct {
 	Type        string                 `json:"type"`
 	ValueHint   string                 `json:"valueHint"`
 	Variables   map[string]InputFields `json:"variables"`
-}
-
-func ParseInput(raw json.RawMessage) (DescriptorInput, wire.Input, map[string]wire.Input, error) {
-	var spec DescriptorInput
-	if json.Unmarshal(raw, &spec) != nil {
-		return spec, wire.Input{}, nil, errors.New("invalid descriptor input")
-	}
-	input, variables, err := spec.Parse()
-	return spec, input, variables, err
 }
 
 func (spec DescriptorInput) Parse() (wire.Input, map[string]wire.Input, error) {

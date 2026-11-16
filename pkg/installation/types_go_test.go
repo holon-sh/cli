@@ -2,7 +2,6 @@ package installation
 
 import (
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/cli/pkg/typegen"
 
 	"github.com/holon-sh/protocol"
 )
@@ -17,7 +17,7 @@ import (
 func TestGoDependencyPreparation(t *testing.T) {
 	fixture, registry := buildRegistry(t)
 	name := strings.TrimPrefix(registry.URL, "https://") + "/orders"
-	options := buildOptions{HTTPClient: registry.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}, Stderr: io.Discard}
+	options := buildOptions{HTTPClient: registry.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
 	metadata := &mcpcontract.Metadata{
 		Identity: mcpcontract.Identity{Name: "example.org/orders", Version: "1.0.0"},
 		Schema: &mcpcontract.Contract{Tools: []mcpcontract.Tool{{
@@ -47,23 +47,27 @@ func main() {
 		manifestApp{Name: "orders", resolved: resolvedApp{App: protocol.App{Name: "orders", Image: image}}},
 		manifestApp{Name: "caller", Path: root, resolved: resolvedApp{App: protocol.App{Name: "caller", Requires: []string{"orders"}}, descriptor: descriptor}},
 	)
-	workspace := new(typeWorkspace)
-	if err := workspace.acquire(manifest); err != nil {
-		t.Fatal(err)
-	}
-	defer workspace.close()
-	options.types = workspace
-	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options)
+	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
 	p := prepared.Apps[1].resolved.types
-	clients, err := os.ReadFile(filepath.Join(root, "holon", "clients.go"))
-	if err != nil || !strings.Contains(string(clients), `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(string(clients), " GetOrder(") {
-		t.Fatalf("the app's Go clients for its editor: %v\n%s", err, clients)
-	}
 	if err := p.prepared.WriteClients(p.name, p.root); err != nil {
 		t.Fatal(err)
+	}
+	clients, err := os.ReadFile(filepath.Join(p.root, "holon", "clients.go"))
+	if err != nil || !strings.Contains(string(clients), `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(string(clients), " GetOrder(") {
+		t.Fatalf("the app's Go clients in its image: %v\n%s", err, clients)
+	}
+	options.plane = protocol.DevPlane
+	_, cleanupDev, err := prepareManifestTypes(t.Context(), manifest, options, map[string]*typegen.Served{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupDev()
+	clients, err = os.ReadFile(filepath.Join(root, "holon", "clients.go"))
+	if err != nil || !strings.Contains(string(clients), `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(string(clients), " GetOrder(") {
+		t.Fatalf("the app's Go clients in its source: %v\n%s", err, clients)
 	}
 }

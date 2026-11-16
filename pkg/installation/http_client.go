@@ -152,10 +152,8 @@ func HTTPStatus(err error) int {
 		switch failure.Code {
 		case "not_found":
 			return http.StatusNotFound
-		case "forbidden", "insufficient_scope":
+		case "forbidden":
 			return http.StatusForbidden
-		case "unauthorized":
-			return http.StatusUnauthorized
 		case "invalid_request":
 			return http.StatusBadRequest
 		case "conflict", "baseline_unknown":

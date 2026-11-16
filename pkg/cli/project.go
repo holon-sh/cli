@@ -12,6 +12,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
@@ -33,7 +34,7 @@ type projectApp struct {
 // A dependency is the manifest's app of that name: a path app's source, a remote app's endpoint or a
 // registry app's version. Other dependencies keep what sh.holon.requires says. Without a manifest it
 // returns nil.
-func projectConsumers(dir string) ([]typegen.Consumer, error) {
+func projectConsumers(dir string, resolve bool) ([]typegen.Consumer, error) {
 	file := projectFile(dir)
 	if file == "" {
 		return nil, nil
@@ -50,7 +51,7 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 	}
 	// The apps a dependency can name: each path app's resolved directory, a remote app's endpoint or a
 	// registry app's version.
-	apps := map[string]typegen.Source{}
+	paths, remotes := map[string]typegen.Path{}, map[string]mcpregistry.Requirement{}
 	for _, app := range project.Apps {
 		switch {
 		case filepath.IsAbs(app.Path):
@@ -60,11 +61,11 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%s: %s: %w", file, app.Name, err)
 			}
-			apps[app.Name] = typegen.Source{Path: path}
+			paths[app.Name] = typegen.Path{Dir: path}
 		case app.Remote != nil:
-			apps[app.Name] = typegen.Source{Endpoint: app.Remote.URL}
+			remotes[app.Name] = mcpregistry.Requirement{URL: app.Remote.URL}
 		case app.Registry != nil:
-			apps[app.Name] = typegen.Source{Registry: app.Registry}
+			remotes[app.Name] = mcpregistry.Requirement{RegistryRef: *app.Registry}
 		}
 	}
 	var consumers []typegen.Consumer
@@ -72,20 +73,14 @@ func projectConsumers(dir string) ([]typegen.Consumer, error) {
 		if app.Path == "" {
 			continue
 		}
-		c, err := appConsumer(app.Name, apps[app.Name].Path)
-		if err != nil {
+		switch c, err := appConsumer(app.Name, paths[app.Name].Dir, paths, remotes, resolve); {
+		case err != nil:
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
+		case c != nil && app.Name == "" && resolve:
+			return nil, errors.New("consumer name is required")
+		case c != nil:
+			consumers = append(consumers, *c)
 		}
-		if c == nil {
-			continue
-		}
-		for i, source := range c.Sources {
-			if sibling, declared := apps[source.Alias]; declared {
-				sibling.Alias = source.Alias
-				c.Sources[i] = sibling
-			}
-		}
-		consumers = append(consumers, *c)
 	}
 	if len(consumers) == 0 {
 		return nil, fmt.Errorf("%s: no path app declares a Holon SDK runtime or keeps an MCP server", file)

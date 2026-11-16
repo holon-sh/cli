@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -91,7 +92,7 @@ func (b *buildSession) start(ctx context.Context, apps []*manifestApp) error {
 	if err != nil {
 		return err
 	}
-	b.session, err = waitSessionReady(ctx, b.manager, b.session.Name, b.session, b.output)
+	b.session, err = waitSessionReady(ctx, b.manager, b.session, b.output)
 	return err
 }
 
@@ -154,11 +155,11 @@ func (b *buildSession) build(
 	return reply, fmt.Errorf("build %s: %w", app, err)
 }
 
-func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, error) {
+func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (ocispec.Descriptor, error) {
 	source := options.build.sources[app.Path]
 	p := app.resolved.types
 	if err := p.prepared.WriteClients(p.name, p.root); err != nil {
-		return "", err
+		return ocispec.Descriptor{}, err
 	}
 	build := runtimecontract.Build{Freeze: &source.recipe.Deploy.Freeze}
 	if checked, language, ok := p.prepared.CheckEntry(p.name); ok {
@@ -168,7 +169,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 			err = writeSourceFile(p.root, path.Join(".holon", runner.checker), checker)
 		}
 		if err != nil {
-			return "", err
+			return ocispec.Descriptor{}, err
 		}
 		build.Run = slices.Concat(runner.check, []string{path.Join(".holon", runner.checker), "check", checked})
 	}
@@ -176,18 +177,18 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	reply, err := options.build.build(ctx, app.Name, p.root, source.plan(source.recipe.Deploy.Build), build)
 	built()
 	if err != nil {
-		return "", err
+		return ocispec.Descriptor{}, err
 	}
 	if reply.Ran != nil && reply.Ran.ExitCode != 0 {
-		return "", fmt.Errorf("%s does not type-check against its typed contracts:\n%s", app.Name, strings.TrimSpace(reply.Ran.Stdout+reply.Ran.Stderr))
+		return ocispec.Descriptor{}, fmt.Errorf("%s does not type-check against its typed contracts:\n%s", app.Name, strings.TrimSpace(reply.Ran.Stdout+reply.Ran.Stderr))
 	}
 	frozen, err := digest.Parse(reply.Image)
 	if err != nil {
-		return "", fmt.Errorf("build %s: the build froze no image: %w", app.Name, err)
+		return ocispec.Descriptor{}, fmt.Errorf("build %s: the build froze no image: %w", app.Name, err)
 	}
 	defer options.output.measure(app.Name, "assemble")()
-	var image string
-	err = upload.publish(ctx, app.Name, options.HTTPClient, func(repository *remote.Repository, grant protocol.UploadGrant) error {
+	var image ocispec.Descriptor
+	err = upload.repository(ctx, app.Name, func(repository *remote.Repository, grant protocol.UploadGrant) error {
 		development, err := remote.NewRepository(grant.Base)
 		if err == nil {
 			err = development.Reference.ValidateReferenceAsDigest()
@@ -216,8 +217,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 			Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex,
 			Manifests: entries, Annotations: annotations,
 		})
-		descriptor, err := oras.PushBytes(ctx, repository, ocispec.MediaTypeImageIndex, data)
-		image = repository.Reference.String() + "@" + descriptor.Digest.String()
+		image, err = oras.PushBytes(ctx, repository, ocispec.MediaTypeImageIndex, data)
 		return err
 	})
 	return image, err
@@ -304,4 +304,15 @@ func configureImage(image *ociimage.Image, directory string, start []string, lab
 	} {
 		image.Runtime[key], _ = json.Marshal(value)
 	}
+}
+
+func sourceLabels(app manifestApp) map[string]string {
+	if d := app.resolved.descriptor; d != nil {
+		return map[string]string{
+			"io.modelcontextprotocol.server.name": d.Name, ocispec.AnnotationTitle: cmp.Or(d.Title, d.Name),
+			ocispec.AnnotationVersion: d.Version, ocispec.AnnotationDescription: d.Description,
+			ocispec.AnnotationURL: d.WebsiteURL, ocispec.AnnotationSource: d.Repository.URL,
+		}
+	}
+	return nil
 }

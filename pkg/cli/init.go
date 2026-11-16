@@ -16,7 +16,6 @@ import (
 	"golang.org/x/term"
 
 	"github.com/holon-sh/cli/internal/commandenv"
-	"github.com/holon-sh/cli/pkg/recipe"
 	"github.com/holon-sh/cli/pkg/scaffold"
 	"github.com/holon-sh/cli/pkg/typegen"
 )
@@ -132,7 +131,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 	}
 	fmt.Fprintf(stderr, "%s: added to %s\n", app, scaffold.Relative(manifestPath))
 
-	install := func() (recipe.Recipe, error) {
+	install := func() ([][]string, error) {
 		var commands [][]string
 		switch language {
 		case typegen.TargetGo:
@@ -143,16 +142,16 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 				append([]string{"uv", "add", "--frozen", "--dev"}, dev...), []string{"uv", "lock"})
 		}
 		if err := commandenv.RunEach(cmd.Context(), dir, app, commands, nil, stderr); err != nil {
-			return recipe.Recipe{}, err
+			return nil, err
 		}
 		options := typegen.Options{Stdout: io.Discard, Stderr: stderr}
 		steps, err := typegen.Install(cmd.Context(), dir, options)
 		if err != nil {
-			return recipe.Recipe{}, err
+			return nil, err
 		}
-		c, err := consumer(dir, nil)
+		c, err := consumer(dir, nil, true)
 		if err != nil {
-			return recipe.Recipe{}, err
+			return nil, err
 		}
 		return steps, typegen.Generate(cmd.Context(), []typegen.Consumer{c}, options)
 	}
@@ -161,7 +160,7 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 		return fmt.Errorf("%w\nthe app is written; run holon types generate in %s once that is fixed", err, dirArg)
 	}
 	if language == typegen.TargetGo {
-		if err := commandenv.RunEach(cmd.Context(), dir, app, append(steps.Build, []string{"go", "mod", "tidy"}), nil, stderr); err != nil {
+		if err := commandenv.RunEach(cmd.Context(), dir, app, append(steps, []string{"go", "mod", "tidy"}), nil, stderr); err != nil {
 			return err
 		}
 	}

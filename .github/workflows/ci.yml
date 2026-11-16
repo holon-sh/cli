@@ -42,7 +42,6 @@ jobs:
           scripts/build-tooling
           git diff --exit-code pkg/tooling
   test:
-    needs: tooling
     strategy:
       fail-fast: false
       matrix:
@@ -68,10 +67,10 @@ jobs:
           uv sync --project tooling/python
           echo "$PWD/tooling/python/.venv/bin" >> "$GITHUB_PATH"
       - run: npm ci --prefix tooling/typescript
-      - run: go test -vet=all -tags="${{ runner.os == 'Linux' && 'docker' || '' }}" ./...
+      - run: go test -trimpath -vet=all -tags="${{ runner.os == 'Linux' && 'docker' || '' }}" ./...
   test-package:
     name: test-package (${{ matrix.target }})
-    needs: [tooling, package-launcher]
+    needs: package-launcher
     strategy:
       fail-fast: false
       matrix:
@@ -123,6 +122,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          # This job finishes first, and its cache would hold no compiled packages for the jobs sharing the key.
+          cache: false
       - run: scripts/third-party-notices
       - uses: actions/setup-node@v7
         with:

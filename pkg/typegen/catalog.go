@@ -99,20 +99,17 @@ func sessionPages(ctx context.Context, session *mcp.ClientSession) func(method s
 	}
 }
 
-// ServedContract lists what the server at endpoint serves, in the form Options.Served takes: its serverInfo,
-// capabilities and every page of each catalog it declares.
-func ServedContract(ctx context.Context, endpoint string, client *http.Client) (json.RawMessage, error) {
+// ServedContract lists what the server at endpoint serves: its serverInfo, capabilities and every page of
+// each catalog it declares.
+func ServedContract(ctx context.Context, endpoint string, client *http.Client) (*Served, error) {
 	served, _, err := listServer(ctx, endpoint, client)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(served)
+	return served, err
 }
 
 // listServer lists what the server at endpoint serves, and the contract that makes. It talks to the server under a
 // context of its own that ends with ctx: go-sdk takes the protocol version of an MCP request it serves from the
 // context, which a listing made inside a tool call would otherwise send.
-func listServer(ctx context.Context, endpoint string, client *http.Client) (*extraction, *mcpcontract.Contract, error) {
+func listServer(ctx context.Context, endpoint string, client *http.Client) (*Served, *mcpcontract.Contract, error) {
 	own, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	defer context.AfterFunc(ctx, cancel)()
@@ -123,11 +120,11 @@ func listServer(ctx context.Context, endpoint string, client *http.Client) (*ext
 	defer func() { _ = session.Close() }()
 	initialized := session.InitializeResult()
 	info, _ := json.Marshal(initialized.ServerInfo)
-	served := &extraction{ServerInfo: info, Capabilities: initialized.Capabilities, Lists: map[string]listed{}}
+	served := &Served{ServerInfo: info, Capabilities: initialized.Capabilities, Lists: map[string]ServedList{}}
 	pages := sessionPages(own, session)
 	contract, err := listCatalog(initialized.Capabilities, func(method string) ([]json.RawMessage, error) {
 		list, err := pages(method)
-		served.Lists[method] = listed{Pages: list}
+		served.Lists[method] = ServedList{Pages: list}
 		return list, err
 	})
 	return served, contract, err

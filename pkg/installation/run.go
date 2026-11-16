@@ -49,8 +49,8 @@ type commandConfig struct {
 	output             *progressOutput
 }
 
-func (c commandConfig) buildOptions(stderr io.Writer) buildOptions {
-	return buildOptions{HTTPClient: c.RegistryHTTPClient, Stderr: stderr, Env: c.Auth.Env, output: c.output}
+func (c commandConfig) buildOptions(manager *Client, plane protocol.Plane) buildOptions {
+	return buildOptions{manager: manager, plane: plane, HTTPClient: c.RegistryHTTPClient, Env: c.Auth.Env, output: c.output}
 }
 
 func (c commandConfig) clock() clock.WithTickerAndDelayedExecution {
@@ -80,18 +80,7 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 	if err != nil {
 		return manifestSpec{}, fmt.Errorf("read manifest %s: %w", absolute, err)
 	}
-	manifest, err := parseManifest(data, absolute)
-	if err != nil {
-		return manifestSpec{}, err
-	}
-	manifest.file = absolute
-	for i := range manifest.Apps {
-		app := &manifest.Apps[i]
-		if app.Path != "" {
-			app.Path = filepath.Join(filepath.Dir(absolute), app.Path)
-		}
-	}
-	return manifest, nil
+	return parseManifest(data, absolute)
 }
 
 func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec, apps ...string) (manifestSpec, error) {
@@ -105,15 +94,13 @@ func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec
 	return resolved, protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil)
 }
 
-func uploadManifest(
-	ctx context.Context, manager *Client, name string, resolved manifestSpec, options buildOptions,
-) (protocol.AppsRequest, error) {
-	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options)
+func uploadManifest(ctx context.Context, resolved manifestSpec, options buildOptions) (protocol.AppsRequest, error) {
+	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options, nil)
 	if err != nil {
 		return protocol.AppsRequest{}, err
 	}
 	defer cleanup()
-	built, err := buildManifestImages(ctx, manager, name, prepared, options)
+	built, err := buildAndPush(ctx, prepared, newImageUpload(options, prepared), options)
 	if err != nil {
 		return protocol.AppsRequest{}, err
 	}
@@ -123,7 +110,7 @@ func uploadManifest(
 	return protocol.AppsRequest{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
 }
 
-func imageDestination(ctx context.Context, manager *Client, name string, manifest manifestSpec) (protocol.UploadGrant, error) {
+func imageDestination(ctx context.Context, manager *Client, plane protocol.Plane, manifest manifestSpec) (protocol.UploadGrant, error) {
 	names := make([]string, 0, len(manifest.Apps))
 	for _, app := range manifest.Apps {
 		names = append(names, app.Name)
@@ -138,7 +125,7 @@ func imageDestination(ctx context.Context, manager *Client, name string, manifes
 	}
 	var grant protocol.UploadGrant
 	upload := protocol.UploadRequest{Apps: names}
-	err := manager.Call(ctx, ControlPlane(name), protocol.ToolUploadGrant, upload, &grant)
+	err := manager.Call(ctx, plane, protocol.ToolUploadGrant, upload, &grant)
 	return grant, err
 }
 
@@ -152,50 +139,48 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
-	options := config.buildOptions(stderr)
-	options.types, options.development = new(typeWorkspace), true
-	defer options.types.close()
+	options := config.buildOptions(manager, protocol.DevPlane)
 	resolved, err := resolveManifest(ctx, manager, config.manifest, apps...)
 	if err != nil {
-		return err
-	}
-	if err := options.types.acquire(resolved); err != nil {
 		return err
 	}
 	recordPath := manager.sessionRecordPath(config.manifest, apps)
 	dev := &devLoop{
 		manager: manager, manifest: resolved, apps: apps, clock: config.clock(), watch: config.watch, started: config.clock().Now(), options: options,
-		updating: sets.New[string](), announce: true,
-		sent: map[string]string{}, background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{},
+		updating: sets.New[string](), sent: map[string]string{},
+		background: context.WithoutCancel(ctx), recording: map[string]context.CancelCauseFunc{}, accepted: map[string]*preparedTypes{},
 	}
+	if dev.unlock, err = lockSources(resolved); err != nil {
+		return err
+	}
+	defer func() { dev.unlock() }()
 	defer dev.records.Wait()
 	if config.devTTLSeconds == nil {
 		dev.session = previousSession(ctx, manager, recordPath)
-		dev.name = dev.session.Name
 		for _, app := range dev.session.Apps {
 			if app.Source {
 				dev.sent[app.Name] = ""
 			}
 		}
 	}
-	if dev.name != "" {
-		if err := printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps); err != nil {
+	if dev.session.Name != "" {
+		if err := printStartingEndpoints(stdout, config.output, manager, dev.session.Name, resolved.Apps); err != nil {
 			return err
 		}
 	}
-	request, err := uploadManifest(ctx, manager, "", resolved, options)
+	request, err := uploadManifest(ctx, resolved, options)
 	if err != nil {
 		return err
 	}
 	request.TTLSeconds = config.devTTLSeconds
-	if dev.name != "" {
+	if dev.session.Name != "" {
 		err = dev.update(ctx, request, removedApps(dev.session.Apps, request.Apps)...)
 	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &dev.session); err == nil {
-		dev.name, dev.rollout = dev.session.Name, true
+		dev.rollout = true
 		for _, app := range request.Apps {
 			dev.begin(app.Name)
 		}
-		err = printStartingEndpoints(stdout, config.output, manager, dev.name, resolved.Apps)
+		err = printStartingEndpoints(stdout, config.output, manager, dev.session.Name, resolved.Apps)
 	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
 		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
 		err = fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
@@ -204,7 +189,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	if request.TTLSeconds != nil {
-		ready, err := waitSessionReady(ctx, manager, dev.name, dev.session, config.output)
+		ready, err := waitSessionReady(ctx, manager, dev.session, config.output)
 		if err == nil {
 			dev.session = ready
 			err = dev.generate(ctx)
@@ -212,26 +197,21 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		if err != nil {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 			defer cancel()
-			return errors.Join(err, manager.DeleteSession(cleanup, dev.name, dev.session.UID, true))
+			return errors.Join(err, manager.DeleteSession(cleanup, dev.session.Name, dev.session.UID, true))
 		}
 		dev.finish()
 		if config.jsonOutput {
 			return json.NewEncoder(resultWriter).Encode(dev.session)
 		}
-		if err := config.output.endpoints(stdout, "Ready", manager, dev.name, resolved.Apps, false); err != nil {
+		if err := config.output.endpoints(stdout, "Ready", manager, dev.session.Name, resolved.Apps, false); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "Expires  %s\n", dev.session.ExpiresAt)
 		return err
 	}
 	err = dev.run(ctx, stdout)
-	data, _ := json.Marshal(sessionRecord{Session: dev.name})
-	_ = writePrivateFile(recordPath, data)
+	_ = writePrivateFile(recordPath, []byte(dev.session.Name))
 	return err
-}
-
-type sessionRecord struct {
-	Session string `json:"session"`
 }
 
 func (m *Client) sessionRecordPath(manifest manifestSpec, selection []string) string {
@@ -244,11 +224,9 @@ func (m *Client) sessionRecordPath(manifest manifestSpec, selection []string) st
 }
 
 func previousSession(ctx context.Context, manager *Client, recordPath string) protocol.SessionResponse {
-	var record sessionRecord
 	var session protocol.SessionResponse
-	data, err := readPrivateFile(recordPath)
-	if err != nil || json.Unmarshal(data, &record) != nil ||
-		manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: record.Session}, &session) != nil {
+	name, err := readPrivateFile(recordPath)
+	if err != nil || manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: string(name)}, &session) != nil {
 		return protocol.SessionResponse{}
 	}
 	return session
@@ -272,22 +250,14 @@ func ControlPlane(name string) protocol.Plane {
 }
 
 func (m *Client) Session(ctx context.Context, name string) (protocol.SessionResponse, error) {
-	var session protocol.SessionResponse
-	err := m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, protocol.SessionRequest{Session: name}, &session)
-	return session, err
-}
-
-type sessionWaitRequest struct {
-	protocol.SessionRequest
-
-	Revision string `json:"revision,omitempty"`
+	return m.awaitSession(ctx, name, "")
 }
 
 // awaitSession reads a session once it has moved past revision, the last one the caller saw, which the
 // server waits for up to sessionWait. Without a revision it answers at once.
 func (m *Client) awaitSession(ctx context.Context, name, revision string) (protocol.SessionResponse, error) {
 	var session protocol.SessionResponse
-	request := sessionWaitRequest{SessionRequest: protocol.SessionRequest{Session: name}, Revision: revision}
+	request := protocol.GetSessionRequest{SessionRequest: protocol.SessionRequest{Session: name}, Revision: revision}
 	return session, m.Call(ctx, ControlPlane(name), protocol.ToolGetSession, request, &session)
 }
 
@@ -299,7 +269,7 @@ func SessionReady(session protocol.SessionResponse) (bool, error) {
 		return false, nil
 	}
 	condition := session.Condition(protocol.ConditionReady)
-	if condition.Status == "True" {
+	if condition.Status == protocol.ConditionTrue {
 		return true, nil
 	}
 	if terminalCondition(condition) {
@@ -309,13 +279,13 @@ func SessionReady(session protocol.SessionResponse) (bool, error) {
 }
 
 func terminalCondition(condition protocol.Condition) bool {
-	return condition.Status == "False" && slices.Contains([]string{
+	return condition.Status == protocol.ConditionFalse && slices.Contains([]string{
 		protocol.ReasonInvalidIdentity, protocol.ReasonInvalidExpiry, protocol.ReasonInvalidSpec,
 		protocol.ReasonLeaseExpired, protocol.ReasonDeleting, protocol.ReasonProgressDeadline,
 	}, condition.Reason)
 }
 
-func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer, config commandConfig) error {
+func runDeploy(ctx context.Context, selection []string, stdout io.Writer, config commandConfig) error {
 	finish := config.output.measure("production", "deploy")
 	defer finish()
 	config.output.headline(deployingApps, progressWorking)
@@ -332,13 +302,13 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	for _, app := range current.Apps {
 		manifest.deployed[app.Name] = app.Access
 	}
-	options := config.buildOptions(stderr)
+	options := config.buildOptions(manager, protocol.AdminPlane)
 	resolved, err := resolveManifest(ctx, manager, manifest, selection...)
 	if err != nil {
 		return err
 	}
 	options.build = &buildSession{manager: manager, output: config.output}
-	desired, err := uploadManifest(ctx, manager, protocol.ProductionName, resolved, options)
+	desired, err := uploadManifest(ctx, resolved, options)
 	if err = errors.Join(err, options.build.close(ctx)); err != nil {
 		return err
 	}
@@ -349,7 +319,7 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
-	ready, err := waitSessionReady(ctx, manager, protocol.ProductionName, accepted, config.output)
+	ready, err := waitSessionReady(ctx, manager, accepted, config.output)
 	if err != nil {
 		return err
 	}
@@ -359,10 +329,8 @@ func runDeploy(ctx context.Context, selection []string, stdout, stderr io.Writer
 	return config.output.endpoints(stdout, "Ready", manager, ready.Name, resolved.Apps, false)
 }
 
-func waitSessionReady(
-	ctx context.Context, manager *Client, name string, accepted protocol.SessionResponse, output *progressOutput,
-) (protocol.SessionResponse, error) {
-	finish := output.measure(name, "rollout")
+func waitSessionReady(ctx context.Context, manager *Client, accepted protocol.SessionResponse, output *progressOutput) (protocol.SessionResponse, error) {
+	finish := output.measure(accepted.Name, "rollout")
 	defer finish()
 	session := accepted
 	for {
@@ -376,7 +344,7 @@ func waitSessionReady(
 		if ready, err := SessionReady(session); ready || err != nil {
 			return session, err
 		}
-		next, err := manager.awaitSession(ctx, name, session.Revision)
+		next, err := manager.awaitSession(ctx, accepted.Name, session.Revision)
 		if err != nil {
 			return session, err
 		}
@@ -393,8 +361,6 @@ func reportSessionProgress(session protocol.SessionResponse, output *progressOut
 		if lifecycle.Hook != "" {
 			headline = strings.TrimSuffix("Running "+lifecycle.Hook+" for "+lifecycle.App, " for ")
 		}
-	} else if condition := session.Condition(protocol.ConditionReady); condition.Reason == "WaitingForConfiguration" {
-		headline, state = condition.Message, progressBlocked
 	}
 	output.headline(headline, state)
 }

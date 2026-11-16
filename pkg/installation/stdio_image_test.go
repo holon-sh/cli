@@ -80,8 +80,8 @@ func TestStdioImageContract(t *testing.T) {
 			manifest := manifestSpec{Apps: []manifestApp{{
 				Name: "app", resolved: resolvedApp{stdio: !test.http, App: protocol.App{Name: "app", Image: image, Port: 3000}},
 			}}}
-			options := buildOptions{HTTPClient: server.Client(), origin: "https://holon.example", Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
-			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant}, options)
+			options := buildOptions{HTTPClient: server.Client(), manager: &Client{client: &apiClient{baseURL: "https://holon.example"}}, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
+			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant, client: options.HTTPClient}, options)
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 					t.Fatalf("want %s: %v", test.wantErr, err)
@@ -130,9 +130,11 @@ func TestStdioImageContract(t *testing.T) {
 		defer zipped.Close()
 		registry, server := buildRegistry(t)
 		source := addTestImage(t, registry, "amd64", ocispec.ImageConfig{Cmd: []string{"/server"}}, nil)
-		repository := strings.TrimPrefix(server.URL, "https://") + "/source"
-		manifest, _ := preparedConfig(t, registry, repository+"@"+source.Digest.String())
-		options := buildOptions{HTTPClient: server.Client()}
+		repository, err := imageRepository(strings.TrimPrefix(server.URL, "https://")+"/source", "", server.Client())
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifest, _ := preparedConfig(t, registry, repository.Reference.String()+"@"+source.Digest.String())
 		prepare := func(descriptor ocispec.Descriptor, data []byte) error {
 			manifest.Layers = []ocispec.Descriptor{descriptor}
 			encoded, _ := json.Marshal(manifest)
@@ -141,7 +143,7 @@ func TestStdioImageContract(t *testing.T) {
 			registry.items["source/manifests/"+image.Digest.String()] = registryItem{mediaType: image.MediaType, data: encoded}
 			registry.items["source/blobs/"+descriptor.Digest.String()] = registryItem{mediaType: descriptor.MediaType, data: data}
 			registry.mu.Unlock()
-			_, err := prepareStdioImage(t.Context(), repository+"@"+image.Digest.String(), "", options)
+			_, err := adaptStdio(t.Context(), repository, image, "")
 			return err
 		}
 		for _, layer := range []struct {
@@ -192,10 +194,10 @@ func TestStdioMultiArchitectureBuild(t *testing.T) {
 	descriptor := addTestIndex(registry, children...)
 	host := strings.TrimPrefix(server.URL, "https://")
 	grant := protocol.UploadGrant{Registry: host, Grant: "grant-secret", Repositories: map[string]string{"echo": "holon/upload/echo"}}
-	options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
+	options := buildOptions{HTTPClient: server.Client(), manager: &Client{client: &apiClient{baseURL: "https://holon.example"}}, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
 	source := host + "/source@" + descriptor.Digest.String()
 	app := manifestApp{Name: "echo", resolved: resolvedApp{stdio: true, App: protocol.App{Name: "echo", Image: source, Port: 3000}}}
-	prepared, err := buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{app}}, &imageUpload{grant: grant}, options)
+	prepared, err := buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{app}}, &imageUpload{grant: grant, client: options.HTTPClient}, options)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,6 +18,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
@@ -56,18 +57,7 @@ func buildGrant(server *httptest.Server) protocol.UploadGrant {
 	return protocol.UploadGrant{Grant: "grant-secret", Registry: strings.TrimPrefix(server.URL, "https://"), Repositories: map[string]string{"alpha": "holon/upload/alpha"}}
 }
 
-func sourceFiles(t *testing.T, root string, files map[string]string) {
-	t.Helper()
-	for name, contents := range files {
-		path := filepath.Join(root, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
+var sourceFiles = testfiles.Write[string]
 
 const sourcePackage = `{"private":true,"engines":{"node":">=22.20.0 <23"}}`
 
@@ -217,7 +207,7 @@ func TestSourceRejectsEscapingSymlinks(t *testing.T) {
 	if err := os.Symlink(filepath.Join(outside, "file"), filepath.Join(root, "outside")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}); err == nil || !strings.Contains(err.Error(), "symlink escapes application") {
+	if _, _, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}, nil); err == nil || !strings.Contains(err.Error(), "symlink escapes application") {
 		t.Fatalf("escaping symlink: %v", err)
 	}
 }

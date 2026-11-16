@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"k8s.io/utils/ptr"
 
 	"github.com/holon-sh/protocol"
 )
@@ -50,16 +51,13 @@ func newCommands(config commandConfig) []*cobra.Command {
 				}
 				// Reading the identity proves the new credentials work before the installation is selected.
 				if manager.info.OAuth != nil {
-					var me struct {
-						Identity struct {
-							Subject string
-							Profile struct{ Email string }
-						}
-					}
-					if err := manager.Call(cmd.Context(), protocol.DevPlane, "get_identity", struct{}{}, &me); err != nil {
+					var caller protocol.Caller
+					if err := manager.Call(cmd.Context(), protocol.DevPlane, protocol.ToolGetIdentity, struct{}{}, &caller); err != nil {
 						return err
 					}
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Signed in to %s as %s\n", manager.client.baseURL, cmp.Or(me.Identity.Profile.Email, me.Identity.Subject))
+					identity := ptr.Deref(caller.Identity, protocol.CallerIdentity{})
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Signed in to %s as %s\n", manager.client.baseURL,
+						cmp.Or(ptr.Deref(identity.Profile, protocol.CallerProfile{}).Email, identity.Subject))
 				}
 				return saveOrigin(config.Auth, manager.client.baseURL)
 			},
@@ -166,7 +164,7 @@ func newDeployCommand(config *commandConfig) *cobra.Command {
   # Deploy an app outside holon.yaml that anyone can call
   holon deploy notes --public`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDeploy(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
+			return runDeploy(cmd.Context(), config.apps, cmd.OutOrStdout(), *config)
 		},
 	}
 	return withProject(withProgress(cmd, config, "Deployment ready"), config)

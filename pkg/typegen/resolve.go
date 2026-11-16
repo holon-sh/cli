@@ -20,20 +20,17 @@ import (
 
 // ResolveDocument returns one source's contract document without writing anything: a path source
 // is extracted by running its server, a registry or endpoint source is fetched, and a supplied
-// document is validated and returned with its bytes.
+// document is returned as it is.
 func ResolveDocument(ctx context.Context, source Source, options Options) (*Document, error) {
 	o := options.defaults()
-	if err := source.validate(); err != nil {
-		return nil, err
-	}
-	switch {
-	case source.Path != "":
-		prepared, err := prepareSource(ctx, "source", source.Path)
+	switch server := source.Server.(type) {
+	case Path:
+		prepared, err := prepareSource("source", server)
 		if err != nil {
 			return nil, err
 		}
 		if prepared.language == "go" {
-			return nil, fmt.Errorf("%s: Go server contracts are not statically extracted", source.Path)
+			return nil, fmt.Errorf("%s: Go server contracts are not statically extracted", server)
 		}
 		root, err := os.MkdirTemp("", "holon-types-")
 		if err != nil {
@@ -45,20 +42,19 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 			return nil, err
 		}
 		return NewDocument(prepared.metadata)
-	case source.Registry != nil:
-		return resolveRegistry(ctx, *source.Registry, o)
-	case source.Endpoint != "":
-		return liveContract(ctx, source.Endpoint, nil, endpointClient(source, o))
-	default:
-		return ParseDocument(source.Document.Data)
+	case Registry:
+		return resolveRegistry(ctx, server, o)
+	case Endpoint:
+		return liveContract(ctx, string(server), nil, endpointClient(source.Alias, server, o))
 	}
+	return source.Server.(*Document), nil
 }
 
-func endpointClient(source Source, o Options) *http.Client {
-	endpoint, _ := url.Parse(source.Endpoint)
+func endpointClient(alias string, location Endpoint, o Options) *http.Client {
+	endpoint, _ := url.Parse(string(location))
 	transport := &endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: endpoint.Scheme + "://" + endpoint.Host, signIn: o.SignIn}
-	if source.Alias != "" {
-		transport.variable = strings.TrimSuffix(protocol.DependencyEnvName(source.Alias), "_URL") + "_TOKEN"
+	if alias != "" {
+		transport.variable = strings.TrimSuffix(protocol.DependencyEnvName(alias), "_URL") + "_TOKEN"
 		transport.token = cmp.Or(commandenv.Value(o.Env, transport.variable), os.Getenv(transport.variable))
 	}
 	client := *o.HTTPClient
@@ -141,9 +137,9 @@ func refused(response *http.Response) bool {
 // resolveRegistry fetches a registry record, then its first OCI package's
 // contract document or its first streamable-http remote's schemas.
 // A package error is an error; a package without a contract artifact falls through to the remote.
-func resolveRegistry(ctx context.Context, ref protocol.RegistryRef, o Options) (*Document, error) {
-	label := ref.Name + "@" + ref.Version
-	d, err := mcpregistry.Fetch(ctx, o.HTTPClient, ref)
+func resolveRegistry(ctx context.Context, ref Registry, o Options) (*Document, error) {
+	label := ref.String()
+	d, err := mcpregistry.Fetch(ctx, o.HTTPClient, protocol.RegistryRef(ref))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", label, err)
 	}

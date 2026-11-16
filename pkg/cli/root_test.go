@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/typegen"
 )
@@ -37,13 +38,7 @@ func run(t *testing.T, wantErr string, args ...string) string {
 
 func writeCLIFile(t *testing.T, root, name, content string) {
 	t.Helper()
-	path := filepath.Join(root, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testfiles.Write(t, root, map[string]string{name: content})
 }
 
 func installCLIRuntime(t *testing.T, root string) {
@@ -75,7 +70,7 @@ func TestConsumerSelectsTheOwnServer(t *testing.T) {
 			writeCLIFile(t, root, "package.json", `{"dependencies":{"holon-sh":"^0.0.1"}}`)
 			writeCLIFile(t, root, "server/server.py", pythonServer)
 			writeCLIFile(t, root, "server/server.json", `{"name":"example.com/view","version":"1.0.0","description":"View"`+requiresOrders)
-			c, err := consumer(root, test.servers)
+			c, err := consumer(root, test.servers, true)
 			if test.err != "" {
 				if err == nil || !strings.Contains(err.Error(), test.err) {
 					t.Fatalf("consumer = %v, want %q", err, test.err)
@@ -85,17 +80,13 @@ func TestConsumerSelectsTheOwnServer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var server, alias string
-			if c.Server != nil {
-				server, _ = filepath.Rel(root, c.Server.Path)
-				alias = c.Server.Alias
-			}
+			server, _ := filepath.Rel(root, c.Server.Dir)
 			var sources []string
 			for _, source := range c.Sources {
 				sources = append(sources, source.Alias)
 			}
-			if server != test.server || alias != test.alias || !slices.Equal(sources, test.sources) {
-				t.Fatalf("consumer = %q %q %v, want %q %q %v", server, alias, sources, test.server, test.alias, test.sources)
+			if server != test.server || c.Alias != test.alias || !slices.Equal(sources, test.sources) {
+				t.Fatalf("consumer = %q %q %v, want %q %q %v", server, c.Alias, sources, test.server, test.alias, test.sources)
 			}
 		})
 	}
@@ -125,7 +116,7 @@ func TestProjectRunsForEachApp(t *testing.T) {
 
 	// The apps holon dev builds and checks: a client, and a server that makes no calls; not the site.
 	// A dependency is the file's app of that name, even where server.json pins another version.
-	consumers, err := projectConsumers(root)
+	consumers, err := projectConsumers(root, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,11 +124,12 @@ func TestProjectRunsForEachApp(t *testing.T) {
 	for _, c := range consumers {
 		names = append(names, c.Name)
 	}
-	if !slices.Equal(names, []string{"view", "orders"}) || consumers[1].Server == nil {
+	if !slices.Equal(names, []string{"view", "orders"}) || consumers[1].Server.Dir == "" {
 		t.Fatalf("consumers = %+v", consumers)
 	}
 	sources := consumers[0].Sources
-	if len(sources) != 3 || sources[0].Endpoint != "https://docs.example/mcp" || sources[1].Path != filepath.Join(root, "orders") || sources[2].Registry.Version != "2.0.0" {
+	if len(sources) != 3 || sources[0].Server != typegen.Endpoint("https://docs.example/mcp") || sources[1].Server != (typegen.Path{Dir: filepath.Join(root, "orders")}) ||
+		sources[2].Server != (typegen.Registry{Name: "example.com/search", Version: "2.0.0"}) {
 		t.Fatalf("view sources = %+v", sources)
 	}
 
@@ -150,6 +142,37 @@ func TestProjectRunsForEachApp(t *testing.T) {
 	defer release()
 	run(t, filepath.Join(view, "generated/holon-sh")+" has no generated clients; run holon types generate", "check")
 	run(t, "-s names one app's dependencies; pass that app's DIR", "types", "generate", "-s", "x")
+}
+
+func TestErrorsNameTheAppAndItsServer(t *testing.T) {
+	root := t.TempDir()
+	view := filepath.Join(root, "view")
+	unused := "  - {name: private, remote: {url: \"https://user:secret@private.example/mcp\"}, access: {server: {}}}\n  - {path: nameless, access: {server: {}}}\n"
+	testfiles.Write(t, root, map[string]string{
+		"holon.yaml":            "apps:\n  - {name: view, path: view, access: {server: {}}}\n  - {name: 9docs, remote: {url: \"https://docs.example/mcp\"}, access: {server: {}}}\n" + unused,
+		"view/package.json":     `{"dependencies":{"holon-sh":"^0.0.1"}}`,
+		"view/server.json":      `{"name":"example.com/view","version":"1.0.0","description":"View","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"9docs":{}}}}}}`,
+		"nameless/package.json": `{"dependencies":{"holon-sh":"^0.0.1"}}`,
+	})
+	if _, err := projectConsumers(root, false); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if _, err := projectConsumers(root, true); err == nil || !strings.HasPrefix(err.Error(), `view: https://docs.example/mcp: alias "9docs" must be a DNS label`) {
+		t.Errorf("generate with a sibling alias that is no client name = %v", err)
+	}
+	for want, servers := range map[string][]string{
+		"view: dependency 9docs has no server to read":             nil,
+		"view: https://user:secret@x.example/mcp: MCP URL must be": {"docs=https://user:secret@x.example/mcp"},
+		`view: alias "aaaaa`: {strings.Repeat("a", 50) + "=" + view},
+	} {
+		if _, err := consumer(view, servers, true); err == nil || !strings.HasPrefix(err.Error(), want) {
+			t.Errorf("consumer(%q) = %v, want %q", servers, err, want)
+		}
+	}
+	writeCLIFile(t, root, "holon.yaml", "apps:\n"+unused)
+	if _, err := projectConsumers(root, true); err == nil || err.Error() != "consumer name is required" {
+		t.Fatalf("generate with a nameless app = %v", err)
+	}
 }
 
 func TestUsageErrors(t *testing.T) {

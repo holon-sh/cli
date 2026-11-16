@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
-	"github.com/holon-sh/protocol"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -44,13 +44,7 @@ func document(t *testing.T, metadata *mcpcontract.Metadata) *Document {
 
 func put(t *testing.T, root, name, content string) {
 	t.Helper()
-	path := filepath.Join(root, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	testfiles.Write(t, root, map[string]string{name: content})
 }
 func mustJSON(t *testing.T, value any) []byte {
 	t.Helper()
@@ -60,14 +54,8 @@ func mustJSON(t *testing.T, value any) []byte {
 	}
 	return data
 }
-func read(t *testing.T, root, name string) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, name))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
-}
+
+var read = testfiles.Read
 
 // writeProvider writes a Python MCP server named example.com/<name> into root.
 func writeProvider(t *testing.T, root, name, source string) {
@@ -114,32 +102,28 @@ func needNode(t *testing.T) {
 	}
 }
 
-func listing(tools ...mcpcontract.Tool) extraction {
+func listing(tools ...mcpcontract.Tool) Served {
 	var pages []json.RawMessage
 	for _, tool := range tools {
 		page, _ := json.Marshal(map[string]any{"tools": []mcpcontract.Tool{tool}})
 		pages = append(pages, page)
 	}
-	return extraction{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}, Lists: map[string]listed{"tools/list": {Pages: pages}}}
+	return Served{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}, Lists: map[string]ServedList{"tools/list": {Pages: pages}}}
 }
 
 // fakeRun stands in for the language runners: it answers each server from results, keyed by the
 // server's server.json name, printing an extraction or returning an error as the runner's failure.
 func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
 	return func(_ context.Context, _, _ string, args []string, stdout io.Writer) error {
-		root, entry := args[1], args[2]
-		if !isFile(filepath.Join(root, entry)) {
-			return fmt.Errorf("entry %s is not in %s", entry, root)
-		}
 		if !strings.Contains(args[3], `"io.modelcontextprotocol/files"`) || !slices.Equal(args[4:], []string{"tools/list", "resources/list", "events/list"}) {
 			return fmt.Errorf("runner asked %q", args[3:])
 		}
 		var descriptor struct{ Name string }
-		if err := readTypeJSON(filepath.Join(root, "server.json"), &descriptor); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := readTypeJSON(filepath.Join(args[1], "server.json"), &descriptor); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		switch result := results[descriptor.Name].(type) {
-		case extraction:
+		case Served:
 			return json.NewEncoder(stdout).Encode(result)
 		case error:
 			return result
@@ -216,7 +200,7 @@ func registryImageSource(t *testing.T, image *http.Client) (Source, *http.Client
 		_, _ = w.Write([]byte(`{"server":{"name":"example.com/orders","version":"1.0.0","description":"Orders","packages":[{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]}}`))
 	}))
 	t.Cleanup(server.Close)
-	source := Source{Registry: &protocol.RegistryRef{Name: "example.com/orders", Version: "1.0.0", Registry: server.URL}}
+	source := Source{Server: Registry{Name: "example.com/orders", Version: "1.0.0", Registry: server.URL}}
 	client := &http.Client{Transport: hostTransport{
 		strings.TrimPrefix(server.URL, "https://"): server.Client().Transport,
 		"images.example": image.Transport,

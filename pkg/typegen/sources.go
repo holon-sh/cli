@@ -42,22 +42,46 @@ var NodePackages = map[string]string{TargetTS: "holon-sh", TargetUI: "holon-ui"}
 var Manifests = map[string]string{TargetTS: "package.json", TargetUI: "package.json", TargetPy: "pyproject.toml", TargetGo: "go.mod"}
 
 // Source is one MCP server whose contract becomes a client, supplied explicitly or declared in
-// sh.holon.requires. Exactly one of Path, Registry, Endpoint or Document is set.
+// sh.holon.requires.
 type Source struct {
 	// Alias names the client (apps.<alias>). Empty derives it: the last segment of the server's
 	// name (example.com/orders → orders), or the live server's serverInfo name for an Endpoint.
-	Alias string
-	// Path is a server entry file (server.py, server.ts, server.js, or the same under src/) or a
-	// directory containing exactly one.
-	Path string
-	// Registry is an MCP registry server version. Resolve its OCI package's document,
-	// falling back to its streamable-http remote when the image has no contract.
-	Registry *protocol.RegistryRef
-	// Endpoint is a live MCP endpoint; initialize and tools/list supply identity and contract. With an
-	// Alias, the environment variable <ALIAS>_MCP_TOKEN supplies a bearer token for its origin.
-	Endpoint string
-	// Document is an already resolved contract document, with the exact bytes its digest names.
-	Document *Document
+	Alias  string
+	Server Server
+}
+
+// Server is where a contract comes from: a Path, an Endpoint, a Registry or a *Document.
+type Server interface{ server() }
+
+// Path is the absolute path of a server entry file, or of a directory holding exactly one.
+type Path struct {
+	Dir string
+	// Served is what its running server answered, when it already has.
+	Served *Served
+}
+
+// Endpoint is a live MCP endpoint; with an Alias, <ALIAS>_MCP_TOKEN supplies a bearer token for its origin.
+type Endpoint string
+
+// Registry is an MCP registry server version, read from its OCI package's document or its streamable-http remote.
+type Registry protocol.RegistryRef
+
+func (p Path) String() string      { return p.Dir }
+func (r Registry) String() string  { return r.Name + "@" + r.Version }
+func (d *Document) String() string { return d.Identity.Name + "@" + d.Identity.Version }
+func (Path) server()               {}
+func (Endpoint) server()           {}
+func (Registry) server()           {}
+func (*Document) server()          {}
+
+// NewEndpoint accepts an HTTP(S) MCP URL without credentials or a fragment.
+func NewEndpoint(url string) (Endpoint, error) {
+	return Endpoint(url), mcpregistry.ValidateEndpoint(url)
+}
+
+// NewRegistry accepts a registry server version with a namespaced name and an exact version.
+func NewRegistry(ref protocol.RegistryRef) (Registry, error) {
+	return Registry(ref), validRegistryRef(ref)
 }
 
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
@@ -71,67 +95,30 @@ func ParseSource(arg string) (Source, error) {
 	if arg == "" {
 		return source, errors.New("a server path or URL is required")
 	}
-	if u, err := url.Parse(arg); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+	path, err := filepath.Abs(arg)
+	source.Server = Path{Dir: path}
+	if u, parseErr := url.Parse(arg); parseErr == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
 			name, _ := url.PathUnescape(m[1])
 			version, _ := url.PathUnescape(m[2])
-			source.Registry = &protocol.RegistryRef{Name: name, Version: version, Registry: u.Scheme + "://" + u.Host}
-			return source, nil
+			source.Server, err = NewRegistry(protocol.RegistryRef{Name: name, Version: version, Registry: u.Scheme + "://" + u.Host})
+		} else {
+			source.Server, err = NewEndpoint(arg)
 		}
-		source.Endpoint = arg
-		return source, nil
 	}
-	var err error
-	source.Path, err = filepath.Abs(arg)
+	if len(source.Alias) > 49 {
+		err = fmt.Errorf("alias %q must be a DNS label of at most 49 characters", source.Alias)
+	}
 	return source, err
 }
 
 // key identifies a fetched source (a registry version, or an endpoint with the alias that names its
 // token), so it resolves once per Prepare; path and document sources never reach it.
 func (s Source) key() string {
-	if s.Registry != nil {
-		return "registry:" + s.Registry.RegistryURL() + "#" + s.Registry.Name + "@" + s.Registry.Version
+	if r, ok := s.Server.(Registry); ok {
+		return "registry:" + protocol.RegistryRef(r).RegistryURL() + "#" + r.String()
 	}
-	return "endpoint:" + s.Alias + "=" + s.Endpoint
-}
-
-func (s Source) String() string {
-	switch {
-	case s.Path != "":
-		return s.Path
-	case s.Registry != nil:
-		return s.Registry.Name + "@" + s.Registry.Version
-	case s.Endpoint != "":
-		return s.Endpoint
-	case s.Document != nil:
-		return s.Document.Identity.Name + "@" + s.Document.Identity.Version
-	}
-	return ""
-}
-
-func (s Source) validate() error {
-	set := 0
-	for _, present := range []bool{s.Path != "", s.Registry != nil, s.Endpoint != "", s.Document != nil} {
-		if present {
-			set++
-		}
-	}
-	switch {
-	case set == 0 && s.Alias != "":
-		return fmt.Errorf("dependency %s has no server to read: make it a path, remote or registry app in holon.yaml, or give it a published version or url in server.json", s.Alias)
-	case set != 1:
-		return errors.New("a source is exactly one of a path, a registry version, an endpoint or a document")
-	}
-	if s.Alias != "" && (len(s.Alias) > 49 || !appName.MatchString(s.Alias)) {
-		return fmt.Errorf("alias %q must be a DNS label of at most 49 characters", s.Alias)
-	}
-	if s.Registry != nil {
-		return validRegistryRef(*s.Registry)
-	}
-	if s.Endpoint == "" {
-		return nil
-	}
-	return mcpregistry.ValidateEndpoint(s.Endpoint)
+	return "endpoint:" + s.Alias + "=" + string(s.Server.(Endpoint))
 }
 
 // Consumer is a project directory that receives typed clients.
@@ -140,10 +127,11 @@ type Consumer struct {
 	Name string
 	// Dir is the absolute project directory.
 	Dir string
-	// Server is the consumer's own MCP server, a path source inside Dir. It supplies the
+	// Server is the consumer's own MCP server, inside Dir, or empty for none. It supplies the
 	// consumer's identity, contract (Metadata) and check configuration. Browser clients call it
 	// under its derived name; an Alias replaces that name and adds the client to every other target.
-	Server *Source
+	Server Path
+	Alias  string
 	// Targets are the clients to write.
 	// A server can have no targets when only its contract is needed.
 	Targets []string
@@ -151,41 +139,13 @@ type Consumer struct {
 	Sources []Source
 }
 
-func (c Consumer) validate() error {
-	if c.Name == "" {
-		return errors.New("consumer name is required")
-	}
-	if !filepath.IsAbs(c.Dir) {
-		return fmt.Errorf("%s: directory must be absolute", c.Name)
-	}
-	if info, err := os.Stat(c.Dir); err != nil || !info.IsDir() {
-		return fmt.Errorf("%s: %s is not a directory", c.Name, c.Dir)
-	}
-	if len(c.Targets) == 0 && c.Server == nil {
-		return fmt.Errorf("%s: at least one target is required", c.Name)
-	}
-	for i, target := range c.Targets {
-		if !slices.Contains(targets, target) {
-			return fmt.Errorf("%s: unknown target %q (expected one of %s)", c.Name, target, strings.Join(targets, ", "))
-		}
-		if slices.Contains(c.Targets[:i], target) {
-			return fmt.Errorf("%s: target %s listed twice", c.Name, target)
-		}
-	}
-	if c.Server != nil {
-		if err := c.Server.validate(); err != nil {
-			return fmt.Errorf("%s: %w", c.Name, err)
-		}
-		if c.Server.Path == "" {
-			return fmt.Errorf("%s: the own server must be a path source", c.Name)
-		}
-	}
-	for _, source := range c.Sources {
-		if err := source.validate(); err != nil {
-			if source.String() != "" {
-				err = fmt.Errorf("%s: %w", source, err)
-			}
-			return fmt.Errorf("%s: %w", c.Name, err)
+func (c Consumer) installed(target string) error {
+	switch target {
+	case TargetTS, TargetUI:
+		return installedRuntime(c.Dir, NodePackages[target])
+	case TargetPy:
+		if pythonEnvironment(c.Dir) == "" {
+			return fmt.Errorf("%s has no Python environment", c.Dir)
 		}
 	}
 	return nil
@@ -195,10 +155,6 @@ func (c Consumer) validate() error {
 // server.py, src/server.py, server.ts, src/server.ts, server.js, src/server.js (and server.go).
 // It returns the application root (the directory above src/), the entry relative to it, and its language.
 func serverEntry(path string) (root, entry, language string, err error) {
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return "", "", "", err
-	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		return "", "", "", err

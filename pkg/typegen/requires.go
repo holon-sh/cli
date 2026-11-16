@@ -1,13 +1,12 @@
 package typegen
 
 import (
-	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
+
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 )
 
 // serverMention is what an MCP server's entry names: the protocol, an SDK or holon-sh.
@@ -20,10 +19,10 @@ var serverMention = regexp.MustCompile(`(?i)mcp|modelcontextprotocol|holon[-_]sh
 // nothing to generate or check.
 func AppConsumer(name, dir string) (*Consumer, error) {
 	targets, err := DeclaredTargets(dir)
-	if err != nil && !errors.Is(err, ErrNoRuntime) {
+	if err != nil {
 		return nil, err
 	}
-	var own *Source
+	var own Path
 	for _, root := range []string{dir, filepath.Join(dir, "server")} {
 		if info, err := os.Stat(root); err != nil || !info.IsDir() {
 			continue
@@ -42,32 +41,42 @@ func AppConsumer(name, dir string) (*Consumer, error) {
 		if !serverMention.Match(data) {
 			continue
 		}
-		if own != nil {
-			return nil, fmt.Errorf("keep exactly one server entry (found them in %s and %s)", own.Path, root)
+		if own.Dir != "" {
+			return nil, fmt.Errorf("keep exactly one server entry (found them in %s and %s)", own, root)
 		}
-		own = &Source{Path: root}
+		own = Path{Dir: root}
 	}
-	if len(targets) == 0 && own == nil {
+	if len(targets) == 0 && own.Dir == "" {
 		return nil, nil
 	}
 	return &Consumer{Name: name, Dir: dir, Targets: targets, Server: own}, nil
 }
 
-// DeclaredSources returns one source per sh.holon.requires entry, sorted by alias: its registry
-// version, its URL, or for an empty entry the alias alone.
-func DeclaredSources(dir string) ([]Source, error) {
+// Requires returns the dependencies the server.json in dir declares in sh.holon.requires, by alias.
+func Requires(dir string) (map[string]mcpregistry.Requirement, error) {
 	d, err := readDescriptor(dir)
 	if err != nil || d == nil {
 		return nil, err
 	}
-	var sources []Source
-	for _, alias := range slices.Sorted(maps.Keys(d.Requires)) {
-		requirement := d.Requires[alias]
-		source := Source{Alias: alias, Endpoint: requirement.URL}
-		if requirement.Name != "" {
-			source.Registry = &requirement.RegistryRef
-		}
-		sources = append(sources, source)
+	return d.Requires, nil
+}
+
+// RequiredSource is the source an sh.holon.requires entry names: path when given, else its URL or registry version.
+func RequiredSource(alias string, r mcpregistry.Requirement, path Path) (Source, error) {
+	source := Source{Alias: alias}
+	var err error
+	switch {
+	case path.Dir != "":
+		source.Server = path
+	case r.URL != "":
+		source.Server, err = NewEndpoint(r.URL)
+	case r.Name != "":
+		source.Server, err = NewRegistry(r.RegistryRef)
+	default:
+		return source, fmt.Errorf("dependency %s has no server to read: make it a path, remote or registry app in holon.yaml, or give it a published version or url in server.json", alias)
 	}
-	return sources, nil
+	if !appName.MatchString(alias) {
+		err = fmt.Errorf("alias %q must be a DNS label of at most 49 characters", alias)
+	}
+	return source, err
 }

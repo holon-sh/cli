@@ -27,7 +27,6 @@ const (
 	progressIdle    = tea.ProgramStateIdle
 	progressWorking = tea.ProgramStateWorking
 	progressDone    = tea.ProgramStateDone
-	progressBlocked = tea.ProgramStateBlocked
 	progressError   = tea.ProgramStateError
 )
 
@@ -85,13 +84,11 @@ func (o *progressOutput) working(app string) {
 }
 
 func (o *progressOutput) ready(app string) {
-	if o == nil {
-		return
-	}
 	o.mu.Lock()
-	elapsed := o.clock.Since(o.started[app]).Seconds()
-	o.mu.Unlock()
-	o.status(app, fmt.Sprintf("ready in %.1f s", elapsed), progressDone)
+	defer o.mu.Unlock()
+	if o.statuses[app].State != progressError {
+		o.show(app, fmt.Sprintf("ready in %.1f s", o.clock.Since(o.started[app]).Seconds()), progressDone)
+	}
 }
 
 func (o *progressOutput) failed(app, reason string) {
@@ -102,12 +99,21 @@ func (o *progressOutput) removed(app string) {
 	o.status(app, "removed", progressDone)
 }
 
-func (o *progressOutput) status(name, message string, state progressState) {
-	if o == nil {
-		return
-	}
+func (o *progressOutput) unrecorded(app string, cause error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if o.statuses[app].State != progressError {
+		o.show(app, fmt.Sprintf("serves this save, but a restart loses it: %v", cause), progressError)
+	}
+}
+
+func (o *progressOutput) status(name, message string, state progressState) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.show(name, message, state)
+}
+
+func (o *progressOutput) show(name, message string, state progressState) {
 	status := tea.ProgramStatus{App: "holon", ID: progressStatusID(name), Title: name, Message: message, State: state}
 	previous, shown := o.statuses[name]
 	if shown && previous == status {
@@ -125,9 +131,6 @@ func (o *progressOutput) status(name, message string, state progressState) {
 func (o *progressOutput) problem(name string, err error) {
 	if err != nil {
 		o.status(name, err.Error(), progressError)
-		return
-	}
-	if o == nil {
 		return
 	}
 	o.mu.Lock()
@@ -170,10 +173,6 @@ func (o *progressOutput) endpoints(
 		return err
 	}
 	text := "\n" + heading + "\n" + block
-	if o == nil {
-		_, err = io.WriteString(stdout, text)
-		return err
-	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.program != nil {
@@ -222,11 +221,11 @@ func (o *progressOutput) finish(err error, message string) error {
 	return o.renderer.Wait()
 }
 
-func (o *progressOutput) logs(writer io.Writer) io.Writer {
-	if o != nil && !o.verbose {
+func (o *progressOutput) logs() io.Writer {
+	if o == nil || !o.verbose {
 		return io.Discard
 	}
-	return writer
+	return o.writer
 }
 
 func (o *progressOutput) measure(name, phase string) func() {
@@ -270,25 +269,17 @@ func (m progressModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m progressModel) working() bool {
-	if m.status.State == progressBlocked {
-		return false
-	}
 	return m.status.State == progressWorking || slices.ContainsFunc(m.items, func(s tea.ProgramStatus) bool { return s.State == progressWorking })
 }
 
 func (m progressModel) indicator(state progressState) string {
 	switch state {
 	case progressWorking:
-		if m.status.State == progressBlocked {
-			return "·"
-		}
 		return m.spinner.View()
 	case progressDone:
 		return "✓"
 	case progressError:
 		return "✗"
-	case progressBlocked:
-		return "!"
 	default:
 		return " "
 	}

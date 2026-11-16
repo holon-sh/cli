@@ -3,6 +3,8 @@ package mcptype
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -14,12 +16,12 @@ type compiledTool struct {
 	structured    bool
 }
 
-func parseCatalog(ctx context.Context, contract contract, files bool) (catalog, error) {
-	names := sortedKeys(contract.Tools)
+func parseCatalog(ctx context.Context, entries map[string]contractTool, files bool, declares func(typ) bool) (catalog, error) {
+	names := sortedKeys(entries)
 	tools := make([]compiledTool, len(names))
 	inputs, outputs := make([]*shape, len(names)), make([]*shape, len(names))
 	for i, name := range names {
-		tool := contract.Tools[name]
+		tool := entries[name]
 		input, err := parseShape(ctx, tool.Input, files)
 		if err != nil {
 			return catalog{}, err
@@ -34,8 +36,8 @@ func parseCatalog(ctx context.Context, contract contract, files bool) (catalog, 
 		inputs[i], outputs[i] = &tools[i].input, &tools[i].output
 	}
 	// Inputs and outputs are named apart, so each shares only with its own kind.
-	share(inputs)
-	share(outputs)
+	share(inputs, declares)
+	share(outputs, declares)
 	result := make(catalog, len(names))
 	for i, name := range names {
 		result[name] = tools[i]
@@ -44,10 +46,10 @@ func parseCatalog(ctx context.Context, contract contract, files bool) (catalog, 
 }
 
 // share declares each type that a definition or title names, each object that several places in
-// shapes have in common, and each recursive type, once however many shapes mention it. Every other
-// type stays where it is used.
-func share(shapes []*shape) {
-	s := &sharing{shapes: shapes, types: map[string]*sharedType{}, keys: map[*declaration]string{}}
+// shapes have in common and declares accepts, and each recursive type, once however many shapes
+// mention it. Every other type stays where it is used.
+func share(shapes []*shape, declares func(typ) bool) {
+	s := &sharing{shapes: shapes, declares: declares, types: map[string]*sharedType{}, keys: map[*declaration]string{}}
 	for i, shape := range shapes {
 		s.current = i
 		s.count(shape.value, false)
@@ -75,10 +77,11 @@ func share(shapes []*shape) {
 }
 
 type sharing struct {
-	shapes  []*shape
-	current int                    // The shape being counted.
-	types   map[string]*sharedType // By structure.
-	keys    map[*declaration]string
+	shapes   []*shape
+	declares func(typ) bool
+	current  int                    // The shape being counted.
+	types    map[string]*sharedType // By structure.
+	keys     map[*declaration]string
 }
 
 // sharedType is a recursive or named type, or an object that might be shared.
@@ -107,36 +110,19 @@ func candidate(value typ) bool {
 // count records the uses of value and the types it contains. A shape's named definitions are not
 // values.
 func (s *sharing) count(value typ, named bool) {
-	switch {
-	case value.kind == kindDeclared:
-		if s.mention(s.recursiveKey(value.ref), value.ref.value, value.ref.definition, true, named) {
-			s.countWithin(value.ref.value)
-		}
-		return
-	case candidate(value):
-		if !s.mention(s.key(value), value, value.definition, false, named) {
+	if value.kind == kindDeclared {
+		if !s.mention(s.recursiveKey(value.ref), value.ref.value, value.ref.definition, true, named) {
 			return
 		}
+		value = value.ref.value
+	} else if candidate(value) && !s.mention(s.key(value), value, value.definition, false, named) {
+		return
 	}
-	s.countWithin(value)
-}
-
-func (s *sharing) countWithin(value typ) {
-	switch value.kind {
-	case kindArray:
-		s.count(*value.item, false)
-	case kindTuple:
-		for _, item := range value.prefix {
-			s.count(item, false)
-		}
-	case kindObject:
-		for _, name := range sortedKeys(value.fields) {
-			s.count(value.fields[name].value, false)
-		}
-	case kindUnion, kindIntersection:
-		for _, item := range value.items {
-			s.count(item, false)
-		}
+	for _, item := range value.items {
+		s.count(item, false)
+	}
+	for _, name := range sortedKeys(value.fields) {
+		s.count(value.fields[name].value, false)
 	}
 	if value.extra.value != nil {
 		s.count(*value.extra.value, false)
@@ -186,14 +172,12 @@ func structuralLabel(value typ) string {
 
 // rewrite copies value, naming each shared type it contains.
 func (s *sharing) rewrite(value typ) typ {
-	switch value.kind {
-	case kindDeclared:
+	if value.kind == kindDeclared {
 		return s.reference(s.types[s.recursiveKey(value.ref)])
-	default:
-		if candidate(value) {
-			if shared := s.types[s.key(value)]; shared.declared() {
-				return s.reference(shared)
-			}
+	}
+	if candidate(value) {
+		if shared := s.types[s.key(value)]; shared.declared() && (value.definition != "" || s.declares(value)) {
+			return s.reference(shared)
 		}
 	}
 	return s.rewriteWithin(value)
@@ -201,29 +185,14 @@ func (s *sharing) rewrite(value typ) typ {
 
 func (s *sharing) rewriteWithin(value typ) typ {
 	value.definition = ""
-	switch value.kind {
-	case kindArray:
-		item := s.rewrite(*value.item)
-		value.item = &item
-	case kindTuple:
-		prefix := make([]typ, len(value.prefix))
-		for i, item := range value.prefix {
-			prefix[i] = s.rewrite(item)
-		}
-		value.prefix = prefix
-	case kindObject:
-		fields := make(map[string]field, len(value.fields))
-		for _, name := range sortedKeys(value.fields) {
-			member := value.fields[name]
-			fields[name] = field{value: s.rewrite(member.value), required: member.required}
-		}
-		value.fields = fields
-	case kindUnion, kindIntersection:
-		items := make([]typ, len(value.items))
-		for i, item := range value.items {
-			items[i] = s.rewrite(item)
-		}
-		value.items = items
+	value.items = slices.Clone(value.items)
+	for i, item := range value.items {
+		value.items[i] = s.rewrite(item)
+	}
+	value.fields = maps.Clone(value.fields)
+	for _, name := range sortedKeys(value.fields) {
+		member := value.fields[name]
+		value.fields[name] = field{value: s.rewrite(member.value), required: member.required}
 	}
 	if value.extra.value != nil {
 		item := s.rewrite(*value.extra.value)
@@ -283,23 +252,16 @@ func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
 		spell(out, value.ref.value, seen)
 	case kindLiteral:
 		out.Write(encode(value.literal))
-	case kindArray:
-		spell(out, *value.item, seen)
 	case kindTuple:
 		fmt.Fprintf(out, "%d", value.min)
-		for _, item := range value.prefix {
-			spell(out, item, seen)
-		}
-	case kindObject:
-		for _, name := range sortedKeys(value.fields) {
-			member := value.fields[name]
-			fmt.Fprintf(out, "%s%t", quoted(name), member.required)
-			spell(out, member.value, seen)
-		}
-	case kindUnion, kindIntersection:
-		for _, item := range value.items {
-			spell(out, item, seen)
-		}
+	}
+	for _, item := range value.items {
+		spell(out, item, seen)
+	}
+	for _, name := range sortedKeys(value.fields) {
+		member := value.fields[name]
+		fmt.Fprintf(out, "%s%t", quoted(name), member.required)
+		spell(out, member.value, seen)
 	}
 	if value.kind == kindTuple || value.kind == kindObject {
 		fmt.Fprintf(out, "%d%t", value.extra.kind, value.extra.recursive)
@@ -309,10 +271,10 @@ func spell(out *strings.Builder, value typ, seen map[*declaration]int) {
 	}
 }
 
-func compileCatalogs(ctx context.Context, contracts map[string]contract, files bool) (map[string]catalog, error) {
-	catalogs := make(map[string]catalog, len(contracts))
-	for _, name := range sortedKeys(contracts) {
-		compiled, err := parseCatalog(ctx, contracts[name], files)
+func compileCatalogs(ctx context.Context, request generateRequest, entries func(contract) map[string]contractTool, files bool) (map[string]catalog, error) {
+	catalogs := make(map[string]catalog, len(request.contracts))
+	for _, name := range sortedKeys(request.contracts) {
+		compiled, err := parseCatalog(ctx, entries(request.contracts[name]), files, declaresShared[request.Target])
 		if err != nil {
 			return nil, err
 		}

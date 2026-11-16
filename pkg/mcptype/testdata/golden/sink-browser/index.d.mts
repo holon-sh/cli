@@ -2,7 +2,7 @@
 import type { ToolClient, EndpointBinding, CreateOptions } from "holon-ui/runtime";
 export { ToolCallError } from "holon-ui/runtime";
 export type OrdersInputId = { "id": string; };
-export type OrdersInputX1startsDashKeyAllEtc = { "1starts"?: string; "Dash-Key"?: string; "all"?: ({ "a": string; } & { "b"?: number; }); "allConflict"?: ({ "a"?: string; } & { "a"?: number; }); "allNonObject"?: (string & { [key: string]: unknown; }); "annotated"?: string; "arrayRef"?: string; "closedEmpty"?: {  }; "constNum"?: 1e+21; "constObj"?: unknown; "constString"?: "it's \"quoted\"\n"; "cycle"?: OrdersInputNode; "dash-key"?: string; "emptyAll"?: unknown; "emptyAny"?: never; "falseSchema"?: never; "files"?: Array<Blob>; "implicitTuple"?: ["x"?, ...unknown[]]; "literals": ("a" | 1 | 2.5 | -3 | true | null | unknown | unknown | 1.0 | 1e+21 | -0.0); "mapOf"?: { [key: string]: string; }; "multi"?: (string | null | Array<number> | unknown); "nested"?: Array<Array<{ "deep"?: null; }>>; "noType": { "p": boolean; }; "nodes"?: OrdersInputNodes; "numericType"?: { "p"?: boolean; }; "odd key with spaces"?: string; "oneOf"?: (string | number); "openObj"?: { "x"?: string; [key: string]: unknown; }; "openTuple"?: [boolean?, ...Array<number>]; "plainArray"?: Array<unknown>; "pointerEscape"?: OrdersInputABC; "rootRef"?: OrdersInputX1startsDashKeyAllEtc; "trueObj"?: { "x"?: string; [key: string]: unknown; }; "trueSchema"?: unknown; "tuple": [string, number?]; "unknownKeyword"?: unknown; };
+export type OrdersInputX1startsDashKeyAllEtc = { "1starts"?: string; "Dash-Key"?: string; "all"?: ({ "a": string; } & { "b"?: number; }); "allConflict"?: ({ "a"?: string; } & { "a"?: number; }); "allNonObject"?: (string & { [key: string]: unknown; }); "annotated"?: string; "arrayRef"?: string; "closedEmpty"?: {  }; "constNum"?: 1e21; "constObj"?: unknown; "constString"?: "it's \"quoted\"\n"; "cycle"?: OrdersInputNode; "dash-key"?: string; "emptyAll"?: unknown; "emptyAny"?: never; "falseSchema"?: never; "files"?: Array<Blob>; "implicitTuple"?: ["x"?, ...unknown[]]; "literals": ("a" | 1 | 2.5 | -3 | true | null | unknown | unknown | 1.0 | 1e21 | -0); "mapOf"?: { [key: string]: string; }; "multi"?: (string | null | Array<number> | unknown); "nested"?: Array<Array<{ "deep"?: null; }>>; "noType": { "p": boolean; }; "nodes"?: OrdersInputNodes; "numericType"?: { "p"?: boolean; }; "odd key with spaces"?: string; "oneOf"?: (string | number); "openObj"?: { "x"?: string; [key: string]: unknown; }; "openTuple"?: [boolean?, ...Array<number>]; "plainArray"?: Array<unknown>; "pointerEscape"?: OrdersInputABC; "rootRef"?: OrdersInputX1startsDashKeyAllEtc; "trueObj"?: { "x"?: string; [key: string]: unknown; }; "trueSchema"?: unknown; "tuple": [string, number?]; "unknownKeyword"?: unknown; };
 export type OrdersInputNode = { "next"?: OrdersInputNode; "value": number; };
 export type OrdersInputNodes = Array<OrdersInputNode>;
 export type OrdersInputABC = number;
@@ -11,6 +11,11 @@ export type OrdersInputLegacy = number;
 export type OrdersInputPrivate = boolean;
 export type OrdersInputFor = string;
 export type OrdersInputList = [string?, ...unknown[]];
+export type SharedInputFilterInput = { "filter-input"?: string; [key: string]: unknown; };
+export type SharedInputIfMatch2 = { "etag"?: string; };
+export type SharedInputIfMatch = { "if-match"?: string; [key: string]: unknown; };
+export type SharedInputN = { "ünï"?: string; };
+export type SharedOutputNote = { "note"?: string; [key: string]: unknown; };
 export interface Inputs {
   "123": {
   };
@@ -38,6 +43,11 @@ export interface Inputs {
   "orders!": {
     "kitchen-sink": { "id": string; };
   };
+  "shared": {
+    "input_filter": { "q"?: string; };
+    "remove": { "a"?: SharedInputFilterInput; "condition"?: SharedInputIfMatch2; "headers"?: SharedInputIfMatch; "labels"?: SharedInputN; };
+    "save": { "a"?: SharedInputFilterInput; "condition"?: SharedInputIfMatch2; "content"?: string; "headers"?: SharedInputIfMatch; "labels"?: SharedInputN; };
+  };
   "with-hyphen": {
     "y": { [key: string]: unknown; };
   };
@@ -61,6 +71,10 @@ export interface Outputs {
   };
   "orders!": {
     "kitchen-sink": boolean;
+  };
+  "shared": {
+    "remove": (SharedOutputNote | null);
+    "save": (SharedOutputNote | null);
   };
   "with-hyphen": {
   };
@@ -94,6 +108,11 @@ export interface InputTypes {
   "orders!": {
     "kitchen-sink": {  };
   };
+  "shared": {
+    "input_filter": {  };
+    "remove": { "IfMatch": SharedInputIfMatch2; };
+    "save": { "IfMatch": SharedInputIfMatch2; };
+  };
   "with-hyphen": {
     "y": {  };
   };
@@ -118,6 +137,10 @@ export interface OutputTypes {
   "orders!": {
     "kitchen-sink": {  };
   };
+  "shared": {
+    "remove": {  };
+    "save": {  };
+  };
   "with-hyphen": {
   };
   "ünï": {
@@ -138,6 +161,8 @@ export interface Resources {
   };
   "orders!": {
   };
+  "shared": {
+  };
   "with-hyphen": {
   };
   "ünï": {
@@ -154,6 +179,8 @@ export interface EventArguments {
   };
   "orders!": {
   };
+  "shared": {
+  };
   "with-hyphen": {
   };
   "ünï": {
@@ -169,6 +196,8 @@ export interface EventData {
   "orders": {
   };
   "orders!": {
+  };
+  "shared": {
   };
   "with-hyphen": {
   };

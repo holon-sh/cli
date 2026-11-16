@@ -3,7 +3,6 @@ package installation
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,7 +23,7 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	t.Parallel()
 	fixture, server := buildRegistry(t)
 	host := strings.TrimPrefix(server.URL, "https://")
-	options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}, Stderr: io.Discard}
+	options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
 	raw := []byte(` { "schema":{"tools":[{"name":"lookup",
 "inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}]},
 "identity":{"version":"1","name":"example/orders"} } `)
@@ -35,10 +34,15 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	descriptor := &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"}
 	caller := &mcpcontract.Metadata{Identity: descriptor.Identity(), Requires: map[string]string{"orders": expected.Digest}}
 	image := publishTypeMetadata(t, fixture, host+"/checkout", caller, options, map[string]*typegen.Document{expected.Digest: expected})
-	copied, err := importImage(t.Context(), image, host, "destination/checkout", "", options.HTTPClient)
+	destination, err := imageRepository(host+"/destination/checkout", "", options.HTTPClient)
 	if err != nil {
 		t.Fatal(err)
 	}
+	imported, err := importImage(t.Context(), image, destination, options.HTTPClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := destination.Reference.String() + "@" + imported.Digest.String()
 	fixture.mu.Lock()
 	for key := range fixture.items {
 		if strings.HasPrefix(key, "checkout/") {
@@ -60,7 +64,7 @@ func TestImageContractsSurviveImport(t *testing.T) {
 				{Name: "orders", resolved: resolvedApp{App: protocol.App{Name: "orders", Image: provider}}},
 				{Name: "checkout", resolved: resolvedApp{App: protocol.App{Name: "checkout", Image: copied}, descriptor: descriptor}},
 			}}
-			_, cleanup, err := prepareManifestTypes(t.Context(), deployment, options)
+			_, cleanup, err := prepareManifestTypes(t.Context(), deployment, options, nil)
 			if test.want == "" {
 				if err != nil {
 					t.Fatal(err)
@@ -77,7 +81,7 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	delete(fixture.items, "destination/checkout/blobs/"+expected.Digest)
 	fixture.mu.Unlock()
 	deployment := manifestSpec{Apps: []manifestApp{{Name: "checkout", resolved: resolvedApp{App: protocol.App{Image: copied}}}}}
-	_, _, err = prepareManifestTypes(t.Context(), deployment, options)
+	_, _, err = prepareManifestTypes(t.Context(), deployment, options, nil)
 	if err == nil || !strings.Contains(err.Error(), "fetch expected orders contract "+expected.Digest) {
 		t.Fatalf("missing pinned blob: %v", err)
 	}
@@ -104,7 +108,7 @@ func TestLiveDependencySnapshotIsPinnedByConsumer(t *testing.T) {
 			App: protocol.App{Name: "checkout", Requires: []string{"orders"}}, descriptor: &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"},
 		}},
 	)
-	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{})
+	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,12 +17,12 @@ const traceback = "Tool 'boom' raised an unexpected exception\nTraceback (most r
 
 func TestLogs(t *testing.T) {
 	h := newRunHarness(t)
-	h.control.Handle([]string{toolGetLogs}, map[string]string{"session": "production"}, func(w http.ResponseWriter, _ *http.Request) {
+	h.control.Handle([]string{protocol.ToolGetLogs}, map[string]string{"session": "production"}, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, map[string]any{"records": []map[string]string{
 			{"time": "2026-11-09T10:00:00.2Z", "app": "alpha", "body": traceback, "traceId": "aaaa"},
 		}})
 	})
-	h.control.Handle([]string{toolListSessions}, nil, func(w http.ResponseWriter, _ *http.Request) {
+	h.control.Handle([]string{protocol.ToolListSessions}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, map[string]any{"items": []protocol.SessionResponse{
 			{Name: "gentle-otter-482", Apps: []protocol.App{{Name: "alpha"}}}, {Name: "quiet-heron-7"},
 		}})

@@ -156,6 +156,35 @@ type Orders2KitchenSinkInput = struct {
 
 type Orders2KitchenSinkOutput = bool
 
+type SharedInputFilterInput = struct {
+	Q *string "json:\"q,omitempty\""
+}
+
+type SharedInputFilterOutput = json.RawMessage
+
+type SharedInputIfMatch = struct {
+	Etag *string "json:\"etag,omitempty\""
+}
+
+type SharedRemoveInput = struct {
+	A *map[string]json.RawMessage "json:\"a,omitempty\""
+	Condition *SharedInputIfMatch "json:\"condition,omitempty\""
+	Headers *map[string]json.RawMessage "json:\"headers,omitempty\""
+	Labels *map[string]json.RawMessage "json:\"labels,omitempty\""
+}
+
+type SharedRemoveOutput = json.RawMessage
+
+type SharedSaveInput = struct {
+	A *map[string]json.RawMessage "json:\"a,omitempty\""
+	Condition *SharedInputIfMatch "json:\"condition,omitempty\""
+	Content *string "json:\"content,omitempty\""
+	Headers *map[string]json.RawMessage "json:\"headers,omitempty\""
+	Labels *map[string]json.RawMessage "json:\"labels,omitempty\""
+}
+
+type SharedSaveOutput = json.RawMessage
+
 type WithHyphenYInput = map[string]json.RawMessage
 
 type WithHyphenYOutput = json.RawMessage

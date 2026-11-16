@@ -41,7 +41,7 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 	}
 	h := newRunHarness(t)
 	var updates []string
-	h.control.Handle([]string{toolListSessions}, nil, func(w http.ResponseWriter, _ *http.Request) {
+	h.control.Handle([]string{protocol.ToolListSessions}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, map[string]any{"items": sessions})
 	})
 	h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, r *http.Request) {

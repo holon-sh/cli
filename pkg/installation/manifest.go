@@ -1,7 +1,6 @@
 package installation
 
 import (
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
@@ -48,14 +46,28 @@ type manifestRemote struct {
 	URL string `description:"Remote Streamable HTTP MCP endpoint." format:"uri" json:"url" minLength:"1" pattern:"^https://" required:"true"`
 }
 
+type secretReference mcpregistry.Value
+
+type manifestOAuth struct {
+	ClientID     protocol.Template `description:"Client ID; {NAME} stands for a configuration input." json:"clientID" required:"true"`
+	ClientSecret secretReference   `json:"clientSecret,omitempty"`
+}
+
+func (c *manifestOAuth) client() *protocol.OAuthClient {
+	if c == nil {
+		return nil
+	}
+	return &protocol.OAuthClient{ClientID: c.ClientID, ClientSecret: c.ClientSecret.Secret}
+}
+
 type resolvedApp struct {
 	protocol.App
 
-	registryPackage *mcpregistry.Package
-	types           *preparedTypes
-	descriptor      *mcpregistry.Descriptor
-	stdio           bool
-	catalogEnv      map[string]protocol.Input
+	pkg        *protocol.RegistrySource
+	types      *preparedTypes
+	descriptor *mcpregistry.Descriptor
+	stdio      bool
+	catalogEnv map[string]protocol.Input
 }
 
 type manifestApp struct {
@@ -80,30 +92,8 @@ type manifestApp struct {
 	resolved  resolvedApp
 }
 
-func resolveAppMetadata(app *manifestApp, pkg mcpregistry.Package) error {
-	app.resolved.stdio = pkg.Transport.Type == "stdio"
-	port, _ := pkg.Port()
-	catalog, err := pkg.App(nil, mcpregistry.RunConfig{})
-	if err != nil {
-		return err
-	}
-	app.resolved.catalogEnv = catalog.Env
-	run := ptr.Deref(app.Run, packageRun{})
-	declared, err := pkg.App(app.Arguments, mcpregistry.RunConfig{Args: run.Args, Env: run.Env})
-	if err != nil {
-		return err
-	}
-	app.resolved.Env, app.resolved.EnvTemplates, app.resolved.Args = declared.Env, declared.EnvTemplates, declared.Args
-	app.resolved.Imported = app.Registry != nil
-	if app.resolved.stdio && app.OAuth != nil {
-		return errors.New("oauth requires an HTTP MCP server")
-	}
-	app.resolved.Port = int32(cmp.Or(port, ptr.Deref(app.Port, 0), 3000))
-	return nil
-}
-
-func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
-	sourceName = scaffold.Relative(sourceName)
+func parseManifest(data []byte, file string) (manifestSpec, error) {
+	sourceName := scaffold.Relative(file)
 	document, err := yaml.YAMLToJSONStrict(data)
 	if err != nil {
 		return manifestSpec{}, fmt.Errorf("%s: %w", sourceName, err)
@@ -111,7 +101,7 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 	if problems := validateProject(document); len(problems) != 0 {
 		return manifestSpec{}, fmt.Errorf("%s: %s", sourceName, strings.Join(problems, "\n"+sourceName+": "))
 	}
-	var p manifestSpec
+	p := manifestSpec{file: file}
 	if err := json.Unmarshal(document, &p); err != nil {
 		return manifestSpec{}, fmt.Errorf("%s: %w", sourceName, err)
 	}
@@ -125,6 +115,9 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 		a := &p.Apps[i]
 		if a.Port != nil && a.Image == "" {
 			errs = append(errs, label+".port requires image")
+		}
+		if err := a.OAuth.client().Validate(nil); err != nil {
+			errs = append(errs, label+".oauth: "+err.Error())
 		}
 		if err := protocol.ValidateAccess(a.Access); err != nil {
 			errs = append(errs, label+": "+err.Error())
@@ -168,6 +161,8 @@ func parseManifest(data []byte, sourceName string) (manifestSpec, error) {
 		names.Insert(a.Name)
 		if filepath.IsAbs(a.Path) {
 			errs = append(errs, label+".path must be a relative directory")
+		} else if a.Path != "" {
+			a.Path = filepath.Join(filepath.Dir(file), a.Path)
 		}
 	}
 	if len(errs) > 0 {
@@ -191,16 +186,14 @@ func (p *manifestSpec) selectApps(args []string) ([]string, error) {
 		if slices.ContainsFunc(slices.Concat(p.Apps, p.sources), func(app manifestApp) bool { return app.Name == source.Alias }) {
 			return nil, fmt.Errorf("app %s is declared twice", source.Alias)
 		}
-		app := manifestApp{Name: source.Alias, Path: source.Path}
-		switch {
-		case source.Registry != nil:
-			app.Registry = &protocol.RegistrySource{RegistryRef: *source.Registry}
-			err = app.Registry.Validate()
-		case source.Endpoint != "":
-			app.Remote = &manifestRemote{URL: source.Endpoint}
-		}
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", arg, err)
+		app := manifestApp{Name: source.Alias}
+		switch server := source.Server.(type) {
+		case typegen.Path:
+			app.Path = server.Dir
+		case typegen.Registry:
+			app.Registry = &protocol.RegistrySource{RegistryRef: protocol.RegistryRef(server)}
+		case typegen.Endpoint:
+			app.Remote = &manifestRemote{URL: string(server)}
 		}
 		p.sources = append(p.sources, app)
 		names = append(names, app.Name)

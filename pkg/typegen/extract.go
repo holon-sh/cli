@@ -24,19 +24,20 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type extraction struct {
+// Served is what a running server answers to initialize and to each catalog list.
+type Served struct {
 	ServerInfo   json.RawMessage         `json:"serverInfo"`
 	Capabilities *mcp.ServerCapabilities `json:"capabilities"`
-	Lists        map[string]listed       `json:"lists"`
+	Lists        map[string]ServedList   `json:"lists"`
 }
 
-type listed struct {
+type ServedList struct {
 	Pages []json.RawMessage `json:"pages"`
-	Error string            `json:"error"`
+	Error string            `json:"error,omitempty"`
 }
 
-func (e *extraction) pages(method string) ([]json.RawMessage, error) {
-	list := e.Lists[method]
+func (s *Served) pages(method string) ([]json.RawMessage, error) {
+	list := s.Lists[method]
 	if list.Error != "" {
 		return nil, errors.New(list.Error)
 	}
@@ -101,17 +102,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 	var run []*preparedSource
 	committed := map[*preparedSource]*Document{}
 	for _, s := range sources {
-		if s.language == "go" {
-			continue
-		}
-		if answers, served := o.Served[s.origin]; served {
-			result := &extraction{}
-			if err := json.Unmarshal(answers, result); err != nil {
-				return fmt.Errorf("%s: %w", s.origin, err)
-			}
-			if err := s.extract(result); err != nil {
-				return err
-			}
+		if s.language == "go" || s.metadata.Schema != nil {
 			continue
 		}
 		document, err := s.committedContract()
@@ -126,7 +117,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 			return err
 		}
 	}
-	results := make([]*extraction, len(run))
+	results := make([]*Served, len(run))
 	failures := make([]error, len(run))
 	var group sync.WaitGroup
 	for i, s := range run {
@@ -186,7 +177,7 @@ func (s *preparedSource) committedContract() (*Document, error) {
 	return document, nil
 }
 
-func runServer(ctx context.Context, tooling string, s *preparedSource, o Options) (*extraction, error) {
+func runServer(ctx context.Context, tooling string, s *preparedSource, o Options) (*Served, error) {
 	extensions, _ := json.Marshal(clientExtensions)
 	args := append([]string{"contract", s.origin, s.entry, string(extensions)}, runtimecontract.CatalogMethods...)
 	var stdout bytes.Buffer
@@ -206,7 +197,7 @@ func runServer(ctx context.Context, tooling string, s *preparedSource, o Options
 	case err != nil:
 		return nil, fmt.Errorf("%s: %w", s.origin, err)
 	}
-	result := &extraction{}
+	result := &Served{}
 	if err := json.Unmarshal(stdout.Bytes(), result); err != nil {
 		return nil, fmt.Errorf("%s: the contract runner printed no answers: %w", s.origin, err)
 	}
@@ -214,16 +205,12 @@ func runServer(ctx context.Context, tooling string, s *preparedSource, o Options
 }
 
 func runLocal(ctx context.Context, tooling, language string, args []string, stdout io.Writer, env []string) error {
-	env, err := commandenv.Environ(env)
-	if err != nil {
-		return err
-	}
 	l := typeLanguages[language]
 	run := func(program string) error {
 		limited, cancel := context.WithTimeout(ctx, serverTimeout)
 		defer cancel()
 		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
-		command.Env = env
+		command.Env = commandenv.Environ(env)
 		var stderr bytes.Buffer
 		command.Stdout, command.Stderr = stdout, &stderr
 		err := command.Run()

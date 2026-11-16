@@ -120,21 +120,17 @@ func connect(cmd *cobra.Command, arg string, signIn typegen.SignIn) (*mcp.Client
 // instead a dependency the server.json in the working directory declares.
 func target(arg string) (typegen.Source, error) {
 	source, err := typegen.ParseSource(arg)
-	if err != nil || source.Path == "" {
+	if _, path := source.Server.(typegen.Path); err != nil || !path {
 		return source, err
 	}
-	declared, err := typegen.DeclaredSources(".")
+	requires, err := typegen.Requires(".")
 	if err != nil {
 		return typegen.Source{}, err
 	}
-	names := make([]string, len(declared))
-	for i, dependency := range declared {
-		if dependency.Alias == arg {
-			return dependency, nil
-		}
-		names[i] = dependency.Alias
+	if requirement, ok := requires[arg]; ok {
+		return typegen.RequiredSource(arg, requirement, typegen.Path{})
 	}
-	return typegen.Source{}, fmt.Errorf("%s is not a URL or a dependency the server.json here declares (%s); for a server's source, pass the MCP URL it runs at, such as the one holon dev prints", arg, cmp.Or(strings.Join(names, ", "), "none"))
+	return typegen.Source{}, fmt.Errorf("%s is not a URL or a dependency the server.json here declares (%s); for a server's source, pass the MCP URL it runs at, such as the one holon dev prints", arg, cmp.Or(strings.Join(slices.Sorted(maps.Keys(requires)), ", "), "none"))
 }
 
 // catalog is what list prints: the initialize result, then every page of each listing the server

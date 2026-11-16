@@ -32,7 +32,7 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 	case protocol.ToolCreateSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession:
 		timeout = max(timeout, 5*time.Minute)
 	}
-	if _, waiting := input.(sessionWaitRequest); waiting {
+	if request, ok := input.(protocol.GetSessionRequest); ok && request.Revision != "" {
 		timeout = max(timeout, sessionWait+15*time.Second)
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)

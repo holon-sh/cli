@@ -34,7 +34,7 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 		}
 		request.contracts[alias] = decoded
 	}
-	catalogs, err := compileCatalogs(ctx, request.contracts, request.Target != "go")
+	catalogs, err := compileCatalogs(ctx, request, func(c contract) map[string]contractTool { return c.Tools }, request.Target != "go")
 	if err != nil {
 		return nil, err
 	}
@@ -61,20 +61,10 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	return files, nil
 }
 
-func eventContracts(contracts map[string]contract) map[string]contract {
-	result := make(map[string]contract, len(contracts))
-	for alias, source := range contracts {
-		tools := make(map[string]contractTool, len(source.Events))
-		for name, event := range source.Events {
-			tools[name] = contractTool{Input: event.Input, Output: event.Payload}
-		}
-		result[alias] = contract{Tools: tools}
-	}
-	return result
-}
+var declaresShared = map[string]func(typ) bool{"node": candidate, "browser": candidate, "python": pythonTypedDict, "go": goStruct}
 
 func (r GenerateRequest) validate() error {
-	if !slices.Contains([]string{"node", "browser", "python", "go"}, r.Target) {
+	if declaresShared[r.Target] == nil {
 		return fmt.Errorf("unknown target %q", r.Target)
 	}
 	for _, identity := range slices.AppendSeq([]mcpcontract.Identity{r.Identity}, maps.Values(r.Requires)) {

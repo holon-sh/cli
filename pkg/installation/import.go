@@ -15,17 +15,14 @@ func importRegistryBuild(
 	ctx context.Context, manager *Client, plane protocol.Plane, app manifestApp,
 ) (protocol.ResolvedAppBuild, error) {
 	var build protocol.ResolvedAppBuild
-	pkg := app.resolved.registryPackage
-	source := *app.Registry
-	source.Package = &protocol.PackageSelection{RegistryType: pkg.RegistryType, Identifier: pkg.Identifier}
 	var imported protocol.Import
-	err := manager.Call(ctx, plane, protocol.ToolImportRegistryPackage, protocol.ImportRegistryPackageRequest{App: app.Name, Registry: source}, &imported)
+	err := manager.Call(ctx, plane, protocol.ToolImportRegistryPackage, protocol.ImportRegistryPackageRequest{App: app.Name, Registry: *app.resolved.pkg}, &imported)
 	if err == nil {
 		err = wait.PollUntilContextCancel(ctx, workflowPoll, true, func(ctx context.Context) (bool, error) {
 			if err := manager.Call(ctx, plane, protocol.ToolGetImport, protocol.GetImportRequest{ID: imported.ID}, &imported); err != nil {
 				return false, err
 			}
-			if imported.Phase == "Failed" {
+			if imported.Phase == protocol.PhaseFailed {
 				return false, errors.New("import failed: " + imported.Message)
 			}
 			return imported.Build != nil, nil

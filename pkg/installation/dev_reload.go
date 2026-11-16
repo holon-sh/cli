@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"maps"
-	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,37 +20,32 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/tonistiigi/fsutil"
 	fstypes "github.com/tonistiigi/fsutil/types"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/pkg/recipe"
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
 )
 
-const toolGetAppContract = "get_app_contract"
-
-type reloadAppResult struct {
-	Output string `json:"output"`
-}
-
 type packedSource struct {
 	overlay ocispec.Descriptor
 	file    string
+	upload  *imageUpload
 }
 
-func (d *devLoop) served(ctx context.Context) (map[string]json.RawMessage, error) {
-	served := map[string]json.RawMessage{}
+func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error) {
+	served := map[string]*typegen.Served{}
 	for _, app := range d.manifest.Apps {
 		sent, running := d.sent[app.Name]
 		if !running {
 			continue
 		}
-		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.name}, App: app.Name}
-		var contract json.RawMessage
-		if err := d.manager.Call(ctx, ControlPlane(d.name), toolGetAppContract, request, &contract); err == nil {
-			served[app.Name] = contract
+		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.session.Name}, App: app.Name}
+		answer := &typegen.Served{}
+		if err := d.manager.Call(ctx, d.options.plane, protocol.ToolGetAppContract, request, answer); err == nil {
+			served[app.Name] = answer
 		} else if sent != "" {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
@@ -75,22 +69,21 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
-	if !d.reload(ctx, d.paths(func(app manifestApp) bool {
+	if !d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool {
 		_, running := d.sent[app.Name]
-		return !running && len(app.resolved.Requires) == 0
+		return running || len(app.resolved.Requires) != 0
 	})) {
 		return errUnstarted
 	}
 	for {
 		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
-		options := d.options
-		var err error
-		if options.served, err = d.served(ctx); err != nil {
+		served, err := d.served(ctx)
+		if err != nil {
 			return err
 		}
 		manifest := d.manifest
 		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), d.waiting)
-		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, options)
+		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, d.options, served)
 		if err != nil {
 			seeded := len(d.sent)
 			maps.DeleteFunc(d.sent, func(_, sent string) bool { return sent == "" })
@@ -100,8 +93,12 @@ func (d *devLoop) generate(ctx context.Context) error {
 			return err
 		}
 		cleanup()
-		d.options.types.accept(prepared)
-		if !d.reload(ctx, d.paths(func(app manifestApp) bool { return !d.waiting(app) })) {
+		for _, app := range prepared.Apps {
+			if p := app.resolved.types; p != nil {
+				d.accepted[app.Name] = p
+			}
+		}
+		if !d.reload(ctx, manifest.Apps) {
 			return errUnstarted
 		}
 		if last {
@@ -110,10 +107,10 @@ func (d *devLoop) generate(ctx context.Context) error {
 	}
 }
 
-func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
+func (d *devLoop) reload(ctx context.Context, apps []manifestApp) bool {
 	reloaded := true
-	for _, app := range d.manifest.Apps {
-		if !contexts.Has(app.Path) {
+	for _, app := range apps {
+		if app.Path == "" {
 			continue
 		}
 		if err := d.reloadApp(ctx, app); err != nil {
@@ -129,16 +126,6 @@ func (d *devLoop) reload(ctx context.Context, contexts sets.Set[string]) bool {
 		}
 	}
 	return reloaded
-}
-
-func (d *devLoop) paths(include func(manifestApp) bool) sets.Set[string] {
-	paths := sets.New[string]()
-	for _, app := range d.manifest.Apps {
-		if app.Path != "" && include(app) {
-			paths.Insert(app.Path)
-		}
-	}
-	return paths
 }
 
 func (d *devLoop) unsent(app manifestApp) bool {
@@ -161,7 +148,8 @@ func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func
 	if _, err := snapshotSource(app, root); err != nil {
 		return packedSource{}, cleanup, err
 	}
-	packed, err := d.options.packSource(ctx, app, root)
+	packed, err := packSource(ctx, app, root, d.accepted[app.Name])
+	packed.upload = newImageUpload(d.options, manifestSpec{Apps: []manifestApp{app}})
 	return packed, cleanup, err
 }
 
@@ -174,7 +162,7 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	if err == nil && packed.overlay.Digest.String() != d.sent[app.Name] {
 		d.begin(app.Name)
 		if err = d.send(ctx, app.Name, packed); err == nil {
-			d.record(app, packed, cleanup)
+			d.record(app.Name, packed, cleanup)
 			return nil
 		}
 		delete(d.sent, app.Name)
@@ -184,8 +172,8 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 }
 
 func (d *devLoop) send(ctx context.Context, app string, packed packedSource) error {
-	var result reloadAppResult
-	if err := d.manager.postOverlay(ctx, d.name, app, "source", packed.file, &result); err != nil {
+	var result protocol.ReloadAppResult
+	if err := d.manager.postOverlay(ctx, d.session.Name, app, "source", packed.file, &result); err != nil {
 		return err
 	}
 	d.sent[app] = packed.overlay.Digest.String()
@@ -195,28 +183,26 @@ func (d *devLoop) send(ctx context.Context, app string, packed packedSource) err
 	return nil
 }
 
-func (d *devLoop) record(app manifestApp, packed packedSource, cleanup func()) {
-	if cancel := d.recording[app.Name]; cancel != nil {
+func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
+	if cancel := d.recording[app]; cancel != nil {
 		cancel(errSourceSuperseded)
 	}
 	ctx, cancel := context.WithCancelCause(d.background)
-	d.recording[app.Name] = cancel
+	d.recording[app] = cancel
 	d.clock.AfterFunc(time.Minute, func() { cancel(errSourceUnrecorded) })
 	session := d.session.UID
-	upload := newImageUpload(d.manager, d.name, manifestSpec{Apps: []manifestApp{app}})
 	d.records.Go(func() {
 		defer cleanup()
-		uploaded := d.options.output.measure(app.Name, "source upload")
-		err := packed.publish(ctx, upload, app.Name, d.options.HTTPClient, session)
+		uploaded := d.options.output.measure(app, "source upload")
+		err := packed.publish(ctx, app, session)
 		uploaded()
 		if cause := cmp.Or(context.Cause(ctx), err); err != nil && cause != errSourceSuperseded {
-			d.options.output.problem(app.Name, fmt.Errorf("serves this save, but a restart loses it: %w", cause))
+			d.options.output.unrecorded(app, cause)
 		}
 	})
 }
 
-func (o buildOptions) packSource(ctx context.Context, app manifestApp, root string) (packedSource, error) {
-	accepted := o.types.accepted[app.Name]
+func packSource(ctx context.Context, app manifestApp, root string, accepted *preparedTypes) (packedSource, error) {
 	if accepted != nil {
 		staged := *accepted
 		staged.root = root
@@ -292,7 +278,7 @@ func (m *Client) postOverlay(ctx context.Context, session, app, route, overlay s
 	if err != nil {
 		return err
 	}
-	request := apiRequest{Plane: ControlPlane(session), Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
+	request := apiRequest{Plane: protocol.DevPlane, Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
 	return m.client.send(ctx, path.Join(protocol.APIPathSessions, session, "apps", app, route), request, result)
 }
 
@@ -302,27 +288,28 @@ func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
 	if err != nil {
 		return runtimecontract.Plan{}, err
 	}
-	read := map[string][]byte{}
+	inputs := digest.SHA256.Digester()
 	for _, name := range steps.Inputs {
-		if read[name], err = fs.ReadFile(source, name); err != nil {
+		data, err := fs.ReadFile(source, name)
+		if err != nil {
 			return runtimecontract.Plan{}, err
 		}
+		_, _ = fmt.Fprintf(inputs.Hash(), "%s\x00%d\x00%s", name, len(data), data)
 	}
-	inputs, _ := json.Marshal(read)
-	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: digest.FromBytes(inputs).String(), Commands: steps.Install}, Start: recipe.Start(entry)}
+	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: inputs.Digest().String(), Commands: steps.Install}, Start: recipe.Start(entry)}
 	if page {
 		plan.Prepare = steps.Build
 	}
 	return plan, nil
 }
 
-func (p packedSource) publish(ctx context.Context, upload *imageUpload, app string, client *http.Client, session string) error {
+func (p packedSource) publish(ctx context.Context, app, session string) error {
 	file, err := os.Open(p.file)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = file.Close() }()
-	return upload.publish(ctx, app, client, func(repository *remote.Repository, _ protocol.UploadGrant) error {
+	return p.upload.repository(ctx, app, func(repository *remote.Repository, _ protocol.UploadGrant) error {
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
