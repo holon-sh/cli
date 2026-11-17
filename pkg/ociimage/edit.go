@@ -3,6 +3,7 @@ package ociimage
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 
@@ -15,9 +16,15 @@ import (
 )
 
 type Image struct {
-	ocispec.Image
+	ocispec.Platform
+	Config *struct {
+		ocispec.ImageConfig
+		Extra map[string]json.RawMessage `json:",embed"`
+	} `json:"config"`
+	RootFS         ocispec.RootFS             `json:"rootfs"`
+	History        []ocispec.History          `json:"history,omitempty"`
+	Extra          map[string]json.RawMessage `json:",embed"`
 	Layers         []ocispec.Descriptor       `json:"-"`
-	Runtime        map[string]json.RawMessage `json:"-"`
 	appended       []ocispec.Descriptor
 	platform       *ocispec.Platform
 	layerMediaType string
@@ -108,31 +115,20 @@ func edit(
 	if err := json.Unmarshal(document["layers"], &layers); err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	var data json.RawMessage
-	if err := FetchJSON(ctx, source, configDescriptor, &data); err != nil {
-		return ocispec.Descriptor{}, err
-	}
-	var config map[string]json.RawMessage
 	image := Image{Layers: layers, platform: platform, layerMediaType: ocispec.MediaTypeImageLayerGzip}
-	if err := json.Unmarshal(data, &config); err != nil {
+	if err := FetchJSON(ctx, source, configDescriptor, &image); err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	if err := json.Unmarshal(data, &image); err != nil {
-		return ocispec.Descriptor{}, err
+	if image.Config == nil {
+		return ocispec.Descriptor{}, errors.New("image has no runtime configuration")
 	}
-	_ = json.Unmarshal(config["config"], &image.Runtime)
 	if mediaType == images.MediaTypeDockerSchema2Manifest {
 		image.layerMediaType = images.MediaTypeDockerSchema2LayerGzip
 	}
 	if err := transform(&image); err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	config["config"], _ = json.Marshal(image.Runtime)
-	config["rootfs"], _ = json.Marshal(image.RootFS)
-	if len(image.History) != 0 {
-		config["history"], _ = json.Marshal(image.History)
-	}
-	preparedConfig, _ := json.Marshal(config)
+	preparedConfig, _ := jsonv2.Marshal(&image, json.DefaultOptionsV1())
 	newConfig, err := oras.PushBytes(ctx, destination, configDescriptor.MediaType, preparedConfig)
 	if err != nil {
 		return ocispec.Descriptor{}, err

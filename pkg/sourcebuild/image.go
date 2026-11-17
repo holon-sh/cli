@@ -48,11 +48,10 @@ func Assemble(
 	named := development.Reference
 	named.Reference = base.String()
 	missing := fmt.Errorf("the registry does not hold the development image %s yet; it is copied there after each upgrade, so deploy again in a minute", named)
-	platform := ocispec.Platform{OS: frozenConfig.OS, Architecture: frozenConfig.Architecture}
-	child, err := oras.Resolve(ctx, development, named.Reference, oras.ResolveOptions{TargetPlatform: &platform})
+	child, err := oras.Resolve(ctx, development, named.Reference, oras.ResolveOptions{TargetPlatform: &frozenConfig.Platform})
 	if errors.Is(err, errdef.ErrNotFound) {
 		if _, lookupErr := development.Resolve(ctx, named.Reference); lookupErr == nil {
-			return ocispec.Descriptor{}, fmt.Errorf("the development image has no %s/%s image", platform.OS, platform.Architecture)
+			return ocispec.Descriptor{}, fmt.Errorf("the development image has no %s/%s image", frozenConfig.OS, frozenConfig.Architecture)
 		}
 		return ocispec.Descriptor{}, missing
 	}
@@ -85,11 +84,12 @@ func configureImage(image *ociimage.Image, directory string, start []string, lab
 		name, _, _ := strings.Cut(entry, "=")
 		return slices.Contains([]string{"HOME", "NODE_ENV", "PYTHONUNBUFFERED"}, name)
 	})
-	merged := maps.Collect(maps.All(image.Config.Labels))
-	maps.Copy(merged, labels)
-	image.Runtime["Entrypoint"] = json.RawMessage("null")
-	image.Runtime["Cmd"], _ = json.Marshal(start)
-	image.Runtime["WorkingDir"], _ = json.Marshal(directory)
-	image.Runtime["Env"], _ = json.Marshal(append(environment, production...))
-	image.Runtime["Labels"], _ = json.Marshal(merged)
+	image.Config.Entrypoint = nil
+	image.Config.Cmd = start
+	image.Config.WorkingDir = directory
+	image.Config.Env = append(environment, production...)
+	if image.Config.Labels == nil {
+		image.Config.Labels = map[string]string{}
+	}
+	maps.Copy(image.Config.Labels, labels)
 }

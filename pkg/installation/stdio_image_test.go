@@ -107,8 +107,22 @@ func TestStdioImageContract(t *testing.T) {
 				t.Fatalf("image configuration (-want +got):\n%s", diff)
 			}
 			if len(imageManifest.Layers) != 2 || !cmp.Equal(imageManifest.Layers[:1], originalManifest.Layers) ||
-				imageManifest.Annotations["example"] != "preserved" || len(config.RootFS.DiffIDs) != 2 || len(config.History) != 2 {
+				imageManifest.Annotations["example"] != "preserved" || config.Author != "original author" || len(config.RootFS.DiffIDs) != 2 || len(config.History) != 2 {
 				t.Fatalf("layers or metadata lost: %#v %#v", imageManifest, config)
+			}
+			var extensions struct {
+				Config struct {
+					Healthcheck struct {
+						Test     []string
+						Interval int64
+					}
+				}
+			}
+			registry.mu.Lock()
+			err = json.Unmarshal(registry.items["holon/upload/app/blobs/"+imageManifest.Config.Digest.String()].data, &extensions)
+			registry.mu.Unlock()
+			if err != nil || !slices.Equal(extensions.Config.Healthcheck.Test, []string{"CMD", "/health"}) || extensions.Config.Healthcheck.Interval != 9007199254740993 {
+				t.Fatalf("image healthcheck lost: %+v: %v", extensions.Config.Healthcheck, err)
 			}
 		})
 	}

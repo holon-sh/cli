@@ -39,15 +39,9 @@ func PackDirectory(ctx context.Context, file *os.File, root string, plan runtime
 			return ocispec.Descriptor{}, err
 		}
 	}
-	stable, err := fsutil.NewFilterFS(fsutil.NewRootFS(snapshot), &fsutil.FilterOpt{Map: stableStat})
-	if err != nil {
-		return ocispec.Descriptor{}, err
-	}
+	stable, _ := fsutil.NewFilterFS(fsutil.NewRootFS(snapshot), &fsutil.FilterOpt{Map: stableStat})
 	digester := digest.SHA256.Digester()
-	compressed, err := zstd.NewWriter(io.MultiWriter(file, digester.Hash()), zstd.WithEncoderConcurrency(1))
-	if err != nil {
-		return ocispec.Descriptor{}, err
-	}
+	compressed, _ := zstd.NewWriter(io.MultiWriter(file, digester.Hash()), zstd.WithEncoderConcurrency(1))
 	if err := errors.Join(fsutil.WriteTar(ctx, stable, compressed), compressed.Close()); err != nil {
 		return ocispec.Descriptor{}, err
 	}

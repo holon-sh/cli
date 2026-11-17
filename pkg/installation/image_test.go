@@ -235,11 +235,20 @@ func addTestImage(t *testing.T, registry *imageRegistry, architecture string, co
 	}
 	layer := content.NewDescriptorFromBytes(ocispec.MediaTypeImageLayer, raw.Bytes())
 	registry.items["source/blobs/"+layer.Digest.String()] = registryItem{data: raw.Bytes()}
-	configuration, _ := json.Marshal(ocispec.Image{
-		Platform: ocispec.Platform{OS: "linux", Architecture: architecture}, Config: config,
+	image := struct {
+		ocispec.Image
+		Config struct {
+			ocispec.ImageConfig
+			Healthcheck json.RawMessage
+		} `json:"config"`
+	}{Image: ocispec.Image{
+		Platform: ocispec.Platform{OS: "linux", Architecture: architecture}, Author: "original author",
 		RootFS:  ocispec.RootFS{Type: "layers", DiffIDs: []digest.Digest{layer.Digest}},
 		History: []ocispec.History{{CreatedBy: "original image"}},
-	})
+	}}
+	image.Config.ImageConfig = config
+	image.Config.Healthcheck = json.RawMessage(`{"Test":["CMD","/health"],"Interval":9007199254740993}`)
+	configuration, _ := json.Marshal(image)
 	configDescriptor := content.NewDescriptorFromBytes(ocispec.MediaTypeImageConfig, configuration)
 	registry.items["source/blobs/"+configDescriptor.Digest.String()] = registryItem{data: configuration}
 	manifest, _ := json.Marshal(ocispec.Manifest{

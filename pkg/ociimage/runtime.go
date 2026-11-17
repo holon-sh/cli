@@ -5,12 +5,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -71,22 +69,18 @@ func AdaptRuntime(ctx context.Context, repository oras.Target, image *Image, opt
 			return err
 		}
 	}
-	if image.Runtime == nil {
-		return errors.New("image has no runtime configuration")
-	}
 	launcher := []string{
 		BridgePath, "serve", "--listen", ":3000", "--protocol-version", mcpbridge.ProtocolVersion, "--allow-origin", options.Origin, "--",
 	}
 	if child := slices.Concat(image.Config.Entrypoint, image.Config.Cmd); len(child) == 0 || child[0] == "" {
 		return errors.New("stdio image has no executable entrypoint or command")
 	}
-	image.Runtime["Entrypoint"], _ = json.Marshal(append(launcher, image.Config.Entrypoint...))
-	image.Runtime["Cmd"], _ = json.Marshal(image.Config.Cmd)
-	image.Runtime["StopSignal"] = json.RawMessage(`"SIGTERM"`)
-	labels := map[string]string{}
-	maps.Copy(labels, image.Config.Labels)
-	labels["sh.holon.bridge.runtime"], labels["sh.holon.bridge.source"] = payload.binary.String(), options.Source
-	image.Runtime["Labels"], _ = json.Marshal(labels)
+	image.Config.Entrypoint = append(launcher, image.Config.Entrypoint...)
+	image.Config.StopSignal = "SIGTERM"
+	if image.Config.Labels == nil {
+		image.Config.Labels = map[string]string{}
+	}
+	image.Config.Labels["sh.holon.bridge.runtime"], image.Config.Labels["sh.holon.bridge.source"] = payload.binary.String(), options.Source
 	layer, err := oras.PushBytes(ctx, repository, image.layerMediaType, payload.layer)
 	if err != nil {
 		return err

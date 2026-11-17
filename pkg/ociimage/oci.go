@@ -3,6 +3,7 @@ package ociimage
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"slices"
 
@@ -24,7 +25,7 @@ func FetchJSON(ctx context.Context, source content.Fetcher, descriptor ocispec.D
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, value)
+	return jsonv2.Unmarshal(data, value, json.DefaultOptionsV1())
 }
 
 func Parse(image string) (reference.Named, error) {
