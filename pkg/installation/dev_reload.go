@@ -210,27 +210,14 @@ func packSource(ctx context.Context, app manifestApp, root string, accepted *pre
 			return packedSource{}, err
 		}
 	}
-	start, err := sourceAppStart(app, root)
+	entry, err := sourceAppEntry(app, root)
 	if err != nil {
 		return packedSource{}, err
 	}
-	source := os.DirFS(root)
-	steps, err := recipe.Read(source)
+	// A page is built once the clients it may import are in the source.
+	plan, err := overlayPlan(root, entry, accepted != nil && !accepted.unserved)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
-	}
-	inputs := digest.SHA256.Digester()
-	for _, name := range steps.Inputs {
-		data, err := fs.ReadFile(source, name)
-		if err != nil {
-			return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
-		}
-		_, _ = fmt.Fprintf(inputs.Hash(), "%s\x00%d\x00%s", name, len(data), data)
-	}
-	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: inputs.Digest().String(), Commands: steps.Install}, Start: start}
-	// A page is built once the clients it may import are in the source.
-	if accepted != nil && !accepted.unserved {
-		plan.Prepare = steps.Build
 	}
 	if err := writeHolonFile(root, runtimecontract.PlanFile, plan); err != nil {
 		return packedSource{}, err
@@ -293,6 +280,27 @@ func (m *Client) postOverlay(ctx context.Context, session, app, route, overlay s
 	}
 	request := apiRequest{Plane: protocol.DevPlane, Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
 	return m.client.send(ctx, path.Join(protocol.APIPathSessions, session, "apps", app, route), request, result)
+}
+
+func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
+	source := os.DirFS(root)
+	steps, err := recipe.Read(source)
+	if err != nil {
+		return runtimecontract.Plan{}, err
+	}
+	inputs := digest.SHA256.Digester()
+	for _, name := range steps.Inputs {
+		data, err := fs.ReadFile(source, name)
+		if err != nil {
+			return runtimecontract.Plan{}, err
+		}
+		_, _ = fmt.Fprintf(inputs.Hash(), "%s\x00%d\x00%s", name, len(data), data)
+	}
+	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: inputs.Digest().String(), Commands: steps.Install}, Start: recipe.Start(entry)}
+	if page {
+		plan.Prepare = steps.Build
+	}
+	return plan, nil
 }
 
 func (p packedSource) publish(ctx context.Context, app, session string) error {
