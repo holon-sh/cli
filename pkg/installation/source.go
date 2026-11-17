@@ -1,13 +1,11 @@
 package installation
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"github.com/holon-sh/cli/pkg/recipe"
 	"github.com/holon-sh/cli/pkg/typegen"
@@ -37,21 +35,19 @@ func sourceAppStart(app manifestApp, root string) ([]string, error) {
 		return nil, err
 	}
 	extension := filepath.Ext(entry)
+	node := extension == ".ts" || extension == ".js"
 	var pkg typegen.PackageJSON
-	if slices.Contains([]string{".ts", ".js"}, extension) {
-		data, err := os.ReadFile(filepath.Join(root, "package.json"))
-		if err == nil {
-			err = json.Unmarshal(data, &pkg)
-		}
+	if node {
+		pkg, err = typegen.ReadPackageJSON(root)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, err
 		}
 	}
-	if !app.resolved.stdio && slices.Contains([]string{".py", ".ts", ".js"}, extension) {
-		if !pkg.Launches() {
+	if !app.resolved.stdio && (node || extension == ".py") && pkg.Main == "" {
+		switch command := pkg.Scripts["start"]; {
+		case command == "":
 			return recipe.Start(entry), nil
-		}
-		if pkg.Main == "" && (entry == "server.ts" || entry == "server.js") && pkg.Scripts["start"] == "node "+entry {
+		case command == "node "+entry && entry == filepath.Base(entry):
 			return []string{"node", entry}, nil
 		}
 	}

@@ -83,15 +83,16 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, command, access, pkg, prefix, edit, failure, want string
-		files                                                   map[string]string
-		contractRan, checkRan                                   *runtimecontract.Ran
-		base                                                    *digest.Digest
-		session                                                 bool
+		name, command, access, pkg, entry, prefix, edit, failure, want string
+		files                                                          map[string]string
+		contractRan, checkRan                                          *runtimecontract.Ran
+		base                                                           *digest.Digest
+		session                                                        bool
 	}{
 		{name: "oauth without identity", command: "dev", access: "--oauth", want: "requires a configured identity provider"},
 		{name: "package main", command: "dev", pkg: `{"main":"index.js","scripts":{"start":"node server.js"}}`, want: "ship it as an image: app"},
 		{name: "arbitrary start script", command: "deploy", pkg: `{"scripts":{"start":"node server.js --extra"}}`, want: "ship it as an image: app"},
+		{name: "start script for a nested entry", command: "deploy", entry: "src/server.js", pkg: `{"scripts":{"start":"node src/server.js"}}`, want: "ship it as an image: app"},
 		{name: "registry off", command: "deploy", prefix: "registry.example/apps", want: "turns off; ship it as an image: app"},
 		{name: "unsupported recipe", command: "deploy", files: map[string]string{"bun.lock": ""}, want: "ship it as an image: app"},
 		{
@@ -114,7 +115,7 @@ func TestRunPreparationFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			sourceFiles(t, root, map[string]string{"package.json": cmp.Or(tc.pkg, sourcePackage), "server.js": `export const mcp = 1`})
+			sourceFiles(t, root, map[string]string{"package.json": cmp.Or(tc.pkg, sourcePackage), cmp.Or(tc.entry, "server.js"): `export const mcp = 1`})
 			sourceFiles(t, root, tc.files)
 			h := newRunHarness(t)
 			builds := serveBuilds(t, h)

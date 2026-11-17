@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,7 +24,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	testingclock "k8s.io/utils/clock/testing"
 
-	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
@@ -546,6 +544,10 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	if request.Session != "gentle-otter-482" || request.App != "alpha" {
 		t.Fatalf("source sent to %s %s", request.Session, request.App)
 	}
+	entries := overlayEntries(t, request.body)
+	if start := readOverlayPlan(t, entries).Start; !slices.Equal(start, []string{".venv/bin/python", "-m", "holon.serve", "server.py"}) {
+		t.Fatalf("dev start = %q", start)
+	}
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +555,7 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	err := json.Unmarshal(f.item("manifests/"+sessionUID), &tagged)
 	if err != nil || tagged.ArtifactType != runtimecontract.OverlayMediaType || len(tagged.Layers) != 1 ||
 		tagged.Layers[0].Digest.String() != request.Digest || !bytes.Equal(f.item("blobs/"+request.Digest), request.body) ||
-		string(overlayEntries(t, request.body)["tools.py"]) != "second" {
+		string(entries["tools.py"]) != "second" {
 		t.Fatalf("the session's tag names %+v, want %s: %v", tagged.Layers, request.Digest, err)
 	}
 }
@@ -564,65 +566,48 @@ func TestDevStartsNativeNodeServer(t *testing.T) {
 		"standalone/server.ts":    "export default { fetch: () => new Response('ready') };",
 		"standalone/package.json": `{"type":"module","scripts":{"start":"node server.ts"}}`,
 	})
-	var plan runtimecontract.Plan
-	request := f.reloadRequests()[0]
-	if err := json.Unmarshal(overlayEntries(t, request.body)[runtimecontract.PlanFile], &plan); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Equal(plan.Start, []string{"node", "server.ts"}) {
-		t.Fatalf("dev start = %q", plan.Start)
-	}
-	if err := f.stop(); err != nil {
-		t.Fatal(err)
+	if start := readOverlayPlan(t, overlayEntries(t, f.reloadRequests()[0].body)).Start; !slices.Equal(start, []string{"node", "server.ts"}) {
+		t.Fatalf("dev start = %q", start)
 	}
 }
 
-func TestOverlayPlan(t *testing.T) {
-	build := `{"scripts":{"build":"vite build"}}`
-	t.Run("a Python app with a page", func(t *testing.T) {
-		root := t.TempDir()
-		testfiles.Write(t, root, map[string]string{
-			"src/server.py": "", "pyproject.toml": "", "uv.lock": "", "package.json": build, "pnpm-lock.yaml": "",
-		})
-		start, err := sourceAppStart(manifestApp{}, root)
+func TestSourceInstallInputs(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "",
+		"package.json": `{"scripts":{"build":"vite build"}}`, "package-lock.json": "",
+	}
+	sourceFiles(t, root, files)
+	install := func() string {
+		packed, err := packSource(t.Context(), manifestApp{}, root, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		plan, err := overlayPlan(root, start, true)
-		plan.Install.Inputs = ""
-		want := runtimecontract.Plan{
-			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}},
-			Prepare: [][]string{{"pnpm", "run", "build"}},
-			Start:   []string{".venv/bin/python", "-m", "holon.serve", "src/server.py"},
+		defer func() { _ = os.Remove(packed.file) }()
+		data, err := os.ReadFile(packed.file)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if err != nil || !reflect.DeepEqual(plan, want) {
-			t.Fatalf("plan = %+v, want %+v: %v", plan, want, err)
+		return readOverlayPlan(t, overlayEntries(t, data)).Install.Inputs
+	}
+	last := install()
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		sourceFiles(t, root, map[string]string{name: files[name] + "\n"})
+		next := install()
+		if (next != last) != (name != "server.py") {
+			t.Fatalf("changing %s changed the install's inputs: %t", name, next != last)
 		}
-	})
-	t.Run("the install's inputs change with what it installs from", func(t *testing.T) {
-		root := t.TempDir()
-		files := map[string]string{"server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "", "package.json": build, "package-lock.json": ""}
-		testfiles.Write(t, root, files)
-		install := func(page bool) runtimecontract.Install {
-			plan, err := overlayPlan(root, nil, page)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return plan.Install
-		}
-		last := install(false)
-		if !reflect.DeepEqual(install(true), last) {
-			t.Fatal("building the page changed the install")
-		}
-		for _, name := range slices.Sorted(maps.Keys(files)) {
-			testfiles.Write(t, root, map[string]string{name: files[name] + "\n"})
-			if next := install(true); (next.Inputs != last.Inputs) != (name != "server.py") {
-				t.Fatalf("changing %s changed the install's inputs: %t", name, next.Inputs != last.Inputs)
-			} else {
-				last = next
-			}
-		}
-	})
+		last = next
+	}
+}
+
+func readOverlayPlan(t *testing.T, entries map[string][]byte) runtimecontract.Plan {
+	t.Helper()
+	var plan runtimecontract.Plan
+	if err := json.Unmarshal(entries[runtimecontract.PlanFile], &plan); err != nil {
+		t.Fatal(err)
+	}
+	return plan
 }
 
 func (f *reloadFixture) uploads() int {
@@ -699,11 +684,15 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true, map[string]string{"alpha/server.py": "import mcp\n"}, test.files)
 			var sends []send
+			var inputs string
 			for _, reload := range f.reloadRequests() {
 				if reload.App == test.app {
 					overlay := overlayEntries(t, reload.body)
-					var plan runtimecontract.Plan
-					_ = json.Unmarshal(overlay[runtimecontract.PlanFile], &plan)
+					plan := readOverlayPlan(t, overlay)
+					if inputs != "" && plan.Install.Inputs != inputs {
+						t.Fatal("generating clients or building the page changed the install key")
+					}
+					inputs = plan.Install.Inputs
 					sends = append(sends, send{clients: strings.Contains(string(overlay[test.client]), "lookup"), page: plan.Prepare != nil})
 				}
 			}
