@@ -1,6 +1,6 @@
 ---
 name: verify-deploy
-description: "Model-check that every release holon deploy publishes runs as it was built, with a TLA+ model of the build pod, the image the CLI assembles (pkg/installation/freeze.go, build.go) and the registry, while deploys overlap, build pods restart, the platform is upgraded and the registry collects untagged content. Use when a change touches buildSource or assembleImage, the runtime's freeze, HOLON_BASE_IMAGE, the base-copy hook, registry maintenance, or how a source app's pod picks its image."
+description: "Model-check that every release holon deploy publishes runs as it was built, with a TLA+ model of the build pod, the image the CLI assembles (pkg/installation/freeze.go and build.go, pkg/sourcebuild/image.go) and the registry, while deploys overlap, build pods restart, the platform is upgraded and the registry collects untagged content. Use when a change touches buildSource or sourcebuild.Assemble, the runtime's freeze, HOLON_BASE_IMAGE, the base-copy hook, registry maintenance, or how a source app's pod picks its image."
 ---
 
 # Verify that holon deploy releases what it built
@@ -24,7 +24,7 @@ Sync commits: CLI `dcabb0e` (hughhan1/cli-private#49), runtime `17a0898` (hughha
 | `Start` | `buildSession.start`, whose pod runs the controller's `DEVELOPMENT_IMAGE` (`Config.image`), and `buildSource`'s build call |
 | `Freeze` | the runtime's `freeze`: `HEAD`, upload what the repository lacks, then a manifest whose base annotation is `HOLON_BASE_IMAGE` |
 | `Answer` | the pod's reply after a passing type check |
-| `Mount` | `assembleImage`: the base digest from the frozen manifest, its index from `development`, then `ociimage.Edit`, which mounts the base layers before it pushes anything |
+| `Mount` | `sourcebuild.Assemble`: the base digest from the frozen manifest, its index from `development`, then `ociimage.Edit`, which mounts the base layers before it pushes anything |
 | `Publish` | `ociimage.Edit`'s push of the config and manifest, which the registry refuses unless the repository holds every layer, and `appartifact.Publish` |
 | `Stop` | any error, refusal, failed check, Ctrl-C or kill; the pod's build ends with the request |
 | `ControllerUpgrades`, `HookCopies` | a Helm upgrade rolling the controller, and the `holon-registry-base` hook tagging the new image `holon-retained` |
@@ -36,7 +36,7 @@ Sync commits: CLI `dcabb0e` (hughhan1/cli-private#49), runtime `17a0898` (hughha
 A change needs the check when any of these prints anything you cannot rule out.
 
 ```sh
-git diff dcabb0e -- pkg/installation/freeze.go pkg/installation/build.go
+git diff 0d410a8 -- pkg/installation/freeze.go pkg/installation/build.go pkg/sourcebuild/image.go
 ```
 
 ```sh
@@ -58,7 +58,7 @@ Each config in `faults/` sets `Fault` to one deliberate break, and `ReleasesRunA
 | Config | The code edit it stands for |
 | --- | --- |
 | `faults/gc_while_serving.cfg` | `maintainRegistry` runs the collection without scaling holon-api and the registry to zero |
-| `faults/assemble_on_retained.cfg` | `assembleImage` assembles on the image tagged `holon-retained` instead of the frozen manifest's base |
+| `faults/assemble_on_retained.cfg` | `sourcebuild.Assemble` assembles on the image tagged `holon-retained` instead of the frozen manifest's base |
 
 When the rule breaks on the code, replay the path against the real code, the CLI's steps as a scratch test beside `TestRunDeployLifecycle` (the CLI builds only with `GOWORK` naming a protocol checkout at the commit above). If a step cannot happen, fix the model; if every step can, it is a bug: report it with the harm and the commit, and do not weaken the rule. Update the model from the code before you run it, and move the sync commits only after the rule holds and both faults break.
 

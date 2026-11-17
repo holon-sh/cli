@@ -1,11 +1,14 @@
 package mcpregistry
 
 import (
+	"cmp"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/url"
+
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 
@@ -102,6 +105,21 @@ func (d *Descriptor) StreamableRemote() string {
 
 func (d *Descriptor) Identity() mcpcontract.Identity {
 	return mcpcontract.Identity{Name: d.Name, Version: d.Version}
+}
+
+// OCILabels returns the server identity and description to add to a locally built image.
+func (d *Descriptor) OCILabels() map[string]string {
+	if d == nil {
+		return nil
+	}
+	return map[string]string{
+		"io.modelcontextprotocol.server.name": d.Name,
+		ocispec.AnnotationTitle:               cmp.Or(d.Title, d.Name),
+		ocispec.AnnotationVersion:             d.Version,
+		ocispec.AnnotationDescription:         d.Description,
+		ocispec.AnnotationURL:                 d.WebsiteURL,
+		ocispec.AnnotationSource:              d.Repository.URL,
+	}
 }
 
 // ParseDescriptor reads a server.json published by someone else, such as a registry record. It

@@ -1,7 +1,8 @@
 -------------------------------- MODULE Deploy --------------------------------
 \* holon deploy of one source app, from the build call to the release tag, for
 \* deploys of the same app by one person that share its repository. The CLI
-\* code is pkg/installation/freeze.go and build.go; the build pods, the
+\* calls are in pkg/installation/freeze.go and build.go, and assembly is in
+\* pkg/sourcebuild/image.go. The build pods, the
 \* controller and the registry are described from the commits SKILL.md names.
 EXTENDS Naturals, FiniteSets, TLC
 
@@ -16,7 +17,7 @@ VARIABLES
     pc,           \* where each deploy is
     call,         \* its build call at the pod: none, building, frozen
     pod,          \* the development image its build pod runs, or "none"
-    assembledOn,  \* the development image assembleImage assembles on, or "none"
+    assembledOn,  \* the development image sourcebuild.Assemble assembles on, or "none"
     ctrlImage,    \* the controller's DEVELOPMENT_IMAGE, which a new build pod runs
     base,         \* development images the repository development holds
     tagged,       \* the development image tagged holon-retained
@@ -83,7 +84,7 @@ Answer(d) ==
     /\ call' = [call EXCEPT ![d] = None]
     /\ UNCHANGED <<pod, assembledOn, ctrlImage, base, tagged, blobs, released, marked, collections, restarts>>
 
-\* assembleImage takes the development image from the frozen manifest's base
+\* sourcebuild.Assemble takes the development image from the frozen manifest's base
 \* annotation, reads its index from development and mounts its layers into
 \* the app's repository.
 Mount(d) ==

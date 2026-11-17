@@ -3,7 +3,6 @@ package installation
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,15 +14,13 @@ import (
 	"slices"
 	"time"
 
-	"github.com/klauspost/compress/zstd"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/tonistiigi/fsutil"
-	fstypes "github.com/tonistiigi/fsutil/types"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/pkg/recipe"
+	"github.com/holon-sh/cli/pkg/sourcebuild"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 	"github.com/holon-sh/protocol/runtimecontract"
@@ -232,17 +229,9 @@ func packSource(ctx context.Context, app manifestApp, root string, accepted *pre
 	if accepted != nil && !accepted.unserved {
 		plan.Prepare = steps.Build
 	}
-	if err := writeHolonFile(root, runtimecontract.PlanFile, plan); err != nil {
-		return packedSource{}, err
-	}
 	var packed packedSource
-	packed.overlay, packed.file, err = packOverlay(ctx, root)
+	packed.overlay, packed.file, err = packOverlay(ctx, root, plan, nil)
 	return packed, err
-}
-
-func writeHolonFile(root, name string, value any) error {
-	data, _ := json.Marshal(value)
-	return writeSourceFile(root, name, data)
 }
 
 func writeSourceFile(root, name string, data []byte) error {
@@ -253,32 +242,18 @@ func writeSourceFile(root, name string, data []byte) error {
 	return os.WriteFile(target, data, 0o644)
 }
 
-func packOverlay(ctx context.Context, root string) (ocispec.Descriptor, string, error) {
-	source, err := fsutil.NewFS(root)
-	if err != nil {
-		return ocispec.Descriptor{}, "", err
-	}
-	stable, err := fsutil.NewFilterFS(source, &fsutil.FilterOpt{Map: stableStat})
-	if err != nil {
-		return ocispec.Descriptor{}, "", err
-	}
+func packOverlay(ctx context.Context, root string, plan runtimecontract.Plan, build *runtimecontract.Build) (ocispec.Descriptor, string, error) {
 	name := root + ".tar.zst"
 	file, err := os.Create(name)
 	if err != nil {
 		return ocispec.Descriptor{}, "", err
 	}
-	defer func() { _ = file.Close() }()
-	digester := digest.SHA256.Digester()
-	compressed, err := zstd.NewWriter(io.MultiWriter(file, digester.Hash()), zstd.WithEncoderConcurrency(1))
-	if err != nil {
+	overlay, err := sourcebuild.PackDirectory(ctx, file, root, plan, build)
+	if err = errors.Join(err, file.Close()); err != nil {
+		_ = os.Remove(name)
 		return ocispec.Descriptor{}, "", err
 	}
-	if err := errors.Join(fsutil.WriteTar(ctx, stable, compressed), compressed.Close()); err != nil {
-		return ocispec.Descriptor{}, "", err
-	}
-	overlay := ocispec.Descriptor{MediaType: runtimecontract.OverlayMediaType, Digest: digester.Digest()}
-	overlay.Size, err = file.Seek(0, io.SeekCurrent)
-	return overlay, name, err
+	return overlay, name, nil
 }
 
 func (m *Client) postOverlay(ctx context.Context, session, app, route, overlay string, result any) error {
@@ -315,9 +290,4 @@ func (p packedSource) publish(ctx context.Context, app, session string) error {
 		}
 		return repository.Tag(ctx, manifest, session)
 	})
-}
-
-func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
-	s.ModTime, s.Uid, s.Gid, s.Xattrs = 0, 0, 0, nil
-	return fsutil.MapResultKeep
 }
