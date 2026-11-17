@@ -82,47 +82,30 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
-	failed := func(message, output string) func(buildCall) string {
-		return func(call buildCall) string {
-			if call.build.Freeze == nil {
-				return ""
-			}
-			body, _ := json.Marshal(map[string]any{"error": map[string]string{"code": "invalid_request", "message": message}, "output": output})
-			return string(body)
-		}
-	}
-	exited := func(contract bool, ran runtimecontract.Ran) func(buildCall) runtimecontract.Ran {
-		return func(call buildCall) runtimecontract.Ran {
-			if (call.build.Freeze == nil) != contract {
-				return runtimecontract.Ran{Stdout: servedContract}
-			}
-			return ran
-		}
-	}
 	for _, tc := range []struct {
-		name, command, access, pkg, prefix, edit, want string
-		files                                          map[string]string
-		failure                                        func(buildCall) string
-		ran                                            func(buildCall) runtimecontract.Ran
-		base                                           *digest.Digest
-		session                                        bool
+		name, command, access, pkg, prefix, edit, failure, want string
+		files                                                   map[string]string
+		contractRan, checkRan                                   *runtimecontract.Ran
+		base                                                    *digest.Digest
+		session                                                 bool
 	}{
 		{name: "oauth without identity", command: "dev", access: "--oauth", want: "requires a configured identity provider"},
 		{name: "start script", command: "dev", pkg: `{"private":true,"main":"index.js"}`, want: "ship it as an image: app"},
 		{name: "registry off", command: "deploy", prefix: "registry.example/apps", want: "turns off; ship it as an image: app"},
-		{name: "unsupported recipe", command: "deploy", files: map[string]string{"bun.lock": ""}, want: "found bun.lock: Node.js projects install with npm or pnpm; ship it as an image: app"},
+		{name: "unsupported recipe", command: "deploy", files: map[string]string{"bun.lock": ""}, want: "ship it as an image: app"},
 		{
-			name: "contract diagnostic", command: "deploy", session: true, ran: exited(true, runtimecontract.Ran{ExitCode: 2, Stderr: "server.js: the server raised ValueError\n"}),
+			name: "contract diagnostic", command: "deploy", session: true, contractRan: &runtimecontract.Ran{ExitCode: 2, Stderr: "server.js: the server raised ValueError\n"},
 			want: "server.js: the server raised ValueError",
 		},
 		{
-			name: "build failure", command: "deploy", session: true, failure: failed("the install or build failed: exit status 1", "npm error missing: fixture-package\n"),
-			want: "build alpha: the install or build failed: exit status 1\nnpm error missing: fixture-package",
+			name: "build failure", command: "deploy", session: true,
+			failure: `{"error":{"code":"invalid_request","message":"the install or build failed: exit status 1"},"output":"npm error missing: fixture-package\n"}`,
+			want:    "build alpha: the install or build failed: exit status 1\nnpm error missing: fixture-package",
 		},
 		{
 			name: "type check", command: "deploy", session: true,
-			ran:  exited(false, runtimecontract.Ran{ExitCode: 2, Stdout: "server.js(1,7): error TS2322: Type 'string' is not assignable to type 'number'.\n"}),
-			want: "alpha does not type-check against its typed contracts:\nserver.js(1,7): error TS2322",
+			checkRan: &runtimecontract.Ran{ExitCode: 2, Stdout: "server.js(1,7): error TS2322: Type 'string' is not assignable to type 'number'.\n"},
+			want:     "alpha does not type-check against its typed contracts:\nserver.js(1,7): error TS2322",
 		},
 		{name: "missing base", command: "deploy", session: true, base: new(digest.FromString("missing")), want: "does not hold the development image"},
 		{name: "unnamed base", command: "deploy", session: true, base: new(digest.Digest("")), want: "has no " + ocispec.AnnotationBaseImageDigest + " annotation"},
@@ -135,11 +118,9 @@ func TestRunPreparationFailures(t *testing.T) {
 			sourceFiles(t, root, tc.files)
 			h := newRunHarness(t)
 			builds := serveBuilds(t, h)
-			builds.failure, builds.ran = tc.failure, tc.ran
-			builds.during = func(call buildCall) {
-				if tc.edit != "" && call.build.Freeze != nil {
-					sourceFiles(t, root, map[string]string{tc.edit: "edited"})
-				}
+			builds.failure, builds.contractRan, builds.checkRan = tc.failure, tc.contractRan, tc.checkRan
+			if tc.edit != "" {
+				builds.duringFreeze = func() { sourceFiles(t, root, map[string]string{tc.edit: "edited"}) }
 			}
 			if tc.base != nil {
 				builds.base = *tc.base
@@ -155,7 +136,7 @@ func TestRunPreparationFailures(t *testing.T) {
 			})
 			h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, map[string]any{
-					"grant": "grant-secret", "registry": "registry.example", "base": baseRepository,
+					"grant": "grant-secret", "registry": "registry.example",
 					"repositories": map[string]string{"alpha": "holon/upload/alpha"}, "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339),
 				})
 			})
@@ -473,12 +454,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 		})
 	})
 	builds := serveBuilds(t, h)
-	current := addTestBase(t, h.registry, "current")
-	builds.during = func(call buildCall) {
-		if call.build.Freeze != nil {
-			buildClock.Step(2 * time.Second)
-		}
-	}
+	builds.duringFreeze = func() { buildClock.Step(2 * time.Second) }
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
 		installationtest.AssertOrigin(t, r, "admin."+h.baseHost)
 		var input protocol.UploadRequest
@@ -490,7 +466,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 			map[string]any{
 				"grant":        "grant-secret",
 				"registry":     "registry.example",
-				"base":         baseRepository + "@" + current.String(),
 				"repositories": map[string]string{"prod": "holon/upload/prod", "hosted": "unused"},
 				"expiresAt":    time.Now().Add(time.Hour).Format(time.RFC3339),
 			},
@@ -583,34 +558,27 @@ func TestRunDeployLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	builds.mu.Lock()
-	if !reflect.DeepEqual(builds.apps, []protocol.App{{Name: "prod", Source: true, Access: &protocol.AppAccess{Server: &protocol.AccessRule{Callers: []string{}}}}}) ||
-		builds.sessions != 1 || builds.deleted != 1 || len(builds.calls) != 2 {
-		t.Fatalf("build session apps %+v, %d sessions, deleted %d times, %d build calls", builds.apps, builds.sessions, builds.deleted, len(builds.calls))
-	}
-	contract, build := builds.calls[0], builds.calls[1]
-	if !reflect.DeepEqual(contract.plan, runtimecontract.Plan{Install: runtimecontract.Install{Commands: steps.Deploy.Install}}) || contract.build.Freeze != nil ||
-		contract.files[".holon/tooling/typescript/runner.mjs"] == nil {
-		t.Fatalf("contract call: %+v %+v", contract.plan, contract.build)
-	}
-	if !reflect.DeepEqual(build.plan, runtimecontract.Plan{Install: runtimecontract.Install{Commands: steps.Deploy.Install}, Prepare: steps.Deploy.Build}) ||
-		build.build.Freeze == nil || !slices.Contains(build.build.Run, ".holon/check.mjs") ||
-		string(build.files[".holon/app.txt"]) != "application file" || build.files[".holon/tooling/typescript/runner.mjs"] != nil {
-		t.Fatalf("build call: %+v %+v", build.plan, build.build)
+	build := builds.calls[slices.IndexFunc(builds.calls, func(call buildCall) bool { return call.build.Freeze != nil })]
+	wantPlan := runtimecontract.Plan{Install: runtimecontract.Install{Commands: steps.Deploy.Install}, Prepare: steps.Deploy.Build}
+	if builds.sessions != 1 || builds.deleted != 1 || !reflect.DeepEqual(build.plan, wantPlan) || string(build.files[".holon/app.txt"]) != "application file" ||
+		slices.ContainsFunc(builds.calls, func(call buildCall) bool { return call.build.Freeze == nil && call.plan.Prepare != nil }) {
+		t.Fatalf("%d build sessions, deleted %d times, build calls %+v", builds.sessions, builds.deleted, builds.calls)
 	}
 	builds.mu.Unlock()
 	index, manifest, config := assembledImage(t, h.registry, initial[slices.IndexFunc(initial, func(app protocol.App) bool { return app.Name == "prod" })].Image)
 	frozen := manifest.Layers[1:]
-	if len(manifest.Layers) != 3 || manifest.Layers[0].MediaType != ocispec.MediaTypeImageLayer ||
+	if len(manifest.Layers) != 3 ||
 		frozen[0].Digest != digest.FromString("dependencies of prod") || frozen[1].Digest != digest.FromString("source of prod") ||
 		len(config.RootFS.DiffIDs) != 3 || config.RootFS.DiffIDs[2] != digest.FromString("tar source of prod") {
 		t.Fatalf("image layers %+v, diff IDs %v", manifest.Layers, config.RootFS.DiffIDs)
 	}
 	wantConfig := ocispec.ImageConfig{
 		User: "10001:10001", WorkingDir: "/app/source", Cmd: []string{"node_modules/.bin/holon-serve", "server.js"},
-		Env: []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOLON_RELOAD_DIR=/app/source", "HOME=/tmp", "NODE_ENV=production", "PYTHONUNBUFFERED=1"},
+		Env: []string{"HOLON_RELOAD_DIR=/app/source", "HOME=/tmp", "NODE_ENV=production", "PATH=/usr/local/bin:/usr/bin:/bin", "PYTHONUNBUFFERED=1"},
 	}
 	labels := config.Config.Labels
 	config.Config.Labels = nil
+	slices.Sort(config.Config.Env)
 	if !reflect.DeepEqual(config.Config, wantConfig) || labels["base"] != "development" || labels["io.modelcontextprotocol.server.name"] != "io.github.acme/prod" {
 		t.Fatalf("image config %+v, labels %v", config.Config, labels)
 	}

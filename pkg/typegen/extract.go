@@ -73,6 +73,14 @@ var typeLanguages = map[string]typeLanguage{
 	"python":     {nil, "extract.py", "runner.py", []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
 }
 
+// RunnerCommand is the interpreter arguments that run language's contract runner from dir, its tooling directory.
+func RunnerCommand(language, dir string) []string {
+	return append(slices.Clone(typeLanguages[language].flags), filepath.Join(dir, typeLanguages[language].runner))
+}
+
+// Checker is language's checker script, in its tooling directory.
+func Checker(language string) string { return typeLanguages[language].checker }
+
 func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
 	for _, program := range l.programs {
 		if exec.CommandContext(ctx, program, l.probe...).Run() == nil {
@@ -209,7 +217,7 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdo
 	run := func(program string) error {
 		limited, cancel := context.WithTimeout(ctx, serverTimeout)
 		defer cancel()
-		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
+		command := exec.CommandContext(limited, program, slices.Concat(RunnerCommand(language, filepath.Join(tooling, language)), args)...)
 		command.Env = commandenv.Environ(env)
 		var stderr bytes.Buffer
 		command.Stdout, command.Stderr = stdout, &stderr

@@ -37,11 +37,11 @@ import (
 const buildSessionSeconds = 60 * 60
 
 var contractRunners = map[string]struct {
-	program, runner, checker string
-	check                    []string
+	program string
+	check   []string
 }{
-	"typescript": {"node", "runner.mjs", "check.mjs", []string{"node"}},
-	"python":     {".venv/bin/python", "extract.py", "runner.py", []string{"uv", "run", "--no-sync", "--with", "mypy==2.4.0", "python"}},
+	"typescript": {"node", []string{"node"}},
+	"python":     {".venv/bin/python", []string{"uv", "run", "--no-sync", "--with", "mypy==2.4.0", "python"}},
 }
 
 type sourceBuild struct {
@@ -114,14 +114,12 @@ func (b *buildSession) extract(ctx context.Context, language, toolingDir string,
 	}
 	defer func() { _ = os.RemoveAll(directory) }()
 	root := filepath.Join(directory, "source")
-	runners := filepath.Join(root, ".holon", "tooling", language)
 	if err := errors.Join(
-		os.CopyFS(root, os.DirFS(source.app.resolved.types.root)), os.CopyFS(runners, os.DirFS(filepath.Join(toolingDir, language))),
+		os.CopyFS(root, os.DirFS(source.app.resolved.types.root)), os.CopyFS(filepath.Join(root, ".holon", "tooling"), os.DirFS(filepath.Join(toolingDir, language))),
 	); err != nil {
 		return err
 	}
-	runner := contractRunners[language]
-	command := slices.Concat([]string{runner.program, path.Join(".holon", "tooling", language, runner.runner), args[0], "."}, args[2:])
+	command := slices.Concat([]string{contractRunners[language].program}, typegen.RunnerCommand(language, path.Join(".holon", "tooling")), []string{args[0], "."}, args[2:])
 	reply, err := b.build(ctx, source.app.Name, root, source.plan(nil), runtimecontract.Build{Run: command})
 	if err != nil {
 		return err
@@ -163,15 +161,15 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	}
 	build := runtimecontract.Build{Freeze: &source.recipe.Deploy.Freeze}
 	if checked, language, ok := p.prepared.CheckEntry(p.name); ok {
-		runner := contractRunners[language]
-		checker, err := tooling.File(language, runner.checker)
+		checker := typegen.Checker(language)
+		script, err := tooling.File(language, checker)
 		if err == nil {
-			err = writeSourceFile(p.root, path.Join(".holon", runner.checker), checker)
+			err = writeSourceFile(p.root, path.Join(".holon", checker), script)
 		}
 		if err != nil {
 			return ocispec.Descriptor{}, err
 		}
-		build.Run = slices.Concat(runner.check, []string{path.Join(".holon", runner.checker), "check", checked})
+		build.Run = slices.Concat(contractRunners[language].check, []string{path.Join(".holon", checker), "check", checked})
 	}
 	built := options.output.measure(app.Name, "build")
 	reply, err := options.build.build(ctx, app.Name, p.root, source.plan(source.recipe.Deploy.Build), build)
@@ -189,9 +187,9 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	defer options.output.measure(app.Name, "assemble")()
 	var image ocispec.Descriptor
 	err = upload.repository(ctx, app.Name, func(repository *remote.Repository, grant protocol.UploadGrant) error {
-		development, err := remote.NewRepository(grant.Base)
+		development, err := remote.NewRepository(grant.Registry + "/" + protocol.BaseRepository)
 		if err != nil {
-			return fmt.Errorf("upload grant names no development repository: %w", err)
+			return err
 		}
 		development.Client = repository.Client
 		ctx := auth.AppendRepositoryScope(ctx, repository.Reference, auth.ActionPull, auth.ActionPush)
@@ -257,25 +255,18 @@ func assembleImage(
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	var manifest ocispec.Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return ocispec.Descriptor{}, err
-	}
-	mounts, mountCtx := errgroup.WithContext(ctx)
-	for _, layer := range manifest.Layers {
-		mounts.Go(func() error {
-			return repository.Mount(mountCtx, layer, development.Reference.Repository, func() (io.ReadCloser, error) { return nil, missing })
-		})
-	}
-	if err := mounts.Wait(); err != nil {
-		return ocispec.Descriptor{}, err
-	}
 	assembled, err := ociimage.Edit(ctx, development, repository, child.MediaType, data, func(image *ociimage.Image) error {
+		mounts, mountCtx := errgroup.WithContext(ctx)
+		for _, layer := range image.Layers {
+			mounts.Go(func() error {
+				return repository.Mount(mountCtx, layer, development.Reference.Repository, func() (io.ReadCloser, error) { return nil, missing })
+			})
+		}
 		configureImage(image, frozenConfig.Config.WorkingDir, start, labels)
 		for i, layer := range frozenManifest.Layers {
 			image.AppendLayer(layer, frozenConfig.RootFS.DiffIDs[i], "holon deploy")
 		}
-		return nil
+		return mounts.Wait()
 	})
 	if err != nil {
 		return ocispec.Descriptor{}, err

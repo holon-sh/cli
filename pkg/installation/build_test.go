@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -63,8 +63,6 @@ const sourcePackage = `{"private":true,"engines":{"node":">=22.20.0 <23"}}`
 
 const buildSessionName = "build-session"
 
-const baseRepository = "registry.example/source"
-
 type buildCall struct {
 	app   string
 	plan  runtimecontract.Plan
@@ -73,12 +71,12 @@ type buildCall struct {
 }
 
 type buildFixture struct {
+	base                  digest.Digest
+	failure               string
+	contractRan, checkRan *runtimecontract.Ran
+	duringFreeze          func()
+
 	mu       sync.Mutex
-	base     digest.Digest
-	failure  func(buildCall) string
-	ran      func(buildCall) runtimecontract.Ran
-	during   func(buildCall)
-	apps     []protocol.App
 	sessions int
 	deleted  int
 	calls    []buildCall
@@ -86,7 +84,7 @@ type buildFixture struct {
 
 func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 	t.Helper()
-	f := &buildFixture{base: addTestBase(t, h.registry, "development")}
+	f := &buildFixture{base: addTestBase(t, h.registry)}
 	session := protocol.SessionResponse{
 		Name: buildSessionName, UID: "build-uid", Revision: "1", Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: "True"}},
 	}
@@ -96,8 +94,12 @@ func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
+		for _, app := range request.Apps {
+			if !app.Source || app.Access == nil || app.Access.Server == nil || app.Access.Server.Callers == nil || len(app.Access.Server.Callers) != 0 {
+				t.Errorf("build session lets callers reach %+v", app)
+			}
+		}
 		f.mu.Lock()
-		f.apps = request.Apps
 		f.sessions++
 		f.mu.Unlock()
 		installationtest.WriteJSON(w, session)
@@ -124,32 +126,25 @@ func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 			json.Unmarshal(call.files[runtimecontract.BuildFile], &call.build)); err != nil {
 			t.Error(err)
 		}
+		for _, arg := range call.build.Run {
+			if strings.HasPrefix(arg, ".holon/") && call.files[arg] == nil {
+				t.Errorf("build of %s runs %s, which its overlay lacks", call.app, arg)
+			}
+		}
 		f.mu.Lock()
 		f.calls = append(f.calls, call)
-		failure, ran, during, base := f.failure, f.ran, f.during, f.base
 		f.mu.Unlock()
-		if during != nil {
-			during(call)
-		}
-		if failure != nil {
-			if body := failure(call); body != "" {
+		reply := runtimecontract.BuildReply{Ran: cmp.Or(f.contractRan, &runtimecontract.Ran{Stdout: servedContract})}
+		if call.build.Freeze != nil {
+			if f.duringFreeze != nil {
+				f.duringFreeze()
+			}
+			if f.failure != "" {
 				w.WriteHeader(http.StatusBadRequest)
-				_, _ = io.WriteString(w, body)
+				_, _ = io.WriteString(w, f.failure)
 				return
 			}
-		}
-		var reply runtimecontract.BuildReply
-		if len(call.build.Run) != 0 {
-			reply.Ran = &runtimecontract.Ran{}
-			if slices.Contains(call.build.Run, "contract") {
-				reply.Ran.Stdout = servedContract
-			}
-			if ran != nil {
-				*reply.Ran = ran(call)
-			}
-		}
-		if call.build.Freeze != nil {
-			reply.Image = h.registry.addFrozenImage(call.app, base).String()
+			reply.Ran, reply.Image = cmp.Or(f.checkRan, &runtimecontract.Ran{}), h.registry.addFrozenImage(call.app, f.base).String()
 		}
 		installationtest.WriteJSON(w, reply)
 	})
@@ -178,14 +173,20 @@ func (r *imageRegistry) addFrozenImage(app string, base digest.Digest) digest.Di
 	return manifestDigest
 }
 
-func addTestBase(t *testing.T, registry *imageRegistry, label string) digest.Digest {
+func addTestBase(t *testing.T, registry *imageRegistry) digest.Digest {
 	t.Helper()
 	child := addTestImage(t, registry, "amd64", ocispec.ImageConfig{
 		User: "10001:10001", WorkingDir: "/app", Entrypoint: []string{"/holon-mcp-runtime"},
 		Env:    []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/app", "HOLON_RELOAD_DIR=/app/source"},
-		Labels: map[string]string{"base": label},
+		Labels: map[string]string{"base": "development"},
 	}, map[string][]byte{"holon-mcp-runtime": []byte("runtime")})
-	return addTestIndex(registry, child).Digest
+	index := addTestIndex(registry, child)
+	for key, item := range registry.items {
+		if rest, ok := strings.CutPrefix(key, "source/"); ok {
+			registry.items[protocol.BaseRepository+"/"+rest] = item
+		}
+	}
+	return index.Digest
 }
 
 func assembledImage(t *testing.T, registry *imageRegistry, image string) (ocispec.Index, ocispec.Manifest, ocispec.Image) {
