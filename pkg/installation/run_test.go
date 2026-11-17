@@ -83,14 +83,16 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, command, access, pkg, prefix, edit, failure, want string
-		files                                                   map[string]string
-		contractRan, checkRan                                   *runtimecontract.Ran
-		base                                                    *digest.Digest
-		session                                                 bool
+		name, command, access, pkg, entry, prefix, edit, failure, want string
+		files                                                          map[string]string
+		contractRan, checkRan                                          *runtimecontract.Ran
+		base                                                           *digest.Digest
+		session                                                        bool
 	}{
 		{name: "oauth without identity", command: "dev", access: "--oauth", want: "requires a configured identity provider"},
-		{name: "start script", command: "dev", pkg: `{"private":true,"main":"index.js"}`, want: "ship it as an image: app"},
+		{name: "package main", command: "dev", pkg: `{"main":"index.js","scripts":{"start":"node server.js"}}`, want: "ship it as an image: app"},
+		{name: "arbitrary start script", command: "deploy", pkg: `{"scripts":{"start":"node server.js --extra"}}`, want: "ship it as an image: app"},
+		{name: "start script for a nested entry", command: "deploy", entry: "src/server.js", pkg: `{"scripts":{"start":"node src/server.js"}}`, want: "ship it as an image: app"},
 		{name: "registry off", command: "deploy", prefix: "registry.example/apps", want: "turns off; ship it as an image: app"},
 		{name: "unsupported recipe", command: "deploy", files: map[string]string{"bun.lock": ""}, want: "ship it as an image: app"},
 		{
@@ -113,7 +115,7 @@ func TestRunPreparationFailures(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			sourceFiles(t, root, map[string]string{"package.json": cmp.Or(tc.pkg, sourcePackage), "server.js": `export const mcp = 1`})
+			sourceFiles(t, root, map[string]string{"package.json": cmp.Or(tc.pkg, sourcePackage), cmp.Or(tc.entry, "server.js"): `export const mcp = 1`})
 			sourceFiles(t, root, tc.files)
 			h := newRunHarness(t)
 			builds := serveBuilds(t, h)
@@ -678,6 +680,29 @@ func TestRunDeployLifecycle(t *testing.T) {
 			}
 		})
 	}
+	t.Run("native Node startup", func(t *testing.T) {
+		standalone := t.TempDir()
+		sourceFiles(t, standalone, map[string]string{
+			"server.js":    "export default { fetch: () => new Response('ready') };",
+			"package.json": `{"type":"module","scripts":{"start":"node server.js"}}`,
+		})
+		mu.Lock()
+		loseResponse, forceConflict, rolloutFailure = false, false, ""
+		mu.Unlock()
+		if err := executeCommand(t.Context(), []string{"deploy", "prod=" + standalone, "--public"}, nil, nil, runConfig); err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		apps := slices.Clone(written)
+		mu.Unlock()
+		if len(apps) != 1 || apps[0].Name != "prod" {
+			t.Fatalf("deployed apps = %+v, want prod", apps)
+		}
+		_, _, config := assembledImage(t, h.registry, apps[0].Image)
+		if !slices.Equal(config.Config.Cmd, []string{"node", "server.js"}) {
+			t.Fatalf("deployed image command = %q", config.Config.Cmd)
+		}
+	})
 }
 
 func TestStreamLogsResumesAfterOutages(t *testing.T) {

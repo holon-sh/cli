@@ -41,7 +41,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			continue
 		}
 		if app.Path != "" && options.plane == protocol.DevPlane {
-			if _, err := sourceAppEntry(app, app.resolved.types.root); err != nil {
+			if _, err := sourceAppStart(app, app.resolved.types.root); err != nil {
 				return nil, err
 			}
 			declaration.Port, declaration.Source = 0, true
