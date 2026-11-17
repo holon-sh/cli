@@ -59,7 +59,7 @@ func clientDir(path string) (string, error) {
 }
 
 // selectConsumers resolves DIR to what holon generates and checks: each app of the holon.yaml there,
-// or else DIR itself.
+// else DIR as the app the nearest holon.yaml above keeps there, else DIR itself.
 func selectConsumers(cmd *cobra.Command, servers []string, resolve bool) ([]typegen.Consumer, error) {
 	dir, err := clientDir(cmd.Flags().Arg(0))
 	if err != nil {
@@ -70,6 +70,14 @@ func selectConsumers(cmd *cobra.Command, servers []string, resolve bool) ([]type
 	case err != nil:
 		return nil, err
 	case consumers == nil:
+		if len(servers) == 0 {
+			switch c, err := enclosingConsumer(dir, resolve); {
+			case err != nil:
+				return nil, err
+			case c != nil:
+				return []typegen.Consumer{*c}, nil
+			}
+		}
 		c, err := consumer(dir, servers, resolve)
 		return []typegen.Consumer{c}, err
 	case len(servers) > 0:
