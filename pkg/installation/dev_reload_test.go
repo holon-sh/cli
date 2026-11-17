@@ -558,36 +558,53 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	}
 }
 
+func TestDevStartsNativeNodeServer(t *testing.T) {
+	f := startReloadFixture(t, true, map[string]string{
+		manifestFileName:          strings.Replace(alphaManifest, "./alpha", "./standalone", 1),
+		"standalone/server.ts":    "export default { fetch: () => new Response('ready') };",
+		"standalone/package.json": `{"type":"module","scripts":{"start":"node server.ts"}}`,
+	})
+	var plan runtimecontract.Plan
+	request := f.reloadRequests()[0]
+	if err := json.Unmarshal(overlayEntries(t, request.body)[runtimecontract.PlanFile], &plan); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(plan.Start, []string{"node", "server.ts"}) {
+		t.Fatalf("dev start = %q", plan.Start)
+	}
+	if err := f.stop(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOverlayPlan(t *testing.T) {
 	build := `{"scripts":{"build":"vite build"}}`
-	python := map[string]string{"pyproject.toml": "", "uv.lock": "", "package.json": build, "pnpm-lock.yaml": ""}
-	serve := []string{".venv/bin/python", "-m", "holon.serve", "src/server.py"}
-	for _, test := range []struct {
-		name, entry string
-		files       map[string]string
-		page        bool
-		want        runtimecontract.Plan
-	}{
-		{"a Python app with a page", "src/server.py", python, true, runtimecontract.Plan{
-			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}}, Prepare: [][]string{{"pnpm", "run", "build"}}, Start: serve,
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			testfiles.Write(t, root, test.files)
-			plan, err := overlayPlan(root, test.entry, test.page)
-			plan.Install.Inputs = ""
-			if err != nil || !reflect.DeepEqual(plan, test.want) {
-				t.Fatalf("plan = %+v, want %+v: %v", plan, test.want, err)
-			}
+	t.Run("a Python app with a page", func(t *testing.T) {
+		root := t.TempDir()
+		testfiles.Write(t, root, map[string]string{
+			"src/server.py": "", "pyproject.toml": "", "uv.lock": "", "package.json": build, "pnpm-lock.yaml": "",
 		})
-	}
+		start, err := sourceAppStart(manifestApp{}, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := overlayPlan(root, start, true)
+		plan.Install.Inputs = ""
+		want := runtimecontract.Plan{
+			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}},
+			Prepare: [][]string{{"pnpm", "run", "build"}},
+			Start:   []string{".venv/bin/python", "-m", "holon.serve", "src/server.py"},
+		}
+		if err != nil || !reflect.DeepEqual(plan, want) {
+			t.Fatalf("plan = %+v, want %+v: %v", plan, want, err)
+		}
+	})
 	t.Run("the install's inputs change with what it installs from", func(t *testing.T) {
 		root := t.TempDir()
 		files := map[string]string{"server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "", "package.json": build, "package-lock.json": ""}
 		testfiles.Write(t, root, files)
 		install := func(page bool) runtimecontract.Install {
-			plan, err := overlayPlan(root, "server.py", page)
+			plan, err := overlayPlan(root, nil, page)
 			if err != nil {
 				t.Fatal(err)
 			}

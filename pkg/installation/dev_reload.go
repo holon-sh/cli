@@ -210,12 +210,12 @@ func packSource(ctx context.Context, app manifestApp, root string, accepted *pre
 			return packedSource{}, err
 		}
 	}
-	entry, err := sourceAppEntry(app, root)
+	start, err := sourceAppStart(app, root)
 	if err != nil {
 		return packedSource{}, err
 	}
 	// A page is built once the clients it may import are in the source.
-	plan, err := overlayPlan(root, entry, accepted != nil && !accepted.unserved)
+	plan, err := overlayPlan(root, start, accepted != nil && !accepted.unserved)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}
@@ -282,7 +282,7 @@ func (m *Client) postOverlay(ctx context.Context, session, app, route, overlay s
 	return m.client.send(ctx, path.Join(protocol.APIPathSessions, session, "apps", app, route), request, result)
 }
 
-func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
+func overlayPlan(root string, start []string, page bool) (runtimecontract.Plan, error) {
 	source := os.DirFS(root)
 	steps, err := recipe.Read(source)
 	if err != nil {
@@ -296,7 +296,7 @@ func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
 		}
 		_, _ = fmt.Fprintf(inputs.Hash(), "%s\x00%d\x00%s", name, len(data), data)
 	}
-	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: inputs.Digest().String(), Commands: steps.Install}, Start: recipe.Start(entry)}
+	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: inputs.Digest().String(), Commands: steps.Install}, Start: start}
 	if page {
 		plan.Prepare = steps.Build
 	}
