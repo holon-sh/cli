@@ -1,13 +1,14 @@
 package installation
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
-	"github.com/holon-sh/cli/pkg/recipe"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol/hookartifact"
 
@@ -26,30 +27,26 @@ func snapshotSource(app manifestApp, destination string) (string, error) {
 	return typegen.SnapshotSource(app.Name, app.Path, destination)
 }
 
-func sourceAppStart(app manifestApp, root string) ([]string, error) {
+func sourceAppEntry(app manifestApp, root string) (string, error) {
 	if _, err := hookartifact.Discover(os.DirFS(root)); err != nil {
-		return nil, err
+		return "", err
 	}
 	entry, err := typegen.SourceEntry(root)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	extension := filepath.Ext(entry)
-	node := extension == ".ts" || extension == ".js"
 	var pkg typegen.PackageJSON
-	if node {
-		pkg, err = typegen.ReadPackageJSON(root)
+	if slices.Contains([]string{".ts", ".js"}, filepath.Ext(entry)) {
+		data, err := os.ReadFile(filepath.Join(root, "package.json"))
+		if err == nil {
+			err = json.Unmarshal(data, &pkg)
+		}
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return nil, err
+			return "", err
 		}
 	}
-	if !app.resolved.stdio && (node || extension == ".py") && pkg.Main == "" {
-		switch command := pkg.Scripts["start"]; {
-		case command == "":
-			return recipe.Start(entry), nil
-		case command == "node "+entry && entry == filepath.Base(entry):
-			return []string{"node", entry}, nil
-		}
+	if app.resolved.stdio || pkg.Launches() || !slices.Contains([]string{".py", ".ts", ".js"}, filepath.Ext(entry)) {
+		return "", fmt.Errorf("%s: holon dev and holon deploy run an app from a server.py, server.ts or server.js entry; ship it as an image: app", app.Name)
 	}
-	return nil, fmt.Errorf("%s: holon dev and holon deploy run an app from a server.py, server.ts or server.js entry; ship it as an image: app", app.Name)
+	return entry, nil
 }

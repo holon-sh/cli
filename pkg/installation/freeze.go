@@ -46,7 +46,7 @@ var contractRunners = map[string]struct {
 
 type sourceBuild struct {
 	app    manifestApp
-	start  []string
+	entry  string
 	recipe recipe.Recipe
 }
 
@@ -72,7 +72,7 @@ func (b *buildSession) start(ctx context.Context, apps []*manifestApp) error {
 	var request protocol.AppsRequest
 	for _, app := range apps {
 		root := app.resolved.types.root
-		start, err := sourceAppStart(*app, root)
+		entry, err := sourceAppEntry(*app, root)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ func (b *buildSession) start(ctx context.Context, apps []*manifestApp) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w; ship it as an image: app", app.Name, err)
 		}
-		b.sources[app.Path] = sourceBuild{app: *app, start: start, recipe: steps}
+		b.sources[app.Path] = sourceBuild{app: *app, entry: entry, recipe: steps}
 		request.Apps = append(request.Apps, protocol.App{
 			Name: app.Name, Source: true, Access: &protocol.AppAccess{Server: &protocol.AccessRule{Callers: []string{}}},
 		})
@@ -194,7 +194,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		development.Client = repository.Client
 		ctx := auth.AppendRepositoryScope(ctx, repository.Reference, auth.ActionPull, auth.ActionPush)
 		ctx = auth.AppendRepositoryScope(ctx, development.Reference, auth.ActionPull)
-		manifest, err := assembleImage(ctx, repository, development, frozen, source.start, sourceLabels(app))
+		manifest, err := assembleImage(ctx, repository, development, frozen, recipe.Start(source.entry), sourceLabels(app))
 		if err != nil {
 			return err
 		}
