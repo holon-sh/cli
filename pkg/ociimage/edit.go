@@ -15,11 +15,7 @@ import (
 )
 
 type Image struct {
-	OS             string                     `json:"os"`
-	Architecture   string                     `json:"architecture"`
-	Config         ocispec.ImageConfig        `json:"config"`
-	RootFS         ocispec.RootFS             `json:"rootfs"`
-	History        []ocispec.History          `json:"history"`
+	ocispec.Image
 	Layers         []ocispec.Descriptor       `json:"-"`
 	Runtime        map[string]json.RawMessage `json:"-"`
 	appended       []ocispec.Descriptor
@@ -91,13 +87,13 @@ func rewrite(
 }
 
 func Edit(
-	ctx context.Context, source content.Fetcher, destination oras.Target, mediaType string, manifest []byte, transform func(*Image) error,
+	ctx context.Context, source content.Fetcher, destination oras.Target, manifest ocispec.Descriptor, transform func(*Image) error,
 ) (ocispec.Descriptor, error) {
 	var document map[string]json.RawMessage
-	if err := json.Unmarshal(manifest, &document); err != nil {
+	if err := FetchJSON(ctx, source, manifest, &document); err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	return edit(ctx, source, destination, mediaType, document, nil, transform)
+	return edit(ctx, source, destination, manifest.MediaType, document, nil, transform)
 }
 
 func edit(

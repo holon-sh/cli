@@ -17,19 +17,24 @@ import (
 	"github.com/holon-sh/protocol/runtimecontract"
 )
 
-// PackDirectory writes a source overlay from a private, writable snapshot.
+// PackDirectory writes a source overlay from a private snapshot to an empty file.
 // It writes the plan and optional build instructions into the snapshot before packing it.
-func PackDirectory(ctx context.Context, dst io.Writer, root string, plan runtimecontract.Plan, build *runtimecontract.Build) (ocispec.Descriptor, error) {
+func PackDirectory(ctx context.Context, file *os.File, root string, plan runtimecontract.Plan, build *runtimecontract.Build) (ocispec.Descriptor, error) {
 	dir, err := os.OpenRoot(root)
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	defer func() { _ = dir.Close() }()
-	if err := writeInstructions(dir, runtimecontract.PlanFile, plan); err != nil {
+	if err := dir.MkdirAll(filepath.Dir(runtimecontract.PlanFile), 0o755); err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	planData, _ := json.Marshal(plan)
+	if err := dir.WriteFile(runtimecontract.PlanFile, planData, 0o644); err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	if build != nil {
-		if err := writeInstructions(dir, runtimecontract.BuildFile, *build); err != nil {
+		buildData, _ := json.Marshal(build)
+		if err := dir.WriteFile(runtimecontract.BuildFile, buildData, 0o644); err != nil {
 			return ocispec.Descriptor{}, err
 		}
 	}
@@ -42,37 +47,18 @@ func PackDirectory(ctx context.Context, dst io.Writer, root string, plan runtime
 		return ocispec.Descriptor{}, err
 	}
 	digester := digest.SHA256.Digester()
-	var size byteCount
-	compressed, err := zstd.NewWriter(io.MultiWriter(dst, digester.Hash(), &size), zstd.WithEncoderConcurrency(1))
+	compressed, err := zstd.NewWriter(io.MultiWriter(file, digester.Hash()), zstd.WithEncoderConcurrency(1))
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	if err := errors.Join(fsutil.WriteTar(ctx, stable, compressed), compressed.Close()); err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	return ocispec.Descriptor{MediaType: runtimecontract.OverlayMediaType, Digest: digester.Digest(), Size: int64(size)}, nil
-}
-
-func writeInstructions(root *os.Root, name string, instructions any) error {
-	data, err := json.Marshal(instructions)
-	if err != nil {
-		return err
-	}
-	target := filepath.FromSlash(name)
-	if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	return root.WriteFile(target, data, 0o644)
+	size, err := file.Seek(0, io.SeekCurrent)
+	return ocispec.Descriptor{MediaType: runtimecontract.OverlayMediaType, Digest: digester.Digest(), Size: size}, err
 }
 
 func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
 	s.ModTime, s.Uid, s.Gid, s.Xattrs = 0, 0, 0, nil
 	return fsutil.MapResultKeep
-}
-
-type byteCount int64
-
-func (count *byteCount) Write(data []byte) (int, error) {
-	*count += byteCount(len(data))
-	return len(data), nil
 }

@@ -550,7 +550,8 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	var tagged ocispec.Manifest
 	err := json.Unmarshal(f.item("manifests/"+sessionUID), &tagged)
 	if err != nil || tagged.ArtifactType != runtimecontract.OverlayMediaType || len(tagged.Layers) != 1 ||
-		tagged.Layers[0].Digest.String() != request.Digest || !bytes.Equal(f.item("blobs/"+request.Digest), request.body) ||
+		tagged.Layers[0].Digest.String() != request.Digest || tagged.Layers[0].Size != int64(len(request.body)) ||
+		!bytes.Equal(f.item("blobs/"+request.Digest), request.body) ||
 		string(overlayEntries(t, request.body)["tools.py"]) != "second" {
 		t.Fatalf("the session's tag names %+v, want %s: %v", tagged.Layers, request.Digest, err)
 	}
