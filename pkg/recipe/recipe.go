@@ -9,6 +9,8 @@ import (
 	"path"
 	"slices"
 	"strings"
+
+	"github.com/holon-sh/protocol/runtimecontract"
 )
 
 // Recipe is how a development environment runs a project: Install whenever a file in Inputs changes, then Build.
@@ -16,6 +18,13 @@ type Recipe struct {
 	Inputs  []string
 	Install [][]string
 	Build   [][]string
+	Deploy  Deploy
+}
+
+type Deploy struct {
+	Install [][]string
+	Build   [][]string
+	Freeze  runtimecontract.Freeze
 }
 
 // Read returns the recipe of the npm, pnpm or uv project in source.
@@ -38,11 +47,19 @@ func Read(source fs.FS) (Recipe, error) {
 			return Recipe{}, fmt.Errorf("found %s but no uv.lock: Python projects install with uv from a pyproject.toml and its uv.lock", strings.Join(python, ", "))
 		}
 		page, err := node(source, files)
-		return Recipe{
+		recipe := Recipe{
 			Inputs:  append(keep(files, pythonInput), page.Inputs...),
 			Install: append([][]string{{"uv", "sync"}}, page.Install...),
 			Build:   page.Build,
-		}, err
+			Deploy: Deploy{
+				Install: append([][]string{{"uv", "sync", "--locked", "--no-dev"}}, page.Deploy.Install...),
+				Freeze:  runtimecontract.Freeze{Dependencies: []string{".venv"}},
+			},
+		}
+		if page.Install != nil {
+			recipe.Deploy.Build = slices.Concat(page.Build, [][]string{{"rm", "-rf", "node_modules"}})
+		}
+		return recipe, err
 	}
 	if bun := found("bun.lock", "bun.lockb", ".bun-version"); len(bun) > 0 {
 		return Recipe{}, fmt.Errorf("found %s: Node.js projects install with npm or pnpm", bun[0])
@@ -126,9 +143,19 @@ func node(source fs.FS, files []string) (Recipe, error) {
 	if manager != "npm" && manager != "pnpm" {
 		return Recipe{}, fmt.Errorf("package.json declares the package manager %s: Node.js projects install with npm or pnpm", manager)
 	}
-	recipe := Recipe{Inputs: keep(files, nodeInput), Install: [][]string{{manager, "install"}}}
+	recipe := Recipe{
+		Inputs: keep(files, nodeInput), Install: [][]string{{manager, "install"}},
+		Deploy: Deploy{Install: [][]string{{manager, "install"}}, Freeze: runtimecontract.Freeze{Dependencies: []string{"node_modules"}}},
+	}
 	if manifest.Scripts["build"] != "" {
 		recipe.Build = [][]string{{manager, "run", "build"}}
+	}
+	recipe.Deploy.Build = recipe.Build
+	if manager == "pnpm" {
+		recipe.Deploy.Build = slices.Concat(recipe.Build, [][]string{{"rm", "-f", "node_modules/.modules.yaml", "node_modules/.pnpm-workspace-state-v1.json"}})
+		if slices.Contains(files, "pnpm-lock.yaml") {
+			recipe.Deploy.Install = [][]string{{"pnpm", "install", "--frozen-lockfile"}}
+		}
 	}
 	return recipe, nil
 }

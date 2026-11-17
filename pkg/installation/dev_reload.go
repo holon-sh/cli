@@ -172,18 +172,8 @@ func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 }
 
 func (d *devLoop) send(ctx context.Context, app string, packed packedSource) error {
-	file, err := os.Open(packed.file)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = file.Close() }()
-	token, err := d.manager.controlToken(ctx)
-	if err != nil {
-		return err
-	}
 	var result protocol.ReloadAppResult
-	request := apiRequest{Plane: d.options.plane, Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
-	if err := d.manager.client.send(ctx, path.Join(protocol.APIPathSessions, d.session.Name, "apps", app, "source"), request, &result); err != nil {
+	if err := d.manager.postOverlay(ctx, d.session.Name, app, "source", packed.file, &result); err != nil {
 		return err
 	}
 	d.sent[app] = packed.overlay.Digest.String()
@@ -216,11 +206,11 @@ func packSource(ctx context.Context, app manifestApp, root string, accepted *pre
 	if accepted != nil {
 		staged := *accepted
 		staged.root = root
-		if err := stageTypes(&staged); err != nil {
+		if err := staged.prepared.WriteClients(staged.name, staged.root); err != nil {
 			return packedSource{}, err
 		}
 	}
-	entry, err := devEntry(app, root)
+	entry, err := sourceAppEntry(app, root)
 	if err != nil {
 		return packedSource{}, err
 	}
@@ -229,46 +219,67 @@ func packSource(ctx context.Context, app manifestApp, root string, accepted *pre
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(runtimecontract.PlanFile)), 0o755); err != nil {
+	if err := writeHolonFile(root, runtimecontract.PlanFile, plan); err != nil {
 		return packedSource{}, err
 	}
-	data, _ := json.Marshal(plan)
-	if err := os.WriteFile(filepath.Join(root, runtimecontract.PlanFile), data, 0o644); err != nil {
-		return packedSource{}, err
+	var packed packedSource
+	packed.overlay, packed.file, err = packOverlay(ctx, root)
+	return packed, err
+}
+
+func writeHolonFile(root, name string, value any) error {
+	data, _ := json.Marshal(value)
+	return writeSourceFile(root, name, data)
+}
+
+func writeSourceFile(root, name string, data []byte) error {
+	target := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
 	}
+	return os.WriteFile(target, data, 0o644)
+}
+
+func packOverlay(ctx context.Context, root string) (ocispec.Descriptor, string, error) {
 	source, err := fsutil.NewFS(root)
 	if err != nil {
-		return packedSource{}, err
+		return ocispec.Descriptor{}, "", err
 	}
 	stable, err := fsutil.NewFilterFS(source, &fsutil.FilterOpt{Map: stableStat})
 	if err != nil {
-		return packedSource{}, err
+		return ocispec.Descriptor{}, "", err
 	}
-	packed := packedSource{file: root + ".tar.zst"}
-	file, err := os.Create(packed.file)
+	name := root + ".tar.zst"
+	file, err := os.Create(name)
 	if err != nil {
-		return packedSource{}, err
+		return ocispec.Descriptor{}, "", err
 	}
 	defer func() { _ = file.Close() }()
 	digester := digest.SHA256.Digester()
 	compressed, err := zstd.NewWriter(io.MultiWriter(file, digester.Hash()), zstd.WithEncoderConcurrency(1))
 	if err != nil {
-		return packedSource{}, err
+		return ocispec.Descriptor{}, "", err
 	}
 	if err := errors.Join(fsutil.WriteTar(ctx, stable, compressed), compressed.Close()); err != nil {
-		return packedSource{}, err
+		return ocispec.Descriptor{}, "", err
 	}
-	packed.overlay = ocispec.Descriptor{MediaType: runtimecontract.OverlayMediaType, Digest: digester.Digest()}
-	packed.overlay.Size, err = file.Seek(0, io.SeekCurrent)
-	return packed, err
+	overlay := ocispec.Descriptor{MediaType: runtimecontract.OverlayMediaType, Digest: digester.Digest()}
+	overlay.Size, err = file.Seek(0, io.SeekCurrent)
+	return overlay, name, err
 }
 
-func devEntry(app manifestApp, root string) (string, error) {
-	entry, err := hostedEntry(app, root)
-	if err == nil && entry == "" {
-		err = fmt.Errorf("%s: holon dev runs an app from a server.py, server.ts or server.js entry; holon deploy still builds this app", app.Name)
+func (m *Client) postOverlay(ctx context.Context, session, app, route, overlay string, result any) error {
+	file, err := os.Open(overlay)
+	if err != nil {
+		return err
 	}
-	return entry, err
+	defer func() { _ = file.Close() }()
+	token, err := m.controlToken(ctx)
+	if err != nil {
+		return err
+	}
+	request := apiRequest{Plane: protocol.DevPlane, Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
+	return m.client.send(ctx, path.Join(protocol.APIPathSessions, session, "apps", app, route), request, result)
 }
 
 func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {

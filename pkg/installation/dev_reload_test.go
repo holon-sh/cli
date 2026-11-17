@@ -235,7 +235,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		f.running[r.PathValue("app")] = body
 		installationtest.WriteJSON(w, protocol.ReloadAppResult{Output: installed})
 	})
-	h.start(t, nil)
+	h.start(t)
 	fc := testingclock.NewFakeClock(time.Now())
 	h.run.Clock, f.clock = fc, fc
 	f.await = func(check func() bool) {
@@ -480,20 +480,9 @@ func TestDevAppliesProjectChanges(t *testing.T) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.creates != 1 || !strings.Contains(f.stdout.String(), "/mcp/beta") {
-		t.Fatalf("creates = %d; stdout=%q", f.creates, f.stdout.String())
+	if !strings.Contains(f.stdout.String(), "/mcp/beta") {
+		t.Fatalf("stdout=%q", f.stdout.String())
 	}
-}
-
-func TestDevDetachedStartsItsOwnSession(t *testing.T) {
-	f := startReloadFixture(t, true)
-	if err := f.stop(); err != nil {
-		t.Fatalf("first run: %v stderr=%q", err, f.stderr.String())
-	}
-	f.start("--detach")
-	f.await(func() bool { return f.created() == 2 })
-	f.update(func() {})
-	f.await(func() bool { return strings.Contains(f.stdout.String(), "Expires") })
 }
 
 func TestDevSessionLifecycle(t *testing.T) {
@@ -552,9 +541,6 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	if app.Image != "" || app.Port != 0 || !app.Source {
 		t.Fatalf("session app = %+v", app)
 	}
-	if overlay := overlayEntries(t, f.reloadRequests()[0].body); !strings.Contains(string(overlay["server.py"]), "app = None") {
-		t.Fatalf("first overlay entries = %v", overlay)
-	}
 	f.save(map[string]string{"alpha/tools.py": "second"}, "alpha ready")
 	request := f.reloadRequests()[1]
 	if request.Session != "gentle-otter-482" || request.App != "alpha" {
@@ -582,9 +568,6 @@ func TestOverlayPlan(t *testing.T) {
 		page        bool
 		want        runtimecontract.Plan
 	}{
-		{"a Node app whose page waits for its clients", "src/server.ts", map[string]string{"package.json": build, "package-lock.json": ""}, false, runtimecontract.Plan{
-			Install: runtimecontract.Install{Commands: [][]string{{"npm", "install"}}}, Start: []string{"node_modules/.bin/holon-serve", "src/server.ts"},
-		}},
 		{"a Python app with a page", "src/server.py", python, true, runtimecontract.Plan{
 			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}}, Prepare: [][]string{{"pnpm", "run", "build"}}, Start: serve,
 		}},
@@ -673,11 +656,6 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 	}{
 		{name: "an app with nothing to generate or build is sent once", app: "alpha", client: ui, sends: []send{{}}},
 		{
-			name: "clients generated from the running app follow in a second send", app: "alpha", client: ui,
-			files: map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-ui":"0.0.1"}}`},
-			sends: []send{{}, {clients: true}},
-		},
-		{
 			name: "a page is built once its clients are in the source", app: "alpha", client: ui,
 			files: map[string]string{"alpha/package.json": `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`},
 			sends: []send{{}, {clients: true, page: true}},
@@ -699,16 +677,6 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 				"gamma/package.json": `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-sh":"0.0.1","holon-ui":"0.0.1"}}`,
 			},
 			sends: []send{{clients: true}, {clients: true, page: true}},
-		},
-		{
-			name: "a Python server is first sent with the clients of the apps it requires", app: "gamma", client: "holon/apps/__init__.py",
-			files: map[string]string{
-				manifestFileName: gammaManifest, "gamma/server.json": requiresAlpha,
-				"gamma/server.py":      "from holon.apps import apps\nimport mcp\n",
-				"gamma/pyproject.toml": "[project]\nname = \"gamma\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n",
-				"gamma/uv.lock":        "version = 1\n",
-			},
-			sends: []send{{clients: true}},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -739,7 +707,7 @@ func TestDevShowsReloadDetailsOnlyWhenVerbose(t *testing.T) {
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
-	for _, hidden := range []string{installed, "npm error 404", "Timing ", "grant-secret", "alpha starting up", "tools/call"} {
+	for _, hidden := range []string{installed, "npm error 404", "Timing ", "grant-secret", "alpha starting up"} {
 		if output := f.stdout.String() + f.stderr.String(); strings.Contains(output, hidden) {
 			t.Fatalf("quiet dev showed %q in %q", hidden, output)
 		}

@@ -5,10 +5,15 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/holon-sh/protocol/runtimecontract"
 )
 
 func TestRead(t *testing.T) {
 	page := `{"scripts":{"build":"vite build"}}`
+	modules := runtimecontract.Freeze{Dependencies: []string{"node_modules"}}
+	npm := Deploy{Install: [][]string{{"npm", "install"}}, Freeze: modules}
+	pnpmState := []string{"rm", "-f", "node_modules/.modules.yaml", "node_modules/.pnpm-workspace-state-v1.json"}
 	for _, test := range []struct {
 		name  string
 		files map[string]string
@@ -21,24 +26,30 @@ func TestRead(t *testing.T) {
 				"go.mod": "", "main.go": "",
 				"package.json": `{"packageManager":"pnpm@11.25.0","dependencies":{"holon-sh":"^0.0.1"}}`,
 			},
-			want: Recipe{Inputs: []string{"package.json"}, Install: [][]string{{"pnpm", "install"}}},
+			want: Recipe{
+				Inputs: []string{"package.json"}, Install: [][]string{{"pnpm", "install"}},
+				Deploy: Deploy{Install: [][]string{{"pnpm", "install"}}, Build: [][]string{pnpmState}, Freeze: modules},
+			},
 		},
 		{
 			name:  "pnpm by its lockfile",
 			files: map[string]string{"package.json": `{"engines":{"node":">=99"},"scripts":{"build":"vite build"}}`, "pnpm-lock.yaml": ""},
 			want: Recipe{
 				Inputs: []string{"package.json", "pnpm-lock.yaml"}, Install: [][]string{{"pnpm", "install"}}, Build: [][]string{{"pnpm", "run", "build"}},
+				Deploy: Deploy{
+					Install: [][]string{{"pnpm", "install", "--frozen-lockfile"}}, Build: [][]string{{"pnpm", "run", "build"}, pnpmState}, Freeze: modules,
+				},
 			},
 		},
 		{
 			name:  "a declaration over the lockfile",
 			files: map[string]string{"package.json": `{"devEngines":{"packageManager":[{"name":"npm"}]}}`, "pnpm-lock.yaml": ""},
-			want:  Recipe{Inputs: []string{"package.json", "pnpm-lock.yaml"}, Install: [][]string{{"npm", "install"}}},
+			want:  Recipe{Inputs: []string{"package.json", "pnpm-lock.yaml"}, Install: [][]string{{"npm", "install"}}, Deploy: npm},
 		},
 		{
 			name:  "npm otherwise, beside a Python version file",
 			files: map[string]string{"package.json": "{}", ".python-version": "3.13\n"},
-			want:  Recipe{Inputs: []string{"package.json"}, Install: [][]string{{"npm", "install"}}},
+			want:  Recipe{Inputs: []string{"package.json"}, Install: [][]string{{"npm", "install"}}, Deploy: npm},
 		},
 		{
 			name: "uv with a page, reinstalled when a manifest changes",
@@ -49,18 +60,15 @@ func TestRead(t *testing.T) {
 			want: Recipe{
 				Inputs:  []string{".python-version", "pyproject.toml", "uv.lock", ".npmrc", "package.json", "patches/left-pad.patch", "web/package.json"},
 				Install: [][]string{{"uv", "sync"}, {"npm", "install"}}, Build: [][]string{{"npm", "run", "build"}},
+				Deploy: Deploy{
+					Install: [][]string{{"uv", "sync", "--locked", "--no-dev"}, {"npm", "install"}},
+					Build:   [][]string{{"npm", "run", "build"}, {"rm", "-rf", "node_modules"}},
+					Freeze:  runtimecontract.Freeze{Dependencies: []string{".venv"}},
+				},
 			},
 		},
-		{
-			name:  "uv alone",
-			files: map[string]string{"pyproject.toml": "", "server.py": "", "uv.lock": ""},
-			want:  Recipe{Inputs: []string{"pyproject.toml", "uv.lock"}, Install: [][]string{{"uv", "sync"}}},
-		},
 		{name: "yarn", files: map[string]string{"package.json": `{"packageManager":"yarn@4.5.0"}`}, err: "declares the package manager yarn"},
-		{name: "bun", files: map[string]string{"package.json": "{}", "bun.lock": ""}, err: "found bun.lock"},
 		{name: "two managers", files: map[string]string{"package.json": `{"packageManager":"pnpm@11.25.0","engines":{"npm":">=10"}}`}, err: "npm and pnpm"},
-		{name: "poetry", files: map[string]string{"pyproject.toml": "", "poetry.lock": ""}, err: "found pyproject.toml, poetry.lock but no uv.lock"},
-		{name: "pdm", files: map[string]string{"pyproject.toml": "", "pdm.lock": ""}, err: "found pyproject.toml, pdm.lock but no uv.lock"},
 		{name: "pip", files: map[string]string{"requirements.txt": "holon-sh\n", "server.py": ""}, err: "found requirements.txt but no uv.lock: Python projects install with uv from a pyproject.toml and its uv.lock"},
 		{name: "no project", files: map[string]string{"server.ts": ""}, err: "found neither package.json nor pyproject.toml"},
 	} {

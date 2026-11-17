@@ -128,7 +128,16 @@ func (r *imageRegistry) ServeHTTP(w http.ResponseWriter, request *http.Request) 
 		digest := digest.FromBytes(body).String()
 		repository, _, _ := strings.Cut(path, "/manifests/")
 		item := registryItem{mediaType: request.Header.Get("Content-Type"), data: body}
+		var references ocispec.Manifest
+		_ = json.Unmarshal(body, &references)
 		r.mu.Lock()
+		for _, blob := range append(references.Layers, references.Config) {
+			if _, ok := r.items[repository+"/blobs/"+blob.Digest.String()]; blob.Digest != "" && !ok {
+				r.mu.Unlock()
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+		}
 		r.items[path], r.items[repository+"/manifests/"+digest] = item, item
 		r.mu.Unlock()
 		w.Header().Set("Docker-Content-Digest", digest)

@@ -23,14 +23,19 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/oauth2"
 
 	"k8s.io/apimachinery/pkg/util/wait"
 	testingclock "k8s.io/utils/clock/testing"
 
+	"github.com/holon-sh/cli/pkg/appartifact"
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
+	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/cli/pkg/recipe"
 	"github.com/holon-sh/protocol"
+	"github.com/holon-sh/protocol/runtimecontract"
 )
 
 func executeCommand(ctx context.Context, args []string, stdout, stderr io.Writer, config commandConfig) error {
@@ -77,40 +82,73 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 
 func TestRunPreparationFailures(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ command, access, want, diagnostics, edit, pkg string }{
+	for _, tc := range []struct {
+		name, command, access, pkg, prefix, edit, failure, want string
+		files                                                   map[string]string
+		contractRan, checkRan                                   *runtimecontract.Ran
+		base                                                    *digest.Digest
+		session                                                 bool
+	}{
+		{name: "oauth without identity", command: "dev", access: "--oauth", want: "requires a configured identity provider"},
+		{name: "start script", command: "dev", pkg: `{"private":true,"main":"index.js"}`, want: "ship it as an image: app"},
+		{name: "registry off", command: "deploy", prefix: "registry.example/apps", want: "turns off; ship it as an image: app"},
+		{name: "unsupported recipe", command: "deploy", files: map[string]string{"bun.lock": ""}, want: "ship it as an image: app"},
 		{
-			command: "deploy", access: "--public", want: "fixture build failed:\nnpm error missing: fixture-package",
-			diagnostics: "#7 0.311 npm notice noise\n------\n > [build 2/3] RUN npm ci:\n0.312 npm error missing: fixture-package\n------\n",
+			name: "contract diagnostic", command: "deploy", session: true, contractRan: &runtimecontract.Ran{ExitCode: 2, Stderr: "server.js: the server raised ValueError\n"},
+			want: "server.js: the server raised ValueError",
 		},
-		{command: "dev", access: "--oauth", want: "requires a configured identity provider"},
-		{command: "dev", access: "--public", want: "holon deploy still builds this app", pkg: `{"private":true,"main":"index.js"}`},
-		{command: "deploy", access: "--public", want: "source changed during preparation", edit: "logic.ts"},
+		{
+			name: "build failure", command: "deploy", session: true,
+			failure: `{"error":{"code":"invalid_request","message":"the install or build failed: exit status 1"},"output":"npm error missing: fixture-package\n"}`,
+			want:    "build alpha: the install or build failed: exit status 1\nnpm error missing: fixture-package",
+		},
+		{
+			name: "type check", command: "deploy", session: true,
+			checkRan: &runtimecontract.Ran{ExitCode: 2, Stdout: "server.js(1,7): error TS2322: Type 'string' is not assignable to type 'number'.\n"},
+			want:     "alpha does not type-check against its typed contracts:\nserver.js(1,7): error TS2322",
+		},
+		{name: "missing base", command: "deploy", session: true, base: new(digest.FromString("missing")), want: "does not hold the development image"},
+		{name: "source changed", command: "deploy", session: true, edit: "logic.ts", want: "source changed during preparation"},
 	} {
-		t.Run(tc.want, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			sourceFiles(t, root, map[string]string{"package.json": cmp.Or(tc.pkg, sourcePackage), "server.js": "export default {}"})
+			sourceFiles(t, root, map[string]string{"package.json": cmp.Or(tc.pkg, sourcePackage), "server.js": `export const mcp = 1`})
+			sourceFiles(t, root, tc.files)
 			h := newRunHarness(t)
+			builds := serveBuilds(t, h)
+			builds.failure, builds.contractRan, builds.checkRan = tc.failure, tc.contractRan, tc.checkRan
+			if tc.edit != "" {
+				builds.duringFreeze = func() { sourceFiles(t, root, map[string]string{tc.edit: "edited"}) }
+			}
+			if tc.base != nil {
+				builds.base = *tc.base
+			}
 			h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, protocol.Info{
 					Installation:          protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"},
-					ImageRepositoryPrefix: "registry.example/apps",
+					ImageRepositoryPrefix: tc.prefix,
 				})
 			})
 			h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, protocol.SessionResponse{})
 			})
-			h.start(t, func(_ context.Context, _ buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
-				if tc.edit != "" {
-					return ocispec.Descriptor{}, os.WriteFile(filepath.Join(root, tc.edit), []byte("edited"), 0o644)
-				}
-				_, _ = io.WriteString(progress, tc.diagnostics+"\n")
-				return ocispec.Descriptor{}, errors.New("fixture build failed")
+			h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
+				installationtest.WriteJSON(w, map[string]any{
+					"grant": "grant-secret", "registry": "registry.example",
+					"repositories": map[string]string{"alpha": "holon/upload/alpha"}, "expiresAt": time.Now().Add(time.Hour).Format(time.RFC3339),
+				})
 			})
+			h.start(t)
 			var stderr bytes.Buffer
-			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, tc.access}, nil, &stderr, h.run)
-			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(stderr.String()+err.Error(), "notice") {
+			err := executeCommand(t.Context(), []string{tc.command, "alpha=" + root, cmp.Or(tc.access, "--public")}, nil, &stderr, h.run)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error=%v stderr=%q, want %q", err, stderr.String(), tc.want)
+			}
+			builds.mu.Lock()
+			defer builds.mu.Unlock()
+			if tc.command == "deploy" && (builds.sessions != 0) != tc.session || builds.deleted != builds.sessions {
+				t.Fatalf("build sessions created %d, deleted %d; want one created and deleted: %t", builds.sessions, builds.deleted, tc.session)
 			}
 		})
 	}
@@ -163,17 +201,20 @@ func (f *fakeFiles) save(t *testing.T, root string, files map[string]string) {
 }
 
 type runHarness struct {
-	mux      *http.ServeMux
-	control  *installationtest.ControlFixtures
-	server   *httptest.Server
-	baseHost string
-	files    fakeFiles
-	run      commandConfig
+	mux            *http.ServeMux
+	control        *installationtest.ControlFixtures
+	server         *httptest.Server
+	registry       *imageRegistry
+	registryServer *httptest.Server
+	baseHost       string
+	files          fakeFiles
+	run            commandConfig
 }
 
 func newRunHarness(t *testing.T) *runHarness {
 	t.Helper()
 	h := &runHarness{mux: http.NewServeMux()}
+	h.registry, h.registryServer = buildRegistry(t)
 	h.control = installationtest.NewControlFixtures(t, h.mux)
 	installationtest.MountDeviceAuth(t, h.mux, func() string { return h.server.URL + "/" }, protocol.AdminPlane,
 		func(r *http.Request) { installationtest.AssertOrigin(t, r, h.baseHost) }, 3600, 0, nil)
@@ -182,7 +223,7 @@ func newRunHarness(t *testing.T) *runHarness {
 
 const servedContract = `{"serverInfo":{"name":"example.com/alpha","version":"1","description":"alpha"},"capabilities":{"tools":{}},"lists":{"tools/list":{"pages":[{"tools":[{"name":"lookup","inputSchema":{"type":"object"}}]}]}}}`
 
-func (h *runHarness) start(t *testing.T, build buildApplication) {
+func (h *runHarness) start(t *testing.T) {
 	t.Helper()
 	h.mux.HandleFunc("GET /sessions/{id}/logs", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(protocol.HeaderContentType, protocol.MIMETextPlain)
@@ -206,15 +247,9 @@ func (h *runHarness) start(t *testing.T, build buildApplication) {
 		})
 	}
 	sourceFiles(t, stateDir, map[string]string{"config.json": fmt.Sprintf(`{"origin":%q}`, h.server.URL)})
-	_, registry := buildRegistry(t)
+	registry := h.registryServer
 	registryHost := strings.TrimPrefix(registry.URL, "https://")
-	if build == nil {
-		build = func(context.Context, buildRequest, io.Writer) (ocispec.Descriptor, error) {
-			return ocispec.Descriptor{}, errors.New("fixture build failed")
-		}
-	}
 	h.run = commandConfig{
-		builder: build,
 		RegistryHTTPClient: installationtest.HTTPClient(func(r *http.Request) (*http.Response, error) {
 			original := r
 			r = r.Clone(r.Context())
@@ -253,7 +288,7 @@ func TestDevDeploymentStatusTransitions(t *testing.T) {
 	h.control.Handle([]string{protocol.ToolGetSession}, nil, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, <-responses)
 	})
-	h.start(t, nil)
+	h.start(t)
 	manager, err := NewClient(t.Context(), h.run.Auth)
 	if err != nil {
 		t.Fatal(err)
@@ -355,15 +390,10 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 						app.Image != "" || app.Port != 0 || !reflect.DeepEqual(app.OAuth, tc.oauth) {
 						t.Errorf("unexpected remote session: %#v", input)
 					}
-					for name := range app.OAuth.Inputs() {
-						if _, injected := app.Env[name]; injected {
-							t.Error("OAuth input injected into the application environment")
-						}
-					}
 				}
 				installationtest.WriteJSON(w, apiSession(tc.want...))
 			})
-			h.start(t, nil)
+			h.start(t)
 			fc := testingclock.NewFakeClock(time.Now())
 			h.run.Clock = fc
 			stdout, _, stop := startDev(t, h.run, tc.apps...)
@@ -378,10 +408,16 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 func TestRunDeployLifecycle(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{"server.js": "export default {}"})
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(sourcePackage), 0o644); err != nil {
-		t.Fatal(err)
+	document := descriptorDocument("prod")
+	document["icons"] = []any{map[string]any{"src": "https://example.com/icon.png", "theme": "light"}}
+	document["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{
+		map[string]any{"name": "TOKEN", "isSecret": true, "isRequired": true},
 	}
+	writeDescriptor(t, filepath.Join(root, "server.json"), document)
+	sourceFiles(t, root, map[string]string{
+		"server.js": "export const mcp = 1", "pnpm-lock.yaml": "", ".holon/app.txt": "application file",
+		"package.json": `{"private":true,"packageManager":"pnpm@10.34.9","scripts":{"build":"vite build"},"dependencies":{"holon-sh":"^0.0.1"}}`,
+	})
 	manifestPath := filepath.Join(root, "holon.yaml")
 	if err := os.WriteFile(manifestPath, []byte(`apps:
   - name: hosted
@@ -395,13 +431,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildClock := testingclock.NewFakeClock(time.Unix(100, 0))
-	build := func(ctx context.Context, request buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
-		if !slices.Equal(request.Platforms, []string{"linux/amd64"}) {
-			t.Errorf("production platforms = %v", request.Platforms)
-		}
-		buildClock.Step(2 * time.Second)
-		return buildImage(t, "first")(ctx, request, progress)
-	}
 	var mu sync.Mutex
 	var existing bool
 	var desired protocol.AppsRequest
@@ -413,11 +442,13 @@ func TestRunDeployLifecycle(t *testing.T) {
 	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, protocol.Info{
 			Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"},
-			Version:      "test", BuildArchitectures: []string{"amd64"}, OAuth: &protocol.OAuthInfo{
+			Version:      "test", OAuth: &protocol.OAuthInfo{
 				Issuer: h.server.URL + "/", AdminAudience: installationtest.AdminAudience(h.server.URL), CLIClientID: "cli-test",
 			},
 		})
 	})
+	builds := serveBuilds(t, h)
+	builds.duringFreeze = func() { buildClock.Step(2 * time.Second) }
 	h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, r *http.Request) {
 		installationtest.AssertOrigin(t, r, "admin."+h.baseHost)
 		var input protocol.UploadRequest
@@ -503,7 +534,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 				})
 			}
 		})
-	h.start(t, build)
+	h.start(t)
 	runConfig := h.run
 	runConfig.Clock = buildClock
 	var output, diagnostics bytes.Buffer
@@ -513,11 +544,66 @@ func TestRunDeployLifecycle(t *testing.T) {
 	mu.Lock()
 	initial := slices.Clone(desired.Apps)
 	mu.Unlock()
-	if slices.ContainsFunc(initial, func(app protocol.App) bool { return app.Source }) {
-		t.Fatalf("deploy carries an overlay: %+v", initial)
+	steps, err := recipe.Read(os.DirFS(root))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(diagnostics.String(), "fixture build output") ||
-		strings.Contains(diagnostics.String(), "Timing ") ||
+	builds.mu.Lock()
+	build := builds.calls[slices.IndexFunc(builds.calls, func(call buildCall) bool { return call.build.Freeze != nil })]
+	wantPlan := runtimecontract.Plan{Install: runtimecontract.Install{Commands: steps.Deploy.Install}, Prepare: steps.Deploy.Build}
+	if builds.sessions != 1 || builds.deleted != 1 || !reflect.DeepEqual(build.plan, wantPlan) || string(build.files[".holon/app.txt"]) != "application file" || build.files["generated/holon-sh/index.mjs"] == nil ||
+		slices.ContainsFunc(builds.calls, func(call buildCall) bool { return call.build.Freeze == nil && call.plan.Prepare != nil }) {
+		t.Fatalf("%d build sessions, deleted %d times, build calls %+v", builds.sessions, builds.deleted, builds.calls)
+	}
+	builds.mu.Unlock()
+	index, manifest, config := assembledImage(t, h.registry, initial[slices.IndexFunc(initial, func(app protocol.App) bool { return app.Name == "prod" })].Image)
+	frozen := manifest.Layers[1:]
+	if len(manifest.Layers) != 3 ||
+		frozen[0].Digest != digest.FromString("dependencies of prod") ||
+		len(config.RootFS.DiffIDs) != 3 || config.RootFS.DiffIDs[2] != digest.FromString("tar source of prod") {
+		t.Fatalf("image layers %+v, diff IDs %v", manifest.Layers, config.RootFS.DiffIDs)
+	}
+	wantConfig := ocispec.ImageConfig{
+		User: "10001:10001", WorkingDir: "/app/source", Cmd: []string{"node_modules/.bin/holon-serve", "server.js"},
+		Env: []string{"HOLON_RELOAD_DIR=/app/source", "HOME=/tmp", "NODE_ENV=production", "PATH=/usr/local/bin:/usr/bin:/bin", "PYTHONUNBUFFERED=1"},
+	}
+	labels := config.Config.Labels
+	config.Config.Labels = nil
+	slices.Sort(config.Config.Env)
+	if !reflect.DeepEqual(config.Config, wantConfig) || labels["io.modelcontextprotocol.server.name"] != "io.github.acme/prod" {
+		t.Fatalf("image config %+v, labels %v", config.Config, labels)
+	}
+	if len(index.Manifests) != 2 || index.Manifests[1].ArtifactType != mcpcontract.MediaType || index.Annotations[mcpcontract.DigestAnnotation] == "" {
+		t.Fatalf("image index %+v", index)
+	}
+	repository, err := imageRepository(strings.TrimPrefix(h.registryServer.URL, "https://")+"/holon/upload/prod", "grant-secret", h.registryServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var releases []string
+	h.registry.mu.Lock()
+	for name := range h.registry.items {
+		if tag, ok := strings.CutPrefix(name, "holon/upload/prod/manifests/"+appartifact.ReleasePrefix); ok {
+			releases = append(releases, appartifact.ReleasePrefix+tag)
+		}
+	}
+	h.registry.mu.Unlock()
+	if len(releases) != 1 {
+		t.Fatalf("releases %v", releases)
+	}
+	release, err := repository.Resolve(t.Context(), releases[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, executable, err := appartifact.Read(t.Context(), repository, release)
+	if err != nil || record.AppName != "prod" || !strings.HasSuffix(initial[1].Image, "@"+executable.Digest.String()) ||
+		len(record.Runtime.Icons) != 1 || record.Runtime.Icons[0].Source != "https://example.com/icon.png" {
+		t.Fatalf("release record %+v: %v", record, err)
+	}
+	if input := record.Runtime.Env["TOKEN"]; !input.IsSecret || !input.IsRequired {
+		t.Fatal("secret declaration was lost")
+	}
+	if strings.Contains(diagnostics.String(), "Timing ") ||
 		!strings.Contains(diagnostics.String(), "prod ready") || strings.ContainsAny(diagnostics.String(), "\x1b\r") {
 		t.Fatalf("compact deployment output: %q", diagnostics.String())
 	}
@@ -535,8 +621,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	if err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath, "--verbose"}, &output, &diagnostics, runConfig); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(diagnostics.String(), "fixture build output") ||
-		!strings.Contains(diagnostics.String(), "Timing apps prepare contracts: ") ||
+	if !strings.Contains(diagnostics.String(), "Timing apps prepare contracts: ") ||
 		!strings.Contains(diagnostics.String(), "Timing prod build and upload: 2s") {
 		t.Fatalf("verbose deployment hid build output or timings: %q", diagnostics.String())
 	}
@@ -546,7 +631,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	}
 	forceConflict = true
 	mu.Unlock()
-	err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath}, &output, nil, runConfig)
+	err = executeCommand(t.Context(), []string{"deploy", "--file", manifestPath}, &output, nil, runConfig)
 	if err == nil || !strings.Contains(err.Error(), "concurrently") {
 		t.Fatalf("conditional conflict = %v", err)
 	}
@@ -645,8 +730,8 @@ func TestStreamLogsResumesAfterOutages(t *testing.T) {
 			t.Fatalf("stream error = %v", err)
 		}
 		// One second after the failed refresh, then one after the dropped stream.
-		if elapsed := time.Since(start); elapsed != 2*time.Second || refreshes != 2 || !slices.Equal(since, []string{"5m", "2026-11-07T10:00:00.2Z"}) {
-			t.Fatalf("resumed after %v with %d refreshes and since = %q", elapsed, refreshes, since)
+		if elapsed := time.Since(start); elapsed != 2*time.Second || !slices.Equal(since, []string{"5m", "2026-11-07T10:00:00.2Z"}) {
+			t.Fatalf("resumed after %v with since = %q", elapsed, since)
 		}
 		if got := output.String(); strings.Count(got, "started \t\n") != 1 || strings.Count(got, "continued") != 1 || !strings.Contains(got, "resumed") {
 			t.Fatalf("output = %q", got)

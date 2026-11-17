@@ -215,8 +215,7 @@ func (c *apiClient) Info(ctx context.Context) (protocol.Info, error) {
 }
 
 func validateInfo(info protocol.Info) error {
-	if len(info.Version) > maxInfoField || !protocol.ValidImageRepositoryPrefix(info.ImageRepositoryPrefix) ||
-		!protocol.ValidBuildArchitectures(info.BuildArchitectures) {
+	if len(info.Version) > maxInfoField || !protocol.ValidImageRepositoryPrefix(info.ImageRepositoryPrefix) {
 		return errMalformedResponse
 	}
 	if info.OAuth == nil {

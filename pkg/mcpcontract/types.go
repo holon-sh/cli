@@ -3,10 +3,7 @@
 package mcpcontract
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
-	"time"
 )
 
 const (
@@ -14,16 +11,6 @@ const (
 	DigestAnnotation = "sh.holon.contract.digest"
 	MediaType        = "application/vnd.holon.mcp-contract.v1+json"
 )
-
-// StableTime returns the mtime Holon gives a file it writes into a build
-// context. BuildKit's incremental sync resends a file only when its size or
-// mtime changed, so the time must be fixed for unchanged content and differ
-// for changed content of the same size. It is 1980 (the zip epoch) plus a
-// content-derived offset of under 105 days.
-func StableTime(data []byte) time.Time {
-	sum := sha256.Sum256(data)
-	return time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(binary.BigEndian.Uint64(sum[:]) >> 11))
-}
 
 type Tool struct {
 	Name   string          `json:"name"`

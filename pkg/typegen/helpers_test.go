@@ -111,8 +111,8 @@ func listing(tools ...mcpcontract.Tool) Served {
 	return Served{Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}}, Lists: map[string]ServedList{"tools/list": {Pages: pages}}}
 }
 
-// fakeRun stands in for the language runners: it answers each snapshot from results, keyed by the
-// snapshot's server.json name, printing an extraction or returning an error as the runner's failure.
+// fakeRun stands in for the language runners: it answers each server from results, keyed by the
+// server's server.json name, printing an extraction or returning an error as the runner's failure.
 func fakeRun(results map[string]any) func(context.Context, string, string, []string, io.Writer) error {
 	return func(_ context.Context, _, _ string, args []string, stdout io.Writer) error {
 		if !strings.Contains(args[3], `"io.modelcontextprotocol/files"`) || !slices.Equal(args[4:], []string{"tools/list", "resources/list", "events/list"}) {

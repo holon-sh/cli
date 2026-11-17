@@ -73,6 +73,14 @@ var typeLanguages = map[string]typeLanguage{
 	"python":     {nil, "extract.py", "runner.py", []string{"python3", "python3.15", "python3.14", "python3.13", "python3.12", "python3.11"}, []string{"-I", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"}},
 }
 
+// RunnerCommand is the interpreter arguments that run language's contract runner from dir, its tooling directory.
+func RunnerCommand(language, dir string) []string {
+	return append(slices.Clone(typeLanguages[language].flags), filepath.Join(dir, typeLanguages[language].runner))
+}
+
+// Checker is language's checker script, in its tooling directory.
+func Checker(language string) string { return typeLanguages[language].checker }
+
 func (l typeLanguage) localProgram(ctx context.Context) (string, error) {
 	for _, program := range l.programs {
 		if exec.CommandContext(ctx, program, l.probe...).Run() == nil {
@@ -101,7 +109,6 @@ func (m *missingPackage) Error() string { return m.name + " is not installed" }
 func extractSources(ctx context.Context, root string, sources []*preparedSource, o Options, drift bool) error {
 	var run []*preparedSource
 	committed := map[*preparedSource]*Document{}
-	directories := map[*preparedSource]string{}
 	for _, s := range sources {
 		if s.language == "go" || s.metadata.Schema != nil {
 			continue
@@ -110,16 +117,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 		if err != nil {
 			return err
 		}
-		committed[s], directories[s] = document, s.origin
-		if o.Run != nil {
-			// A hook may run servers where only root is visible, such as a container without network
-			// access, so it gets a snapshot there: a server that needs only its schema libraries
-			// extracts with the tooling's copies, and others report the package they miss.
-			directories[s] = filepath.Join(root, "sources", s.name)
-			if _, err := SnapshotSource(s.name, s.origin, directories[s]); err != nil {
-				return err
-			}
-		}
+		committed[s] = document
 		run = append(run, s)
 	}
 	if len(run) != 0 {
@@ -131,7 +129,7 @@ func extractSources(ctx context.Context, root string, sources []*preparedSource,
 	failures := make([]error, len(run))
 	var group sync.WaitGroup
 	for i, s := range run {
-		group.Go(func() { results[i], failures[i] = runServer(ctx, filepath.Join(root, "tooling"), directories[s], s, o) })
+		group.Go(func() { results[i], failures[i] = runServer(ctx, filepath.Join(root, "tooling"), s, o) })
 	}
 	group.Wait()
 	for i, s := range run {
@@ -187,9 +185,9 @@ func (s *preparedSource) committedContract() (*Document, error) {
 	return document, nil
 }
 
-func runServer(ctx context.Context, tooling, dir string, s *preparedSource, o Options) (*Served, error) {
+func runServer(ctx context.Context, tooling string, s *preparedSource, o Options) (*Served, error) {
 	extensions, _ := json.Marshal(clientExtensions)
-	args := append([]string{"contract", dir, s.entry, string(extensions)}, runtimecontract.CatalogMethods...)
+	args := append([]string{"contract", s.origin, s.entry, string(extensions)}, runtimecontract.CatalogMethods...)
 	var stdout bytes.Buffer
 	var err error
 	if o.Run != nil {
@@ -219,7 +217,7 @@ func runLocal(ctx context.Context, tooling, language string, args []string, stdo
 	run := func(program string) error {
 		limited, cancel := context.WithTimeout(ctx, serverTimeout)
 		defer cancel()
-		command := exec.CommandContext(limited, program, slices.Concat(l.flags, []string{filepath.Join(tooling, language, l.runner)}, args)...)
+		command := exec.CommandContext(limited, program, slices.Concat(RunnerCommand(language, filepath.Join(tooling, language)), args)...)
 		command.Env = commandenv.Environ(env)
 		var stderr bytes.Buffer
 		command.Stdout, command.Stderr = stdout, &stderr

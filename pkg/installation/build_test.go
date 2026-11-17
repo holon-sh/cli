@@ -1,51 +1,28 @@
 package installation
 
 import (
-	"context"
+	"cmp"
 	"encoding/json"
+	"errors"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 
+	"github.com/opencontainers/go-digest"
+	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"k8s.io/utils/ptr"
 	"oras.land/oras-go/v2/content"
-	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/holon-sh/cli/internal/testfiles"
-	"github.com/holon-sh/cli/pkg/appartifact"
+	"github.com/holon-sh/cli/pkg/installation/installationtest"
 	"github.com/holon-sh/protocol"
+	"github.com/holon-sh/protocol/runtimecontract"
 )
-
-func buildImage(t *testing.T, marker string) buildApplication {
-	t.Helper()
-	return func(ctx context.Context, request buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
-		if _, err := io.WriteString(progress, "fixture build output\n"); err != nil {
-			return ocispec.Descriptor{}, err
-		}
-		fixture, source := buildRegistry(t)
-		config := ocispec.ImageConfig{
-			User: "10001:10001", WorkingDir: "/app", Entrypoint: []string{"/bin/sh", "-c"},
-			Cmd: []string{"exec node main.mjs"}, Labels: map[string]string{"test.build": marker},
-		}
-		var children []ocispec.Descriptor
-		for _, platform := range request.Platforms {
-			children = append(children, addTestImage(t, fixture, strings.TrimPrefix(platform, "linux/"), config, nil))
-		}
-		descriptor := addTestIndex(fixture, children...)
-		var image ocispec.Descriptor
-		err := request.upload.repository(ctx, request.app.Name, func(repository *remote.Repository, _ protocol.UploadGrant) (err error) {
-			image, err = importImage(ctx, strings.TrimPrefix(source.URL, "https://")+"/source@"+descriptor.Digest.String(), repository, request.upload.client)
-			return err
-		})
-		return image, err
-	}
-}
 
 func buildRegistry(t *testing.T) (*imageRegistry, *httptest.Server) {
 	t.Helper()
@@ -76,16 +53,6 @@ func buildManifest(t *testing.T, root string) manifestSpec {
 	return resolved
 }
 
-func prepareBuild(t *testing.T, manifest manifestSpec) manifestSpec {
-	t.Helper()
-	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(cleanup)
-	return prepared
-}
-
 func buildGrant(server *httptest.Server) protocol.UploadGrant {
 	return protocol.UploadGrant{Grant: "grant-secret", Registry: strings.TrimPrefix(server.URL, "https://"), Repositories: map[string]string{"alpha": "holon/upload/alpha"}}
 }
@@ -94,136 +61,149 @@ var sourceFiles = testfiles.Write[string]
 
 const sourcePackage = `{"private":true,"engines":{"node":">=22.20.0 <23"}}`
 
-func TestSourceBuildAndUpload(t *testing.T) {
-	root := t.TempDir()
-	document := descriptorDocument("alpha")
-	document["icons"] = []any{map[string]any{"src": "https://example.com/icon.png", "theme": "light"}}
-	writeDescriptor(t, filepath.Join(root, "server.json"), document)
-	manifest := buildManifest(t, root)
-	if err := os.Remove(filepath.Join(root, "server.js")); err != nil {
-		t.Fatal(err)
-	}
-	sourceFiles(t, root, map[string]string{
-		"main.mjs": "console.log(1)", ".holon/app.txt": "application file",
-		"package.json":      `{"main":"main.mjs"}`,
-		".dockerignore":     "excluded/\n!excluded/keep.txt\n",
-		"excluded/keep.txt": "yes", "excluded/no.txt": "no", "script": "hello",
-	})
-	if err := os.Chmod(filepath.Join(root, "script"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	modified := time.Unix(1_700_000_000, 123)
-	if err := os.Chtimes(filepath.Join(root, "script"), modified, modified); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("script", filepath.Join(root, "link")); err != nil {
-		t.Fatal(err)
-	}
-	fixture, server := buildRegistry(t)
-	build := buildImage(t, "source")
-	options := buildOptions{HTTPClient: server.Client(), plane: protocol.AdminPlane}
-	options.builder = func(ctx context.Context, request buildRequest, progress io.Writer) (ocispec.Descriptor, error) {
-		snapshot := request.Source
-		if err := os.WriteFile(filepath.Join(root, "main.mjs"), []byte("console.log(2)"), 0o600); err != nil {
-			return ocispec.Descriptor{}, err
-		}
-		t.Run("build input", func(t *testing.T) {
-			for name, want := range map[string]string{
-				"main.mjs": "console.log(1)", ".holon/app.txt": "application file",
-				"package.json":      `{"main":"main.mjs"}`,
-				"excluded/keep.txt": "yes", "script": "hello",
-			} {
-				got, err := os.ReadFile(filepath.Join(snapshot, name))
-				if err != nil || string(got) != want {
-					t.Fatalf("build input %s = %q, want %q: %v", name, got, want, err)
-				}
-			}
-			for _, name := range []string{"excluded/no.txt", ".dockerignore"} {
-				if _, err := os.Lstat(filepath.Join(snapshot, name)); !os.IsNotExist(err) {
-					t.Fatalf("excluded file reached builder: %s: %v", name, err)
-				}
-			}
-			info, err := os.Stat(filepath.Join(snapshot, "script"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if info.Mode().Perm() != 0o755 {
-				t.Fatalf("executable permissions = %o, want 755", info.Mode().Perm())
-			}
-			if !info.ModTime().Equal(modified) {
-				t.Fatalf("modification time = %v, want %v", info.ModTime(), modified)
-			}
-			if link, err := os.Readlink(filepath.Join(snapshot, "link")); err != nil || link != "script" {
-				t.Fatalf("source symlink = %q, want script: %v", link, err)
-			}
-		})
-		return build(ctx, request, progress)
-	}
+const buildSessionName = "build-session"
 
-	grant := buildGrant(server)
-	manifest.Apps[0].resolved.Env = map[string]protocol.Input{
-		"DEPLOYMENT_VALUE": {Value: ptr.To("only-for-this-deployment")},
-		"TOKEN":            {IsSecret: true, IsRequired: true},
-	}
-	manifest = prepareBuild(t, manifest)
-	apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant, client: options.HTTPClient}, options)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(apps) != 1 || !strings.HasPrefix(apps[0].Image, grant.Registry+"/holon/upload/alpha@sha256:") {
-		t.Fatalf("unexpected image: %#v", apps)
-	}
-	repository, err := imageRepository(grant.Registry+"/"+grant.Repositories["alpha"], grant.Grant, server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var descriptor ocispec.Descriptor
-	fixture.mu.Lock()
-	for key, item := range fixture.items {
-		if strings.Contains(key, "/manifests/"+appartifact.ReleasePrefix) {
-			descriptor = content.NewDescriptorFromBytes(item.mediaType, item.data)
-		}
-	}
-	fixture.mu.Unlock()
-	record, executable, err := appartifact.Read(t.Context(), repository, descriptor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if record.AppName != "alpha" || record.ServerName != "io.github.acme/alpha" || !strings.HasSuffix(apps[0].Image, "@"+executable.Digest.String()) {
-		t.Fatalf("published build: %+v", record)
-	}
-	if input := record.Runtime.Env["DEPLOYMENT_VALUE"]; !input.IsRequired || input.Value != nil || input.Default != nil {
-		t.Fatal("deployment value escaped into shared metadata")
-	}
-	if len(record.Runtime.Icons) != 1 || record.Runtime.Icons[0].Source != "https://example.com/icon.png" || record.Runtime.Icons[0].Theme != "light" {
-		t.Fatalf("build icon metadata lost: %+v", record.Runtime.Icons)
-	}
-	if input := record.Runtime.Env["TOKEN"]; !input.IsSecret || !input.IsRequired {
-		t.Fatal("secret declaration was lost")
-	}
+type buildCall struct {
+	app   string
+	plan  runtimecontract.Plan
+	build runtimecontract.Build
+	files map[string][]byte
 }
 
-func TestSourceStartsThroughItsSDK(t *testing.T) {
-	for entry, want := range map[string][]string{
-		"server.ts":     {"node_modules/.bin/holon-serve", "server.ts"},
-		"src/server.py": {"python", "-m", "holon.serve", "src/server.py"},
-	} {
-		t.Run(entry, func(t *testing.T) {
-			root := t.TempDir()
-			sourceFiles(t, root, map[string]string{entry: ""})
-			manifest, err := resolveManifestGraph(t.Context(), manifestSpec{Apps: []manifestApp{{
-				Name: "alpha", Path: root, Access: &protocol.AppAccess{Server: &protocol.AccessRule{}},
-			}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			app := prepareBuild(t, manifest).Apps[0]
-			start, err := stageSnapshot(app, app.resolved.types)
-			if err != nil || !slices.Equal(start, want) {
-				t.Fatalf("start = %q, want %q: %v", start, want, err)
-			}
-		})
+type buildFixture struct {
+	base                  digest.Digest
+	failure               string
+	contractRan, checkRan *runtimecontract.Ran
+	duringFreeze          func()
+
+	mu       sync.Mutex
+	sessions int
+	deleted  int
+	calls    []buildCall
+}
+
+func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
+	t.Helper()
+	f := &buildFixture{base: addTestBase(t, h.registry)}
+	session := protocol.SessionResponse{
+		Name: buildSessionName, UID: "build-uid", Revision: "1", Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: "True"}},
 	}
+	h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
+		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
+		var request protocol.AppsRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		for _, app := range request.Apps {
+			if !app.Source || app.Access == nil || app.Access.Server == nil || app.Access.Server.Callers == nil || len(app.Access.Server.Callers) != 0 {
+				t.Errorf("build session lets callers reach %+v", app)
+			}
+		}
+		f.mu.Lock()
+		f.sessions++
+		f.mu.Unlock()
+		installationtest.WriteJSON(w, session)
+	})
+	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolDeleteSession}, map[string]string{"session": buildSessionName},
+		func(w http.ResponseWriter, r *http.Request) {
+			if installationtest.ToolName(r) == protocol.ToolGetSession {
+				installationtest.WriteJSON(w, session)
+				return
+			}
+			f.mu.Lock()
+			f.deleted++
+			f.mu.Unlock()
+			installationtest.WriteJSON(w, protocol.DeleteSessionResult{Deleted: true})
+		})
+	h.mux.HandleFunc("POST /sessions/{id}/apps/{app}/build", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil || r.PathValue("id") != buildSessionName {
+			t.Errorf("build request for %s: %v", r.PathValue("id"), err)
+			return
+		}
+		call := buildCall{app: r.PathValue("app"), files: overlayEntries(t, body)}
+		if err := errors.Join(json.Unmarshal(call.files[runtimecontract.PlanFile], &call.plan),
+			json.Unmarshal(call.files[runtimecontract.BuildFile], &call.build)); err != nil {
+			t.Error(err)
+		}
+		for _, arg := range call.build.Run {
+			if strings.HasPrefix(arg, ".holon/") && call.files[arg] == nil {
+				t.Errorf("build of %s runs %s, which its overlay lacks", call.app, arg)
+			}
+		}
+		f.mu.Lock()
+		f.calls = append(f.calls, call)
+		f.mu.Unlock()
+		reply := runtimecontract.BuildReply{Ran: cmp.Or(f.contractRan, &runtimecontract.Ran{Stdout: servedContract})}
+		if call.build.Freeze != nil {
+			if f.duringFreeze != nil {
+				f.duringFreeze()
+			}
+			if f.failure != "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, f.failure)
+				return
+			}
+			reply.Ran, reply.Image = cmp.Or(f.checkRan, &runtimecontract.Ran{}), h.registry.addFrozenImage(call.app, f.base).String()
+		}
+		installationtest.WriteJSON(w, reply)
+	})
+	return f
+}
+
+func (r *imageRegistry) addFrozenImage(app string, base digest.Digest) digest.Digest {
+	image := ocispec.Image{Platform: ocispec.Platform{OS: "linux", Architecture: "amd64"}, Config: ocispec.ImageConfig{WorkingDir: "/app/source"}}
+	var layers []ocispec.Descriptor
+	for _, layer := range []string{"dependencies", "source"} {
+		data := []byte(layer + " of " + app)
+		layers = append(layers, ocispec.Descriptor{MediaType: ocispec.MediaTypeImageLayerZstd, Digest: digest.FromBytes(data), Size: int64(len(data))})
+		r.mu.Lock()
+		r.items["holon/upload/"+app+"/blobs/"+digest.FromBytes(data).String()] = registryItem{data: data}
+		r.mu.Unlock()
+		image.RootFS.DiffIDs = append(image.RootFS.DiffIDs, digest.FromString("tar "+string(data)))
+	}
+	config, _ := json.Marshal(image)
+	configDescriptor := content.NewDescriptorFromBytes(ocispec.MediaTypeImageConfig, config)
+	manifest, _ := json.Marshal(ocispec.Manifest{
+		Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageManifest, Config: configDescriptor, Layers: layers,
+		Annotations: map[string]string{ocispec.AnnotationBaseImageDigest: base.String()},
+	})
+	manifestDigest := digest.FromBytes(manifest)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.items["holon/upload/"+app+"/blobs/"+configDescriptor.Digest.String()] = registryItem{data: config}
+	r.items["holon/upload/"+app+"/manifests/"+manifestDigest.String()] = registryItem{mediaType: ocispec.MediaTypeImageManifest, data: manifest}
+	return manifestDigest
+}
+
+func addTestBase(t *testing.T, registry *imageRegistry) digest.Digest {
+	t.Helper()
+	child := addTestImage(t, registry, "amd64", ocispec.ImageConfig{
+		User: "10001:10001", WorkingDir: "/app", Entrypoint: []string{"/holon-mcp-runtime"},
+		Env:    []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/app", "HOLON_RELOAD_DIR=/app/source"},
+		Labels: map[string]string{"base": "development"},
+	}, map[string][]byte{"holon-mcp-runtime": []byte("runtime")})
+	index := addTestIndex(registry, child)
+	for key, item := range registry.items {
+		if rest, ok := strings.CutPrefix(key, "source/"); ok {
+			registry.items[protocol.BaseRepository+"/"+rest] = item
+		}
+	}
+	return index.Digest
+}
+
+func assembledImage(t *testing.T, registry *imageRegistry, image string) (ocispec.Index, ocispec.Manifest, ocispec.Image) {
+	t.Helper()
+	repository, reference, _ := strings.Cut(image, "@")
+	var index ocispec.Index
+	registry.mu.Lock()
+	err := json.Unmarshal(registry.items[strings.TrimPrefix(repository, "registry.example/")+"/manifests/"+reference].data, &index)
+	registry.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, config := preparedConfig(t, registry, repository+"@"+index.Manifests[0].Digest.String())
+	return index, manifest, config
 }
 
 func TestSourceRejectsEscapingSymlinks(t *testing.T) {
@@ -235,16 +215,5 @@ func TestSourceRejectsEscapingSymlinks(t *testing.T) {
 	}
 	if _, _, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}, nil); err == nil || !strings.Contains(err.Error(), "symlink escapes application") {
 		t.Fatalf("escaping symlink: %v", err)
-	}
-}
-
-func publishedJSON(t *testing.T, source content.Fetcher, descriptor ocispec.Descriptor, value any) {
-	t.Helper()
-	data, err := content.FetchAll(t.Context(), source, descriptor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(data, value); err != nil {
-		t.Fatal(err)
 	}
 }

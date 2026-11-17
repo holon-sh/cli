@@ -83,7 +83,7 @@ When the code closes a finding, move its rule or its setting into `DevSaves.cfg`
 ## Read a result
 
 - **The three rules hold and the findings break as listed.** Nothing moved. Say so with the bounds, not as "the dev loop is correct".
-- **A rule in `DevSaves.cfg` breaks.** The report gives the shortest path as numbered steps. Replay it against the real loop, one step for each action, as a scratch test beside `TestDevSaves` in `pkg/installation/dev_reload_test.go` (its `reloadFixture` can refuse a save with `failNext` and hold an upload with `unsaved`; these tests need `-tags=kiln`).
+- **A rule in `DevSaves.cfg` breaks.** The report gives the shortest path as numbered steps. Replay it against the real loop, one step for each action, as a scratch test beside `TestDevSaves` in `pkg/installation/dev_reload_test.go` (its `reloadFixture` can refuse a save with `failNext` and hold an upload with `unsaved`).
   - If a step cannot happen in the code, the model is wrong. Fix the model and say what was wrong.
   - If every step can happen, it is a bug. Report the path in the code's words, the harm from the table above, and the commit that introduced it. Do not weaken the rule, the bounds or the model, and do not commit the scratch test.
 

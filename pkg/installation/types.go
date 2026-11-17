@@ -63,8 +63,8 @@ func prepareManifestTypes(
 	needed := map[string]bool{}
 	typeOptions := typegen.Options{Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.output.logs()}
 	prepareOptions := typeOptions
-	if served == nil {
-		prepareOptions.Run = options.extractTypes
+	if options.build != nil {
+		prepareOptions.Run = options.build.extract
 	}
 	var pathApps []*manifestApp
 	for i := range manifest.Apps {
@@ -144,6 +144,11 @@ func prepareManifestTypes(
 			return manifestSpec{}, nil, err
 		}
 	}
+	if options.build != nil {
+		if err := options.build.start(ctx, pathApps); err != nil {
+			return manifestSpec{}, nil, err
+		}
+	}
 	if options.plane == protocol.DevPlane && served == nil {
 		consumers = nil
 	}
@@ -193,11 +198,6 @@ func prepareManifestTypes(
 					"%s has changed the typed contract expected by %s (%s); include both in holon deploy %s %s (or rebuild and publish the caller)",
 					name, app.Name, strings.Join(changes, ", "), name, app.Name)
 			}
-		}
-	}
-	if options.plane != protocol.DevPlane {
-		if err := options.checkTypes(ctx, pathApps); err != nil {
-			return manifestSpec{}, nil, err
 		}
 	}
 	return manifest, remove, nil

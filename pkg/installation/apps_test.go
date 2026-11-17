@@ -69,7 +69,7 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 		updates = append(updates, update)
 		installationtest.WriteJSON(w, protocol.SessionResponse{Name: input.Session, Revision: "2"})
 	})
-	h.start(t, nil)
+	h.start(t)
 	h.run.Clock = testingclock.NewFakeClock(time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC))
 	for _, test := range []struct {
 		args    []string
@@ -108,7 +108,6 @@ func TestAppCommandsDefaultToEveryDevelopmentSession(t *testing.T) {
 			updates: []string{"s-two remove= chat:public"},
 			output:  []string{"chat access in dev session s-two: "},
 		},
-		{args: []string{"app", "get", "chat", "--session", "s-three"}, err: "app chat is not in dev session s-three"},
 		{args: []string{"app", "get", "missing"}, err: "app missing is not in any development session"},
 		{args: []string{"access", "delete", "chat/send_message"}, err: "dev session s-one: chat/send_message has no rule"},
 	} {

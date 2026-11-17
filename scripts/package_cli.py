@@ -85,13 +85,8 @@ def verify_binary(binary: Path, target: Target) -> list[str]:
 
 
 def build_binary(binary: Path, target: Target, version: str) -> None:
-    """Build natively against the Kiln SDK on PKG_CONFIG_PATH: static musl on Linux, macOS 15.0 minimum on darwin."""
-    env = os.environ | {"CGO_ENABLED": "1", "GOOS": target.goos, "GOARCH": target.goarch}
-    if target.goos == "linux":
-        env |= {"CC": "musl-gcc", "CGO_LDFLAGS": "-static"}
-    else:
-        env |= {"MACOSX_DEPLOYMENT_TARGET": "15.0", "CGO_CFLAGS": "-O2 -g -mmacosx-version-min=15.0", "CGO_LDFLAGS": "-mmacosx-version-min=15.0"}
-    subprocess.run(["go", "build", "-tags", "kiln", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
+    env = os.environ | {"CGO_ENABLED": "0", "GOOS": target.goos, "GOARCH": target.goarch}
+    subprocess.run(["go", "build", "-trimpath", "-buildvcs=false", "-ldflags", f"-s -w -X main.version={version}", "-o", str(binary), "./cmd/holon"], cwd=ROOT, env=env, check=True)
 
 
 def build_pdm_wheel(package: Path, dist: Path, metadata: dict, settings: dict) -> None:

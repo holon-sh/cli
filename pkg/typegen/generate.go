@@ -387,21 +387,11 @@ func (p *Prepared) Write(stdout io.Writer) error {
 	return nil
 }
 
-// WriteClients writes a consumer's clients into dir, a build context, each file with its StableTime,
-// and nothing for an unknown one. It refuses to overwrite files it did not generate.
+// WriteClients writes a consumer's clients into dir, and nothing for an unknown one. It refuses to
+// overwrite files it did not generate.
 func (p *Prepared) WriteClients(consumer, dir string) error {
 	if c := p.consumer(consumer); c != nil {
-		if err := c.write(dir); err != nil {
-			return err
-		}
-		for _, target := range c.Targets {
-			for name, data := range c.packages[target] {
-				stable := mcpcontract.StableTime(data)
-				if err := os.Chtimes(filepath.Join(slotDirectory(dir, target), name), stable, stable); err != nil {
-					return err
-				}
-			}
-		}
+		return c.write(dir)
 	}
 	return nil
 }

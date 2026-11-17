@@ -13,7 +13,6 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/singleflight"
 
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/errcode"
@@ -24,20 +23,17 @@ import (
 )
 
 type buildOptions struct {
-	manager       *Client
-	plane         protocol.Plane
-	architectures []string
-	builder       buildApplication
-	builders      *builderConnections
-	Env           []string
-	HTTPClient    *http.Client
-	output        *progressOutput
+	manager    *Client
+	plane      protocol.Plane
+	build      *buildSession
+	Env        []string
+	HTTPClient *http.Client
+	output     *progressOutput
 }
 
 func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
 	apps := make([]protocol.App, len(manifest.Apps))
 	group, ctx := errgroup.WithContext(ctx)
-	group.SetLimit(3)
 	for index, app := range manifest.Apps {
 		declaration := app.resolved.App
 		if app.resolved.Remote != nil {
@@ -45,25 +41,19 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			continue
 		}
 		if app.Path != "" && options.plane == protocol.DevPlane {
-			if _, err := devEntry(app, app.resolved.types.root); err != nil {
+			if _, err := sourceAppEntry(app, app.resolved.types.root); err != nil {
 				return nil, err
 			}
 			declaration.Port, declaration.Source = 0, true
 			apps[index] = declaration
 			continue
 		}
-		group.Go(func() (err error) {
+		group.Go(func() error {
 			finish := options.output.measure(app.Name, "build and upload")
 			defer finish()
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			logs := options.output.logs()
-			defer func() {
-				if err != nil {
-					err = logs.explain(err)
-				}
-			}()
 			if app.resolved.pkg != nil {
 				build, err := importRegistryBuild(ctx, options.manager, options.plane, app)
 				if err != nil {
@@ -75,7 +65,8 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			}
 			var built ocispec.Descriptor
 			if app.resolved.Image == "" {
-				if built, err = buildSource(ctx, app, upload, options, logs); err != nil {
+				var err error
+				if built, err = buildSource(ctx, app, upload, options); err != nil {
 					return err
 				}
 			}
@@ -152,8 +143,6 @@ type imageUpload struct {
 	grant        protocol.UploadGrant
 	renewed      bool
 	repositories sync.Map
-	blobs        sync.Map
-	blobUploads  singleflight.Group
 }
 
 func (u *imageUpload) destination(ctx context.Context, rejected string) (protocol.UploadGrant, error) {

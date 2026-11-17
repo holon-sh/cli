@@ -28,9 +28,8 @@ import (
 )
 
 const (
-	workflowPoll     = time.Second
-	renewalInterval  = time.Minute
-	maxCommandOutput = 64 << 10
+	workflowPoll    = time.Second
+	renewalInterval = time.Minute
 
 	// sessionWait is how long the server holds a get_session that names a revision.
 	sessionWait = 30 * time.Second
@@ -41,7 +40,6 @@ type commandConfig struct {
 	file               string
 	apps               []string
 	devTTLSeconds      *int64
-	builder            buildApplication
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
 	Clock              clock.WithTickerAndDelayedExecution
@@ -52,10 +50,7 @@ type commandConfig struct {
 }
 
 func (c commandConfig) buildOptions(manager *Client, plane protocol.Plane) buildOptions {
-	return buildOptions{
-		manager: manager, plane: plane, builder: c.builder, HTTPClient: c.RegistryHTTPClient,
-		Env: c.Auth.Env, output: c.output, architectures: manager.info.BuildArchitectures, builders: new(builderConnections),
-	}
+	return buildOptions{manager: manager, plane: plane, HTTPClient: c.RegistryHTTPClient, Env: c.Auth.Env, output: c.output}
 }
 
 func (c commandConfig) clock() clock.WithTickerAndDelayedExecution {
@@ -145,7 +140,6 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	options := config.buildOptions(manager, protocol.DevPlane)
-	defer options.builders.close()
 	resolved, err := resolveManifest(ctx, manager, config.manifest, apps...)
 	if err != nil {
 		return err
@@ -309,13 +303,13 @@ func runDeploy(ctx context.Context, selection []string, stdout io.Writer, config
 		manifest.deployed[app.Name] = app.Access
 	}
 	options := config.buildOptions(manager, protocol.AdminPlane)
-	defer options.builders.close()
 	resolved, err := resolveManifest(ctx, manager, manifest, selection...)
 	if err != nil {
 		return err
 	}
+	options.build = &buildSession{manager: manager, output: config.output}
 	desired, err := uploadManifest(ctx, resolved, options)
-	if err != nil {
+	if err = errors.Join(err, options.build.close(ctx)); err != nil {
 		return err
 	}
 	for _, app := range desired.Apps {
