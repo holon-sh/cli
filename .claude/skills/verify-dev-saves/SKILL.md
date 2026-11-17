@@ -22,7 +22,7 @@ All four hold under the assumptions below.
 
 ## What the model describes
 
-Sync commit: `54f44c8`. The model was last confirmed to describe the CLI at this commit, together with the change that added `progressOutput.unrecorded` and its rule for error rows, which arrived with this version of the model and has no commit of its own to name yet. The runtime and registry behavior was read from the platform at `818db651` and the runtime at `7da1e52`.
+Sync commit: `dcabb0e` (hughhan1/cli-private#49 on main `19cef75`). The model was last confirmed to describe the CLI at this commit. The runtime and registry behavior was read from the platform at `818db651` and the runtime at `17a0898` (hughhan1/runtime-private#11).
 
 | Actions | Code |
 | --- | --- |
@@ -45,10 +45,10 @@ The variables `tried` and `triedOk` exist only so that the rules can be written.
 A change needs the check when this prints anything you cannot rule out:
 
 ```sh
-git diff 54f44c8 -- pkg/installation/dev.go pkg/installation/dev_reload.go pkg/installation/progress.go
+git diff dcabb0e -- pkg/installation/dev.go pkg/installation/dev_reload.go pkg/installation/progress.go
 ```
 
-Changes to these do not alter anything the model describes: `apply`, `update`, `settle` and rollouts, `generate` and `regenerate`, `poll`, `readSession` and `renew`, `packSource`, the ignore rules, and how a status row is drawn. A change to the runtime's `reload` or `boot`, or to who writes the session's tag, does, although it lives in another repository.
+Changes to these do not alter anything the model describes: `apply`, `update`, `settle` and rollouts, `generate` and `regenerate`, `poll`, `readSession` and `renew`, `packSource`, the ignore rules, and how a status row is drawn. A change to the runtime's `reload` or `boot`, to the turn they share with `build`, or to who writes the session's tag, does, although it lives in another repository. So does anything that calls the runtime's build route on a development session: `build` stops the app and empties its directory.
 
 ## Run it
 
