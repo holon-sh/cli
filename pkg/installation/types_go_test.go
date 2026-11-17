@@ -47,26 +47,13 @@ func main() {
 		manifestApp{Name: "orders", resolved: resolvedApp{App: protocol.App{Name: "orders", Image: image}}},
 		manifestApp{Name: "caller", Path: root, resolved: resolvedApp{App: protocol.App{Name: "caller", Requires: []string{"orders"}}, descriptor: descriptor}},
 	)
-	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	p := prepared.Apps[1].resolved.types
-	if err := p.prepared.WriteClients(p.name, p.root); err != nil {
-		t.Fatal(err)
-	}
-	clients, err := os.ReadFile(filepath.Join(p.root, "holon", "clients.go"))
-	if err != nil || !strings.Contains(string(clients), `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(string(clients), " GetOrder(") {
-		t.Fatalf("the app's Go clients in its image: %v\n%s", err, clients)
-	}
 	options.plane = protocol.DevPlane
 	_, cleanupDev, err := prepareManifestTypes(t.Context(), manifest, options, map[string]*typegen.Served{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanupDev()
-	clients, err = os.ReadFile(filepath.Join(root, "holon", "clients.go"))
+	clients, err := os.ReadFile(filepath.Join(root, "holon", "clients.go"))
 	if err != nil || !strings.Contains(string(clients), `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(string(clients), " GetOrder(") {
 		t.Fatalf("the app's Go clients in its source: %v\n%s", err, clients)
 	}

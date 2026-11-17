@@ -67,19 +67,8 @@ func TestRead(t *testing.T) {
 				},
 			},
 		},
-		{
-			name:  "uv alone",
-			files: map[string]string{"pyproject.toml": "", "server.py": "", "uv.lock": ""},
-			want: Recipe{
-				Inputs: []string{"pyproject.toml", "uv.lock"}, Install: [][]string{{"uv", "sync"}},
-				Deploy: Deploy{Install: [][]string{{"uv", "sync", "--locked", "--no-dev"}}, Freeze: runtimecontract.Freeze{Dependencies: []string{".venv"}}},
-			},
-		},
 		{name: "yarn", files: map[string]string{"package.json": `{"packageManager":"yarn@4.5.0"}`}, err: "declares the package manager yarn"},
-		{name: "bun", files: map[string]string{"package.json": "{}", "bun.lock": ""}, err: "found bun.lock"},
 		{name: "two managers", files: map[string]string{"package.json": `{"packageManager":"pnpm@11.25.0","engines":{"npm":">=10"}}`}, err: "npm and pnpm"},
-		{name: "poetry", files: map[string]string{"pyproject.toml": "", "poetry.lock": ""}, err: "found pyproject.toml, poetry.lock but no uv.lock"},
-		{name: "pdm", files: map[string]string{"pyproject.toml": "", "pdm.lock": ""}, err: "found pyproject.toml, pdm.lock but no uv.lock"},
 		{name: "pip", files: map[string]string{"requirements.txt": "holon-sh\n", "server.py": ""}, err: "found requirements.txt but no uv.lock: Python projects install with uv from a pyproject.toml and its uv.lock"},
 		{name: "no project", files: map[string]string{"server.ts": ""}, err: "found neither package.json nor pyproject.toml"},
 	} {

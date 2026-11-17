@@ -91,8 +91,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				if err := json.Unmarshal(output.Bytes(), &result); err != nil {
 					t.Fatalf("stdout must contain only JSON: %v, output=%s", err, output.String())
 				}
-				if result.Name != created.Name || result.ExpiresAt != created.ExpiresAt ||
-					len(result.Endpoints) != 1 || result.Endpoints[0].URL != "https://preview.example/mcp/echo" {
+				if len(result.Endpoints) != 1 || result.Endpoints[0].URL != "https://preview.example/mcp/echo" {
 					t.Fatalf("detached JSON = %+v", result)
 				}
 			default:

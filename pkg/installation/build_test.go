@@ -157,6 +157,9 @@ func (r *imageRegistry) addFrozenImage(app string, base digest.Digest) digest.Di
 	for _, layer := range []string{"dependencies", "source"} {
 		data := []byte(layer + " of " + app)
 		layers = append(layers, ocispec.Descriptor{MediaType: ocispec.MediaTypeImageLayerZstd, Digest: digest.FromBytes(data), Size: int64(len(data))})
+		r.mu.Lock()
+		r.items["holon/upload/"+app+"/blobs/"+digest.FromBytes(data).String()] = registryItem{data: data}
+		r.mu.Unlock()
 		image.RootFS.DiffIDs = append(image.RootFS.DiffIDs, digest.FromString("tar "+string(data)))
 	}
 	config, _ := json.Marshal(image)
