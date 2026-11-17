@@ -544,10 +544,6 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	if request.Session != "gentle-otter-482" || request.App != "alpha" {
 		t.Fatalf("source sent to %s %s", request.Session, request.App)
 	}
-	entries := overlayEntries(t, request.body)
-	if start := readOverlayPlan(t, entries).Start; !slices.Equal(start, []string{".venv/bin/python", "-m", "holon.serve", "server.py"}) {
-		t.Fatalf("dev start = %q", start)
-	}
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +551,7 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 	err := json.Unmarshal(f.item("manifests/"+sessionUID), &tagged)
 	if err != nil || tagged.ArtifactType != runtimecontract.OverlayMediaType || len(tagged.Layers) != 1 ||
 		tagged.Layers[0].Digest.String() != request.Digest || !bytes.Equal(f.item("blobs/"+request.Digest), request.body) ||
-		string(entries["tools.py"]) != "second" {
+		string(overlayEntries(t, request.body)["tools.py"]) != "second" {
 		t.Fatalf("the session's tag names %+v, want %s: %v", tagged.Layers, request.Digest, err)
 	}
 }
@@ -574,11 +570,11 @@ func TestDevStartsNativeNodeServer(t *testing.T) {
 func TestSourceInstallInputs(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
-		"server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "",
+		"src/server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "",
 		"package.json": `{"scripts":{"build":"vite build"}}`, "package-lock.json": "",
 	}
 	sourceFiles(t, root, files)
-	install := func() string {
+	plan := func() runtimecontract.Plan {
 		packed, err := packSource(t.Context(), manifestApp{}, root, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -588,13 +584,17 @@ func TestSourceInstallInputs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return readOverlayPlan(t, overlayEntries(t, data)).Install.Inputs
+		return readOverlayPlan(t, overlayEntries(t, data))
 	}
-	last := install()
+	initial := plan()
+	if !slices.Equal(initial.Start, []string{".venv/bin/python", "-m", "holon.serve", "src/server.py"}) {
+		t.Fatalf("SDK start = %q", initial.Start)
+	}
+	last := initial.Install.Inputs
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		sourceFiles(t, root, map[string]string{name: files[name] + "\n"})
-		next := install()
-		if (next != last) != (name != "server.py") {
+		next := plan().Install.Inputs
+		if (next != last) != (name != "src/server.py") {
 			t.Fatalf("changing %s changed the install's inputs: %t", name, next != last)
 		}
 		last = next
