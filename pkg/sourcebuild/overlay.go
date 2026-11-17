@@ -24,7 +24,8 @@ func PackDirectory(ctx context.Context, file *os.File, root string, plan runtime
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	defer func() { _ = dir.Close() }()
+	snapshot := fsutil.NewRoot(dir)
+	defer func() { _ = snapshot.Close() }()
 	if err := dir.MkdirAll(filepath.Dir(runtimecontract.PlanFile), 0o755); err != nil {
 		return ocispec.Descriptor{}, err
 	}
@@ -38,11 +39,7 @@ func PackDirectory(ctx context.Context, file *os.File, root string, plan runtime
 			return ocispec.Descriptor{}, err
 		}
 	}
-	source, err := fsutil.NewFS(root)
-	if err != nil {
-		return ocispec.Descriptor{}, err
-	}
-	stable, err := fsutil.NewFilterFS(source, &fsutil.FilterOpt{Map: stableStat})
+	stable, err := fsutil.NewFilterFS(fsutil.NewRootFS(snapshot), &fsutil.FilterOpt{Map: stableStat})
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
