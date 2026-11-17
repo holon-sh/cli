@@ -2,6 +2,7 @@ package installation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +14,9 @@ import (
 	"time"
 
 	"github.com/opencontainers/go-digest"
+	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 
@@ -40,10 +43,6 @@ type sourceBuild struct {
 	app    manifestApp
 	start  []string
 	recipe recipe.Recipe
-}
-
-func (s sourceBuild) plan(prepare [][]string) runtimecontract.Plan {
-	return runtimecontract.Plan{Install: runtimecontract.Install{Commands: s.recipe.Deploy.Install}, Prepare: prepare}
 }
 
 type buildSession struct {
@@ -112,7 +111,9 @@ func (b *buildSession) extract(ctx context.Context, language, toolingDir string,
 		return err
 	}
 	command := slices.Concat([]string{contractRunners[language].program}, typegen.RunnerCommand(language, path.Join(".holon", "tooling")), []string{args[0], "."}, args[2:])
-	reply, err := b.build(ctx, source.app.Name, root, source.plan(nil), runtimecontract.Build{Run: command})
+	plan := source.recipe.Deploy.Plan()
+	plan.Prepare = nil
+	reply, err := b.build(ctx, source.app.Name, root, plan, runtimecontract.Build{Run: command})
 	if err != nil {
 		return err
 	}
@@ -161,7 +162,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		build.Run = slices.Concat(contractRunners[language].check, []string{path.Join(".holon", checker), "check", checked})
 	}
 	built := options.output.measure(app.Name, "build")
-	reply, err := options.build.build(ctx, app.Name, p.root, source.plan(source.recipe.Deploy.Build), build)
+	reply, err := options.build.build(ctx, app.Name, p.root, source.recipe.Deploy.Plan(), build)
 	built()
 	if err != nil {
 		return ocispec.Descriptor{}, err
@@ -187,17 +188,20 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		if err != nil {
 			return err
 		}
-		entries := []ocispec.Descriptor{manifest}
-		annotations := map[string]string{}
+		index := ocispec.Index{
+			Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex,
+			Manifests: []ocispec.Descriptor{manifest},
+		}
 		if p.metadata != nil {
 			metadata, ownDigest, err := pushTypeMetadata(ctx, repository, p.metadata, p.documents)
 			if err != nil {
 				return err
 			}
-			entries = append(entries, metadata)
-			annotations[mcpcontract.DigestAnnotation] = ownDigest
+			index.Manifests = append(index.Manifests, metadata)
+			index.Annotations = map[string]string{mcpcontract.DigestAnnotation: ownDigest}
 		}
-		image, err = sourcebuild.PushIndex(ctx, repository, entries, annotations)
+		data, _ := json.Marshal(index)
+		image, err = oras.PushBytes(ctx, repository, index.MediaType, data)
 		return err
 	})
 	return image, err

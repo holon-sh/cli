@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/opencontainers/go-digest"
-	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
 	"oras.land/oras-go/v2"
@@ -27,8 +26,12 @@ import (
 func Assemble(
 	ctx context.Context, repository, development *remote.Repository, frozen digest.Digest, start []string, labels map[string]string,
 ) (ocispec.Descriptor, error) {
-	frozenManifest, err := fetchReference[ocispec.Manifest](ctx, repository, frozen)
+	_, data, err := oras.FetchBytes(ctx, repository, frozen.String(), oras.FetchBytesOptions{MaxBytes: 4 << 20})
 	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	var frozenManifest ocispec.Manifest
+	if err := json.Unmarshal(data, &frozenManifest); err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	base, err := digest.Parse(frozenManifest.Annotations[ocispec.AnnotationBaseImageDigest])
@@ -45,20 +48,17 @@ func Assemble(
 	named := development.Reference
 	named.Reference = base.String()
 	missing := fmt.Errorf("the registry does not hold the development image %s yet; it is copied there after each upgrade, so deploy again in a minute", named)
-	index, err := fetchReference[ocispec.Index](ctx, development, base)
+	platform := ocispec.Platform{OS: frozenConfig.OS, Architecture: frozenConfig.Architecture}
+	child, err := oras.Resolve(ctx, development, named.Reference, oras.ResolveOptions{TargetPlatform: &platform})
 	if errors.Is(err, errdef.ErrNotFound) {
+		if _, lookupErr := development.Resolve(ctx, named.Reference); lookupErr == nil {
+			return ocispec.Descriptor{}, fmt.Errorf("the development image has no %s/%s image", platform.OS, platform.Architecture)
+		}
 		return ocispec.Descriptor{}, missing
 	}
 	if err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	i := slices.IndexFunc(index.Manifests, func(child ocispec.Descriptor) bool {
-		return child.Platform != nil && child.Platform.OS == frozenConfig.OS && child.Platform.Architecture == frozenConfig.Architecture
-	})
-	if i < 0 {
-		return ocispec.Descriptor{}, fmt.Errorf("the development image has no %s/%s image", frozenConfig.OS, frozenConfig.Architecture)
-	}
-	child := index.Manifests[i]
 	assembled, err := ociimage.Edit(ctx, development, repository, child, func(image *ociimage.Image) error {
 		mounts, mountCtx := errgroup.WithContext(ctx)
 		for _, layer := range image.Layers {
@@ -79,15 +79,6 @@ func Assemble(
 	return assembled, nil
 }
 
-func fetchReference[T ocispec.Manifest | ocispec.Index](ctx context.Context, target oras.ReadOnlyTarget, reference digest.Digest) (T, error) {
-	var value T
-	_, data, err := oras.FetchBytes(ctx, target, reference.String(), oras.FetchBytesOptions{MaxBytes: 4 << 20})
-	if err == nil {
-		err = json.Unmarshal(data, &value)
-	}
-	return value, err
-}
-
 func configureImage(image *ociimage.Image, directory string, start []string, labels map[string]string) {
 	production := []string{"HOME=/tmp", "NODE_ENV=production", "PYTHONUNBUFFERED=1"}
 	environment := slices.DeleteFunc(image.Config.Env, func(entry string) bool {
@@ -101,13 +92,4 @@ func configureImage(image *ociimage.Image, directory string, start []string, lab
 	image.Runtime["WorkingDir"], _ = json.Marshal(directory)
 	image.Runtime["Env"], _ = json.Marshal(append(environment, production...))
 	image.Runtime["Labels"], _ = json.Marshal(merged)
-}
-
-// PushIndex publishes a runnable OCI index from the assembled image and any companion manifests.
-func PushIndex(ctx context.Context, target oras.Target, manifests []ocispec.Descriptor, annotations map[string]string) (ocispec.Descriptor, error) {
-	data, _ := json.Marshal(ocispec.Index{
-		Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex,
-		Manifests: manifests, Annotations: annotations,
-	})
-	return oras.PushBytes(ctx, target, ocispec.MediaTypeImageIndex, data)
 }

@@ -27,6 +27,10 @@ type Deploy struct {
 	Freeze  runtimecontract.Freeze
 }
 
+func (d Deploy) Plan() runtimecontract.Plan {
+	return runtimecontract.Plan{Install: runtimecontract.Install{Commands: d.Install}, Prepare: d.Build}
+}
+
 // Read returns the recipe of the npm, pnpm or uv project in source.
 func Read(source fs.FS) (Recipe, error) {
 	var files []string

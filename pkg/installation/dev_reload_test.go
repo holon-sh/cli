@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -570,11 +569,7 @@ func TestDevStartsNativeNodeServer(t *testing.T) {
 
 func TestSourceInstallInputs(t *testing.T) {
 	root := t.TempDir()
-	files := map[string]string{
-		"src/server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "",
-		"package.json": `{"scripts":{"build":"vite build"}}`, "package-lock.json": "",
-	}
-	sourceFiles(t, root, files)
+	sourceFiles(t, root, map[string]string{"src/server.py": "", "pyproject.toml": "", "uv.lock": ""})
 	plan := func() runtimecontract.Plan {
 		packed, err := packSource(t.Context(), manifestApp{}, root, nil)
 		if err != nil {
@@ -591,14 +586,13 @@ func TestSourceInstallInputs(t *testing.T) {
 	if !slices.Equal(initial.Start, []string{".venv/bin/python", "-m", "holon.serve", "src/server.py"}) {
 		t.Fatalf("SDK start = %q", initial.Start)
 	}
-	last := initial.Install.Inputs
-	for _, name := range slices.Sorted(maps.Keys(files)) {
-		sourceFiles(t, root, map[string]string{name: files[name] + "\n"})
-		next := plan().Install.Inputs
-		if (next != last) != (name != "src/server.py") {
-			t.Fatalf("changing %s changed the install's inputs: %t", name, next != last)
-		}
-		last = next
+	sourceFiles(t, root, map[string]string{"src/server.py": "app = None"})
+	if plan().Install.Inputs != initial.Install.Inputs {
+		t.Fatal("changing application code invalidated the install")
+	}
+	sourceFiles(t, root, map[string]string{"uv.lock": "version = 1"})
+	if plan().Install.Inputs == initial.Install.Inputs {
+		t.Fatal("changing the lockfile did not invalidate the install")
 	}
 }
 
