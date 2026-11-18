@@ -277,7 +277,7 @@ func generatePython(contracts, events map[string]catalog) string {
 			input, arguments := emitter.input(shapes[0].value, prefix+"Input")
 			output := emitter.render(shapes[1].value, prefix+"Output")
 			returned := output
-			if !tool.structured {
+			if tool.returns == returnsResult {
 				returned = "_CompleteResult[_builtins.object]"
 			}
 			var signatures []string
@@ -290,7 +290,7 @@ func generatePython(contracts, events map[string]catalog) string {
 			}
 			methods = append(methods, pythonOverloaded(signatures)...)
 			for i, rendered := range []string{input, output} {
-				if i == 1 && !tool.structured {
+				if i == 1 && tool.returns == returnsResult {
 					continue
 				}
 				appExports[i] = append(appExports[i], fmt.Sprintf("        %s: _typing.TypeAlias = %s", method, rendered))

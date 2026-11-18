@@ -96,12 +96,12 @@ func joinTypeScript(items []typ, separator string) string {
 	return strings.Join(rendered, separator)
 }
 
-// generateTypeScript writes the declared types, then the interfaces of inputs, outputs, input
-// definitions and output definitions under the names given, leaving out any named "". Declared types
-// take identifiers that names does not hold yet, and names keeps them.
-func generateTypeScript(contracts map[string]catalog, names map[string]bool, interfaces [4]string) string {
+// generateTypeScript writes the declared types, then the interfaces of inputs, structured outputs,
+// input definitions, output definitions and parsed responses under the names given, leaving out any
+// named "". Declared types take identifiers that names does not hold yet, and names keeps them.
+func generateTypeScript(contracts map[string]catalog, names map[string]bool, interfaces [5]string) string {
 	var out strings.Builder
-	exports := make([]strings.Builder, 4)
+	exports := make([]strings.Builder, 5)
 	for i, name := range interfaces {
 		fmt.Fprintf(&exports[i], "export interface %s {\n", name)
 	}
@@ -113,14 +113,18 @@ func generateTypeScript(contracts map[string]catalog, names map[string]bool, int
 		nameDeclarations(names, binding, tools)
 		for _, name := range sortedKeys(tools) {
 			tool := tools[name]
+			slots := [2]int{0, 1}
+			if tool.returns == returnsParsed {
+				slots[1] = 4
+			}
 			for index, shape := range []shape{tool.input, tool.output} {
-				if index == 1 && !tool.structured {
+				if index == 1 && tool.returns == returnsResult {
 					continue
 				}
 				for _, ref := range shape.declared {
 					fmt.Fprintf(&out, "export type %s = %s;\n", ref.name, renderTypeScript(ref.value))
 				}
-				fmt.Fprintf(&exports[index], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value))
+				fmt.Fprintf(&exports[slots[index]], "    %s: %s;\n", quoted(name), renderTypeScript(shape.value))
 				named := make([]string, 0, len(shape.named))
 				for _, definition := range sortedKeys(shape.named) {
 					named = append(named, fmt.Sprintf("%s: %s;", quoted(definition), renderTypeScript(shape.named[definition])))

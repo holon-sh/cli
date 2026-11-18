@@ -146,6 +146,24 @@ export interface OutputTypes {
   "ünï": {
   };
 }
+export interface Responses {
+  "123": {
+  };
+  "_private": {
+  };
+  "for": {
+  };
+  "orders": {
+  };
+  "orders!": {
+  };
+  "shared": {
+  };
+  "with-hyphen": {
+  };
+  "ünï": {
+  };
+}
 export type OrdersOutputItem = { "id": string; };
 export interface Resources {
   "123": {
@@ -206,7 +224,7 @@ export interface EventData {
 }
 export type Events = { readonly [A in keyof EventArguments]: { [K in keyof EventArguments[A]]: { arguments: EventArguments[A][K]; data: K extends keyof EventData[A] ? EventData[A][K] : unknown } } };
 
-export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> };
+export type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A], Responses[A]> };
 export declare const apps: Apps;
 export type { EndpointBinding, CreateOptions };
 export declare function createApps<K extends keyof Apps>(bindings: { [A in K]: EndpointBinding }, options?: CreateOptions): Pick<Apps,K>;

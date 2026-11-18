@@ -33,11 +33,14 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 			return nil, err
 		}
 		if !parsesResponses[request.Target] {
-			decoded.Responses = nil
+			for name, tool := range decoded.Tools {
+				tool.Response = nil
+				decoded.Tools[name] = tool
+			}
 		}
 		request.contracts[alias] = decoded
 	}
-	catalogs, err := compileCatalogs(ctx, request, contract.results, request.Target != "go")
+	catalogs, err := compileCatalogs(ctx, request, func(c contract) map[string]contractTool { return c.Tools }, request.Target != "go")
 	if err != nil {
 		return nil, err
 	}

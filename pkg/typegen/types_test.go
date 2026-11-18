@@ -247,6 +247,7 @@ const pet = await apps.pets.tools.getPet({ id: "1" });
 export const name: string = pet.name;
 export const owner: string | null | undefined = pet.owner;
 export const names: string[] = (await apps.pets.tools.listPets({})).map(pet => pet.name);
+export const called = await apps.pets.callTool({ name: "getPet", arguments: { id: "1" } }).then(result => result.resultType === "complete" && !result.isError && 0 satisfies typeof result.structuredContent);
 `)
 	if output, err := check(t, app); err != nil {
 		t.Fatalf("check: %v\n%s", err, output)

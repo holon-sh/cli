@@ -13,25 +13,11 @@ import (
 )
 
 // contractTool is the schemas of one tool, resource or event. A resource has no Input, and Output is
-// nil when a tool declares no outputSchema.
-type contractTool struct{ Input, Output Object }
+// nil when a tool declares no outputSchema. Response is the schema, with the definitions it reaches,
+// of the JSON that a tool without one returns as text, when the contract's responses describe it.
+type contractTool struct{ Input, Output, Response Object }
 
-type contract struct {
-	Tools, Resources, Events map[string]contractTool
-	// Responses are, by tool, the schemas of the JSON that tools without an outputSchema return as
-	// text, each with the definitions it reaches.
-	Responses map[string]Object
-}
-
-// results are the tools, each with the schema of what its typed call returns: its outputSchema, or
-// the JSON a response describes.
-func (c contract) results() map[string]contractTool {
-	tools := maps.Clone(c.Tools)
-	for name, schema := range c.Responses {
-		tools[name] = contractTool{Input: tools[name].Input, Output: schema}
-	}
-	return tools
-}
+type contract struct{ Tools, Resources, Events map[string]contractTool }
 
 // checkIdentity requires what names a published app.
 func checkIdentity(identity mcpcontract.Identity) error {
@@ -102,41 +88,36 @@ func decodeContract(source mcpcontract.Contract) (contract, error) {
 		}
 		result.Events[event.Name] = contractTool{Input: input, Output: payload}
 	}
-	responses, err := decodeResponses(source.Responses, result.Tools)
-	if err != nil {
-		return contract{}, err
-	}
-	result.Responses = responses
-	return result, nil
+	return result, decodeResponses(source.Responses, result.Tools)
 }
 
-// decodeResponses splits a contract's responses into one schema per tool, each with the definitions
-// it reaches.
-func decodeResponses(raw json.RawMessage, tools map[string]contractTool) (map[string]Object, error) {
+// decodeResponses gives each tool that a contract's responses name its Response.
+func decodeResponses(raw json.RawMessage, tools map[string]contractTool) error {
 	if len(raw) == 0 {
-		return nil, nil
+		return nil
 	}
 	document, err := decodeSchema("responses", raw)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	properties, ok := document["properties"].(Object)
 	if !ok {
-		return nil, errors.New("responses must have properties")
+		return errors.New("responses must have properties")
 	}
 	definitions, _ := document["$defs"].(Object)
-	responses := make(map[string]Object, len(properties))
 	for name, value := range properties {
 		schema, ok := value.(Object)
-		if tool, exists := tools[name]; !ok || !exists || tool.Output != nil {
-			return nil, fmt.Errorf("responses: %s must be an object schema of a tool without an outputSchema", name)
+		tool, exists := tools[name]
+		if !ok || !exists || tool.Output != nil {
+			return fmt.Errorf("responses: %s must be an object schema of a tool without an outputSchema", name)
 		}
 		reached := Object{}
 		reach(schema, definitions, reached)
-		responses[name] = maps.Clone(schema)
-		responses[name]["$defs"] = reached
+		tool.Response = maps.Clone(schema)
+		tool.Response["$defs"] = reached
+		tools[name] = tool
 	}
-	return responses, nil
+	return nil
 }
 
 // reach adds to reached each definition that value refers to, directly or through other definitions.
@@ -189,11 +170,15 @@ func decodeMetadata(document *mcpcontract.Metadata) (*contract, error) {
 // URI, and the names of the tools whose text is JSON in place of their responses.
 func (c contract) MarshalJSON() ([]byte, error) {
 	tools := make([]Value, 0, len(c.Tools))
+	var responses []string
 	for _, name := range sortedKeys(c.Tools) {
 		tool := c.Tools[name]
 		entry := Object{"name": name, "inputSchema": tool.Input}
 		if tool.Output != nil {
 			entry["outputSchema"] = tool.Output
+		}
+		if tool.Response != nil {
+			responses = append(responses, name)
 		}
 		tools = append(tools, entry)
 	}
@@ -212,8 +197,8 @@ func (c contract) MarshalJSON() ([]byte, error) {
 		}
 		wire["events"] = events
 	}
-	if len(c.Responses) > 0 {
-		wire["responses"] = sortedKeys(c.Responses)
+	if len(responses) > 0 {
+		wire["responses"] = responses
 	}
 	return json.Marshal(wire)
 }
