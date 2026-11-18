@@ -18,7 +18,7 @@ Every `holon` process of one person shares one credential file per installation:
 
 ## What the model describes
 
-Sync commit: `95ff746`. The model was last confirmed to describe the code at this commit.
+Sync commit: `95ff746` (holon-sh/cli#300). The model was last confirmed to describe the code at this commit.
 
 Each action in `Credentials.tla` is one file read, one atomic rename, or one request to the identity provider.
 
