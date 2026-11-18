@@ -603,6 +603,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 	if input := record.Runtime.Env["TOKEN"]; !input.IsSecret || !input.IsRequired {
 		t.Fatal("secret declaration was lost")
 	}
+	if source, err := appartifact.SourceLayer(t.Context(), repository, executable); err != nil || source.Digest != frozen[1].Digest {
+		t.Fatalf("source layer %+v: %v", source, err)
+	}
 	if strings.Contains(diagnostics.String(), "Timing ") ||
 		!strings.Contains(diagnostics.String(), "prod ready") || strings.ContainsAny(diagnostics.String(), "\x1b\r") {
 		t.Fatalf("compact deployment output: %q", diagnostics.String())
