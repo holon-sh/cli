@@ -90,8 +90,7 @@ func typeScriptApp(t *testing.T) string {
 	return app
 }
 
-// pythonApp checks generated clients against the installed SDK and mypy: tooling/python's environment
-// is the app's, as typeScriptApp lends the compiler.
+// pythonApp checks generated clients against the installed SDK and mypy.
 func pythonApp(t *testing.T) string {
 	t.Helper()
 	app := t.TempDir()

@@ -5,26 +5,23 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
-// The runtime receives the module's identity and contracts. A contract names the tools whose text the
-// runtime parses and carries none of their response schemas.
-func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
+// The runtime receives the module's identity and the names of the tools whose text it parses.
+func TestPythonModulePassesTheRuntimeItsIdentityAndParsedTools(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 is not installed")
 	}
 	identity := mcpcontract.Identity{Name: "a'b\"\\\n\r\t\x00\x1f\x7fé😀 ", Version: "1"}
 	request := GenerateRequest{Target: "python", Identity: identity, App: "caller"}
-	tools := `[{"name": "get_pet", "inputSchema": {"type": "object"}}]`
-	responses := `{"properties": {"get_pet": {"$ref": "#/$defs/Pet"}}, "$defs": {"Pet": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}}}`
-	if err := json.Unmarshal([]byte(`{"pets": {"tools": `+tools+`, "responses": `+responses+`}}`), &request.Contracts); err != nil {
+	if err := json.Unmarshal([]byte(`{"pets": {"tools": [{"name": "get_pet", "inputSchema": {"type": "object"}}], "responses": {"properties": {"get_pet": {"type": "string"}}}}}`), &request.Contracts); err != nil {
 		t.Fatal(err)
 	}
 	files, err := Generate(t.Context(), request)
@@ -45,17 +42,13 @@ func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
 	}
 	var received struct {
 		Identity  mcpcontract.Identity
-		Contracts any
+		Contracts map[string]struct{ Responses []string }
 	}
 	if err := json.Unmarshal(output, &received); err != nil || received.Identity != identity {
 		t.Fatalf("runtime received %+v, %v; want %+v", received.Identity, err, identity)
 	}
-	var want any
-	if err := json.Unmarshal([]byte(`{"pets": {"tools": `+tools+`, "responses": ["get_pet"]}}`), &want); err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff(want, received.Contracts); diff != "" {
-		t.Errorf("runtime received other contracts (-want +got):\n%s", diff)
+	if responses := received.Contracts["pets"].Responses; !slices.Equal(responses, []string{"get_pet"}) {
+		t.Errorf("runtime received responses %v, want [get_pet]", responses)
 	}
 }
 

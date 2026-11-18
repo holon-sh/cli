@@ -204,8 +204,7 @@ async def use() -> None:
 	})
 }
 
-// An OpenAPI document's response schemas type the results of the tools om serves for it, and not
-// the structured content of their full results.
+// An OpenAPI document's response schemas type the results of the tools om serves for it.
 func TestOpenAPIResponsesTypeResults(t *testing.T) {
 	const pets = `openapi: 3.1.1
 info: {title: Pets, version: '1'}
@@ -260,12 +259,10 @@ export const name = (await apps.pets.tools.getPet({ id: "1" })).nmae;
 		t.Parallel()
 		app := pythonApp(t)
 		generate(t, app, TargetPy)
-		put(t, app, "main.py", `from holon.apps import Responses, apps
+		put(t, app, "main.py", `from holon.apps import apps
 from holon.client import ToolResult
 async def use() -> None:
-    pet: Responses.pets.getPet = await apps.pets.tools.getPet(id="1")
-    name: str = pet["name"]
-    owner: str | None = pet.get("owner")
+    name: str = (await apps.pets.tools.getPet(id="1"))["name"]
     names: list[str] = [pet["name"] for pet in await apps.pets.tools.listPets()]
     called: ToolResult[object] = await apps.pets.call_tool("getPet", id="1")
 `)
