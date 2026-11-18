@@ -122,6 +122,8 @@ func TestParseSource(t *testing.T) {
 		{arg: "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.upstash%2Fcontext7/versions/4.4.4", want: Source{Server: Registry{Name: "io.github.upstash/context7", Version: "4.4.4", Registry: "https://registry.modelcontextprotocol.io"}}},
 		{arg: "docs=https://registry.example/v0/servers/example.com%2Fdocs/versions/1.0.0", want: Source{Alias: "docs", Server: Registry{Name: "example.com/docs", Version: "1.0.0", Registry: "https://registry.example"}}},
 		{arg: "https://huggingface.co/mcp", want: Source{Server: Endpoint("https://huggingface.co/mcp")}},
+		{arg: "pets=./pets.yml", want: Source{Alias: "pets", Server: OpenAPI(filepath.Join(cwd, "pets.yml"))}},
+		{arg: "https://api.example.test/openapi.json", want: Source{Server: Endpoint("https://api.example.test/openapi.json")}},
 	} {
 		got, err := ParseSource(test.arg)
 		if err != nil || !reflect.DeepEqual(got, test.want) {

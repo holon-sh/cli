@@ -213,6 +213,50 @@ async def use() -> None:
 	})
 }
 
+// An OpenAPI document's response schemas type the results of the tools om serves for it.
+func TestOpenAPIResponsesTypeResults(t *testing.T) {
+	app := typeScriptApp(t)
+	put(t, app, "pets.yaml", `openapi: 3.1.1
+info: {title: Pets, version: '1'}
+servers: [{url: 'https://pets.example.test'}]
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      responses:
+        '200': {description: ok, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Pet'}}}}}
+  /pets/{id}:
+    get:
+      operationId: getPet
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/Pet'}}}}
+components:
+  schemas:
+    Pet: {type: object, required: [name], properties: {name: {type: string}, owner: {type: [string, 'null']}}}
+`)
+	source, err := ParseSource("pets=" + filepath.Join(app, "pets.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Generate(t.Context(), []Consumer{{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{source}}}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+const pet = await apps.pets.tools.getPet({ id: "1" });
+export const name: string = pet.name;
+export const owner: string | null | undefined = pet.owner;
+export const names: string[] = (await apps.pets.tools.listPets({})).map(pet => pet.name);
+`)
+	if output, err := check(t, app); err != nil {
+		t.Fatalf("check: %v\n%s", err, output)
+	}
+	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+export const name = (await apps.pets.tools.getPet({ id: "1" })).nmae;
+`)
+	mustReject(t, app, "Property 'nmae' does not exist")
+}
+
 func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {
 	t.Run("typescript", func(t *testing.T) {
 		t.Parallel()

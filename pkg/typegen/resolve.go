@@ -15,12 +15,13 @@ import (
 	"github.com/holon-sh/cli/internal/commandenv"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
+	"github.com/holon-sh/om/compile"
 	"github.com/holon-sh/protocol"
 )
 
 // ResolveDocument returns one source's contract document without writing anything: a path source
-// is extracted by running its server, a registry or endpoint source is fetched, and a supplied
-// document is returned as it is.
+// is extracted by running its server, a registry or endpoint source is fetched, an OpenAPI document
+// is compiled, and a supplied document is returned as it is.
 func ResolveDocument(ctx context.Context, source Source, options Options) (*Document, error) {
 	o := options.defaults()
 	switch server := source.Server.(type) {
@@ -46,8 +47,29 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 		return resolveRegistry(ctx, server, o)
 	case Endpoint:
 		return liveContract(ctx, string(server), nil, endpointClient(source.Alias, server, o))
+	case OpenAPI:
+		return compileOpenAPI(ctx, string(server))
 	}
 	return source.Server.(*Document), nil
+}
+
+// compileOpenAPI is the contract of the tools om serves for the OpenAPI document at path, named as om
+// names its server, with the response schemas that type their results.
+func compileOpenAPI(ctx context.Context, path string) (*Document, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	compiled, err := compile.Compile(ctx, data, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	contract := &mcpcontract.Contract{Responses: compiled.Responses}
+	for _, operation := range compiled.Document.Operations {
+		contract.Tools = append(contract.Tools, mcpcontract.Tool{Name: operation.Name, Input: operation.InputSchema})
+	}
+	identity := mcpcontract.Identity{Name: compiled.Document.Title, Version: cmp.Or(compiled.Document.Version, unversioned)}
+	return NewDocument(&mcpcontract.Metadata{Identity: identity, Schema: contract})
 }
 
 func endpointClient(alias string, location Endpoint, o Options) *http.Client {
