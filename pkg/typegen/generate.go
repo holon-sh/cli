@@ -234,6 +234,8 @@ func (p *preparation) resolve(ctx context.Context, source Source) (*Document, er
 		return NewDocument(dependency.metadata)
 	case *Document:
 		return server, nil
+	case OpenAPI:
+		return compileOpenAPI(ctx, string(server))
 	}
 	fetched := p.fetched[source.key()]
 	if fetched.err != nil {

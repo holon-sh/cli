@@ -194,6 +194,8 @@ func (p *manifestSpec) selectApps(args []string) ([]string, error) {
 			app.Registry = &protocol.RegistrySource{RegistryRef: protocol.RegistryRef(server)}
 		case typegen.Endpoint:
 			app.Remote = &manifestRemote{URL: string(server)}
+		case typegen.OpenAPI:
+			return nil, fmt.Errorf("%s: an OpenAPI document is a source of types only (holon types generate -s)", arg)
 		}
 		p.sources = append(p.sources, app)
 		names = append(names, app.Name)

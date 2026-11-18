@@ -18,7 +18,7 @@
     "@types/node": "22.20.5",
     "esbuild": "0.28.2",
     "fflate": "0.8.3",
-    "holon-sh": "0.0.1-dev.20",
+    "holon-sh": "0.0.1-dev.37",
     "typescript": "~5.9.3",
     "zod": "4.6.5"
   }

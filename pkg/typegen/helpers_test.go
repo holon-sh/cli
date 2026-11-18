@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -86,6 +87,21 @@ func typeScriptApp(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return app
+}
+
+// pythonApp checks generated clients against the installed SDK and mypy.
+func pythonApp(t *testing.T) string {
+	t.Helper()
+	app := t.TempDir()
+	venv, err := filepath.Abs("../../tooling/python/.venv")
+	if err == nil {
+		err = os.Symlink(venv, filepath.Join(app, ".venv"))
+	}
+	if err != nil || exec.CommandContext(t.Context(), pythonEnvironment(app), "-c", "import mypy").Run() != nil {
+		t.Skip("mypy is not installed in tooling/python/.venv")
+	}
+	put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
 	return app
 }
 

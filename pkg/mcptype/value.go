@@ -30,6 +30,11 @@ func sortedKeys[V any](m map[string]V) []string {
 	return slices.Sorted(maps.Keys(m))
 }
 
+// unescape decodes a JSON pointer reference token.
+func unescape(token string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(token, "~1", "/"), "~0", "~")
+}
+
 // pointer resolves a JSON pointer as serde_json's Value::pointer does.
 func pointer(root Value, path string) (Value, bool) {
 	if path == "" {
@@ -40,7 +45,7 @@ func pointer(root Value, path string) (Value, bool) {
 	}
 	target := root
 	for _, token := range strings.Split(path, "/")[1:] {
-		token = strings.ReplaceAll(strings.ReplaceAll(token, "~1", "/"), "~0", "~")
+		token = unescape(token)
 		switch current := target.(type) {
 		case Object:
 			next, ok := current[token]

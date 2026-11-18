@@ -25,19 +25,23 @@ var runtimes = map[string]string{"node": quoted("holon-sh/runtime"), "browser": 
 func generateTypeScriptPackage(ctx context.Context, request generateRequest, catalogs map[string]catalog) (map[string]string, error) {
 	// Resources take names that tools left free, in the same declarations.
 	names := map[string]bool{}
-	tools := generateTypeScript(catalogs, names, [4]string{"Inputs", "Outputs", "InputTypes", "OutputTypes"})
+	interfaces, client := [5]string{"Inputs", "Outputs", "InputTypes", "OutputTypes"}, "Inputs[A], Outputs[A], Resources[A], Events[A]"
+	if parsesResponses[request.Target] {
+		interfaces[4], client = "Responses", client+", Responses[A]"
+	}
+	tools := generateTypeScript(catalogs, names, interfaces)
 	catalogs, err := compileCatalogs(ctx, request, func(c contract) map[string]contractTool { return c.Resources }, false)
 	if err != nil {
 		return nil, err
 	}
-	resources := generateTypeScript(catalogs, names, [4]string{1: "Resources"})
+	resources := generateTypeScript(catalogs, names, [5]string{1: "Resources"})
 	catalogs, err = compileCatalogs(ctx, request, func(c contract) map[string]contractTool { return c.Events }, false)
 	if err != nil {
 		return nil, err
 	}
-	events := generateTypeScript(catalogs, names, [4]string{"EventArguments", "EventData"}) + eventTypes
+	events := generateTypeScript(catalogs, names, [5]string{"EventArguments", "EventData"}) + eventTypes
 	runtime := runtimes[request.Target]
-	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> };\n", runtime, runtime, tools, resources, events)
+	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<%s> };\n", runtime, runtime, tools, resources, events, client)
 	identity, contracts := encode(request.caller()), encode(request.contracts)
 	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
 	imports, module, declarations := "bindApps", bound, types

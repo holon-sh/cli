@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"strings"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/opencontainers/go-digest"
 )
 
 // contractTool is the schemas of one tool, resource or event. A resource has no Input, and Output is
-// nil when a tool declares no outputSchema.
-type contractTool struct{ Input, Output Object }
+// nil when a tool declares no outputSchema. Response is the schema, with the definitions it reaches,
+// of the JSON that a tool without one returns as text, when the contract's responses describe it.
+type contractTool struct{ Input, Output, Response Object }
 
 type contract struct{ Tools, Resources, Events map[string]contractTool }
 
@@ -85,7 +88,60 @@ func decodeContract(source mcpcontract.Contract) (contract, error) {
 		}
 		result.Events[event.Name] = contractTool{Input: input, Output: payload}
 	}
-	return result, nil
+	return result, decodeResponses(source.Responses, result.Tools)
+}
+
+// decodeResponses gives each tool that a contract's responses name its Response.
+func decodeResponses(raw json.RawMessage, tools map[string]contractTool) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	document, err := decodeSchema("responses", raw)
+	if err != nil {
+		return err
+	}
+	properties, ok := document["properties"].(Object)
+	if !ok {
+		return errors.New("responses must have properties")
+	}
+	definitions, _ := document["$defs"].(Object)
+	for name, value := range properties {
+		schema, ok := value.(Object)
+		tool, exists := tools[name]
+		if !ok || !exists || tool.Output != nil {
+			return fmt.Errorf("responses: %s must be an object schema of a tool without an outputSchema", name)
+		}
+		reached := Object{}
+		reach(schema, definitions, reached)
+		tool.Response = maps.Clone(schema)
+		tool.Response["$defs"] = reached
+		tools[name] = tool
+	}
+	return nil
+}
+
+// reach adds to reached each definition that value refers to, directly or through other definitions.
+func reach(value Value, definitions, reached Object) {
+	switch value := value.(type) {
+	case Object:
+		if reference, ok := value["$ref"].(string); ok {
+			if rest, ok := strings.CutPrefix(reference, "#/$defs/"); ok {
+				token, _, _ := strings.Cut(rest, "/")
+				name := unescape(token)
+				if _, seen := reached[name]; !seen && definitions[name] != nil {
+					reached[name] = definitions[name]
+					reach(definitions[name], definitions, reached)
+				}
+			}
+		}
+		for _, item := range value {
+			reach(item, definitions, reached)
+		}
+	case []Value:
+		for _, item := range value {
+			reach(item, definitions, reached)
+		}
+	}
 }
 
 func decodeMetadata(document *mcpcontract.Metadata) (*contract, error) {
@@ -110,14 +166,19 @@ func decodeMetadata(document *mcpcontract.Metadata) (*contract, error) {
 	return &decoded, nil
 }
 
-// MarshalJSON writes the contract with tools, resources and events sorted by name or URI.
+// MarshalJSON writes the contract as a runtime reads it: tools, resources and events sorted by name or
+// URI, and the names of the tools whose text is JSON in place of their responses.
 func (c contract) MarshalJSON() ([]byte, error) {
 	tools := make([]Value, 0, len(c.Tools))
+	var responses []string
 	for _, name := range sortedKeys(c.Tools) {
 		tool := c.Tools[name]
 		entry := Object{"name": name, "inputSchema": tool.Input}
 		if tool.Output != nil {
 			entry["outputSchema"] = tool.Output
+		}
+		if tool.Response != nil {
+			responses = append(responses, name)
 		}
 		tools = append(tools, entry)
 	}
@@ -135,6 +196,9 @@ func (c contract) MarshalJSON() ([]byte, error) {
 			events = append(events, Object{"name": name, "inputSchema": c.Events[name].Input, "payloadSchema": c.Events[name].Output})
 		}
 		wire["events"] = events
+	}
+	if len(responses) > 0 {
+		wire["responses"] = responses
 	}
 	return json.Marshal(wire)
 }

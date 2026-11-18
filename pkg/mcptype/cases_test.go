@@ -6,10 +6,7 @@ import (
 )
 
 // generationCase is one package-generation request in its JSON wire form.
-type generationCase struct {
-	name, input string
-	wantError   bool
-}
+type generationCase struct{ input string }
 
 func (c generationCase) run(t *testing.T) (map[string][]byte, error) {
 	var request GenerateRequest
@@ -94,23 +91,7 @@ const kitchenSink = `{
   ]
 }`
 
-const sinkRequires = `{"orders": {"name": "orders", "version": "1.0.0"}, "orders!": {"name": "example/orders", "version": "2"}, "123": {"name": "n", "version": "1"}, "for": {"name": "keyword", "version": "1"}, "with-hyphen": {"name": "h", "version": "1"}, "_private": {"name": "p", "version": "1"}, "ünï": {"name": "ü", "version": "1"}}`
-
-// The second orders alias exercises identifier collisions without repeating every schema case.
-func sinkContracts() string {
-	shared := `"a": {"type": "object", "additionalProperties": true, "properties": {"filter-input": {"type": "string"}}}, "headers": {"type": "object", "additionalProperties": true, "properties": {"if-match": {"type": "string"}}}, "labels": {"type": "object", "additionalProperties": false, "properties": {"ünï": {"type": "string"}}}, "condition": {"$ref": "#/$defs/IfMatch"}`
-	tool := func(name, extra string) string {
-		return `{"name": "` + name + `", "inputSchema": {"type": "object", "additionalProperties": false, "properties": {` + shared + extra + `}, "$defs": {"IfMatch": {"type": "object", "additionalProperties": false, "properties": {"etag": {"type": "string"}}}}}, "outputSchema": {"anyOf": [{"type": "object", "additionalProperties": true, "properties": {"note": {"type": "string"}}}, {"type": "null"}]}}`
-	}
-	return `{"shared": {"tools": [{"name": "input_filter", "inputSchema": {"type": "object", "additionalProperties": false, "properties": {"q": {"type": "string"}}}}, ` + tool("save", `, "content": {"type": "string"}`) + `, ` + tool("remove", "") + `]}, "orders": ` + kitchenSink + `, "orders!": {"tools": [{"name": "kitchen-sink", "inputSchema": {"type":"object", "properties":{"id":{"type":"string"}}, "required":["id"], "additionalProperties":false}, "outputSchema":{"type":"boolean"}}]}, "123": {"tools": []}, "for": {"tools": [{"name": "x", "inputSchema": {"type": "object"}}]}, "with-hyphen": {"tools": [{"name": "y", "inputSchema": {"type": "object"}}], "resources": []}, "_private": {"tools": []}, "ünï": {"tools": [{"name": "z", "inputSchema": {"type": "object"}}]}}`
-}
-
-func generationCases(t *testing.T) []generationCase {
-	t.Helper()
-	var cases []generationCase
-	for _, target := range []string{"node", "browser", "python", "go"} {
-		cases = append(cases, generationCase{name: "sink-" + target, input: `{"target": "` + target + `", "identity": {"name": "chéck\"out", "version": "1.0.0-rc.1"}, "requires": ` + sinkRequires + `, "contracts": ` + sinkContracts() + `, "go_module": "example.com/é/runtime", "own": "orders", "app": "chéck\"out"}`})
-	}
+func TestGenerateRejectsInvalidRequests(t *testing.T) {
 	for _, test := range []struct{ name, patch string }{
 		{"go-module-missing", `"target": "go", "go_module": ""`},
 		{"app-newline", `"app": "marker\nimport os"`},
@@ -125,7 +106,10 @@ func generationCases(t *testing.T) []generationCase {
 		{"external-ref-in-cycle", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": {"$ref": "#/$defs/A"}}, "$defs": {"A": {"anyOf": [{"$ref": "/$defs/B"}]}, "B": {"$ref": "#/$defs/A"}}}}]}}`},
 		{"schema-number", `"contracts": {"x": {"tools": [{"name": "t", "inputSchema": {"type": "object", "properties": {"p": 5}}}]}}`},
 	} {
-		cases = append(cases, generationCase{name: "invalid-" + test.name, input: `{"target": "node", "identity": {"name": "a", "version": "1"}, "app": "a", "go_module": "example.com/runtime", ` + test.patch + `}`, wantError: true})
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := (generationCase{input: `{"target": "node", "identity": {"name": "a", "version": "1"}, "app": "a", "go_module": "example.com/runtime", ` + test.patch + `}`}).run(t); err == nil {
+				t.Fatal("accepted an invalid generation request")
+			}
+		})
 	}
-	return cases
 }

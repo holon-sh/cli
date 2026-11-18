@@ -32,6 +32,12 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 		if err != nil {
 			return nil, err
 		}
+		if !parsesResponses[request.Target] {
+			for name, tool := range decoded.Tools {
+				tool.Response = nil
+				decoded.Tools[name] = tool
+			}
+		}
 		request.contracts[alias] = decoded
 	}
 	catalogs, err := compileCatalogs(ctx, request, func(c contract) map[string]contractTool { return c.Tools }, request.Target != "go")
@@ -60,6 +66,10 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 	}
 	return files, nil
 }
+
+// parsesResponses holds the targets whose runtime returns the JSON a contract's responses describe;
+// the others type those tools' results as they would without them.
+var parsesResponses = map[string]bool{"node": true, "python": true}
 
 var declaresShared = map[string]func(typ) bool{"node": candidate, "browser": candidate, "python": pythonTypedDict, "go": goStruct}
 

@@ -50,7 +50,7 @@ type Source struct {
 	Server Server
 }
 
-// Server is where a contract comes from: a Path, an Endpoint, a Registry or a *Document.
+// Server is where a contract comes from: a Path, an Endpoint, a Registry, an OpenAPI or a *Document.
 type Server interface{ server() }
 
 // Path is the absolute path of a server entry file, or of a directory holding exactly one.
@@ -66,12 +66,17 @@ type Endpoint string
 // Registry is an MCP registry server version, read from its OCI package's document or its streamable-http remote.
 type Registry protocol.RegistryRef
 
+// OpenAPI is the absolute path of an OpenAPI document, compiled where the generator runs: its tools
+// are the ones om serves for it, and its response schemas type their results.
+type OpenAPI string
+
 func (p Path) String() string      { return p.Dir }
 func (r Registry) String() string  { return r.Name + "@" + r.Version }
 func (d *Document) String() string { return d.Identity.Name + "@" + d.Identity.Version }
 func (Path) server()               {}
 func (Endpoint) server()           {}
 func (Registry) server()           {}
+func (OpenAPI) server()            {}
 func (*Document) server()          {}
 
 // NewEndpoint accepts an HTTP(S) MCP URL without credentials or a fragment.
@@ -87,6 +92,8 @@ func NewRegistry(ref protocol.RegistryRef) (Registry, error) {
 var registryPath = regexp.MustCompile(`^/v0(?:\.1)?/servers/([^/]+)/versions/([^/]+)$`)
 
 // ParseSource reads one [ALIAS=]PATH or URL argument. Paths are resolved against the working directory.
+// A URL is an MCP endpoint or registry server version, a path ending in .json, .yaml or .yml is an
+// OpenAPI document, and any other path is a server entry or its directory.
 func ParseSource(arg string) (Source, error) {
 	var source Source
 	if alias, rest, ok := strings.Cut(arg, "="); ok && appName.MatchString(alias) {
@@ -97,6 +104,9 @@ func ParseSource(arg string) (Source, error) {
 	}
 	path, err := filepath.Abs(arg)
 	source.Server = Path{Dir: path}
+	if slices.Contains([]string{".json", ".yaml", ".yml"}, filepath.Ext(path)) {
+		source.Server = OpenAPI(path)
+	}
 	if u, parseErr := url.Parse(arg); parseErr == nil && (u.Scheme == "http" || u.Scheme == "https") {
 		if m := registryPath.FindStringSubmatch(u.EscapedPath()); m != nil {
 			name, _ := url.PathUnescape(m[1])
