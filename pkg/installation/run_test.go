@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -407,7 +408,8 @@ func TestRunDevRemoteWithoutBuildContext(t *testing.T) {
 
 func TestRunDeployLifecycle(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
+	checkout := t.TempDir()
+	root := filepath.Join(checkout, "prod")
 	document := descriptorDocument("prod")
 	document["icons"] = []any{map[string]any{"src": "https://example.com/icon.png", "theme": "light"}}
 	document["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{
@@ -435,6 +437,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	var existing bool
 	var desired protocol.AppsRequest
 	var written []protocol.App
+	var sent *protocol.Revision
 	var forceConflict, loseResponse bool
 	var rolloutFailure string
 	revision := 7
@@ -501,6 +504,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 					t.Error(err)
 					return
 				}
+				sent = input.Desired.Revision
 				if forceConflict {
 					forceConflict = false
 					for i := range desired.Apps {
@@ -543,6 +547,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 	}
 	mu.Lock()
 	initial := slices.Clone(desired.Apps)
+	if sent != nil {
+		t.Errorf("deploy outside a Git checkout sent revision %+v", sent)
+	}
 	mu.Unlock()
 	steps, err := recipe.Read(os.DirFS(root))
 	if err != nil {
@@ -616,6 +623,20 @@ func TestRunDeployLifecycle(t *testing.T) {
 	}
 	output.Reset()
 	diagnostics.Reset()
+	git := func(args ...string) string {
+		command := exec.Command("git", append([]string{"-C", checkout, "-c", "user.name=test", "-c", "user.email=test@example.com"}, args...)...)
+		command.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+		out, err := command.Output()
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init")
+	git("add", ".")
+	git("commit", "-m", "deploy")
+	head := git("rev-parse", "HEAD")
+	sourceFiles(t, checkout, map[string]string{"notes.md": "outside the app"})
 	mu.Lock()
 	desired.Apps[1].Image = strings.Replace(initial[1].Image, "registry.example/holon/upload/prod", "old-registry.example/prod", 1)
 	mu.Unlock()
@@ -630,12 +651,21 @@ func TestRunDeployLifecycle(t *testing.T) {
 	if desired.Apps[1].Image != initial[1].Image {
 		t.Errorf("deployment retained an obsolete repository: %s", desired.Apps[1].Image)
 	}
+	if !reflect.DeepEqual(sent, &protocol.Revision{Commit: head}) {
+		t.Errorf("deploy from a clean checkout sent revision %+v, want commit %s", sent, head)
+	}
 	forceConflict = true
 	mu.Unlock()
+	sourceFiles(t, root, map[string]string{"server.js": "export const mcp = 2"})
 	err = executeCommand(t.Context(), []string{"deploy", "--file", manifestPath}, &output, nil, runConfig)
 	if err == nil || !strings.Contains(err.Error(), "concurrently") {
 		t.Fatalf("conditional conflict = %v", err)
 	}
+	mu.Lock()
+	if !reflect.DeepEqual(sent, &protocol.Revision{Commit: head, Dirty: true}) {
+		t.Errorf("deploy from a changed checkout sent revision %+v, want commit %s and dirty", sent, head)
+	}
+	mu.Unlock()
 	for _, scenario := range []struct{ name, message string }{
 		{"progress deadline", "ProgressDeadlineExceeded: prod: unready replacement"},
 		{"superseded", "superseded"},

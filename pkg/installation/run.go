@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -23,6 +24,7 @@ import (
 	"k8s.io/utils/clock"
 	"k8s.io/utils/ptr"
 
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 	"github.com/opencontainers/go-digest"
 )
@@ -307,11 +309,16 @@ func runDeploy(ctx context.Context, selection []string, stdout io.Writer, config
 	if err != nil {
 		return err
 	}
+	revision, err := sourceRevision(ctx, resolved.Apps)
+	if err != nil {
+		return err
+	}
 	options.build = &buildSession{manager: manager, output: config.output}
 	desired, err := uploadManifest(ctx, resolved, options)
 	if err = errors.Join(err, options.build.close(ctx)); err != nil {
 		return err
 	}
+	desired.Revision = revision
 	for _, app := range desired.Apps {
 		config.output.working(app.Name)
 	}
@@ -327,6 +334,40 @@ func runDeploy(ctx context.Context, selection []string, stdout io.Writer, config
 		config.output.ready(app.Name)
 	}
 	return config.output.endpoints(stdout, "Ready", manager, ready.Name, resolved.Apps, false)
+}
+
+// sourceRevision reads the source apps' checkout from [git status porcelain v2].
+//
+// [git status porcelain v2]: https://git-scm.com/docs/git-status#_porcelain_format_version_2
+func sourceRevision(ctx context.Context, apps []manifestApp) (*protocol.Revision, error) {
+	top := ""
+	var paths []string
+	for _, app := range apps {
+		if app.Path != "" {
+			top, paths = cmp.Or(top, typegen.CheckoutRoot(app.Path)), append(paths, app.Path)
+		}
+	}
+	if top == "" {
+		return nil, nil
+	}
+	var stderr bytes.Buffer
+	command := exec.CommandContext(ctx, "git", slices.Concat([]string{"-C", top, "status", "--porcelain=v2", "--branch", "--"}, paths)...)
+	command.Stderr = &stderr
+	status, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git status: %w: %s", err, bytes.TrimSpace(stderr.Bytes()))
+	}
+	var revision protocol.Revision
+	for line := range strings.Lines(string(status)) {
+		if commit, ok := strings.CutPrefix(line, "# branch.oid "); ok {
+			revision.Commit = strings.TrimSpace(commit)
+		}
+		revision.Dirty = revision.Dirty || !strings.HasPrefix(line, "# ")
+	}
+	if revision.Commit == "(initial)" {
+		return nil, nil
+	}
+	return &revision, nil
 }
 
 func waitSessionReady(ctx context.Context, manager *Client, accepted protocol.SessionResponse, output *progressOutput) (protocol.SessionResponse, error) {
