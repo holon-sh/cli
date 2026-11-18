@@ -3,7 +3,6 @@ package typegen
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -160,15 +159,7 @@ export const misspelled = createApps({ orders: { endpoint: "mcp:", fetsh: fetch 
 	})
 	t.Run("python", func(t *testing.T) {
 		t.Parallel()
-		app := t.TempDir()
-		venv, err := filepath.Abs("../../tooling/python/.venv")
-		if err == nil {
-			err = os.Symlink(venv, filepath.Join(app, ".venv"))
-		}
-		if python := pythonEnvironment(app); err != nil || exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
-			t.Skip("mypy is not installed in tooling/python/.venv")
-		}
-		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
+		app := pythonApp(t)
 		c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetPy}, Sources: []Source{{Server: document(t, orders)}}}
 		if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 			t.Fatal(err)
@@ -200,8 +191,7 @@ async def use() -> None:
 
 // An OpenAPI document's response schemas type the results of the tools om serves for it.
 func TestOpenAPIResponsesTypeResults(t *testing.T) {
-	app := typeScriptApp(t)
-	put(t, app, "pets.yaml", `openapi: 3.1.1
+	const pets = `openapi: 3.1.1
 info: {title: Pets, version: '1'}
 servers: [{url: 'https://pets.example.test'}]
 paths:
@@ -219,28 +209,57 @@ paths:
 components:
   schemas:
     Pet: {type: object, required: [name], properties: {name: {type: string}, owner: {type: [string, 'null']}}}
-`)
-	source, err := ParseSource("pets=" + filepath.Join(app, "pets.yaml"))
-	if err != nil {
-		t.Fatal(err)
+`
+	generate := func(t *testing.T, app, target string) {
+		t.Helper()
+		put(t, app, "pets.yaml", pets)
+		source, err := ParseSource("pets=" + filepath.Join(app, "pets.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Generate(t.Context(), []Consumer{{Name: "caller", Dir: app, Targets: []string{target}, Sources: []Source{source}}}, Options{}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := Generate(t.Context(), []Consumer{{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{source}}}, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+	t.Run("typescript", func(t *testing.T) {
+		t.Parallel()
+		app := typeScriptApp(t)
+		generate(t, app, TargetTS)
+		put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
 const pet = await apps.pets.tools.getPet({ id: "1" });
 export const name: string = pet.name;
 export const owner: string | null | undefined = pet.owner;
 export const names: string[] = (await apps.pets.tools.listPets({})).map(pet => pet.name);
 export const called = await apps.pets.callTool({ name: "getPet", arguments: { id: "1" } }).then(result => result.resultType === "complete" && !result.isError && 0 satisfies typeof result.structuredContent);
 `)
-	if output, err := check(t, app); err != nil {
-		t.Fatalf("check: %v\n%s", err, output)
-	}
-	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+		if output, err := check(t, app); err != nil {
+			t.Fatalf("check: %v\n%s", err, output)
+		}
+		put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
 export const name = (await apps.pets.tools.getPet({ id: "1" })).nmae;
 `)
-	mustReject(t, app, "Property 'nmae' does not exist")
+		mustReject(t, app, "Property 'nmae' does not exist")
+	})
+	t.Run("python", func(t *testing.T) {
+		t.Parallel()
+		app := pythonApp(t)
+		generate(t, app, TargetPy)
+		put(t, app, "main.py", `from holon.apps import apps
+from holon.client import ToolResult
+async def use() -> None:
+    name: str = (await apps.pets.tools.getPet(id="1"))["name"]
+    names: list[str] = [pet["name"] for pet in await apps.pets.tools.listPets()]
+    called: ToolResult[object] = await apps.pets.call_tool("getPet", id="1")
+`)
+		if output, err := check(t, app); err != nil {
+			t.Fatalf("check: %v\n%s", err, output)
+		}
+		put(t, app, "main.py", `from holon.apps import apps
+async def use() -> None:
+    (await apps.pets.tools.getPet(id="1"))["nmae"]
+`)
+		mustReject(t, app, `has no key "nmae"`)
+	})
 }
 
 func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {
@@ -303,17 +322,7 @@ export const owner: InputTypes["files"]["stat"]["Owner"] = { lgn: "a" };
 	})
 	t.Run("python", func(t *testing.T) {
 		t.Parallel()
-		app := t.TempDir()
-		// The tooling's environment, which has mypy, is the app's, as typeScriptApp lends the compiler.
-		venv, err := filepath.Abs("../../tooling/python/.venv")
-		if err == nil {
-			err = os.Symlink(venv, filepath.Join(app, ".venv"))
-		}
-		python := pythonEnvironment(app)
-		if err != nil || exec.CommandContext(t.Context(), python, "-c", "import mypy").Run() != nil {
-			t.Skip("mypy is not installed in tooling/python/.venv")
-		}
-		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
+		app := pythonApp(t)
 		generateFiles(t, app, TargetPy)
 		put(t, app, "main.py", `from holon.apps import Outputs, OutputTypes, apps
 async def use(walk: Outputs.files.walk, stat: Outputs.files.stat, listed: Outputs.files.list, named: OutputTypes.files.walk.FileInfo) -> None:
@@ -336,7 +345,7 @@ async def use(walk: Outputs.files.walk, stat: Outputs.files.stat, listed: Output
 		}
 		// mypy reads the module without running it, but Python evaluates most of its types on import,
 		// and a caller's annotations too unless it postpones them.
-		load := exec.CommandContext(t.Context(), python, "-c", "import holon.apps as a; a.Outputs.files.walk | None; a.OutputTypes.files.walk.Tree | None; a.OutputTypes.files.walk.Chain | None")
+		load := exec.CommandContext(t.Context(), pythonEnvironment(app), "-c", "import holon.apps as a; a.Outputs.files.walk | None; a.OutputTypes.files.walk.Tree | None; a.OutputTypes.files.walk.Chain | None")
 		load.Dir = app
 		if output, err := load.CombinedOutput(); err != nil {
 			t.Fatalf("generated module failed to import: %v\n%s", err, output)
