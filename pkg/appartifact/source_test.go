@@ -20,20 +20,18 @@ func TestSourceLayer(t *testing.T) {
 	layer := func(name string) ocispec.Descriptor {
 		return content.NewDescriptorFromBytes(ocispec.MediaTypeImageLayer, []byte(name))
 	}
-	system, dependencies, source, bridge := layer("system"), layer("dependencies"), layer("source"), layer("bridge")
+	system, source, bridge := layer("system"), layer("source"), layer("bridge")
 	config, _ := json.Marshal(ocispec.Image{History: []ocispec.History{{CreatedBy: "ADD system /"}, {CreatedBy: `CMD ["sh"]`, EmptyLayer: true}}})
 	configDescriptor := content.NewDescriptorFromBytes(ocispec.MediaTypeImageConfig, config)
 	development, _ := json.Marshal(ocispec.Manifest{Config: configDescriptor, Layers: []ocispec.Descriptor{system}})
-	by := map[digest.Digest]string{dependencies.Digest: "holon deploy", source.Digest: "holon deploy", bridge.Digest: "holon stdio bridge"}
+	by := map[digest.Digest]string{source.Digest: "holon deploy", bridge.Digest: "holon stdio bridge"}
 	for _, test := range []struct {
 		name     string
 		appended []ocispec.Descriptor
 		indexed  bool
 		want     digest.Digest
 	}{
-		{"dependencies and source", []ocispec.Descriptor{dependencies, source}, true, source.Digest},
-		{"source only", []ocispec.Descriptor{source}, true, source.Digest},
-		{"bridge on top", []ocispec.Descriptor{dependencies, source, bridge}, true, source.Digest},
+		{"bridge on top", []ocispec.Descriptor{source, bridge}, true, source.Digest},
 		{"nobody froze", nil, true, ""},
 		{"plain manifest", nil, false, ""},
 	} {
