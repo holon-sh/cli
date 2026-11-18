@@ -69,7 +69,7 @@ func Generate(ctx context.Context, options GenerateRequest) (map[string][]byte, 
 
 // parsesResponses holds the targets whose runtime returns the JSON a contract's responses describe;
 // the others type those tools' results as they would without them.
-var parsesResponses = map[string]bool{"node": true}
+var parsesResponses = map[string]bool{"node": true, "go": true}
 
 var declaresShared = map[string]func(typ) bool{"node": candidate, "browser": candidate, "python": pythonTypedDict, "go": goStruct}
 

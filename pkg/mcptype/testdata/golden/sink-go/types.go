@@ -173,7 +173,7 @@ type SharedRemoveInput = struct {
 	Labels *map[string]json.RawMessage "json:\"labels,omitempty\""
 }
 
-type SharedRemoveOutput = json.RawMessage
+type SharedRemoveOutput = *map[string]json.RawMessage
 
 type SharedSaveInput = struct {
 	A *map[string]json.RawMessage "json:\"a,omitempty\""
@@ -183,7 +183,7 @@ type SharedSaveInput = struct {
 	Labels *map[string]json.RawMessage "json:\"labels,omitempty\""
 }
 
-type SharedSaveOutput = json.RawMessage
+type SharedSaveOutput = *map[string]json.RawMessage
 
 type WithHyphenYInput = map[string]json.RawMessage
 

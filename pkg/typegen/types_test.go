@@ -213,10 +213,9 @@ async def use() -> None:
 	})
 }
 
-// An OpenAPI document's response schemas type the results of the tools om serves for it.
-func TestOpenAPIResponsesTypeResults(t *testing.T) {
-	app := typeScriptApp(t)
-	put(t, app, "pets.yaml", `openapi: 3.1.1
+// petsDocument is an OpenAPI document whose tools return a pet, a list of pets, and a pet or nothing.
+// A pet's toy is a reference with a description, which OpenAPI writes as allOf with one member.
+const petsDocument = `openapi: 3.1.1
 info: {title: Pets, version: '1'}
 servers: [{url: 'https://pets.example.test'}]
 paths:
@@ -231,31 +230,80 @@ paths:
       parameters: [{name: id, in: path, required: true, schema: {type: string}}]
       responses:
         '200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/Pet'}}}}
+    put:
+      operationId: adoptPet
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200': {description: adopted, content: {application/json: {schema: {$ref: '#/components/schemas/Pet'}}}}
+        '204': {description: already adopted}
 components:
   schemas:
-    Pet: {type: object, required: [name], properties: {name: {type: string}, owner: {type: [string, 'null']}}}
-`)
-	source, err := ParseSource("pets=" + filepath.Join(app, "pets.yaml"))
-	if err != nil {
-		t.Fatal(err)
+    Pet: {type: object, required: [name], properties: {name: {type: string}, owner: {type: [string, 'null']}, toy: {allOf: [{$ref: '#/components/schemas/Toy'}], description: Its favourite toy}}}
+    Toy: {type: object, properties: {name: {type: string}}}
+`
+
+// An OpenAPI document's response schemas type the results of the tools om serves for it.
+func TestOpenAPIResponsesTypeResults(t *testing.T) {
+	generate := func(t *testing.T, app, target string) {
+		t.Helper()
+		put(t, app, "pets.yaml", petsDocument)
+		source, err := ParseSource("pets=" + filepath.Join(app, "pets.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Generate(t.Context(), []Consumer{{Name: "caller", Dir: app, Targets: []string{target}, Sources: []Source{source}}}, Options{}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := Generate(t.Context(), []Consumer{{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{source}}}, Options{}); err != nil {
-		t.Fatal(err)
-	}
-	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+	t.Run("typescript", func(t *testing.T) {
+		t.Parallel()
+		app := typeScriptApp(t)
+		generate(t, app, TargetTS)
+		put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
 const pet = await apps.pets.tools.getPet({ id: "1" });
 export const name: string = pet.name;
 export const owner: string | null | undefined = pet.owner;
 export const names: string[] = (await apps.pets.tools.listPets({})).map(pet => pet.name);
 export const called = await apps.pets.callTool({ name: "getPet", arguments: { id: "1" } }).then(result => result.resultType === "complete" && !result.isError && 0 satisfies typeof result.structuredContent);
 `)
-	if output, err := check(t, app); err != nil {
-		t.Fatalf("check: %v\n%s", err, output)
-	}
-	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+		if output, err := check(t, app); err != nil {
+			t.Fatalf("check: %v\n%s", err, output)
+		}
+		put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
 export const name = (await apps.pets.tools.getPet({ id: "1" })).nmae;
 `)
-	mustReject(t, app, "Property 'nmae' does not exist")
+		mustReject(t, app, "Property 'nmae' does not exist")
+	})
+	t.Run("go", func(t *testing.T) {
+		t.Parallel()
+		app := t.TempDir()
+		put(t, app, "go.mod", "module example.com/caller\n\ngo 1.27.0\n")
+		generate(t, app, TargetGo)
+		decodes(t, app, `package holon
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestDecodesResults(t *testing.T) {
+	var pet PetsGetPetOutput
+	if err := json.Unmarshal([]byte(`+"`"+`{"name": "Rex", "owner": null}`+"`"+`), &pet); err != nil || pet.Name != "Rex" || pet.Owner != nil {
+		t.Fatalf("pet = %+v, %v", pet, err)
+	}
+	var pets PetsListPetsOutput
+	if err := json.Unmarshal([]byte(`+"`"+`[{"name": "Rex", "owner": "Ann", "toy": {"name": "ball"}}]`+"`"+`), &pets); err != nil || *pets[0].Owner != "Ann" || *pets[0].Toy.Name != "ball" {
+		t.Fatalf("pets = %+v, %v", pets, err)
+	}
+	var adopted PetsAdoptPetOutput
+	if err := json.Unmarshal([]byte("null"), &adopted); err != nil || adopted != nil {
+		t.Fatalf("adopted = %+v, %v", adopted, err)
+	}
+	// Go types are nominal, so this compiles only if the three tools share Pet.
+	adopted, pet = &pets[0], pets[0]
+}
+`)
+	})
 }
 
 func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {
@@ -376,7 +424,7 @@ async def use(walk: Outputs.files.walk, stat: Outputs.files.stat, listed: Output
 		put(t, app, "go.mod", "module example.com/caller\n\ngo 1.27.0\n")
 		generateFiles(t, app, TargetGo)
 		declaredOnce(t, read(t, app, "holon/types.go"), `json:\"login\"`)
-		put(t, app, "holon/use_test.go", `package holon
+		decodes(t, app, `package holon
 
 import (
 	"encoding/json"
@@ -417,12 +465,18 @@ func TestDecodesEveryDepth(t *testing.T) {
 	_, _, _ = FilesStatOutput{File: &named}, FilesStatInput{File: inputRoot}, self
 }
 `)
-		// holon types check leaves Go to the compiler. Only clients.go needs the SDK. Go has no
-		// dynamic member access, so reading Name at depth also proves a misspelling would not compile.
-		compile := exec.CommandContext(t.Context(), "go", "test", "holon/types.go", "holon/use_test.go")
-		compile.Dir = app
-		if output, err := compile.CombinedOutput(); err != nil {
-			t.Fatalf("generated types do not compile and decode: %v\n%s", err, output)
-		}
 	})
+}
+
+// decodes runs use, a test in a Go app's generated package, against the generated types alone.
+// holon types check leaves Go to the compiler, and only clients.go needs the SDK. Go has no dynamic
+// member access, so a test that reads a field also proves that a misspelling would not compile.
+func decodes(t *testing.T, app, use string) {
+	t.Helper()
+	put(t, app, "holon/use_test.go", use)
+	compile := exec.CommandContext(t.Context(), "go", "test", "holon/types.go", "holon/use_test.go")
+	compile.Dir = app
+	if output, err := compile.CombinedOutput(); err != nil {
+		t.Fatalf("generated types do not compile and decode: %v\n%s", err, output)
+	}
 }
