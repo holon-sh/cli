@@ -32,14 +32,11 @@ func generateGoPackage(request generateRequest, catalogs map[string]catalog) map
 				for _, ref := range shape.declared {
 					// Only a defined type can contain itself, but one defined from json.RawMessage would
 					// lose its methods.
-					format, value := "type %s = %s\n\n", renderGo(ref.value)
-					switch {
-					case ref.cyclic && goRecursive(ref.value):
+					format := "type %s = %s\n\n"
+					if ref.cyclic && goRecursive(ref.value) {
 						format = "type %s %s\n\n"
-					case ref.cyclic:
-						value = "json.RawMessage"
 					}
-					fmt.Fprintf(&declarations, format, ref.name, value)
+					fmt.Fprintf(&declarations, format, ref.name, renderGo(ref.value))
 				}
 				fmt.Fprintf(&declarations, "type %s = %s\n\n", symbols[i], renderGo(shape.value))
 			}

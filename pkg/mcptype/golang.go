@@ -38,57 +38,31 @@ func unique(names map[string]bool, preferred string) string {
 // goRecursive reports whether a recursive type keeps its recursion in Go, which arrays and objects
 // do. The others are unions, intersections and tuples, which decode as raw JSON as usual.
 func goRecursive(value typ) bool {
+	value = goMember(value)
 	return value.kind == kindArray || value.kind == kindObject
+}
+
+// goMember is a type without the unions and intersections of one member around it, which are that
+// member.
+func goMember(value typ) typ {
+	for (value.kind == kindUnion || value.kind == kindIntersection) && len(value.items) == 1 {
+		value = value.items[0]
+	}
+	return value
 }
 
 func goStruct(value typ) bool { return strings.HasPrefix(renderGo(value), "struct") }
 
-// goNilable reports whether renderGo writes a type that holds null itself, by whatever name: raw
-// JSON, or a pointer.
-func goNilable(value typ) bool {
-	switch value.kind {
-	case kindDeclared:
-		if value.ref.cyclic {
-			return !goRecursive(value.ref.value)
-		}
-		return goNilable(value.ref.value)
-	case kindString, kindInteger, kindNumber, kindBoolean, kindArray, kindObject:
-		return false
-	case kindLiteral:
-		switch value.literal.(type) {
-		case string, bool, json.Number:
-			return false
-		}
-	case kindUnion, kindIntersection:
-		if len(value.items) == 1 {
-			return goNilable(value.items[0])
-		}
+// goRawJSON reports whether a type decodes as raw JSON, by whatever name.
+func goRawJSON(value typ) bool {
+	for value.kind == kindDeclared && !value.ref.cyclic {
+		value = value.ref.value
 	}
-	return true
-}
-
-// goPointer renders a type that may also be null or absent: a pointer, unless it holds null itself.
-func goPointer(value typ) string {
-	if goNilable(value) {
-		return renderGo(value)
-	}
-	return "*" + renderGo(value)
-}
-
-// goNullable reports the one type besides null that a union allows, if it allows no other. Go
-// declares no other unions, which decode as raw JSON.
-func goNullable(value typ) (typ, bool) {
-	if value.kind != kindUnion || len(value.items) != 2 {
-		return typ{}, false
-	}
-	if value.items[0].kind == kindNull {
-		return value.items[1], true
-	}
-	return value.items[0], value.items[1].kind == kindNull
+	return renderGo(value) == "json.RawMessage"
 }
 
 func renderGo(value typ) string {
-	switch value.kind {
+	switch value = goMember(value); value.kind {
 	case kindDeclared:
 		if value.ref.cyclic && !goRecursive(value.ref.value) {
 			return "json.RawMessage"
@@ -108,13 +82,6 @@ func renderGo(value typ) string {
 			return "bool"
 		case json.Number:
 			return "json.Number"
-		}
-	case kindUnion, kindIntersection:
-		if len(value.items) == 1 {
-			return renderGo(value.items[0])
-		}
-		if other, ok := goNullable(value); ok {
-			return goPointer(other)
 		}
 	case kindArray:
 		return "[]" + renderGo(value.items[0])
@@ -137,13 +104,12 @@ func renderGo(value typ) string {
 				return "map[string]json.RawMessage"
 			}
 			member := value.fields[name]
-			render := renderGo
+			rendered := renderGo(member.value)
 			tagName := name
 			// A struct cannot contain a recursive type by value, since that type may contain the struct.
-			if !member.required || member.value.kind == kindDeclared && member.value.ref.cyclic {
-				render = goPointer
+			if (!member.required || member.value.kind == kindDeclared && member.value.ref.cyclic) && !goRawJSON(member.value) {
+				rendered = "*" + rendered
 			}
-			rendered := render(member.value)
 			if !member.required {
 				tagName += ",omitempty"
 			}
