@@ -340,18 +340,18 @@ func runDeploy(ctx context.Context, selection []string, stdout io.Writer, config
 //
 // [git status porcelain v2]: https://git-scm.com/docs/git-status#_porcelain_format_version_2
 func sourceRevision(ctx context.Context, apps []manifestApp) (*protocol.Revision, error) {
-	top := ""
-	var paths []string
+	var paths, checkouts []string
 	for _, app := range apps {
 		if app.Path != "" {
-			top, paths = cmp.Or(top, typegen.CheckoutRoot(app.Path)), append(paths, app.Path)
+			paths, checkouts = append(paths, app.Path), append(checkouts, typegen.CheckoutRoot(app.Path))
 		}
 	}
-	if top == "" {
+	slices.Sort(checkouts)
+	if checkouts = slices.Compact(checkouts); len(checkouts) != 1 || checkouts[0] == "" {
 		return nil, nil
 	}
 	var stderr bytes.Buffer
-	command := exec.CommandContext(ctx, "git", slices.Concat([]string{"-C", top, "status", "--porcelain=v2", "--branch", "--"}, paths)...)
+	command := exec.CommandContext(ctx, "git", slices.Concat([]string{"-C", checkouts[0], "status", "--porcelain=v2", "--branch", "--untracked-files=normal", "--"}, paths)...)
 	command.Stderr = &stderr
 	status, err := command.Output()
 	if err != nil {
