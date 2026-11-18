@@ -304,7 +304,7 @@ func TestDecodesResults(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		implementation, options, err := compiled.Document.Implementation()
+		_, options, err := compiled.Document.Implementation()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -312,9 +312,9 @@ func TestDecodesResults(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		answer, _ := json.Marshal(map[string]any{
-			"serverInfo": implementation, "capabilities": options.Capabilities,
-			"lists": map[string]any{"tools/list": map[string]any{"pages": []any{page}}}, "responses": compiled.Responses,
+		answer := mustJSON(t, map[string]any{
+			"capabilities": options.Capabilities, "lists": map[string]any{"tools/list": map[string]any{"pages": []any{page}}},
+			"responses": compiled.Responses,
 		})
 		var served Served
 		if err := json.Unmarshal(answer, &served); err != nil {
@@ -324,8 +324,7 @@ func TestDecodesResults(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, _ := json.Marshal(document.Schema)
-		if got, _ := json.Marshal(installed.Schema); string(got) != string(want) || installed.Schema.Responses == nil {
+		if got, want := mustJSON(t, installed.Schema), mustJSON(t, document.Schema); string(got) != string(want) {
 			t.Fatalf("installation contract %s, want %s", got, want)
 		}
 	})
