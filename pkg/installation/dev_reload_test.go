@@ -132,7 +132,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 		inherited := slices.ContainsFunc(f.served, func(served protocol.App) bool { return served.Name == app && served.Inherited })
 		f.mu.Unlock()
 		if inherited {
-			installationtest.WriteJSON(w, json.RawMessage(strings.Replace(servedContract, `"lookup"`, `"lookup_`+app+`"`, 1)))
+			installationtest.WriteJSON(w, json.RawMessage(servedContract))
 			return
 		}
 		if !ok {
@@ -181,7 +181,8 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 				return
 			case tool == protocol.ToolCreateSession:
 				f.creates++
-				f.served, f.running = input.Apps, map[string][]byte{}
+				f.served = append(input.Apps, protocol.App{Name: "linear", Inherited: true, Remote: &protocol.Remote{URL: "https://linear.example/mcp"}})
+				f.running = map[string][]byte{}
 				if f.ambiguous {
 					panic(http.ErrAbortHandler)
 				}
@@ -425,7 +426,7 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			if reloads := len(f.reloadRequests()) - reloaded; reloads != test.reloads {
 				t.Fatalf("reloads = %d, want %d", reloads, test.reloads)
 			}
-			if names := f.apps(); !slices.Equal(names, append([]string{"alpha"}, test.apps...)) {
+			if names := f.apps(); !slices.Equal(names, slices.Concat([]string{"alpha"}, test.apps, []string{"linear"})) {
 				t.Fatalf("session apps = %v", names)
 			}
 			failed := strings.Contains(f.stderr.String(), "alpha failed")
@@ -470,7 +471,6 @@ func TestDevResumesTheAppsAnEarlierRunStarted(t *testing.T) {
 
 func TestDevAppliesProjectChanges(t *testing.T) {
 	f := startReloadFixture(t, true)
-	f.update(func() { f.served = append(f.served, protocol.App{Name: "linear", Inherited: true}) })
 	for _, step := range []struct {
 		files        map[string]string
 		fail         bool
@@ -670,13 +670,13 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 			sends: []send{{}, {page: true}},
 		},
 		{
-			name: "a dependency chain starts each server with the clients of the apps it requires", app: "gamma", client: "generated/holon-sh/index.mjs",
+			name: "a dependency chain starts each server with the clients of the apps it requires, its session's own among them", app: "gamma", client: "generated/holon-sh/index.mjs",
 			files: map[string]string{
 				manifestFileName:     gammaManifest + "- name: beta\n  access: {server: {}}\n  path: ./beta\n",
 				"beta/server.json":   strings.ReplaceAll(requiresAlpha, "/gamma", "/beta"),
 				"beta/server.ts":     "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
 				"beta/package.json":  `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
-				"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha"`, `"beta"`),
+				"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"beta":{},"linear":{}`),
 				"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
 				"gamma/package.json": `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-sh":"0.0.1","holon-ui":"0.0.1"}}`,
 			},
