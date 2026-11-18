@@ -18,7 +18,7 @@ Every `holon` process of one person shares one credential file per installation:
 
 ## What the model describes
 
-Sync commit: `54f44c8`. The model was last confirmed to describe the code at this commit.
+Sync commit: `95ff746`. The model was last confirmed to describe the code at this commit.
 
 Each action in `Credentials.tla` is one file read, one atomic rename, or one request to the identity provider.
 
@@ -39,11 +39,11 @@ The variables `identity`, `served`, `started`, `spent` and `stale` exist only so
 A change needs the check when either command prints anything you cannot rule out:
 
 ```sh
-git diff 54f44c8 -- pkg/installation/auth.go pkg/installation/credentials.go
+git diff 95ff746 -- pkg/installation/auth.go pkg/installation/credentials.go
 ```
 
 ```sh
-git diff 54f44c8 -G'writeState|withLock|loadCredentials|readState|removeCredentialFile|statePath|m\.state' --stat -- . ':!pkg/installation/auth.go' ':!pkg/installation/credentials.go' ':!*_test.go'
+git diff 95ff746 -G'writeState|withLock|loadCredentials|readState|removeCredentialFile|statePath|m\.state' --stat -- . ':!pkg/installation/auth.go' ':!pkg/installation/credentials.go' ':!*_test.go'
 ```
 
 The first shows edits to the covered code. The second shows other files that started to touch the file or `Client.state`. A change that only touches discovery, token validation, device-flow prompts, error wording or service-account tokens (`machineToken`) does not alter anything the model describes.
