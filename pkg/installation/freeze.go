@@ -25,6 +25,7 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 
+	"github.com/holon-sh/cli/pkg/appartifact"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/ociimage"
 	"github.com/holon-sh/cli/pkg/recipe"
@@ -264,7 +265,7 @@ func assembleImage(
 		}
 		configureImage(image, frozenConfig.Config.WorkingDir, start, labels)
 		for i, layer := range frozenManifest.Layers {
-			image.AppendLayer(layer, frozenConfig.RootFS.DiffIDs[i], "holon deploy")
+			image.AppendLayer(layer, frozenConfig.RootFS.DiffIDs[i], appartifact.FrozenBy)
 		}
 		return mounts.Wait()
 	})
