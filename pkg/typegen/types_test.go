@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/om/compile"
 )
 
 // fileInfo is a recursive entry holding an owner. Tools walk and stat both define it, in their inputs
@@ -198,10 +199,10 @@ async def use() -> None:
 	})
 }
 
-// An OpenAPI document's response schemas type the results of the tools om serves for it.
+// An OpenAPI document's response schemas type the results of the tools om serves for it, whether the generator compiles
+// the document or reads the contract an installation serving it answers.
 func TestOpenAPIResponsesTypeResults(t *testing.T) {
-	app := typeScriptApp(t)
-	put(t, app, "pets.yaml", `openapi: 3.1.1
+	const pets = `openapi: 3.1.1
 info: {title: Pets, version: '1'}
 servers: [{url: 'https://pets.example.test'}]
 paths:
@@ -219,28 +220,59 @@ paths:
 components:
   schemas:
     Pet: {type: object, required: [name], properties: {name: {type: string}, owner: {type: [string, 'null']}}}
-`)
-	source, err := ParseSource("pets=" + filepath.Join(app, "pets.yaml"))
+`
+	dir := t.TempDir()
+	put(t, dir, "pets.yaml", pets)
+	document, err := ParseSource("pets=" + filepath.Join(dir, "pets.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Generate(t.Context(), []Consumer{{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{source}}}, Options{}); err != nil {
+	compiled, err := compile.Compile(t.Context(), []byte(pets), nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+	implementation, options, err := compiled.Document.Implementation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := compiled.Document.Tools("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, _ := json.Marshal(map[string]any{
+		"serverInfo": implementation, "capabilities": options.Capabilities,
+		"lists": map[string]any{"tools/list": map[string]any{"pages": []any{page}}}, "responses": compiled.Responses,
+	})
+	var served Served
+	if err := json.Unmarshal(answer, &served); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := served.Document("pets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, source := range map[string]Source{"the document": document, "an installation serving it": {Alias: "pets", Server: installed}} {
+		t.Run(name, func(t *testing.T) {
+			app := typeScriptApp(t)
+			if err := Generate(t.Context(), []Consumer{{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{source}}}, Options{}); err != nil {
+				t.Fatal(err)
+			}
+			put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
 const pet = await apps.pets.tools.getPet({ id: "1" });
 export const name: string = pet.name;
 export const owner: string | null | undefined = pet.owner;
 export const names: string[] = (await apps.pets.tools.listPets({})).map(pet => pet.name);
 export const called = await apps.pets.callTool({ name: "getPet", arguments: { id: "1" } }).then(result => result.resultType === "complete" && !result.isError && 0 satisfies typeof result.structuredContent);
 `)
-	if output, err := check(t, app); err != nil {
-		t.Fatalf("check: %v\n%s", err, output)
-	}
-	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+			if output, err := check(t, app); err != nil {
+				t.Fatalf("check: %v\n%s", err, output)
+			}
+			put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
 export const name = (await apps.pets.tools.getPet({ id: "1" })).nmae;
 `)
-	mustReject(t, app, "Property 'nmae' does not exist")
+			mustReject(t, app, "Property 'nmae' does not exist")
+		})
+	}
 }
 
 func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {

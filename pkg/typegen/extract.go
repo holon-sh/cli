@@ -24,11 +24,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Served is what a running server answers to initialize and to each catalog list.
+// Served is what a running server answers to initialize and to each catalog list. An installation serving an
+// OpenAPI document adds the Responses the document's response schemas compile to, as [mcpcontract.Contract] has them.
 type Served struct {
 	ServerInfo   json.RawMessage         `json:"serverInfo"`
 	Capabilities *mcp.ServerCapabilities `json:"capabilities"`
 	Lists        map[string]ServedList   `json:"lists"`
+	Responses    json.RawMessage         `json:"responses,omitempty"`
 }
 
 type ServedList struct {
