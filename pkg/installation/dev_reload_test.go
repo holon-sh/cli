@@ -36,6 +36,8 @@ const (
 	alphaManifest = "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n"
 	betaRemote    = "- name: beta\n  access: {server: {}}\n  remote: {url: https://upstream.example/mcp}\n"
 	alphaLock     = "version = 1\n\n[[package]]\nname = \"alpha\"\nversion = \"1\"\nsource = { virtual = \".\" }\n"
+	requiresAlpha = `{"name":"example.com/gamma","version":"1","description":"gamma","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"alpha":{}}}}}}`
+	gammaManifest = alphaManifest + "- name: gamma\n  access: {server: {}}\n  path: ./gamma\n"
 )
 
 const installed = "added 1 package\n"
@@ -124,9 +126,15 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	h := newRunHarness(t)
 	f.harness = h
 	h.control.Handle([]string{protocol.ToolGetAppContract}, nil, func(w http.ResponseWriter, r *http.Request) {
+		app := installationtest.ToolArguments(r)["app"].(string)
 		f.mu.Lock()
-		running, ok := f.running[installationtest.ToolArguments(r)["app"].(string)]
+		running, ok := f.running[app]
+		inherited := slices.ContainsFunc(f.served, func(served protocol.App) bool { return served.Name == app && served.Inherited })
 		f.mu.Unlock()
+		if inherited {
+			installationtest.WriteJSON(w, json.RawMessage(servedContract))
+			return
+		}
 		if !ok {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -173,7 +181,8 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 				return
 			case tool == protocol.ToolCreateSession:
 				f.creates++
-				f.served, f.running = input.Apps, map[string][]byte{}
+				f.served = append(input.Apps, protocol.App{Name: "linear", Inherited: true, Remote: &protocol.Remote{URL: "https://linear.example/mcp"}})
+				f.running = map[string][]byte{}
 				if f.ambiguous {
 					panic(http.ErrAbortHandler)
 				}
@@ -417,7 +426,7 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			if reloads := len(f.reloadRequests()) - reloaded; reloads != test.reloads {
 				t.Fatalf("reloads = %d, want %d", reloads, test.reloads)
 			}
-			if names := f.apps(); !slices.Equal(names, append([]string{"alpha"}, test.apps...)) {
+			if names := f.apps(); !slices.Equal(names, slices.Concat([]string{"alpha"}, test.apps, []string{"linear"})) {
 				t.Fatalf("session apps = %v", names)
 			}
 			failed := strings.Contains(f.stderr.String(), "alpha failed")
@@ -462,7 +471,6 @@ func TestDevResumesTheAppsAnEarlierRunStarted(t *testing.T) {
 
 func TestDevAppliesProjectChanges(t *testing.T) {
 	f := startReloadFixture(t, true)
-	f.update(func() { f.served = append(f.served, protocol.App{Name: "linear", Inherited: true}) })
 	for _, step := range []struct {
 		files        map[string]string
 		fail         bool
@@ -642,11 +650,7 @@ func overlayEntries(t *testing.T, overlay []byte) map[string][]byte {
 }
 
 func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
-	const (
-		ui            = "generated/holon-ui/index.mjs"
-		requiresAlpha = `{"name":"example.com/gamma","version":"1","description":"gamma","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"alpha":{}}}}}}`
-		gammaManifest = alphaManifest + "- name: gamma\n  access: {server: {}}\n  path: ./gamma\n"
-	)
+	const ui = "generated/holon-ui/index.mjs"
 	type send struct{ clients, page bool }
 	for _, test := range []struct {
 		name        string
@@ -666,13 +670,13 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 			sends: []send{{}, {page: true}},
 		},
 		{
-			name: "a dependency chain starts each server with the clients of the apps it requires", app: "gamma", client: "generated/holon-sh/index.mjs",
+			name: "a dependency chain starts each server with the clients of the apps it requires, its session's own among them", app: "gamma", client: "generated/holon-sh/index.mjs",
 			files: map[string]string{
 				manifestFileName:     gammaManifest + "- name: beta\n  access: {server: {}}\n  path: ./beta\n",
 				"beta/server.json":   strings.ReplaceAll(requiresAlpha, "/gamma", "/beta"),
 				"beta/server.ts":     "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
 				"beta/package.json":  `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
-				"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha"`, `"beta"`),
+				"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"beta":{},"linear":{}`),
 				"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
 				"gamma/package.json": `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-sh":"0.0.1","holon-ui":"0.0.1"}}`,
 			},

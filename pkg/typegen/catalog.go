@@ -106,6 +106,15 @@ func ServedContract(ctx context.Context, endpoint string, client *http.Client) (
 	return served, err
 }
 
+// Document is the contract s describes, under name.
+func (s *Served) Document(name string) (*Document, error) {
+	contract, err := listCatalog(s.Capabilities, s.pages)
+	if err != nil {
+		return nil, err
+	}
+	return NewDocument(&mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: name, Version: unversioned}, Schema: contract})
+}
+
 // listServer lists what the server at endpoint serves, and the contract that makes. It talks to the server under a
 // context of its own that ends with ctx: go-sdk takes the protocol version of an MCP request it serves from the
 // context, which a listing made inside a tool call would otherwise send.

@@ -42,15 +42,26 @@ func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error
 		if !running {
 			continue
 		}
-		request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: d.session.Name}, App: app.Name}
-		answer := &typegen.Served{}
-		if err := d.manager.Call(ctx, d.options.plane, protocol.ToolGetAppContract, request, answer); err == nil {
+		if answer, err := d.manager.appContract(ctx, d.session.Name, app.Name); err == nil {
 			served[app.Name] = answer
 		} else if sent != "" {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
 	}
+	for _, name := range d.manifest.installed() {
+		answer, err := d.manager.appContract(ctx, d.session.Name, name)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		served[name] = answer
+	}
 	return served, nil
+}
+
+func (m *Client) appContract(ctx context.Context, session, app string) (*typegen.Served, error) {
+	answer := &typegen.Served{}
+	request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: session}, App: app}
+	return answer, m.Call(ctx, ControlPlane(session), protocol.ToolGetAppContract, request, answer)
 }
 
 var (

@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/holon-sh/cli/internal/clientutil"
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
 
@@ -85,7 +86,7 @@ func (t *controlTransport) RoundTrip(request *http.Request) (*http.Response, err
 		return nil, err
 	}
 	defer response.Body.Close()
-	data, err := clientutil.ReadLimited(response.Body, 2*maxHTTPBody)
+	data, err := clientutil.ReadLimited(response.Body, 2*typegen.MaxContractBytes+maxHTTPBody)
 	if errors.Is(err, clientutil.ErrContentTooLarge) {
 		return nil, errResponseTooLarge
 	}

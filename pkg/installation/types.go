@@ -112,27 +112,6 @@ func prepareManifestTypes(
 			}
 		}
 	}
-	for _, app := range manifest.Apps {
-		if app.resolved.Remote == nil || !needed[app.Name] {
-			continue
-		}
-		document, err := typegen.ResolveDocument(ctx, typegen.Source{Server: typegen.Endpoint(app.resolved.Remote.URL)}, typeOptions)
-		if err != nil {
-			return manifestSpec{}, nil, err
-		}
-		byApp[app.Name] = document
-	}
-
-	for i := range consumers {
-		app, _ := manifest.app(consumers[i].Name)
-		for _, name := range app.resolved.Requires {
-			server, ok := byApp[name]
-			if !ok {
-				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s carries no MCP contract to type calls against", consumers[i].Name, name)
-			}
-			consumers[i].Sources = append(consumers[i].Sources, typegen.Source{Alias: name, Server: server})
-		}
-	}
 	if options.plane == protocol.DevPlane {
 		if err := typegen.MapClients(consumers, typeOptions); err != nil {
 			return manifestSpec{}, nil, err
@@ -144,13 +123,47 @@ func prepareManifestTypes(
 			return manifestSpec{}, nil, err
 		}
 	}
+	if options.plane == protocol.DevPlane && served == nil {
+		return manifest, remove, nil
+	}
+	for _, app := range manifest.Apps {
+		if app.resolved.Remote == nil || !needed[app.Name] {
+			continue
+		}
+		document, err := typegen.ResolveDocument(ctx, typegen.Source{Server: typegen.Endpoint(app.resolved.Remote.URL)}, typeOptions)
+		if err != nil {
+			return manifestSpec{}, nil, err
+		}
+		byApp[app.Name] = document
+	}
+	installed := manifest.installed()
+	for _, name := range installed {
+		answer := served[name]
+		var err error
+		if options.plane == protocol.AdminPlane && needed[name] {
+			answer, err = options.manager.appContract(ctx, protocol.ProductionName, name)
+		}
+		if err == nil && answer != nil {
+			byApp[name], err = answer.Document(name)
+		}
+		if err != nil {
+			return manifestSpec{}, nil, fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	for i := range consumers {
+		app, _ := manifest.app(consumers[i].Name)
+		for _, name := range app.resolved.Requires {
+			server, ok := byApp[name]
+			if !ok {
+				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s carries no MCP contract to type calls against", consumers[i].Name, name)
+			}
+			consumers[i].Sources = append(consumers[i].Sources, typegen.Source{Alias: name, Server: server})
+		}
+	}
 	if options.build != nil {
 		if err := options.build.start(ctx, pathApps); err != nil {
 			return manifestSpec{}, nil, err
 		}
-	}
-	if options.plane == protocol.DevPlane && served == nil {
-		consumers = nil
 	}
 	prepared, err := typegen.Prepare(ctx, consumers, prepareOptions)
 	if err != nil {
@@ -181,7 +194,6 @@ func prepareManifestTypes(
 			return manifestSpec{}, nil, err
 		}
 	}
-
 	for _, app := range manifest.Apps {
 		requires := ptr.Deref(metadata[app.Name], mcpcontract.Metadata{}).Requires
 		for _, name := range slices.Sorted(maps.Keys(requires)) {
@@ -193,11 +205,14 @@ func prepareManifestTypes(
 			if err != nil {
 				return manifestSpec{}, nil, err
 			}
-			if len(changes) != 0 {
-				return manifestSpec{}, nil, fmt.Errorf(
-					"%s has changed the typed contract expected by %s (%s); include both in holon deploy %s %s (or rebuild and publish the caller)",
-					name, app.Name, strings.Join(changes, ", "), name, app.Name)
+			if len(changes) == 0 {
+				continue
 			}
+			advice := fmt.Sprintf("include both in holon deploy %s %s (or rebuild and publish the caller)", name, app.Name)
+			if slices.Contains(installed, name) {
+				advice = "rebuild and publish the caller"
+			}
+			return manifestSpec{}, nil, fmt.Errorf("%s has changed the typed contract expected by %s (%s); %s", name, app.Name, strings.Join(changes, ", "), advice)
 		}
 	}
 	return manifest, remove, nil

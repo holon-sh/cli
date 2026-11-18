@@ -39,13 +39,12 @@ type Descriptor struct {
 }
 
 type HolonMetadata struct {
-	Requires map[string]Requirement `description:"Dependencies keyed by app name. In a project each is the project's app of that name, so {} is enough; outside one, a published name and version or a url names the server." json:"requires"`
+	Requires map[string]Requirement `description:"Dependencies keyed by app name. In a project each is the project's app of that name, and {} is enough; {} also names an app the project does not declare that holon dev and holon deploy find on the installation. Outside a project, a published name and version or a url names the server." json:"requires"`
 
 	Egress wire.Egress `description:"Outbound TCP destinations: DNS names or IP addresses; {NAME} is a non-secret input." json:"egress,omitzero" nullable:"false"`
 }
 
-// Requirement is one sh.holon.requires entry: empty, a published name and version, or a URL. In a
-// project the dependency is the project's app of that name whatever the entry says.
+// Requirement is one sh.holon.requires entry: empty, a published name and version, or a URL.
 type Requirement struct {
 	wire.RegistryRef
 
