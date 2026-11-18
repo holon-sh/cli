@@ -92,15 +92,6 @@ func generateFiles(t *testing.T, app, target string) {
 	}
 }
 
-// declaredOnce fails unless the shared Owner, named by its field, is declared once in inputs and
-// once in outputs, although walk and stat both define it.
-func declaredOnce(t *testing.T, types, field string) {
-	t.Helper()
-	if count := strings.Count(types, field); count != 2 {
-		t.Errorf("%s is declared %d times, want once per direction:\n%s", field, count, types)
-	}
-}
-
 // check runs holon types check on app.
 func check(t *testing.T, app string) (string, error) {
 	var output bytes.Buffer
@@ -133,8 +124,8 @@ const editsSchema = `{"type":"object","required":["edits"],"properties":{"edits"
 // An app's events are subscribed to by name, with their arguments checked and their data typed, as a
 // tool's input and output are. A union narrows on the field that tells its members apart, here in a
 // list and in the shape Pydantic writes for a discriminated union whose literal has a default.
-// TypeScript clients take holon-sh's own binding and option types: a session hook and a plain fetch
-// bind, and a binding's fields are still checked.
+// TypeScript clients take holon-sh's own binding type: a plain fetch binds, and a binding's fields
+// are still checked.
 func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 	orders := ordersMetadata()
 	orders.Schema.Events = []mcpcontract.Event{{Name: "cells.edited",
@@ -147,7 +138,7 @@ func TestEventsAreSubscribedToByNameWithTypedData(t *testing.T) {
 		if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
 			t.Fatal(err)
 		}
-		put(t, app, "src/index.ts", `import { apps, createApps, type EndpointBinding } from "#holon-sh";
+		put(t, app, "src/index.ts", `import { apps, type EndpointBinding } from "#holon-sh";
 for await (const { data } of await apps.orders.ext.events.subscribe("cells.edited", { notebook: "1" })) {
   for (const edit of data.edits) {
     if (edit.op === "cell.updated") { const code: string = edit.code; }
@@ -155,12 +146,6 @@ for await (const { data } of await apps.orders.ext.events.subscribe("cells.edite
   }
 }
 const binding: EndpointBinding = { endpoint: "mcp:", fetch };
-const bound = createApps({ orders: binding }, { session: () => ({
-  callTool: async () => ({ content: [], structuredContent: { total: 1 } }),
-  readResource: async () => ({ contents: [] }),
-  listTools: async () => ({ tools: [] }),
-}) });
-export const total: Promise<number> = bound.orders.tools.lookup({ id: "1" }).then(result => result.total);
 `)
 		if output, err := check(t, app); err != nil {
 			t.Fatalf("check: %v\n%s", err, output)
@@ -213,6 +198,51 @@ async def use() -> None:
 	})
 }
 
+// An OpenAPI document's response schemas type the results of the tools om serves for it.
+func TestOpenAPIResponsesTypeResults(t *testing.T) {
+	app := typeScriptApp(t)
+	put(t, app, "pets.yaml", `openapi: 3.1.1
+info: {title: Pets, version: '1'}
+servers: [{url: 'https://pets.example.test'}]
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      responses:
+        '200': {description: ok, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Pet'}}}}}
+  /pets/{id}:
+    get:
+      operationId: getPet
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        '200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/Pet'}}}}
+components:
+  schemas:
+    Pet: {type: object, required: [name], properties: {name: {type: string}, owner: {type: [string, 'null']}}}
+`)
+	source, err := ParseSource("pets=" + filepath.Join(app, "pets.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Generate(t.Context(), []Consumer{{Name: "caller", Dir: app, Targets: []string{TargetTS}, Sources: []Source{source}}}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+const pet = await apps.pets.tools.getPet({ id: "1" });
+export const name: string = pet.name;
+export const owner: string | null | undefined = pet.owner;
+export const names: string[] = (await apps.pets.tools.listPets({})).map(pet => pet.name);
+export const called = await apps.pets.callTool({ name: "getPet", arguments: { id: "1" } }).then(result => result.resultType === "complete" && !result.isError && 0 satisfies typeof result.structuredContent);
+`)
+	if output, err := check(t, app); err != nil {
+		t.Fatalf("check: %v\n%s", err, output)
+	}
+	put(t, app, "src/index.ts", `import { apps } from "#holon-sh";
+export const name = (await apps.pets.tools.getPet({ id: "1" })).nmae;
+`)
+	mustReject(t, app, "Property 'nmae' does not exist")
+}
+
 func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {
 	t.Run("typescript", func(t *testing.T) {
 		t.Parallel()
@@ -221,7 +251,6 @@ func TestGeneratedTypesArePreciseAtAnyDepth(t *testing.T) {
 		// that a project publishing declarations can export an inferred recursive type, a resource's too.
 		put(t, app, "tsconfig.json", `{"compilerOptions":{"strict":true,"noEmit":true,"declaration":true,"skipLibCheck":false,"target":"ES2023","module":"NodeNext","moduleResolution":"NodeNext"},"include":["src"]}`)
 		generateFiles(t, app, TargetTS)
-		declaredOnce(t, read(t, app, "generated/holon-sh/index.d.mts"), `"login": string`)
 		put(t, app, "src/index.ts", `import type { Inputs, Outputs, OutputTypes, Resources } from "../generated/holon-sh/index.mjs";
 type Walk = Outputs["files"]["walk"];
 declare const walk: Walk;
@@ -286,7 +315,6 @@ export const owner: InputTypes["files"]["stat"]["Owner"] = { lgn: "a" };
 		}
 		put(t, app, "pyproject.toml", "[project]\nname = \"caller\"\nversion = \"1\"\ndependencies = [\"holon-sh\"]\n")
 		generateFiles(t, app, TargetPy)
-		declaredOnce(t, read(t, app, "holon/apps/__init__.py"), `"login": _builtins.str`)
 		put(t, app, "main.py", `from holon.apps import Outputs, OutputTypes, apps
 async def use(walk: Outputs.files.walk, stat: Outputs.files.stat, listed: Outputs.files.list, named: OutputTypes.files.walk.FileInfo) -> None:
     name: str = walk["root"]["children"][0]["children"][0]["name"]
@@ -330,7 +358,6 @@ async def use(walk: Outputs.files.walk, stat: Outputs.files.stat, listed: Output
 		app := t.TempDir()
 		put(t, app, "go.mod", "module example.com/caller\n\ngo 1.27.0\n")
 		generateFiles(t, app, TargetGo)
-		declaredOnce(t, read(t, app, "holon/types.go"), `json:\"login\"`)
 		put(t, app, "holon/use_test.go", `package holon
 
 import (

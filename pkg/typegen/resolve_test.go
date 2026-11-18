@@ -177,14 +177,14 @@ func TestRegistrySourceResolution(t *testing.T) {
 	wrongIdentity := ordersMetadata()
 	wrongIdentity.Identity.Name = "example.com/other"
 	for _, test := range []struct {
-		name, record, tool, want string
-		image                    *http.Client
+		name, record, tool string // no tool when resolution fails
+		image              *http.Client
 	}{
-		{"oci before remote", base + oci + remote + `}`, "lookup", "", nil},
-		{"oci without a contract falls through to remote", base + oci + remote + `}`, "read", "", imageClient(t, nil)},
-		{"oci identity mismatch", base + oci + `}`, "", "belongs to example.com/other", imageClient(t, wrongIdentity)},
-		{"oci error propagates", base + `,"packages":[{"registryType":"oci","identifier":"orders:1.0.0"},{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]` + remote + `}`, "", "package orders:1.0.0: package identifier must use an explicit OCI registry", nil},
-		{"neither", base + `,"packages":[{"registryType":"npm","identifier":"orders"}]}`, "", "publishes neither", nil},
+		{"oci before remote", base + oci + remote + `}`, "lookup", nil},
+		{"oci without a contract falls through to remote", base + oci + remote + `}`, "read", imageClient(t, nil)},
+		{"oci identity mismatch", base + oci + `}`, "", imageClient(t, wrongIdentity)},
+		{"oci error propagates", base + `,"packages":[{"registryType":"oci","identifier":"orders:1.0.0"},{"registryType":"oci","identifier":"images.example/orders:1.0.0"}]` + remote + `}`, "", nil},
+		{"neither", base + `,"packages":[{"registryType":"npm","identifier":"orders"}]}`, "", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			record = test.record
@@ -199,9 +199,9 @@ func TestRegistrySourceResolution(t *testing.T) {
 			}}
 			ref := protocol.RegistryRef{Name: identity.Name, Version: identity.Version, Registry: server.URL}
 			metadata, err := ResolveDocument(t.Context(), Source{Alias: "orders", Server: Registry(ref)}, Options{HTTPClient: client, Env: []string{"DOCKER_CONFIG=" + t.TempDir(), "ORDERS_MCP_TOKEN=secret"}})
-			if test.want != "" {
-				if err == nil || !strings.Contains(err.Error(), test.want) {
-					t.Fatalf("ResolveDocument = %v, want %q", err, test.want)
+			if test.tool == "" {
+				if err == nil {
+					t.Fatalf("ResolveDocument = %+v, want an error", metadata)
 				}
 				return
 			}

@@ -3,6 +3,7 @@ package mcptype
 import (
 	"encoding/json"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -70,6 +71,33 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	}
 	if got.PlainConnects {
 		t.Error("a page without its own app has connect")
+	}
+}
+
+// Node clients tell the runtime only which tools return the JSON a contract's responses describe;
+// every other target generates what it would without them.
+func TestOnlyNodeClientsTypeResponses(t *testing.T) {
+	tools := `[{"name":"get_pet","inputSchema":{"type":"object"}}]`
+	responses := `,"responses":{"properties":{"get_pet":{"$ref":"#/$defs/Pet"}},"$defs":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}}}`
+	generate := func(target, members string) map[string][]byte {
+		request := GenerateRequest{Target: target, Identity: mcpcontract.Identity{Name: "shop", Version: "1"}, App: "shop", GoModule: "example.test/holon"}
+		if err := json.Unmarshal([]byte(`{"pets":{"tools":`+tools+members+`}}`), &request.Contracts); err != nil {
+			t.Fatal(err)
+		}
+		files, err := Generate(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return files
+	}
+	for _, target := range []string{"browser", "python", "go"} {
+		if diff := cmp.Diff(generate(target, ""), generate(target, responses)); diff != "" {
+			t.Errorf("%s clients changed (-without +with responses):\n%s", target, diff)
+		}
+	}
+	node := generate("node", responses)
+	if module := string(node[TypeScriptModule]); !strings.Contains(module, `"responses":["get_pet"]`) || strings.Contains(module, "Pet") {
+		t.Errorf("the module does not pass the runtime only the names of the tools that return JSON:\n%s", module)
 	}
 }
 

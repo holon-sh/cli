@@ -199,7 +199,7 @@ func (p *parser) reference(reference string, target Value, depth int) (typ, erro
 func definitionName(reference string) string {
 	for _, section := range []string{"#/definitions/", "#/$defs/"} {
 		if name, ok := strings.CutPrefix(reference, section); ok && !strings.Contains(name, "/") {
-			return strings.NewReplacer("~1", "/", "~0", "~").Replace(name)
+			return unescape(name)
 		}
 	}
 	return ""
