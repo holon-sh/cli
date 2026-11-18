@@ -2,6 +2,7 @@ package typegen
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -34,13 +35,7 @@ func ReadSourceRules(root string) (*SourceRules, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &SourceRules{root: root, top: root, docker: docker, patterns: map[string][]gitignore.Pattern{}}
-	for dir := root; filepath.Dir(dir) != dir; dir = filepath.Dir(dir) {
-		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
-			s.top = dir
-			break
-		}
-	}
+	s := &SourceRules{root: root, top: cmp.Or(CheckoutRoot(root), root), docker: docker, patterns: map[string][]gitignore.Pattern{}}
 	data, err := os.ReadFile(filepath.Join(s.top, ".gitmodules"))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
@@ -53,6 +48,16 @@ func ReadSourceRules(root string) (*SourceRules, error) {
 		s.submodules = append(s.submodules, module.Option("path"))
 	}
 	return s, nil
+}
+
+// CheckoutRoot returns the nearest directory above dir that holds a .git entry, or "" outside a Git checkout.
+func CheckoutRoot(dir string) string {
+	for ; filepath.Dir(dir) != dir; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+	}
+	return ""
 }
 
 // Ignored reports whether path is left out of the source, and whether everything below it is too.
