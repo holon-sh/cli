@@ -8,25 +8,34 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/holon-sh/cli/internal/testfiles"
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
 
+// The runtime receives the module's identity and contracts. A contract names the tools whose text the
+// runtime parses and carries none of their response schemas.
 func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 is not installed")
 	}
 	identity := mcpcontract.Identity{Name: "a'b\"\\\n\r\t\x00\x1f\x7fé😀 ", Version: "1"}
-	files, err := Generate(t.Context(), GenerateRequest{Target: "python", Identity: identity, App: "caller"})
+	request := GenerateRequest{Target: "python", Identity: identity, App: "caller"}
+	tools := `[{"name": "get_pet", "inputSchema": {"type": "object"}}]`
+	responses := `{"properties": {"get_pet": {"$ref": "#/$defs/Pet"}}, "$defs": {"Pet": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}}}`
+	if err := json.Unmarshal([]byte(`{"pets": {"tools": `+tools+`, "responses": `+responses+`}}`), &request.Contracts); err != nil {
+		t.Fatal(err)
+	}
+	files, err := Generate(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A stand-in runtime prints the identity the generated module constructs its clients with.
+	// A stand-in runtime prints the identity and contracts the generated module constructs its clients with.
 	root := t.TempDir()
 	testfiles.Write(t, root, map[string][]byte{
 		"holon/apps/__init__.py": files["__init__.py"],
-		"holon/client.py":        []byte("import json\nclass Apps:\n    def __init__(self, identity, *rest):\n        print(json.dumps(identity))\ndef __getattr__(name):\n    return object\n"),
+		"holon/client.py":        []byte("import json\nclass Apps:\n    def __init__(self, identity, contracts, *rest):\n        print(json.dumps({\"identity\": identity, \"contracts\": contracts}))\ndef __getattr__(name):\n    return object\n"),
 	})
 	command := exec.CommandContext(t.Context(), python, "-c", "import holon.apps")
 	command.Dir = root
@@ -34,9 +43,19 @@ func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generated module failed to import: %v\n%s", err, output)
 	}
-	var decoded mcpcontract.Identity
-	if err := json.Unmarshal(output, &decoded); err != nil || decoded != identity {
-		t.Fatalf("runtime received %+v, %v; want %+v", decoded, err, identity)
+	var received struct {
+		Identity  mcpcontract.Identity
+		Contracts any
+	}
+	if err := json.Unmarshal(output, &received); err != nil || received.Identity != identity {
+		t.Fatalf("runtime received %+v, %v; want %+v", received.Identity, err, identity)
+	}
+	var want any
+	if err := json.Unmarshal([]byte(`{"pets": {"tools": `+tools+`, "responses": ["get_pet"]}}`), &want); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(want, received.Contracts); diff != "" {
+		t.Errorf("runtime received other contracts (-want +got):\n%s", diff)
 	}
 }
 

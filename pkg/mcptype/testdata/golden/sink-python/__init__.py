@@ -149,6 +149,12 @@ class OutputTypes:
         class save:
             pass
 
+class Responses:
+    class orders:
+        pass
+    class shared:
+        pass
+
 class X123Tools(_typing.Protocol):
     pass
 

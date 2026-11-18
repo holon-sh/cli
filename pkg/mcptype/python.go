@@ -254,17 +254,22 @@ func (e *pythonEmitter) input(value typ, name string) (string, []string) {
 }
 
 // generatePython writes the typing-only module body: shapes, export classes, protocols and _Clients.
+// The export classes hold inputs, structured outputs, input definitions, output definitions and parsed
+// responses.
 func generatePython(contracts, events map[string]catalog) string {
-	emitter := &pythonEmitter{names: map[string]bool{"Inputs": true, "Outputs": true, "InputTypes": true, "OutputTypes": true}, emitted: map[*declaration]bool{}}
+	exportNames := []string{"Inputs", "Outputs", "InputTypes", "OutputTypes", "Responses"}
+	emitter := &pythonEmitter{names: map[string]bool{}, emitted: map[*declaration]bool{}}
+	for _, name := range exportNames {
+		emitter.names[name] = true
+	}
 	var clients []string
-	exportNames := []string{"Inputs", "Outputs", "InputTypes", "OutputTypes"}
-	exports := make([][]string, 4)
+	exports := make([][]string, len(exportNames))
 	var fields, indices []string
 	for _, binding := range sortedKeys(contracts) {
 		appName := unique(emitter.names, typeIdentifier(binding)+"App")
 		toolsName := unique(emitter.names, typeIdentifier(binding)+"Tools")
 		var methods, calls []string
-		appExports := make([][]string, 4)
+		appExports := make([][]string, len(exportNames))
 		tools := contracts[binding]
 		nameDeclarations(emitter.names, binding, tools)
 		toolMethods := pythonMethods(tools)
@@ -276,13 +281,16 @@ func generatePython(contracts, events map[string]catalog) string {
 			emitter.declare(shapes[1])
 			input, arguments := emitter.input(shapes[0].value, prefix+"Input")
 			output := emitter.render(shapes[1].value, prefix+"Output")
-			returned := output
-			if tool.returns == returnsResult {
+			returned, structured, slots := output, output, [2]int{0, 1}
+			switch tool.returns {
+			case returnsResult:
 				returned = "_CompleteResult[_builtins.object]"
+			case returnsParsed:
+				structured, slots[1] = "_builtins.object", 4
 			}
 			var signatures []string
 			for _, argument := range arguments {
-				calls = append(calls, fmt.Sprintf("    async def call_tool(self, name: _typing.Literal[%s], options: _CallOptions | None = ..., /, **arguments: %s) -> _ToolResult[%s]: ...", quoted(name), argument, output))
+				calls = append(calls, fmt.Sprintf("    async def call_tool(self, name: _typing.Literal[%s], options: _CallOptions | None = ..., /, **arguments: %s) -> _ToolResult[%s]: ...", quoted(name), argument, structured))
 				signatures = append(signatures, fmt.Sprintf("    async def %s(self, options: _CallOptions | None = ..., /, **arguments: %s) -> %s: ...", method, argument, returned))
 			}
 			if method == "" {
@@ -293,7 +301,7 @@ func generatePython(contracts, events map[string]catalog) string {
 				if i == 1 && tool.returns == returnsResult {
 					continue
 				}
-				appExports[i] = append(appExports[i], fmt.Sprintf("        %s: _typing.TypeAlias = %s", method, rendered))
+				appExports[slots[i]] = append(appExports[slots[i]], fmt.Sprintf("        %s: _typing.TypeAlias = %s", method, rendered))
 				var types []string
 				for _, definition := range sortedKeys(shapes[i].named) {
 					if pythonIdentifier(definition) {
