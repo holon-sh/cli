@@ -4,11 +4,6 @@ const doing = {
   token_use: "holds the lock, has read the file",
   token_write: "holds the lock, renewed, not yet saved",
   unlock: "about to release the lock",
-  unlock_signin: "about to release the lock and ask for a session sign-in",
-  signin_device: "waiting for a session sign-in",
-  signin_lock: "has a session token, waiting for the lock",
-  signin_load: "holds the lock with a session token, about to read the file",
-  signin_write: "holds the lock, about to save the session token",
   login_device: "holon login waiting for approval",
   login_lock: "holon login approved, waiting for the lock",
   login_check: "holon login holds the lock, about to compare versions",
@@ -30,9 +25,8 @@ const who = (v, p) => {
 };
 
 const provider = (v) => {
-  const dead = Object.values(v.file.tokens).filter((t) => t !== 0 && !v.live.includes(t));
   const notes = [];
-  if (dead.length) notes.push("the file holds a spent refresh token");
+  if (v.file.refresh !== 0 && !v.live.includes(v.file.refresh)) notes.push("the file holds a spent refresh token");
   if (v.spent) notes.push("a spent refresh token was presented");
   if (v.stale) notes.push("a sign-in replaced a newer one");
   return notes.length ? notes.join(", ") : "ok";
@@ -50,17 +44,13 @@ const steps = {
   TokenCached: "returns its cached access token",
   TokenRenew: "presents its refresh token",
   TokenWrite: "saves the renewed token",
-  SigninDevice: "gets a session token from the device flow",
-  SigninLock: "takes the lock to save the session token",
-  SigninLoad: "reads the file again",
-  SigninWrite: "saves the session token",
   LoginBefore: "starts holon login and notes the version on disk",
-  LoginDevice: "gets an admin token from the device flow",
+  LoginDevice: "gets a refresh token from the device flow",
   LoginLock: "takes the lock to save the sign-in",
   LoginCheck: "compares the version on disk with the one it noted",
   LoginWrite: "saves the new sign-in",
   LogoutLock: "takes the lock for holon logout",
-  LogoutRevoke: "asks the identity provider to revoke the tokens in the file",
+  LogoutRevoke: "asks the identity provider to revoke the refresh token in the file",
   LogoutRemove: "removes the file",
   Unlock: "releases the lock",
   Restart: "exits, and a new holon starts",

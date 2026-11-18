@@ -237,7 +237,7 @@ func (w *ObservedOutput) String() string {
 	return w.buffer.String()
 }
 
-func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, plane protocol.Plane,
+func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string,
 	check func(*http.Request), expiresIn, interval int64, tokenHandler http.HandlerFunc,
 ) {
 	t.Helper()
@@ -270,10 +270,7 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, pla
 	})
 	mux.HandleFunc("/device-authorization", func(w http.ResponseWriter, r *http.Request) {
 		check(r)
-		origin, resource := strings.TrimSuffix(issuer(), "/"), r.FormValue("resource")
-		target, _ := protocol.PlaneOrigin(origin, plane, "")
-		_, _, session := protocol.ParseSessionAudience(origin, resource)
-		if r.FormValue("client_id") != "cli-test" || resource != target && !session || r.FormValue("audience") != "" {
+		if r.FormValue("client_id") != "cli-test" || r.Form.Has("resource") || r.FormValue("audience") != "" {
 			t.Errorf("unexpected device request form: %s", r.Form.Encode())
 		}
 		WriteJSON(
@@ -292,7 +289,13 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string, pla
 		origin, resource := strings.TrimSuffix(issuer(), "/"), r.FormValue("resource")
 		_, control := protocol.ParseControlAudience(origin, resource)
 		_, _, session := protocol.ParseSessionAudience(origin, resource)
-		if !control && !session || len(r.Form["resource"]) != 1 || r.FormValue("audience") != "" {
+		named := control || session
+		if r.FormValue("grant_type") != "refresh_token" {
+			named = !r.Form.Has("resource")
+		} else if len(r.Form["resource"]) != 1 {
+			named = false
+		}
+		if !named || r.FormValue("audience") != "" {
 			t.Errorf("unexpected token request target: %s", r.Form.Encode())
 		}
 		tokenHandler(w, r)

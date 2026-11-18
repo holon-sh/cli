@@ -61,7 +61,7 @@ func TestSignedOutCommandFailsWithoutSigningIn(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
 	var server *httptest.Server
-	installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, func(r *http.Request) {
+	installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, func(r *http.Request) {
 		if r.URL.Path != protocol.APIPathInfo {
 			t.Errorf("signed-out command contacted %s", r.URL.Path)
 		}

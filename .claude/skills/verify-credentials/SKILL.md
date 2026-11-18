@@ -5,7 +5,7 @@ description: "Model-check how several holon processes share one credential file 
 
 # Verify the credential file protocol
 
-Every `holon` process of one person shares one credential file per installation: `holon dev` in one terminal, `holon apps list` in another, two `holon login` prompts left open. Each can renew a refresh token, which the identity provider then replaces, so the order in which processes read, renew and save decides whether the person stays signed in. A Go test runs one order. `Credentials.tla` in this directory is a TLA+ model of the protocol, and the TLC model checker runs every order of two processes within the bounds below.
+Every `holon` process of one person shares one credential file per installation: `holon dev` in one terminal, `holon apps list` in another, two `holon login` prompts left open. The file holds one refresh token, from a sign-in that named no resource, and the access tokens renewed from it for each resource. Each process can renew that refresh token, which the identity provider then replaces, so the order in which processes read, renew and save decides whether the person stays signed in. A Go test runs one order. `Credentials.tla` in this directory is a TLA+ model of the protocol, and the TLC model checker runs every order of two processes within the bounds below.
 
 ## The rules
 
@@ -25,10 +25,9 @@ Each action in `Credentials.tla` is one file read, one atomic rename, or one req
 | Actions | Code in `pkg/installation` |
 | --- | --- |
 | `TokenLock`, `Unlock` | `withLock` in `auth.go`: the `flock` on `<state file>.lock`, taken by `resourceToken` around `token` |
-| `TokenLoad`, `SigninLoad`, `Mismatch`, `Loadable` | `loadCredentials` and `readState` in `auth.go`, `readCredentialFile` in `credentials.go`; `Mismatch` is the `errCredentialChanged` check |
-| `TokenCached`, `TokenRenew` | `token` and `renewToken` in `auth.go` |
-| `TokenWrite`, `SigninWrite`, `LoginWrite` | `writeState` and `writeAtomicFile` in `credentials.go` |
-| `SigninDevice`, `SigninLock`, `SigninLoad`, `SigninWrite` | the `errNoAudienceToken` branch of `resourceToken`, and `deviceToken` |
+| `TokenLoad`, `Mismatch`, `Loadable` | `loadCredentials` and `readState` in `auth.go`, `readCredentialFile` in `credentials.go`; `Mismatch` is the `errCredentialChanged` check |
+| `TokenCached`, `TokenRenew` | `token` and `renewToken` in `auth.go`; the model leaves out which resource a token is for, because every renewal presents the same refresh token |
+| `TokenWrite`, `LoginWrite` | `writeState` and `writeAtomicFile` in `credentials.go` |
 | `LoginBefore`, `LoginDevice`, `LoginLock`, `LoginCheck`, `LoginWrite` | `loginInteractive` in `auth.go` |
 | `LogoutLock`, `LogoutRevoke`, `LogoutRemove` | `logout` and `revokeRefreshTokens` in `auth.go`, `removeCredentialFile` in `credentials.go` |
 | `Restart` | `NewClient`: a new process starts with an empty `Client.state` |
@@ -53,7 +52,7 @@ The first shows edits to the covered code. The second shows other files that sta
 
 Check `Credentials.tla` with the pstack `/statechart` skill, giving it `Credentials.cfg` as the config and `view.mjs` as the view. Read `/statechart` for how to run it and how to read its report. It installs its own pinned TLC and Java on first use.
 
-On the sync commit the report lists all four rules and `NoDeadlock` under "Rules that hold", after 540,827 distinct states, in about a minute.
+On the sync commit the report lists all four rules and `NoDeadlock` under "Rules that hold", after 127,168 distinct states, in about ten seconds.
 
 ## Check that it can still fail
 
@@ -62,7 +61,6 @@ A model that cannot fail proves nothing. Each config in `faults/` sets `Fault` t
 | Config | The code edit it stands for | Rules that must break |
 | --- | --- | --- |
 | `faults/renew_unlocked.cfg` | `resourceToken` calls `token` without `withLock` | `RefreshTokenSpentOnce`, `StoredTokensAreLive`, `NewestSignInWins` |
-| `faults/write_without_load.cfg` | the `errNoAudienceToken` branch saves `m.state` without calling `loadCredentials` under the lock | `RefreshTokenSpentOnce`, `StoredTokensAreLive` |
 | `faults/no_version_check.cfg` | `loadCredentials` no longer returns `errCredentialChanged` | `OneIdentityPerProcess` |
 | `faults/no_login_check.cfg` | `loginInteractive` no longer compares `saved.Version` with `before.Version` | `NewestSignInWins` |
 
@@ -91,10 +89,10 @@ After the model passes and its faults fail as listed, update the tables here, an
 
 A pass covers this much and no more.
 
-- Two processes, two audiences (`admin` and one session audience), at most three completed sign-ins (a sign-in may begin until two have completed), and four refresh tokens issued.
+- Two processes, at most three completed sign-ins (a sign-in may begin until two have completed), and four refresh tokens issued.
 - The `flock` excludes every other process, a rename replaces the file in one step, and a reader sees the old file or the new one.
 - No process dies, and no write fails, between the provider's answer to a renewal and the rename that saves it. If that happens the file keeps a spent token and `StoredTokensAreLive` no longer holds. The code cannot make those two steps one.
 - The provider answers every renewal it performs, always replaces the refresh token, and stops accepting a token only when it replaces or revokes it. A provider that expires tokens by age is not modeled.
-- A revocation at sign-out revokes every token in the file or none.
+- A revocation at sign-out revokes the refresh token in the file, or fails.
 
 Not covered: goroutines of one process sharing a `Client` (the `mu` mutex), how long a process waits for the lock while another holds it across a network call, service-account tokens, file permissions and symlink checks, a file written for another installation or issuer, and the device flow itself.
