@@ -44,7 +44,11 @@ func generateGoPackage(request generateRequest, catalogs map[string]catalog) map
 			if schema.Output != nil {
 				output = strconv.Quote(string(encode(schema.Output)))
 			}
-			fmt.Fprintf(&source, "\t%s: {\n\t\tInput:  %s,\n\t\tOutput: %s,\n\t},\n", strconv.Quote(name), strconv.Quote(string(encode(schema.Input))), output)
+			parsed := ""
+			if tool.returns == returnsParsed {
+				parsed = "\t\tParsed: true,\n"
+			}
+			fmt.Fprintf(&source, "\t%s: {\n\t\tInput:  %s,\n\t\tOutput: %s,\n%s\t},\n", strconv.Quote(name), strconv.Quote(string(encode(schema.Input))), output, parsed)
 			fmt.Fprintf(&methods, "\nfunc (client _%s) %s(ctx context.Context, input %s) (%s, error) {\n\treturn holon.Call[%s](ctx, client._dependency, %s, input)\n}\n", client, method, symbols[0], symbols[1], symbols[1], strconv.Quote(name))
 		}
 		fmt.Fprintf(&source, "}}}\n\ntype _%s struct{ *_dependency }\n%s", client, methods.String())
