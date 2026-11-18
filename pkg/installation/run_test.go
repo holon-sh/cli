@@ -557,9 +557,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	}
 	builds.mu.Unlock()
 	index, manifest, config := assembledImage(t, h.registry, initial[slices.IndexFunc(initial, func(app protocol.App) bool { return app.Name == "prod" })].Image)
-	frozen := manifest.Layers[1:]
-	if len(manifest.Layers) != 3 ||
-		frozen[0].Digest != digest.FromString("dependencies of prod") ||
+	if manifest.Layers[1].Digest != digest.FromString("dependencies of prod") ||
 		len(config.RootFS.DiffIDs) != 3 || config.RootFS.DiffIDs[2] != digest.FromString("tar source of prod") {
 		t.Fatalf("image layers %+v, diff IDs %v", manifest.Layers, config.RootFS.DiffIDs)
 	}
@@ -602,6 +600,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 	}
 	if input := record.Runtime.Env["TOKEN"]; !input.IsSecret || !input.IsRequired {
 		t.Fatal("secret declaration was lost")
+	}
+	if source, err := appartifact.SourceLayer(t.Context(), repository, executable); err != nil || source.Digest != digest.FromString("source of prod") {
+		t.Fatalf("source layer %+v: %v", source, err)
 	}
 	if strings.Contains(diagnostics.String(), "Timing ") ||
 		!strings.Contains(diagnostics.String(), "prod ready") || strings.ContainsAny(diagnostics.String(), "\x1b\r") {

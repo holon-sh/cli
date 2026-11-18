@@ -74,9 +74,9 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	}
 }
 
-// Node and Go clients tell the runtime only which tools return the JSON a contract's responses
-// describe; every other target generates what it would without them.
-func TestOnlyNodeAndGoClientsTypeResponses(t *testing.T) {
+// Node clients tell the runtime only which tools return the JSON a contract's responses describe;
+// browser clients generate what they would without them, and Go clients mark those tools.
+func TestOnlyParsingClientsTypeResponses(t *testing.T) {
 	tools := `[{"name":"get_pet","inputSchema":{"type":"object"}}]`
 	responses := `,"responses":{"properties":{"get_pet":{"$ref":"#/$defs/Pet"}},"$defs":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}}}`
 	generate := func(target, members string) map[string][]byte {
@@ -90,10 +90,8 @@ func TestOnlyNodeAndGoClientsTypeResponses(t *testing.T) {
 		}
 		return files
 	}
-	for _, target := range []string{"browser", "python"} {
-		if diff := cmp.Diff(generate(target, ""), generate(target, responses)); diff != "" {
-			t.Errorf("%s clients changed (-without +with responses):\n%s", target, diff)
-		}
+	if diff := cmp.Diff(generate("browser", ""), generate("browser", responses)); diff != "" {
+		t.Errorf("browser clients changed (-without +with responses):\n%s", diff)
 	}
 	node := generate("node", responses)
 	if module := string(node[TypeScriptModule]); !strings.Contains(module, `"responses":["get_pet"]`) || strings.Contains(module, "Pet") {

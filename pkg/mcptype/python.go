@@ -276,13 +276,16 @@ func generatePython(contracts, events map[string]catalog) string {
 			emitter.declare(shapes[1])
 			input, arguments := emitter.input(shapes[0].value, prefix+"Input")
 			output := emitter.render(shapes[1].value, prefix+"Output")
-			returned := output
-			if tool.returns == returnsResult {
+			returned, structured := output, "_builtins.object"
+			switch tool.returns {
+			case returnsResult:
 				returned = "_CompleteResult[_builtins.object]"
+			case returnsStructured:
+				structured = output
 			}
 			var signatures []string
 			for _, argument := range arguments {
-				calls = append(calls, fmt.Sprintf("    async def call_tool(self, name: _typing.Literal[%s], options: _CallOptions | None = ..., /, **arguments: %s) -> _ToolResult[%s]: ...", quoted(name), argument, output))
+				calls = append(calls, fmt.Sprintf("    async def call_tool(self, name: _typing.Literal[%s], options: _CallOptions | None = ..., /, **arguments: %s) -> _ToolResult[%s]: ...", quoted(name), argument, structured))
 				signatures = append(signatures, fmt.Sprintf("    async def %s(self, options: _CallOptions | None = ..., /, **arguments: %s) -> %s: ...", method, argument, returned))
 			}
 			if method == "" {
