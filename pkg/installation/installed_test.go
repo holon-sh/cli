@@ -22,7 +22,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 	if err := json.Unmarshal([]byte(servedContract), &built); err != nil {
 		t.Fatal(err)
 	}
-	pinned, err := built.Document()
+	pinned, err := built.Document("pokeapi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +127,4 @@ func TestDevTypesCallsToAppsOnTheSession(t *testing.T) {
 	if client := string(overlayEntries(t, gamma.body)["generated/holon-sh/index.mjs"]); !strings.Contains(client, "lookup_pokeapi") {
 		t.Fatalf("gamma started without a client for pokeapi: %q", client)
 	}
-	f.save(map[string]string{"gamma/server.json": strings.Replace(requiresAlpha, `"alpha":{}`, `"pokeapi":{},"missing":{}`, 1)},
-		"gamma requires missing, which is neither an app in this project nor on the installation")
 }

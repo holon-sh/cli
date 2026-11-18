@@ -136,13 +136,15 @@ func prepareManifestTypes(
 		}
 		byApp[app.Name] = document
 	}
-	for _, name := range manifest.installed {
-		if !needed[name] {
-			continue
+	installed := manifest.installed()
+	for _, name := range installed {
+		answer := served[name]
+		var err error
+		if options.plane == protocol.AdminPlane && needed[name] {
+			answer, err = options.manager.appContract(ctx, protocol.ProductionName, name)
 		}
-		answer, err := options.manager.appContract(ctx, options.session, name)
-		if err == nil {
-			byApp[name], err = answer.Document()
+		if err == nil && answer != nil {
+			byApp[name], err = answer.Document(name)
 		}
 		if err != nil {
 			return manifestSpec{}, nil, fmt.Errorf("%s: %w", name, err)
@@ -207,7 +209,7 @@ func prepareManifestTypes(
 				continue
 			}
 			advice := fmt.Sprintf("include both in holon deploy %s %s (or rebuild and publish the caller)", name, app.Name)
-			if slices.Contains(manifest.installed, name) {
+			if slices.Contains(installed, name) {
 				advice = "rebuild and publish the caller"
 			}
 			return manifestSpec{}, nil, fmt.Errorf("%s has changed the typed contract expected by %s (%s); %s", name, app.Name, strings.Join(changes, ", "), advice)

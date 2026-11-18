@@ -25,7 +25,6 @@ import (
 type buildOptions struct {
 	manager    *Client
 	plane      protocol.Plane
-	session    string
 	build      *buildSession
 	Env        []string
 	HTTPClient *http.Client

@@ -164,9 +164,6 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		}
 	}
 	if dev.session.Name != "" {
-		if err := resolved.checkInstalled(dev.session.Apps); err != nil {
-			return err
-		}
 		if err := printStartingEndpoints(stdout, config.output, manager, dev.session.Name, resolved.Apps); err != nil {
 			return err
 		}
@@ -191,7 +188,6 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
-	dev.options.session = dev.session.Name
 	if request.TTLSeconds != nil {
 		ready, err := waitSessionReady(ctx, manager, dev.session, config.output)
 		if err == nil {
@@ -307,11 +303,7 @@ func runDeploy(ctx context.Context, selection []string, stdout io.Writer, config
 		manifest.deployed[app.Name] = app.Access
 	}
 	options := config.buildOptions(manager, protocol.AdminPlane)
-	options.session = protocol.ProductionName
 	resolved, err := resolveManifest(ctx, manager, manifest, selection...)
-	if err == nil {
-		err = resolved.checkInstalled(current.Apps)
-	}
 	if err != nil {
 		return err
 	}

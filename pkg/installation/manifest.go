@@ -24,12 +24,11 @@ const (
 )
 
 type manifestSpec struct {
-	Apps      []manifestApp `description:"Applications in this project." json:"apps,omitempty"`
-	file      string
-	sources   []manifestApp
-	access    *protocol.AppAccess
-	deployed  map[string]*protocol.AppAccess
-	installed []string
+	Apps     []manifestApp `description:"Applications in this project." json:"apps,omitempty"`
+	file     string
+	sources  []manifestApp
+	access   *protocol.AppAccess
+	deployed map[string]*protocol.AppAccess
 }
 
 type packageRun struct {

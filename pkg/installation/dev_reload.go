@@ -48,6 +48,13 @@ func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
 	}
+	for _, name := range d.manifest.installed() {
+		answer, err := d.manager.appContract(ctx, d.session.Name, name)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		served[name] = answer
+	}
 	return served, nil
 }
 
