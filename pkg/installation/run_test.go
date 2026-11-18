@@ -217,7 +217,7 @@ func newRunHarness(t *testing.T) *runHarness {
 	h := &runHarness{mux: http.NewServeMux()}
 	h.registry, h.registryServer = buildRegistry(t)
 	h.control = installationtest.NewControlFixtures(t, h.mux)
-	installationtest.MountDeviceAuth(t, h.mux, func() string { return h.server.URL + "/" }, protocol.AdminPlane,
+	installationtest.MountDeviceAuth(t, h.mux, func() string { return h.server.URL + "/" },
 		func(r *http.Request) { installationtest.AssertOrigin(t, r, h.baseHost) }, 3600, 0, nil)
 	return h
 }
@@ -720,7 +720,7 @@ func TestStreamLogsResumesAfterOutages(t *testing.T) {
 		var refreshes int
 		var since []string
 		mux := http.NewServeMux()
-		installationtest.MountDeviceAuth(t, mux, func() string { return "https://apps.example.test/" }, protocol.AdminPlane, nil, 0, 0,
+		installationtest.MountDeviceAuth(t, mux, func() string { return "https://apps.example.test/" }, nil, 0, 0,
 			func(w http.ResponseWriter, _ *http.Request) {
 				if refreshes++; refreshes == 1 {
 					w.WriteHeader(http.StatusServiceUnavailable)

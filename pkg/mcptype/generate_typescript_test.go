@@ -74,30 +74,26 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	}
 }
 
-// Node clients tell the runtime only which tools return the JSON a contract's responses describe;
-// browser and Go clients generate what they would without them.
-func TestOnlyParsingClientsTypeResponses(t *testing.T) {
-	tools := `[{"name":"get_pet","inputSchema":{"type":"object"}}]`
-	responses := `,"responses":{"properties":{"get_pet":{"$ref":"#/$defs/Pet"}},"$defs":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}}}`
-	generate := func(target, members string) map[string][]byte {
+// Clients tell the runtime only which tools return the JSON a contract's responses describe, never
+// the schemas that type it.
+func TestClientsTellTheRuntimeOnlyWhichToolsReturnJSON(t *testing.T) {
+	contracts := `{"pets":{"tools":[{"name":"get_pet","inputSchema":{"type":"object"}}],"responses":{"properties":{"get_pet":{"$ref":"#/$defs/Pet"}},"$defs":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}}}}}`
+	for target, runtime := range map[string]struct{ file, names string }{
+		"node":    {TypeScriptModule, `"responses":["get_pet"]`},
+		"browser": {TypeScriptModule, `"responses":["get_pet"]`},
+		"go":      {"clients.go", "Parsed: true"},
+	} {
 		request := GenerateRequest{Target: target, Identity: mcpcontract.Identity{Name: "shop", Version: "1"}, App: "shop", GoModule: "example.test/holon"}
-		if err := json.Unmarshal([]byte(`{"pets":{"tools":`+tools+members+`}}`), &request.Contracts); err != nil {
+		if err := json.Unmarshal([]byte(contracts), &request.Contracts); err != nil {
 			t.Fatal(err)
 		}
 		files, err := Generate(t.Context(), request)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return files
-	}
-	for _, target := range []string{"browser", "go"} {
-		if diff := cmp.Diff(generate(target, ""), generate(target, responses)); diff != "" {
-			t.Errorf("%s clients changed (-without +with responses):\n%s", target, diff)
+		if module := string(files[runtime.file]); !strings.Contains(module, runtime.names) || strings.Contains(module, "$defs") {
+			t.Errorf("%s clients do not tell the runtime only which tools return JSON:\n%s", target, module)
 		}
-	}
-	node := generate("node", responses)
-	if module := string(node[TypeScriptModule]); !strings.Contains(module, `"responses":["get_pet"]`) || strings.Contains(module, "Pet") {
-		t.Errorf("the module does not pass the runtime only the names of the tools that return JSON:\n%s", module)
 	}
 }
 
