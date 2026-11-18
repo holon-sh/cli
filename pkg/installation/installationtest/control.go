@@ -289,13 +289,11 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string,
 		origin, resource := strings.TrimSuffix(issuer(), "/"), r.FormValue("resource")
 		_, control := protocol.ParseControlAudience(origin, resource)
 		_, _, session := protocol.ParseSessionAudience(origin, resource)
-		named := control || session
-		if r.FormValue("grant_type") != "refresh_token" {
-			named = !r.Form.Has("resource")
-		} else if len(r.Form["resource"]) != 1 {
-			named = false
+		valid := !r.Form.Has("resource")
+		if r.FormValue("grant_type") == "refresh_token" {
+			valid = len(r.Form["resource"]) == 1 && (control || session)
 		}
-		if !named || r.FormValue("audience") != "" {
+		if !valid || r.FormValue("audience") != "" {
 			t.Errorf("unexpected token request target: %s", r.Form.Encode())
 		}
 		tokenHandler(w, r)

@@ -195,7 +195,7 @@ func (m *Client) token(ctx context.Context, audience string) (*oauth2.Token, err
 	if err != nil {
 		return nil, err
 	}
-	m.state.Refresh, token.RefreshToken = cmp.Or(token.RefreshToken, m.state.Refresh), ""
+	m.state.Refresh, token.RefreshToken = token.RefreshToken, ""
 	maps.DeleteFunc(m.state.Access, func(_ string, token *oauth2.Token) bool { return time.Until(token.Expiry) <= accessSafety })
 	if m.state.Access == nil {
 		m.state.Access = map[string]*oauth2.Token{}
@@ -485,10 +485,7 @@ func (m *Client) deviceToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("device token polling: %w", oauthFailure(ctx, err))
 	}
-	if !validOAuthToken(tokens) {
-		return "", errMalformedResponse
-	}
-	if tokens.RefreshToken == "" {
+	if !validToken(tokens.RefreshToken) {
 		return "", errNoRefreshToken
 	}
 	return tokens.RefreshToken, nil
