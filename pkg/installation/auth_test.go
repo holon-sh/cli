@@ -28,7 +28,7 @@ func newAuthTestServer(t *testing.T, tokenHandler http.HandlerFunc) *httptest.Se
 	t.Helper()
 	mux := http.NewServeMux()
 	var server *httptest.Server
-	installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, nil, 120, 1, tokenHandler)
+	installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, nil, 120, 1, tokenHandler)
 	server = httptest.NewTLSServer(mux)
 	t.Cleanup(server.Close)
 	return server
@@ -54,7 +54,7 @@ func TestLogin(t *testing.T) {
 					installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}})
 				})
 			} else {
-				installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, protocol.AdminPlane, func(r *http.Request) {
+				installationtest.MountDeviceAuth(t, mux, func() string { return server.URL + "/" }, func(r *http.Request) {
 					if r.URL.Path == "/revoke" {
 						revoked = append(revoked, r.FormValue("token"))
 					}
@@ -127,7 +127,7 @@ func TestTerminalSignIn(t *testing.T) {
 	var once sync.Once
 	entered, release := make(chan struct{}), make(chan struct{})
 	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.FormValue("grant_type") == "refresh_token" {
+		if r.FormValue("refresh_token") == "revoked" {
 			w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
 			w.WriteHeader(http.StatusBadRequest)
 			installationtest.WriteJSON(w, map[string]string{"error": "invalid_grant"})
@@ -198,7 +198,7 @@ func TestDeviceLoginFailures(t *testing.T) {
 						cancel()
 					}
 				}
-				installationtest.MountDeviceAuth(t, mux, func() string { return "https://identity.example/" }, protocol.AdminPlane, nil, test.expires, 1, fail)
+				installationtest.MountDeviceAuth(t, mux, func() string { return "https://identity.example/" }, nil, test.expires, 1, fail)
 				client := installationtest.HTTPClient(func(request *http.Request) (*http.Response, error) {
 					response := httptest.NewRecorder()
 					if request.URL.Path == test.path {
@@ -465,10 +465,45 @@ func TestResourceTokenCacheIsPerAudience(t *testing.T) {
 	}
 }
 
+func TestSessionTokenComesFromTheSignIn(t *testing.T) {
+	t.Parallel()
+	var refreshes []string
+	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		refreshes = append(refreshes, r.FormValue("refresh_token")+"|"+r.FormValue("resource"))
+		installationtest.WriteJSON(w, map[string]any{
+			"token_type": "Bearer", "access_token": fmt.Sprintf("access-%d", len(refreshes)),
+			"refresh_token": fmt.Sprintf("refresh-%d", len(refreshes)), "expires_in": 3600,
+		})
+	})
+	dir := t.TempDir()
+	manager := newManager(t, server, dir)
+	seedAdminCredentials(t, manager, oauth2.Token{AccessToken: "admin", RefreshToken: "refresh-0", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)})
+	session, err := protocol.SessionAudience(server.URL, protocol.ModeDevelopment, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if token, err := manager.resourceToken(t.Context(), session); err != nil || token.AccessToken != "access-1" {
+			t.Fatalf("session token = %v, %v", token, err)
+		}
+	}
+	other, _ := protocol.SessionAudience(server.URL, protocol.ModeDevelopment, "s2")
+	if _, err := newManager(t, server, dir).resourceToken(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"refresh-0|" + session, "refresh-1|" + other}; !slices.Equal(refreshes, want) {
+		t.Fatalf("refreshes = %v, want %v", refreshes, want)
+	}
+}
+
 func seedAdminCredentials(t *testing.T, manager *Client, token oauth2.Token) {
 	t.Helper()
-	manager.state = authState{OAuth: credentialTarget(manager.info.OAuth), Version: "test"}
-	manager.state.Tokens = map[string]*oauth2.Token{manager.info.OAuth.AdminAudience: &token}
+	refresh := token.RefreshToken
+	token.RefreshToken = ""
+	manager.state = authState{
+		OAuth: credentialTarget(manager.info.OAuth), Version: "test", Refresh: refresh,
+		Access: map[string]*oauth2.Token{manager.info.OAuth.AdminAudience: &token},
+	}
 	if err := manager.withLock(t.Context(), func() error { return manager.writeState(manager.state) }); err != nil {
 		t.Fatal(err)
 	}
