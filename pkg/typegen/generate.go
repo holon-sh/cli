@@ -52,7 +52,7 @@ type preparedSource struct {
 }
 
 func (s *preparedSource) extract(result *Served) error {
-	contract, err := result.contract()
+	contract, err := listCatalog(result.Capabilities, result.pages)
 	if err != nil {
 		return fmt.Errorf("%s: %w", s.origin, err)
 	}

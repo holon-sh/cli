@@ -108,21 +108,12 @@ func ServedContract(ctx context.Context, endpoint string, client *http.Client) (
 
 // Document is the contract s describes, under name.
 func (s *Served) Document(name string) (*Document, error) {
-	contract, err := s.contract()
-	if err != nil {
-		return nil, err
-	}
-	return NewDocument(&mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: name, Version: unversioned}, Schema: contract})
-}
-
-// contract is the contract s describes.
-func (s *Served) contract() (*mcpcontract.Contract, error) {
 	contract, err := listCatalog(s.Capabilities, s.pages)
 	if err != nil {
 		return nil, err
 	}
 	contract.Responses = s.Responses
-	return contract, nil
+	return NewDocument(&mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: name, Version: unversioned}, Schema: contract})
 }
 
 // listServer lists what the server at endpoint serves, and the contract that makes. It talks to the server under a

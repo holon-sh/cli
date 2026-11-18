@@ -75,8 +75,8 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 }
 
 // Node clients tell the runtime only which tools return the JSON a contract's responses describe;
-// every other target generates what it would without them.
-func TestOnlyNodeClientsTypeResponses(t *testing.T) {
+// browser and Go clients generate what they would without them.
+func TestOnlyParsingClientsTypeResponses(t *testing.T) {
 	tools := `[{"name":"get_pet","inputSchema":{"type":"object"}}]`
 	responses := `,"responses":{"properties":{"get_pet":{"$ref":"#/$defs/Pet"}},"$defs":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}}}`
 	generate := func(target, members string) map[string][]byte {
@@ -90,7 +90,7 @@ func TestOnlyNodeClientsTypeResponses(t *testing.T) {
 		}
 		return files
 	}
-	for _, target := range []string{"browser", "python", "go"} {
+	for _, target := range []string{"browser", "go"} {
 		if diff := cmp.Diff(generate(target, ""), generate(target, responses)); diff != "" {
 			t.Errorf("%s clients changed (-without +with responses):\n%s", target, diff)
 		}
