@@ -112,6 +112,7 @@ func (s *Served) Document(name string) (*Document, error) {
 	if err != nil {
 		return nil, err
 	}
+	contract.Responses = s.Responses
 	return NewDocument(&mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: name, Version: unversioned}, Schema: contract})
 }
 

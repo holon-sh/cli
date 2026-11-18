@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/om/compile"
 )
 
 // fileInfo is a recursive entry holding an owner. Tools walk and stat both define it, in their inputs
@@ -189,7 +190,8 @@ async def use() -> None:
 	})
 }
 
-// An OpenAPI document's response schemas type the results of the tools om serves for it.
+// An OpenAPI document's response schemas type the results of the tools om serves for it, whether the generator compiles
+// the document or reads the contract an installation serving it answers.
 func TestOpenAPIResponsesTypeResults(t *testing.T) {
 	const pets = `openapi: 3.1.1
 info: {title: Pets, version: '1'}
@@ -284,6 +286,46 @@ func TestDecodesResults(t *testing.T) {
 		compile.Dir = app
 		if output, err := compile.CombinedOutput(); err != nil {
 			t.Fatalf("generated types do not compile and decode: %v\n%s", err, output)
+		}
+	})
+	t.Run("an installation's contract", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		put(t, dir, "pets.yaml", pets)
+		source, err := ParseSource("pets=" + filepath.Join(dir, "pets.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		document, err := ResolveDocument(t.Context(), source, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		compiled, err := compile.Compile(t.Context(), []byte(pets), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, options, err := compiled.Document.Implementation()
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := compiled.Document.Tools("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		answer := mustJSON(t, map[string]any{
+			"capabilities": options.Capabilities, "lists": map[string]any{"tools/list": map[string]any{"pages": []any{page}}},
+			"responses": compiled.Responses,
+		})
+		var served Served
+		if err := json.Unmarshal(answer, &served); err != nil {
+			t.Fatal(err)
+		}
+		installed, err := served.Document("pets")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := mustJSON(t, installed.Schema), mustJSON(t, document.Schema); string(got) != string(want) {
+			t.Fatalf("installation contract %s, want %s", got, want)
 		}
 	})
 }
