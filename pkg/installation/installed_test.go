@@ -27,7 +27,10 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, test := range []struct{ name, contract, want string }{
-		{name: "an app on the installation is typed and stays out of the deployment", contract: servedContract},
+		{
+			name:     "an app on the installation, however long its catalog, is typed and stays out of the deployment",
+			contract: strings.Replace(servedContract, `"name":"lookup"`, `"name":"lookup","description":"`+strings.Repeat("a", maxHTTPBody)+`"`, 1),
+		},
 		{
 			name: "a contract that changed on the installation stops the deployment", contract: strings.Replace(servedContract, `"lookup"`, `"search"`, 1),
 			want: "pokeapi has changed the typed contract expected by checkout (tool lookup removed); rebuild and publish the caller",

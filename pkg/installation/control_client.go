@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/holon-sh/cli/internal/clientutil"
+	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
 )
 
@@ -27,10 +28,12 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 	if len(data) > maxRequestBody {
 		return clientutil.ErrContentTooLarge
 	}
-	timeout := c.timeout
+	timeout, limit := c.timeout, int64(2*maxHTTPBody)
 	switch tool {
 	case protocol.ToolCreateSession, protocol.ToolUpdateSession, protocol.ToolDeleteSession:
 		timeout = max(timeout, 5*time.Minute)
+	case protocol.ToolGetAppContract:
+		limit = 2*typegen.MaxContractBytes + maxHTTPBody
 	}
 	if request, ok := input.(protocol.GetSessionRequest); ok && request.Revision != "" {
 		timeout = max(timeout, sessionWait+15*time.Second)
@@ -38,7 +41,9 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	client := *c.client
-	client.Transport = &controlTransport{base: cmp.Or(client.Transport, http.DefaultTransport), origin: origin, token: token, installation: c.installationUID}
+	client.Transport = &controlTransport{
+		base: cmp.Or(client.Transport, http.DefaultTransport), origin: origin, token: token, installation: c.installationUID, limit: limit,
+	}
 	session, err := mcp.NewClient(&mcp.Implementation{Name: "holon", Version: "cli"}, nil).Connect(ctx,
 		&mcp.StreamableClientTransport{Endpoint: origin + protocol.MCPPath, HTTPClient: &client, DisableStandaloneSSE: true},
 		&mcp.ClientSessionOptions{ProtocolVersion: bridgeproxy.CurrentVersion})
@@ -75,6 +80,7 @@ type controlTransport struct {
 	origin       string
 	token        string
 	installation string
+	limit        int64
 }
 
 func (t *controlTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -85,7 +91,7 @@ func (t *controlTransport) RoundTrip(request *http.Request) (*http.Response, err
 		return nil, err
 	}
 	defer response.Body.Close()
-	data, err := clientutil.ReadLimited(response.Body, 2*maxHTTPBody)
+	data, err := clientutil.ReadLimited(response.Body, t.limit)
 	if errors.Is(err, clientutil.ErrContentTooLarge) {
 		return nil, errResponseTooLarge
 	}

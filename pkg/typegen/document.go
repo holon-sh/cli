@@ -13,7 +13,8 @@ import (
 	"oras.land/oras-go/v2/registry"
 )
 
-const maxContractBytes = 4 << 20
+// MaxContractBytes is the largest contract document Holon reads.
+const MaxContractBytes = 4 << 20
 
 // Document retains the bytes a registry digest names. Copy Data when publishing;
 // marshaling Metadata again would give a different digest for some valid documents.
@@ -25,8 +26,8 @@ type Document struct {
 
 // ParseDocument validates a document and retains its exact bytes.
 func ParseDocument(data []byte) (*Document, error) {
-	if len(data) > maxContractBytes {
-		return nil, fmt.Errorf("contract document exceeds %d bytes", maxContractBytes)
+	if len(data) > MaxContractBytes {
+		return nil, fmt.Errorf("contract document exceeds %d bytes", MaxContractBytes)
 	}
 	metadata, err := mcptype.ParseMetadata(data)
 	if err != nil {
@@ -56,7 +57,7 @@ func FetchDocument(ctx context.Context, blobs registry.BlobStore, reference stri
 		return nil, err
 	}
 	defer reader.Close()
-	if descriptor.Size <= 0 || descriptor.Size > maxContractBytes {
+	if descriptor.Size <= 0 || descriptor.Size > MaxContractBytes {
 		return nil, fmt.Errorf("invalid contract document size %d", descriptor.Size)
 	}
 	// Verify the requested digest even for a caller-supplied BlobStore.
