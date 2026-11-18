@@ -208,7 +208,8 @@ paths:
         '200': {description: ok, content: {application/json: {schema: {$ref: '#/components/schemas/Pet'}}}}
 components:
   schemas:
-    Pet: {type: object, required: [name], properties: {name: {type: string}, owner: {type: [string, 'null']}}}
+    Pet: {type: object, required: [name], properties: {name: {type: string}, owner: {type: [string, 'null']}, toy: {allOf: [{$ref: '#/components/schemas/Toy'}], description: A reference with a description}}}
+    Toy: {type: object, properties: {name: {type: string}}}
 `
 	generate := func(t *testing.T, app, target string) {
 		t.Helper()
@@ -259,6 +260,31 @@ async def use() -> None:
     (await apps.pets.tools.getPet(id="1"))["nmae"]
 `)
 		mustReject(t, app, `has no key "nmae"`)
+	})
+	t.Run("go", func(t *testing.T) {
+		t.Parallel()
+		app := t.TempDir()
+		put(t, app, "go.mod", "module example.com/caller\n\ngo 1.27.0\n")
+		generate(t, app, TargetGo)
+		put(t, app, "holon/use_test.go", `package holon
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestDecodesResults(t *testing.T) {
+	var pets PetsListPetsOutput
+	if err := json.Unmarshal([]byte(`+"`"+`[{"name": "Rex", "toy": {"name": "ball"}}]`+"`"+`), &pets); err != nil || pets[0].Name != "Rex" || *pets[0].Toy.Name != "ball" {
+		t.Fatalf("pets = %+v, %v", pets, err)
+	}
+}
+`)
+		compile := exec.CommandContext(t.Context(), "go", "test", "holon/types.go", "holon/use_test.go")
+		compile.Dir = app
+		if output, err := compile.CombinedOutput(); err != nil {
+			t.Fatalf("generated types do not compile and decode: %v\n%s", err, output)
+		}
 	})
 }
 

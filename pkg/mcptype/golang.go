@@ -73,6 +73,10 @@ func renderGo(value typ) string {
 		case json.Number:
 			return "json.Number"
 		}
+	case kindUnion, kindIntersection:
+		if len(value.items) == 1 {
+			return renderGo(value.items[0])
+		}
 	case kindArray:
 		return "[]" + renderGo(value.items[0])
 	case kindObject:
