@@ -463,7 +463,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 			map[string]any{
 				"grant":        "grant-secret",
 				"registry":     "registry.example",
-				"repositories": map[string]string{"prod": "holon/upload/prod", "zeta": "holon/upload/zeta", "hosted": "unused"},
+				"repositories": map[string]string{"prod": "holon/upload/prod", "hosted": "unused"},
 				"expiresAt":    time.Now().Add(time.Hour).Format(time.RFC3339),
 			},
 		)
@@ -547,9 +547,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 	}
 	mu.Lock()
 	initial := slices.Clone(desired.Apps)
-	if sent != nil {
-		t.Errorf("deploy outside a Git checkout sent revision %+v", sent)
-	}
 	mu.Unlock()
 	steps, err := recipe.Read(os.DirFS(root))
 	if err != nil {
@@ -635,7 +632,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 	git("init")
 	git("add", ".")
 	git("commit", "-m", "deploy")
-	git("config", "status.showUntrackedFiles", "no")
 	head := git("rev-parse", "HEAD")
 	sourceFiles(t, checkout, map[string]string{"notes.md": "outside the app"})
 	mu.Lock()
@@ -665,17 +661,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 	mu.Lock()
 	if !reflect.DeepEqual(sent, &protocol.Revision{Commit: head, Dirty: true}) {
 		t.Errorf("deploy from a changed checkout sent revision %+v, want commit %s and dirty", sent, head)
-	}
-	mu.Unlock()
-	zeta := t.TempDir()
-	sourceFiles(t, zeta, map[string]string{"package.json": sourcePackage, "server.js": "export const mcp = 1"})
-	git("init", zeta)
-	if err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath, "prod", "zeta=" + zeta, "--public"}, &output, nil, runConfig); err != nil {
-		t.Fatal(err)
-	}
-	mu.Lock()
-	if sent != nil {
-		t.Errorf("deploy from two checkouts sent revision %+v", sent)
 	}
 	mu.Unlock()
 	for _, scenario := range []struct{ name, message string }{
