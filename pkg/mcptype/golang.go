@@ -38,17 +38,7 @@ func unique(names map[string]bool, preferred string) string {
 // goRecursive reports whether a recursive type keeps its recursion in Go, which arrays and objects
 // do. The others are unions, intersections and tuples, which decode as raw JSON as usual.
 func goRecursive(value typ) bool {
-	value = goMember(value)
 	return value.kind == kindArray || value.kind == kindObject
-}
-
-// goMember is a type without the unions and intersections of one member around it, which are that
-// member.
-func goMember(value typ) typ {
-	for (value.kind == kindUnion || value.kind == kindIntersection) && len(value.items) == 1 {
-		value = value.items[0]
-	}
-	return value
 }
 
 func goStruct(value typ) bool { return strings.HasPrefix(renderGo(value), "struct") }
@@ -62,7 +52,7 @@ func goRawJSON(value typ) bool {
 }
 
 func renderGo(value typ) string {
-	switch value = goMember(value); value.kind {
+	switch value.kind {
 	case kindDeclared:
 		if value.ref.cyclic && !goRecursive(value.ref.value) {
 			return "json.RawMessage"
@@ -82,6 +72,10 @@ func renderGo(value typ) string {
 			return "bool"
 		case json.Number:
 			return "json.Number"
+		}
+	case kindUnion, kindIntersection:
+		if len(value.items) == 1 {
+			return renderGo(value.items[0])
 		}
 	case kindArray:
 		return "[]" + renderGo(value.items[0])
