@@ -94,7 +94,7 @@ func tokenlessServer(t *testing.T) *httptest.Server {
 }
 
 func TestEndpointToken(t *testing.T) {
-	server := liveServerBehind(t, func(authorization string) bool { return authorization == "Bearer good-value" })
+	endpoint := liveServerBehind(t, func(authorization string) bool { return authorization == "Bearer good-value" }).URL + "/mcp/orders"
 	for _, test := range []struct {
 		name, alias, env, signedIn, want string
 		signInErr                        error
@@ -108,14 +108,14 @@ func TestEndpointToken(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			signedIn := false
-			signIn := func(_ context.Context, origin string) (string, error) {
-				if signedIn || origin != server.URL {
-					t.Errorf("signed in again, or to %s rather than the endpoint's origin %s", origin, server.URL)
+			signIn := func(_ context.Context, resource string) (string, error) {
+				if signedIn || resource != endpoint {
+					t.Errorf("signed in again, or for %s rather than the endpoint %s", resource, endpoint)
 				}
 				signedIn = true
 				return test.signedIn, test.signInErr
 			}
-			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Server: Endpoint(server.URL)}, Options{Env: []string{test.env}, SignIn: signIn})
+			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Server: Endpoint(endpoint)}, Options{Env: []string{test.env}, SignIn: signIn})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), "-value") {
 					t.Fatalf("ResolveDocument = %v, want %q without the token", err, test.want)

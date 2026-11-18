@@ -24,7 +24,7 @@ import (
 // unversioned stands in when no source names a version.
 const unversioned = "0.0.0"
 
-type SignIn func(ctx context.Context, origin string) (string, error)
+type SignIn func(ctx context.Context, resource string) (string, error)
 
 type Options struct {
 	Env            []string
