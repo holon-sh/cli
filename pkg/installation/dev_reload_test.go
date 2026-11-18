@@ -36,6 +36,8 @@ const (
 	alphaManifest = "apps:\n- name: alpha\n  access: {server: {}}\n  path: ./alpha\n"
 	betaRemote    = "- name: beta\n  access: {server: {}}\n  remote: {url: https://upstream.example/mcp}\n"
 	alphaLock     = "version = 1\n\n[[package]]\nname = \"alpha\"\nversion = \"1\"\nsource = { virtual = \".\" }\n"
+	requiresAlpha = `{"name":"example.com/gamma","version":"1","description":"gamma","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"alpha":{}}}}}}`
+	gammaManifest = alphaManifest + "- name: gamma\n  access: {server: {}}\n  path: ./gamma\n"
 )
 
 const installed = "added 1 package\n"
@@ -124,9 +126,15 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	h := newRunHarness(t)
 	f.harness = h
 	h.control.Handle([]string{protocol.ToolGetAppContract}, nil, func(w http.ResponseWriter, r *http.Request) {
+		app := installationtest.ToolArguments(r)["app"].(string)
 		f.mu.Lock()
-		running, ok := f.running[installationtest.ToolArguments(r)["app"].(string)]
+		running, ok := f.running[app]
+		inherited := slices.ContainsFunc(f.served, func(served protocol.App) bool { return served.Name == app && served.Inherited })
 		f.mu.Unlock()
+		if inherited {
+			installationtest.WriteJSON(w, json.RawMessage(strings.Replace(servedContract, `"lookup"`, `"lookup_`+app+`"`, 1)))
+			return
+		}
 		if !ok {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -642,11 +650,7 @@ func overlayEntries(t *testing.T, overlay []byte) map[string][]byte {
 }
 
 func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
-	const (
-		ui            = "generated/holon-ui/index.mjs"
-		requiresAlpha = `{"name":"example.com/gamma","version":"1","description":"gamma","_meta":{"io.modelcontextprotocol.registry/publisher-provided":{"sh.holon":{"requires":{"alpha":{}}}}}}`
-		gammaManifest = alphaManifest + "- name: gamma\n  access: {server: {}}\n  path: ./gamma\n"
-	)
+	const ui = "generated/holon-ui/index.mjs"
 	type send struct{ clients, page bool }
 	for _, test := range []struct {
 		name        string

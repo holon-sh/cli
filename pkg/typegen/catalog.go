@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -104,6 +105,20 @@ func sessionPages(ctx context.Context, session *mcp.ClientSession) func(method s
 func ServedContract(ctx context.Context, endpoint string, client *http.Client) (*Served, error) {
 	served, _, err := listServer(ctx, endpoint, client)
 	return served, err
+}
+
+// Document is the contract s describes, named by its serverInfo name and version, 0.0.0 when unset.
+func (s *Served) Document() (*Document, error) {
+	contract, err := listCatalog(s.Capabilities, s.pages)
+	if err != nil {
+		return nil, err
+	}
+	var info struct{ Name, Version string }
+	_ = json.Unmarshal(s.ServerInfo, &info)
+	if info.Name == "" {
+		return nil, errors.New("the server reports no name")
+	}
+	return NewDocument(&mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: info.Name, Version: cmp.Or(info.Version, unversioned)}, Schema: contract})
 }
 
 // listServer lists what the server at endpoint serves, and the contract that makes. It talks to the server under a

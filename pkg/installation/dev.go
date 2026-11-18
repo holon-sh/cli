@@ -1,6 +1,7 @@
 package installation
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -422,7 +423,7 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 	manifest.sources, manifest.access = d.manifest.sources, d.manifest.access
 	resolved, err := resolveManifestGraph(ctx, manifest, d.apps...)
 	if err == nil {
-		err = protocol.AccessPolicy(resolved.declarations(), d.manager.info.OAuth != nil)
+		err = cmp.Or(protocol.AccessPolicy(resolved.declarations(), d.manager.info.OAuth != nil), resolved.checkInstalled(d.session.Apps))
 	}
 	if err != nil || reflect.DeepEqual(resolved.Apps, d.manifest.Apps) {
 		return false, err

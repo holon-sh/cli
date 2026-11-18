@@ -30,15 +30,20 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	for len(apps) > 0 {
 		name := apps[0]
 		apps = apps[1:]
-		if slices.ContainsFunc(resolved.Apps, func(app manifestApp) bool { return app.Name == name }) {
+		if slices.Contains(resolved.installed, name) || slices.ContainsFunc(resolved.Apps, func(app manifestApp) bool { return app.Name == name }) {
 			continue
 		}
 		app, err := manifest.app(name)
 		if err != nil {
-			if i := slices.IndexFunc(resolved.Apps, func(a manifestApp) bool { return slices.Contains(a.resolved.Requires, name) }); i >= 0 {
-				err = undeclaredDependency(&resolved.Apps[i], name)
+			i := slices.IndexFunc(resolved.Apps, func(a manifestApp) bool { return slices.Contains(a.resolved.Requires, name) })
+			if i < 0 {
+				return manifestSpec{}, err
 			}
-			return manifestSpec{}, err
+			if resolved.Apps[i].resolved.descriptor.Requires[name] != (mcpregistry.Requirement{}) {
+				return manifestSpec{}, undeclaredDependency(&resolved.Apps[i], name)
+			}
+			resolved.installed = append(resolved.installed, name)
+			continue
 		}
 		access := cmp.Or(app.Access, manifest.access, manifest.deployed[name])
 		if access == nil {
@@ -77,21 +82,33 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 		apps = append(apps, app.resolved.Requires...)
 	}
 	slices.SortFunc(resolved.Apps, func(a, b manifestApp) int { return strings.Compare(a.Name, b.Name) })
-	if err := protocol.ValidateAppMounts(resolved.declarations()); err != nil {
+	declared := resolved.declarations()
+	if err := protocol.ValidateAppMounts(declared); err != nil {
 		return manifestSpec{}, err
 	}
-	if problems := protocol.Dependencies(resolved.declarations()); len(problems) != 0 {
+	for _, name := range resolved.installed {
+		declared = append(declared, protocol.App{Name: name})
+	}
+	if problems := protocol.Dependencies(declared); len(problems) != 0 {
 		return manifestSpec{}, errors.New(strings.Join(problems, "; "))
 	}
 	return resolved, nil
 }
 
+func (p manifestSpec) checkInstalled(kept []protocol.App) error {
+	for _, app := range p.Apps {
+		for _, name := range app.resolved.Requires {
+			if slices.Contains(p.installed, name) && !slices.ContainsFunc(kept, func(kept protocol.App) bool { return kept.Name == name }) {
+				return fmt.Errorf("%s requires %s, which is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation", app.Name, name)
+			}
+		}
+	}
+	return nil
+}
+
 func undeclaredDependency(requirer *manifestApp, name string) error {
 	missing := fmt.Errorf("%s requires %s, which is not an app in this project; declare it in holon.yaml", requirer.Name, name)
 	pin := requirer.resolved.descriptor.Requires[name]
-	if pin == (mcpregistry.Requirement{}) {
-		return missing
-	}
 	source, value := "registry", any(pin.RegistryRef)
 	if pin.URL != "" {
 		source, value = "remote", map[string]string{"url": pin.URL}
