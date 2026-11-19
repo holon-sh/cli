@@ -149,30 +149,21 @@ func (d *devLoop) waiting(app manifestApp) bool {
 	})
 }
 
-func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func(), error) {
-	directory, err := os.MkdirTemp("", "holon-overlay-")
-	if err != nil {
-		return packedSource{}, func() {}, err
-	}
-	cleanup := func() { _ = os.RemoveAll(directory) }
-	root := filepath.Join(directory, "source")
-	if _, err := snapshotSource(app, root); err != nil {
-		return packedSource{}, cleanup, err
-	}
-	packed, err := d.packSource(ctx, app, root)
-	packed.upload = newImageUpload(d.options, manifestSpec{Apps: []manifestApp{app}})
-	return packed, cleanup, err
-}
-
 func (d *devLoop) reloadApp(ctx context.Context, app manifestApp) error {
 	defer d.options.output.measure(app.Name, "reload")()
 	if !slices.ContainsFunc(d.session.Apps, func(current protocol.App) bool { return current.Name == app.Name }) {
 		return errors.New("application removed from the session")
 	}
-	packed, cleanup, err := d.pack(ctx, app)
+	directory, err := os.MkdirTemp("", "holon-overlay-")
+	if err != nil {
+		return err
+	}
+	cleanup := func() { _ = os.RemoveAll(directory) }
+	packed, err := d.packSource(ctx, app, filepath.Join(directory, "source"))
 	if err == nil && packed.overlay.Digest.String() != d.sent[app.Name] {
 		d.begin(app.Name)
 		if err = d.send(ctx, app.Name, packed); err == nil {
+			packed.upload = newImageUpload(d.options, manifestSpec{Apps: []manifestApp{app}})
 			d.record(app.Name, packed, cleanup)
 			return nil
 		}
@@ -214,11 +205,12 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 }
 
 func (d *devLoop) packSource(ctx context.Context, app manifestApp, root string) (packedSource, error) {
+	if _, err := snapshotSource(app, root); err != nil {
+		return packedSource{}, err
+	}
 	accepted := d.accepted[app.Name]
 	if accepted != nil {
-		staged := *accepted
-		staged.root = root
-		if err := staged.prepared.WriteClients(staged.name, staged.root); err != nil {
+		if err := accepted.prepared.WriteClients(accepted.name, root); err != nil {
 			return packedSource{}, err
 		}
 	}

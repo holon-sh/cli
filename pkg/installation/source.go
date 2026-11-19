@@ -1,7 +1,6 @@
 package installation
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -38,11 +37,7 @@ func sourceAppEntry(app manifestApp, root string) (string, error) {
 	}
 	var pkg typegen.PackageJSON
 	if slices.Contains([]string{".ts", ".js"}, filepath.Ext(entry)) {
-		data, err := os.ReadFile(filepath.Join(root, "package.json"))
-		if err == nil {
-			err = json.Unmarshal(data, &pkg)
-		}
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := pkg.Read(root); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return "", err
 		}
 	}

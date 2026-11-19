@@ -93,11 +93,7 @@ func (p Project) Check() error {
 		}
 	case typegen.TargetTS:
 		var pkg typegen.PackageJSON
-		data, err := os.ReadFile(manifest)
-		if err == nil {
-			err = json.Unmarshal(data, &pkg)
-		}
-		if err != nil {
+		if err := pkg.Read(p.Dir); err != nil {
 			return err
 		}
 		if pkg.Launches() {

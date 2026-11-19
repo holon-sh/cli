@@ -29,6 +29,11 @@ type PackageJSON struct {
 	Dependencies, DevDependencies, PeerDependencies, OptionalDependencies map[string]string
 }
 
+// Read loads the package.json at the project root.
+func (p *PackageJSON) Read(dir string) error {
+	return readTypeJSON(filepath.Join(dir, "package.json"), p)
+}
+
 // Launches reports whether the package starts itself, through main or a start script, so that
 // Holon runs it instead of importing its server entry.
 func (p PackageJSON) Launches() bool {
@@ -169,7 +174,7 @@ const GoRuntimeModule = "github.com/holon-sh/sdk-go"
 func DeclaredTargets(dir string) ([]string, error) {
 	var targets []string
 	var manifest PackageJSON
-	if err := readTypeJSON(filepath.Join(dir, "package.json"), &manifest); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := manifest.Read(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	for _, target := range []string{TargetTS, TargetUI} {

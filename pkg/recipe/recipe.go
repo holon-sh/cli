@@ -159,31 +159,24 @@ func (manifest packageJSON) nodeVersionNotice(files []string) string {
 	source, engine := "engines.node", strings.TrimSpace(manifest.Engines["node"])
 	if engine == "" {
 		source = "devEngines.runtime"
-		engine = nodeRange(manifest.DevEngines.Runtime)
+		var ranges []string
+		for _, runtime := range manifest.DevEngines.Runtime {
+			if runtime.Name == "node" {
+				ranges = append(ranges, strings.TrimSpace(runtime.Version))
+			}
+		}
+		if !slices.Contains(ranges, "") {
+			engine = strings.Join(ranges, " || ")
+		}
 	}
 	if engine == "" {
 		return "is unspecified. A fresh install uses the newest LTS."
 	}
 	version := "v" + strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(engine, "=")), "v")
-	if canonical := semver.Canonical(version); canonical != "" && canonical+semver.Build(version) == version {
+	if semver.Canonical(version)+semver.Build(version) == version {
 		return ""
 	}
 	return fmt.Sprintf("follows %s %q. A fresh install can select a different matching version.", source, engine)
-}
-
-func nodeRange(runtimes []nodeRuntime) string {
-	var ranges []string
-	for _, runtime := range runtimes {
-		if runtime.Name != "node" {
-			continue
-		}
-		version := strings.TrimSpace(runtime.Version)
-		if version == "" {
-			return ""
-		}
-		ranges = append(ranges, version)
-	}
-	return strings.Join(ranges, " || ")
 }
 
 func present(files []string, names ...string) []string {
