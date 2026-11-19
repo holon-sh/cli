@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -145,6 +146,9 @@ func prepareManifestTypes(
 		}
 		if err == nil && answer != nil {
 			byApp[name], err = answer.Document(name)
+		}
+		if HTTPStatus(err) == http.StatusNotFound {
+			return manifestSpec{}, nil, fmt.Errorf("%s is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation", name)
 		}
 		if err != nil {
 			return manifestSpec{}, nil, fmt.Errorf("%s: %w", name, err)

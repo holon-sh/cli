@@ -97,7 +97,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 		},
 		{
 			name: "an app in neither place stops the deployment",
-			want: "checkout requires pokeapi, which is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation",
+			want: "pokeapi is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -113,10 +113,6 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 			root := t.TempDir()
 			sourceFiles(t, root, map[string]string{manifestFileName: "apps:\n- name: checkout\n  access: {server: {}}\n" +
 				"  registry: {name: " + identity.Name + ", version: " + identity.Version + ", registry: '" + catalog.Registry + "'}\n"})
-			var production []protocol.App
-			if test.contract != "" {
-				production = []protocol.App{{Name: "pokeapi", Remote: &protocol.Remote{URL: "https://pokeapi.example/mcp"}}}
-			}
 			var mu sync.Mutex
 			var desired []protocol.App
 			h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
@@ -124,6 +120,10 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 			})
 			h.control.Handle([]string{protocol.ToolGetAppContract}, map[string]string{"session": protocol.ProductionName, "app": "pokeapi"},
 				func(w http.ResponseWriter, _ *http.Request) {
+					if test.contract == "" {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
 					installationtest.WriteJSON(w, json.RawMessage(test.contract))
 				})
 			h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
@@ -136,7 +136,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 					mu.Lock()
 					defer mu.Unlock()
 					session := protocol.SessionResponse{
-						Name: protocol.ProductionName, UID: "production-uid", Revision: "1", Generation: 1, Apps: production,
+						Name: protocol.ProductionName, UID: "production-uid", Revision: "1", Generation: 1,
 						Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: protocol.ConditionTrue}},
 					}
 					if installationtest.ToolName(r) == protocol.ToolUpdateSession {
@@ -145,7 +145,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 							t.Error(err)
 						}
 						desired = input.Desired.Apps
-						session.Revision, session.Generation, session.Apps = "2", 2, append(slices.Clone(production), desired...)
+						session.Revision, session.Generation, session.Apps = "2", 2, desired
 					}
 					installationtest.WriteJSON(w, session)
 				})
