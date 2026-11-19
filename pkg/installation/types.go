@@ -141,7 +141,7 @@ func prepareManifestTypes(
 	for _, name := range installed {
 		answer := served[name]
 		var err error
-		if options.plane == protocol.AdminPlane && needed[name] {
+		if _, deployed := manifest.deployed[name]; options.plane == protocol.AdminPlane && (needed[name] || !deployed) {
 			answer, err = options.manager.appContract(ctx, protocol.ProductionName, name)
 		}
 		if err == nil && answer != nil {

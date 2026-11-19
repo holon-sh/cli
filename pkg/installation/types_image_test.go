@@ -86,7 +86,10 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, test := range []struct{ name, contract, want string }{
+	for _, test := range []struct {
+		name, contract, want string
+		untyped              bool
+	}{
 		{
 			name:     "an app on the installation, however long its catalog, is typed and stays out of the deployment",
 			contract: strings.Replace(servedContract, `"name":"lookup"`, `"name":"lookup","description":"`+strings.Repeat("a", maxHTTPBody)+`"`, 1),
@@ -99,14 +102,22 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 			name: "an app in neither place stops the deployment",
 			want: "pokeapi is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation",
 		},
+		{
+			name: "an app in neither place stops the deployment of a caller that carries no contract", untyped: true,
+			want: "pokeapi is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			h := newRunHarness(t)
 			document := descriptorDocument("checkout")
 			identity := mcpcontract.Identity{Name: document["name"].(string), Version: document["version"].(string)}
+			requires := map[string]string{"pokeapi": pinned.Digest}
+			if test.untyped {
+				requires = nil
+			}
 			document["packages"].([]any)[0].(map[string]any)["identifier"] = publishTypeMetadata(t, h.registry,
-				strings.TrimPrefix(h.registryServer.URL, "https://")+"/checkout", &mcpcontract.Metadata{Identity: identity, Requires: map[string]string{"pokeapi": pinned.Digest}},
+				strings.TrimPrefix(h.registryServer.URL, "https://")+"/checkout", &mcpcontract.Metadata{Identity: identity, Requires: requires},
 				buildOptions{HTTPClient: h.registryServer.Client()}, map[string]*typegen.Document{pinned.Digest: pinned})
 			document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"pokeapi": map[string]any{}}}}}
 			catalog := descriptorRegistry(t, document)
