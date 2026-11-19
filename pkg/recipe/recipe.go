@@ -39,7 +39,10 @@ func Read(source fs.FS) (Recipe, error) {
 	if err != nil {
 		return Recipe{}, err
 	}
-	if python := present(files, "pyproject.toml", "requirements.txt", "poetry.lock", "pdm.lock", "uv.lock"); len(python) > 0 {
+	found := func(names ...string) []string {
+		return keep(names, func(name string) bool { return slices.Contains(files, name) })
+	}
+	if python := found("pyproject.toml", "requirements.txt", "poetry.lock", "pdm.lock", "uv.lock"); len(python) > 0 {
 		if !slices.Contains(files, "uv.lock") {
 			return Recipe{}, fmt.Errorf("found %s but no uv.lock: Python projects install with uv from a pyproject.toml and its uv.lock", strings.Join(python, ", "))
 		}
@@ -58,7 +61,7 @@ func Read(source fs.FS) (Recipe, error) {
 		}
 		return recipe, err
 	}
-	if bun := present(files, "bun.lock", "bun.lockb", ".bun-version"); len(bun) > 0 {
+	if bun := found("bun.lock", "bun.lockb", ".bun-version"); len(bun) > 0 {
 		return Recipe{}, fmt.Errorf("found %s: Node.js projects install with npm or pnpm", bun[0])
 	}
 	if !slices.Contains(files, "package.json") {
@@ -131,17 +134,17 @@ func node(source fs.FS, files []string) (Recipe, error) {
 		return Recipe{}, fmt.Errorf("package.json declares the package managers %s", strings.Join(declared, " and "))
 	}
 	manager := "npm"
-	if len(present(files, "pnpm-lock.yaml", "pnpm-workspace.yaml")) > 0 {
+	if slices.Contains(files, "pnpm-lock.yaml") || slices.Contains(files, "pnpm-workspace.yaml") {
 		manager = "pnpm"
 	}
 	if len(declared) == 1 {
 		manager = declared[0]
 	}
-	if !slices.Contains([]string{"npm", "pnpm"}, manager) {
+	if manager != "npm" && manager != "pnpm" {
 		return Recipe{}, fmt.Errorf("package.json declares the package manager %s: Node.js projects install with npm or pnpm", manager)
 	}
 	recipe := Recipe{
-		Inputs: append(present(files, ".node-version", ".nvmrc"), keep(files, nodeInput)...), Install: [][]string{{manager, "install"}},
+		Inputs: keep(files, nodeInput), Install: [][]string{{manager, "install"}},
 		Deploy: Deploy{Install: [][]string{{manager, "install"}}, Freeze: runtimecontract.Freeze{Dependencies: []string{"node_modules"}}},
 	}
 	if manifest.Scripts["build"] != "" {
@@ -157,10 +160,6 @@ func node(source fs.FS, files []string) (Recipe, error) {
 	return recipe, nil
 }
 
-func present(files []string, names ...string) []string {
-	return keep(names, func(name string) bool { return slices.Contains(files, name) })
-}
-
 func keep(names []string, wanted func(name string) bool) []string {
 	return slices.DeleteFunc(slices.Clone(names), func(name string) bool { return !wanted(name) })
 }
@@ -170,7 +169,8 @@ func pythonInput(name string) bool {
 }
 
 func nodeInput(name string) bool {
-	return strings.HasPrefix(name, "patches/") || slices.Contains([]string{
+	return slices.Contains([]string{".nvmrc", ".node-version"}, name) ||
+		strings.HasPrefix(name, "patches/") || slices.Contains([]string{
 		"package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml",
 		"binding.gyp", ".npmrc", ".pnpmfile.cjs", "pnpmfile.cjs",
 	}, path.Base(name))
