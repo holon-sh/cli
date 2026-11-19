@@ -215,9 +215,7 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 
 func packSource(ctx context.Context, app manifestApp, root string, accepted *preparedTypes) (packedSource, error) {
 	if accepted != nil {
-		staged := *accepted
-		staged.root = root
-		if err := staged.prepared.WriteClients(staged.name, staged.root); err != nil {
+		if err := accepted.prepared.WriteClients(accepted.name, root); err != nil {
 			return packedSource{}, err
 		}
 	}
