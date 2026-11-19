@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -114,6 +115,14 @@ func runInit(cmd *cobra.Command, dirArg, language, name string) error {
 
 	if project.Versions, err = scaffold.Resolve(cmd.Context(), language, cmd.Root().Version); err != nil {
 		return err
+	}
+	if !existing {
+		// New projects install their UI with npm, including Go and Python apps.
+		var versions struct{ Node string }
+		data, err := exec.CommandContext(cmd.Context(), "npm", "--global", "version", "--json").Output()
+		if err == nil && json.Unmarshal(data, &versions) == nil {
+			project.NodeVersion = versions.Node
+		}
 	}
 	stderr := cmd.ErrOrStderr()
 	created, changed, notes, err := project.Write()

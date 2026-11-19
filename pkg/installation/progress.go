@@ -133,6 +133,10 @@ func (o *progressOutput) problem(name string, err error) {
 		o.status(name, err.Error(), progressError)
 		return
 	}
+	o.clear(name)
+}
+
+func (o *progressOutput) clear(name string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if _, shown := o.statuses[name]; !shown {

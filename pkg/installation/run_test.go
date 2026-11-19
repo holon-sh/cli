@@ -545,6 +545,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 	if err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath}, &output, &diagnostics, runConfig); err != nil {
 		t.Fatal(err)
 	}
+	if strings.Count(diagnostics.String(), "prod Node.js version is unspecified.") != 1 {
+		t.Fatalf("deploy version notice: %s", diagnostics.String())
+	}
 	mu.Lock()
 	initial := slices.Clone(desired.Apps)
 	mu.Unlock()

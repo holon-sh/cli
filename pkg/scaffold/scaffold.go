@@ -18,6 +18,8 @@ import (
 	"strings"
 	"text/template"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/holon-sh/cli/pkg/typegen"
 )
 
@@ -33,6 +35,7 @@ var Languages = []string{typegen.TargetGo, typegen.TargetPy, typegen.TargetTS}
 // Project is an app in Dir, whose MCP server is named Name.
 type Project struct {
 	Dir, Language, Name string
+	NodeVersion         string // Local Node version for a new app’s .nvmrc.
 	Versions            Versions
 }
 
@@ -43,6 +46,9 @@ func AppName(dir string) string {
 
 // build builds the view: a page into dist/web, and the single file the server returns into dist/mcp.
 const build = "vite build"
+
+// nodeMinimum is the engine floor for the scaffold’s UI.
+const nodeMinimum = "22.20.0"
 
 // shared are the files an existing project may already have: the app merges into package.json and
 // .gitignore, and leaves the others as written.
@@ -155,6 +161,13 @@ func (p Project) Write() (created, changed, notes []string, err error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	if !existing {
+		version := nodeMinimum
+		if local := "v" + p.NodeVersion; semver.Compare(local, "v"+nodeMinimum) >= 0 && semver.Prerelease(local) == "" {
+			version = p.NodeVersion
+		}
+		files[".nvmrc"] = []byte(version + "\n")
+	}
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		data, target := files[name], filepath.Join(p.Dir, filepath.FromSlash(name))
 		current, err := os.ReadFile(target)
@@ -162,7 +175,7 @@ func (p Project) Write() (created, changed, notes []string, err error) {
 		switch {
 		case name == ".python-version" && existing:
 			continue
-		case present && slices.Contains([]string{"tsconfig.json", "pyproject.toml", "go.mod"}, name):
+		case present && slices.Contains([]string{"tsconfig.json", "pyproject.toml", "go.mod", ".nvmrc"}, name):
 			if name == "tsconfig.json" {
 				notes = append(notes, "kept tsconfig.json: holon types check uses it, so it must include ui/ with the DOM library and the node types")
 			}
@@ -229,7 +242,7 @@ func (p Project) render() (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data := struct{ App, Name, Key string }{AppName(p.Dir), p.Name, typegen.ServerKey(p.Name)}
+	data := struct{ App, Name, Key, NodeMinimum string }{AppName(p.Dir), p.Name, typegen.ServerKey(p.Name), nodeMinimum}
 	files := map[string][]byte{}
 	for relative, name := range sources {
 		source, err := templates.ReadFile(name)

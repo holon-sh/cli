@@ -10,15 +10,18 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/holon-sh/protocol/runtimecontract"
 )
 
 // Recipe is how a development environment runs a project: Install whenever a file in Inputs changes, then Build.
 type Recipe struct {
-	Inputs  []string
-	Install [][]string
-	Build   [][]string
-	Deploy  Deploy
+	NodeVersionNotice string // Reason a later install can select a different Node version.
+	Inputs            []string
+	Install           [][]string
+	Build             [][]string
+	Deploy            Deploy
 }
 
 type Deploy struct {
@@ -43,19 +46,14 @@ func Read(source fs.FS) (Recipe, error) {
 		if !slices.Contains(files, "uv.lock") {
 			return Recipe{}, fmt.Errorf("found %s but no uv.lock: Python projects install with uv from a pyproject.toml and its uv.lock", strings.Join(python, ", "))
 		}
-		page, err := node(source, files)
-		recipe := Recipe{
-			Inputs:  append(keep(files, pythonInput), page.Inputs...),
-			Install: append([][]string{{"uv", "sync"}}, page.Install...),
-			Build:   page.Build,
-			Deploy: Deploy{
-				Install: append([][]string{{"uv", "sync", "--locked", "--no-dev"}}, page.Deploy.Install...),
-				Freeze:  runtimecontract.Freeze{Dependencies: []string{".venv"}},
-			},
+		recipe, err := node(source, files)
+		if recipe.Install != nil {
+			recipe.Deploy.Build = slices.Concat(recipe.Build, [][]string{{"rm", "-rf", "node_modules"}})
 		}
-		if page.Install != nil {
-			recipe.Deploy.Build = slices.Concat(page.Build, [][]string{{"rm", "-rf", "node_modules"}})
-		}
+		recipe.Inputs = append(keep(files, pythonInput), recipe.Inputs...)
+		recipe.Install = append([][]string{{"uv", "sync"}}, recipe.Install...)
+		recipe.Deploy.Install = append([][]string{{"uv", "sync", "--locked", "--no-dev"}}, recipe.Deploy.Install...)
+		recipe.Deploy.Freeze = runtimecontract.Freeze{Dependencies: []string{".venv"}}
 		return recipe, err
 	}
 	if bun := present(files, "bun.lock", "bun.lockb", ".bun-version"); len(bun) > 0 {
@@ -140,8 +138,10 @@ func node(source fs.FS, files []string) (Recipe, error) {
 	if !slices.Contains([]string{"npm", "pnpm"}, manager) {
 		return Recipe{}, fmt.Errorf("package.json declares the package manager %s: Node.js projects install with npm or pnpm", manager)
 	}
+	versions := present(files, ".node-version", ".nvmrc")
 	recipe := Recipe{
-		Inputs: append(present(files, ".node-version", ".nvmrc"), keep(files, nodeInput)...), Install: [][]string{{manager, "install"}},
+		NodeVersionNotice: nodeVersionNotice(versions, manifest.Engines["node"]),
+		Inputs:            append(versions, keep(files, nodeInput)...), Install: [][]string{{manager, "install"}},
 		Deploy: Deploy{Install: [][]string{{manager, "install"}}, Freeze: runtimecontract.Freeze{Dependencies: []string{"node_modules"}}},
 	}
 	if manifest.Scripts["build"] != "" {
@@ -155,6 +155,21 @@ func node(source fs.FS, files []string) (Recipe, error) {
 		}
 	}
 	return recipe, nil
+}
+
+func nodeVersionNotice(files []string, engine string) string {
+	if len(files) > 0 {
+		return ""
+	}
+	engine = strings.TrimSpace(engine)
+	if engine == "" {
+		return "is unspecified. A fresh install uses the newest LTS."
+	}
+	version := "v" + strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(engine, "=")), "v")
+	if canonical := semver.Canonical(version); canonical != "" && canonical+semver.Build(version) == version {
+		return ""
+	}
+	return fmt.Sprintf("follows engines.node %q. A fresh install can select a different matching version.", engine)
 }
 
 func present(files []string, names ...string) []string {

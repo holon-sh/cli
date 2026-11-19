@@ -567,13 +567,21 @@ func TestDevSendsSourceAndNoImage(t *testing.T) {
 }
 
 func TestOverlayPlan(t *testing.T) {
+	output, _, _ := newProgressOutput(io.Discard, io.Discard, false, testingclock.NewFakeClock(time.Now()))
+	overlayPlan := func(root string, page bool) (runtimecontract.Plan, error) {
+		source, err := readSource(manifestApp{Name: "example"}, root, output)
+		if err != nil {
+			return runtimecontract.Plan{}, err
+		}
+		return source.overlayPlan(root, page)
+	}
 	build := `{"scripts":{"build":"vite build"}}`
-	python := map[string]string{"pyproject.toml": "", "uv.lock": "", "package.json": build, "pnpm-lock.yaml": ""}
+	python := map[string]string{"pyproject.toml": "", "uv.lock": "", "package.json": build, "pnpm-lock.yaml": "", "src/server.py": ""}
 	serve := []string{".venv/bin/python", "-m", "holon.serve", "src/server.py"}
 	t.Run("a Python app with a page", func(t *testing.T) {
 		root := t.TempDir()
 		testfiles.Write(t, root, python)
-		plan, err := overlayPlan(root, "src/server.py", true)
+		plan, err := overlayPlan(root, true)
 		want := runtimecontract.Plan{
 			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}},
 			Prepare: [][]string{{"pnpm", "run", "build"}}, Start: serve,
@@ -588,7 +596,7 @@ func TestOverlayPlan(t *testing.T) {
 		files := map[string]string{"server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "", "package.json": build, "package-lock.json": "", ".nvmrc": "22", ".node-version": "24"}
 		testfiles.Write(t, root, files)
 		install := func(page bool) runtimecontract.Install {
-			plan, err := overlayPlan(root, "server.py", page)
+			plan, err := overlayPlan(root, page)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -735,6 +743,13 @@ func TestDevInstallsNothingOnThisMachine(t *testing.T) {
 	f.harness.files.save(t, f.root, map[string]string{"alpha/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`})
 	f.await(func() bool {
 		data, _ := os.ReadFile(filepath.Join(f.root, "alpha", "package.json"))
-		return strings.Contains(string(data), `"#holon-sh"`)
+		return strings.Contains(string(data), `"#holon-sh"`) && strings.Contains(f.stderr.String(), "alpha Node.js version is unspecified.")
 	})
+	const ranged = `{"engines":{"node":"^24"}}`
+	f.save(map[string]string{"alpha/package.json": ranged}, `alpha Node.js version follows engines.node "^24".`)
+	f.save(map[string]string{"alpha/package.json": `{"engines":{"node":"24.22.0"}}`}, "alpha Node.js version ok")
+	f.save(map[string]string{"alpha/package.json": ranged, "alpha/.node-version": "24.22.0"}, "alpha ready")
+	if output := f.stderr.String(); strings.Count(output, "version follows engines.node") != 1 || strings.Count(output, "version is unspecified") != 1 {
+		t.Fatalf("Node version notices: %s", output)
+	}
 }

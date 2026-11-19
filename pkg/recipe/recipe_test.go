@@ -10,6 +10,7 @@ import (
 )
 
 func TestRead(t *testing.T) {
+	const unspecified = "is unspecified. A fresh install uses the newest LTS."
 	page := `{"scripts":{"build":"vite build"}}`
 	modules := runtimecontract.Freeze{Dependencies: []string{"node_modules"}}
 	npm := Deploy{Install: [][]string{{"npm", "install"}}, Freeze: modules}
@@ -35,7 +36,8 @@ func TestRead(t *testing.T) {
 			name:  "pnpm by its lockfile",
 			files: map[string]string{"package.json": `{"engines":{"node":">=99"},"scripts":{"build":"vite build"}}`, "pnpm-lock.yaml": ""},
 			want: Recipe{
-				Inputs: []string{"package.json", "pnpm-lock.yaml"}, Install: [][]string{{"pnpm", "install"}}, Build: [][]string{{"pnpm", "run", "build"}},
+				NodeVersionNotice: `follows engines.node ">=99". A fresh install can select a different matching version.`,
+				Inputs:            []string{"package.json", "pnpm-lock.yaml"}, Install: [][]string{{"pnpm", "install"}}, Build: [][]string{{"pnpm", "run", "build"}},
 				Deploy: Deploy{
 					Install: [][]string{{"pnpm", "install", "--frozen-lockfile"}}, Build: [][]string{{"pnpm", "run", "build"}, pnpmState}, Freeze: modules,
 				},
@@ -44,12 +46,12 @@ func TestRead(t *testing.T) {
 		{
 			name:  "a declaration over the lockfile",
 			files: map[string]string{"package.json": `{"devEngines":{"packageManager":[{"name":"npm"}]}}`, "pnpm-lock.yaml": ""},
-			want:  Recipe{Inputs: []string{"package.json", "pnpm-lock.yaml"}, Install: [][]string{{"npm", "install"}}, Deploy: npm},
+			want:  Recipe{NodeVersionNotice: unspecified, Inputs: []string{"package.json", "pnpm-lock.yaml"}, Install: [][]string{{"npm", "install"}}, Deploy: npm},
 		},
 		{
 			name:  "npm otherwise, beside a Python version file",
 			files: map[string]string{"package.json": "{}", ".python-version": "3.13\n"},
-			want:  Recipe{Inputs: []string{"package.json"}, Install: [][]string{{"npm", "install"}}, Deploy: npm},
+			want:  Recipe{NodeVersionNotice: unspecified, Inputs: []string{"package.json"}, Install: [][]string{{"npm", "install"}}, Deploy: npm},
 		},
 		{
 			name: "uv with a page, reinstalled when a manifest changes",
@@ -58,8 +60,9 @@ func TestRead(t *testing.T) {
 				"patches/left-pad.patch": "", "web/package.json": "{}", "web/main.ts": "",
 			},
 			want: Recipe{
-				Inputs:  []string{".python-version", "pyproject.toml", "uv.lock", ".npmrc", "package.json", "patches/left-pad.patch", "web/package.json"},
-				Install: [][]string{{"uv", "sync"}, {"npm", "install"}}, Build: [][]string{{"npm", "run", "build"}},
+				NodeVersionNotice: unspecified,
+				Inputs:            []string{".python-version", "pyproject.toml", "uv.lock", ".npmrc", "package.json", "patches/left-pad.patch", "web/package.json"},
+				Install:           [][]string{{"uv", "sync"}, {"npm", "install"}}, Build: [][]string{{"npm", "run", "build"}},
 				Deploy: Deploy{
 					Install: [][]string{{"uv", "sync", "--locked", "--no-dev"}, {"npm", "install"}},
 					Build:   [][]string{{"npm", "run", "build"}, {"rm", "-rf", "node_modules"}},

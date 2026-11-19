@@ -45,13 +45,7 @@ var contractRunners = map[string]struct {
 	"python":     {".venv/bin/python", []string{"uv", "run", "--no-sync", "--with", "mypy==2.4.0", "python"}},
 }
 
-type sourceBuild struct {
-	app    manifestApp
-	entry  string
-	recipe recipe.Recipe
-}
-
-func (s sourceBuild) plan(prepare [][]string) runtimecontract.Plan {
+func (s sourceApp) plan(prepare [][]string) runtimecontract.Plan {
 	return runtimecontract.Plan{Install: runtimecontract.Install{Commands: s.recipe.Deploy.Install}, Prepare: prepare}
 }
 
@@ -59,7 +53,7 @@ type buildSession struct {
 	manager *Client
 	output  *progressOutput
 	session protocol.SessionResponse
-	sources map[string]sourceBuild
+	sources map[string]sourceApp
 }
 
 func (b *buildSession) start(ctx context.Context, apps []*manifestApp) error {
@@ -69,19 +63,14 @@ func (b *buildSession) start(ctx context.Context, apps []*manifestApp) error {
 	if b.manager.info.ImageRepositoryPrefix != "" {
 		return fmt.Errorf("%s: holon deploy builds source apps in the installation's registry, which this installation turns off; ship it as an image: app", apps[0].Name)
 	}
-	b.sources = map[string]sourceBuild{}
+	b.sources = map[string]sourceApp{}
 	var request protocol.AppsRequest
 	for _, app := range apps {
-		root := app.resolved.types.root
-		entry, err := sourceAppEntry(*app, root)
+		source, err := readSource(*app, app.resolved.types.root, b.output)
 		if err != nil {
 			return err
 		}
-		steps, err := recipe.Read(os.DirFS(root))
-		if err != nil {
-			return fmt.Errorf("%s: %w; ship it as an image: app", app.Name, err)
-		}
-		b.sources[app.Path] = sourceBuild{app: *app, entry: entry, recipe: steps}
+		b.sources[app.Path] = source
 		request.Apps = append(request.Apps, protocol.App{
 			Name: app.Name, Source: true, Access: &protocol.AppAccess{Server: &protocol.AccessRule{Callers: []string{}}},
 		})

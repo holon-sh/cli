@@ -13,11 +13,16 @@ import (
 )
 
 func TestCheckRefusesToOverwrite(t *testing.T) {
-	for _, language := range Languages {
-		t.Run(language, func(t *testing.T) {
-			project := Project{Dir: filepath.Join(t.TempDir(), "orders"), Language: language, Name: "com.example/orders"}
+	for _, test := range []struct{ language, local, want string }{
+		{"go", "", nodeMinimum}, {"py", "20.1.0", nodeMinimum}, {"ts", "24.1.2", "24.1.2"},
+	} {
+		t.Run(test.language, func(t *testing.T) {
+			project := Project{Dir: filepath.Join(t.TempDir(), "orders"), Language: test.language, Name: "com.example/orders", NodeVersion: test.local}
 			if _, _, _, err := project.Write(); err != nil {
 				t.Fatal(err)
+			}
+			if got := testfiles.Read(t, project.Dir, ".nvmrc"); got != test.want+"\n" {
+				t.Fatalf(".nvmrc = %q", got)
 			}
 			if err := project.Check(); err == nil || !strings.Contains(err.Error(), "orders already has") {
 				t.Errorf("Check after Write = %v, want the files it would overwrite", err)
@@ -31,14 +36,15 @@ func TestWriteBesideAProject(t *testing.T) {
 	testfiles.Write(t, dir, map[string]string{
 		"pyproject.toml": "[project]\nname = \"billing\"\n",
 		".gitignore":     ".venv\n",
+		".node-version":  "22",
 		"package.json":   "{\n  \"name\": \"billing\",\n  \"scripts\": {\n    \"build\": \"\"\n  },\n  \"devDependencies\": {\n    \"vite\": \"^7.0.0\"\n  }\n}\n",
 	})
-	project := Project{Dir: dir, Language: "py", Name: "com.example/billing"}
+	project := Project{Dir: dir, Language: "py", Name: "com.example/billing", NodeVersion: "24.1.2"}
 	created, changed, notes, err := project.Write()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(created, "server.py") || slices.Contains(created, ".python-version") || !slices.Equal(changed, []string{".gitignore", "package.json"}) {
+	if !slices.Contains(created, "server.py") || slices.Contains(created, ".python-version") || slices.Contains(created, ".nvmrc") || !slices.Equal(changed, []string{".gitignore", "package.json"}) {
 		t.Errorf("created %v, changed %v", created, changed)
 	}
 	if ignore := testfiles.Read(t, dir, ".gitignore"); !strings.HasPrefix(ignore, ".venv\n__pycache__/\n") || strings.Contains(ignore, ".venv/") {

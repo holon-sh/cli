@@ -159,7 +159,7 @@ func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func
 	if _, err := snapshotSource(app, root); err != nil {
 		return packedSource{}, cleanup, err
 	}
-	packed, err := packSource(ctx, app, root, d.accepted[app.Name])
+	packed, err := d.packSource(ctx, app, root)
 	packed.upload = newImageUpload(d.options, manifestSpec{Apps: []manifestApp{app}})
 	return packed, cleanup, err
 }
@@ -213,7 +213,8 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 	})
 }
 
-func packSource(ctx context.Context, app manifestApp, root string, accepted *preparedTypes) (packedSource, error) {
+func (d *devLoop) packSource(ctx context.Context, app manifestApp, root string) (packedSource, error) {
+	accepted := d.accepted[app.Name]
 	if accepted != nil {
 		staged := *accepted
 		staged.root = root
@@ -221,12 +222,12 @@ func packSource(ctx context.Context, app manifestApp, root string, accepted *pre
 			return packedSource{}, err
 		}
 	}
-	entry, err := sourceAppEntry(app, root)
+	source, err := readSource(app, root, d.options.output)
 	if err != nil {
 		return packedSource{}, err
 	}
 	// A page is built once the clients it may import are in the source.
-	plan, err := overlayPlan(root, entry, accepted != nil && !accepted.unserved)
+	plan, err := source.overlayPlan(root, accepted != nil && !accepted.unserved)
 	if err != nil {
 		return packedSource{}, fmt.Errorf("%s: %w", app.Name, err)
 	}
@@ -293,12 +294,9 @@ func (m *Client) postOverlay(ctx context.Context, session, app, route, overlay s
 	return m.client.send(ctx, path.Join(protocol.APIPathSessions, session, "apps", app, route), request, result)
 }
 
-func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
+func (s sourceApp) overlayPlan(root string, page bool) (runtimecontract.Plan, error) {
 	source := os.DirFS(root)
-	steps, err := recipe.Read(source)
-	if err != nil {
-		return runtimecontract.Plan{}, err
-	}
+	steps := s.recipe
 	inputs := digest.SHA256.Digester()
 	for _, name := range steps.Inputs {
 		data, err := fs.ReadFile(source, name)
@@ -307,7 +305,7 @@ func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
 		}
 		_, _ = fmt.Fprintf(inputs.Hash(), "%s\x00%d\x00%s", name, len(data), data)
 	}
-	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: inputs.Digest().String(), Commands: steps.Install}, Start: recipe.Start(entry)}
+	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: inputs.Digest().String(), Commands: steps.Install}, Start: recipe.Start(s.entry)}
 	if page {
 		plan.Prepare = steps.Build
 	}

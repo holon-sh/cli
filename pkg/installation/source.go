@@ -9,11 +9,12 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol/hookartifact"
 
 	"github.com/holon-sh/cli/internal/clientutil"
 	"github.com/holon-sh/cli/internal/commandenv"
+	"github.com/holon-sh/cli/pkg/recipe"
+	"github.com/holon-sh/cli/pkg/typegen"
 )
 
 func snapshotSource(app manifestApp, destination string) (string, error) {
@@ -49,4 +50,28 @@ func sourceAppEntry(app manifestApp, root string) (string, error) {
 		return "", fmt.Errorf("%s: holon dev and holon deploy run an app from a server.py, server.ts or server.js entry; ship it as an image: app", app.Name)
 	}
 	return entry, nil
+}
+
+type sourceApp struct {
+	app    manifestApp
+	entry  string
+	recipe recipe.Recipe
+}
+
+func readSource(app manifestApp, root string, output *progressOutput) (sourceApp, error) {
+	entry, err := sourceAppEntry(app, root)
+	if err != nil {
+		return sourceApp{}, err
+	}
+	steps, err := recipe.Read(os.DirFS(root))
+	if err != nil {
+		return sourceApp{}, fmt.Errorf("%s: %w; ship it as an image: app", app.Name, err)
+	}
+	row := app.Name + " Node.js version"
+	if notice := steps.NodeVersionNotice; notice != "" {
+		output.status(row, notice+" Pin an exact version in .nvmrc for repeatable builds.", progressIdle)
+	} else {
+		output.clear(row)
+	}
+	return sourceApp{app: app, entry: entry, recipe: steps}, nil
 }
