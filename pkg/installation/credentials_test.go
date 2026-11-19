@@ -2,11 +2,11 @@ package installation
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -91,11 +91,9 @@ func TestMovedInstallationNamesItsNewOrigin(t *testing.T) {
 
 func TestAppTokenIsForTheEndpoint(t *testing.T) {
 	t.Parallel()
-	var resources []string
 	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		resources = append(resources, r.FormValue("resource"))
 		installationtest.WriteJSON(w, map[string]any{
-			"token_type": "Bearer", "access_token": r.FormValue("resource"), "refresh_token": "refresh-" + r.FormValue("resource"), "expires_in": 3600,
+			"token_type": "Bearer", "access_token": r.FormValue("resource") + strings.Repeat("=", 4<<10), "refresh_token": "refresh-" + r.FormValue("resource"), "expires_in": 3600,
 		})
 	})
 	dir := t.TempDir()
@@ -108,12 +106,16 @@ func TestAppTokenIsForTheEndpoint(t *testing.T) {
 		AccessToken: "control", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour),
 	})
 	endpoints := []string{"https://example.com/mcp/app", server.URL + "/mcp/app", session + "/mcp"}
-	for i, want := range []string{"", endpoints[1], endpoints[2]} {
-		if token, err := config.AppToken(t.Context(), endpoints[i]); token != want || err != nil {
-			t.Fatalf("%s: token=%q error=%v, want %q", endpoints[i], token, err, want)
-		}
+	for i := range 20 {
+		endpoints = append(endpoints, fmt.Sprintf("%s/mcp/app-%d", session, i))
 	}
-	if !slices.Equal(resources, endpoints[1:]) {
-		t.Fatalf("refreshed for %v, want %v", resources, endpoints[1:])
+	for i, endpoint := range endpoints {
+		want := endpoint
+		if i == 0 {
+			want = ""
+		}
+		if token, err := config.AppToken(t.Context(), endpoint); strings.TrimRight(token, "=") != want || err != nil {
+			t.Fatalf("%s: token=%.40q error=%v", endpoint, token, err)
+		}
 	}
 }

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -196,11 +195,7 @@ func (m *Client) token(ctx context.Context, audience string) (*oauth2.Token, err
 		return nil, err
 	}
 	m.state.Refresh, token.RefreshToken = token.RefreshToken, ""
-	maps.DeleteFunc(m.state.Access, func(_ string, token *oauth2.Token) bool { return time.Until(token.Expiry) <= accessSafety })
-	if m.state.Access == nil {
-		m.state.Access = map[string]*oauth2.Token{}
-	}
-	m.state.Access[audience] = token
+	m.state.Access = map[string]*oauth2.Token{audience: token}
 	return token, m.writeState(m.state)
 }
 

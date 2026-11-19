@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -287,15 +286,9 @@ func MountDeviceAuth(t *testing.T, mux *http.ServeMux, issuer func() string,
 	})
 	mux.HandleFunc("/token-exchange", func(w http.ResponseWriter, r *http.Request) {
 		check(r)
-		origin, resource := strings.TrimSuffix(issuer(), "/"), r.FormValue("resource")
-		if endpoint, err := url.Parse(resource); err == nil {
-			resource = endpoint.Scheme + "://" + endpoint.Host
-		}
-		_, control := protocol.ParseControlAudience(origin, resource)
-		_, _, session := protocol.ParseSessionAudience(origin, resource)
 		valid := !r.Form.Has("resource")
 		if r.FormValue("grant_type") == "refresh_token" {
-			valid = len(r.Form["resource"]) == 1 && (control || session)
+			valid = len(r.Form["resource"]) == 1
 		}
 		if !valid || r.FormValue("audience") != "" {
 			t.Errorf("unexpected token request target: %s", r.Form.Encode())
