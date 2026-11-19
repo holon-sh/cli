@@ -140,19 +140,36 @@ func TestEndpointTokenFollowsEachAlias(t *testing.T) {
 }
 
 func TestEndpointTokenStaysWithItsOrigin(t *testing.T) {
-	other := tokenlessServer(t)
-	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer secret" {
-			t.Errorf("the named origin received %q", r.Header.Get("Authorization"))
-		}
-		http.Redirect(w, r, other.URL, http.StatusTemporaryRedirect)
-	}))
-	defer redirecting.Close()
+	redirectingTo := func(target string) *httptest.Server {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer secret" {
+				t.Errorf("the named origin received %q", r.Header.Get("Authorization"))
+			}
+			http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+		}))
+		t.Cleanup(server.Close)
+		return server
+	}
 	// The process environment is where the CLI's token comes from.
 	t.Setenv("DOCS_MCP_TOKEN", "secret")
-	if _, err := ResolveDocument(t.Context(), Source{Alias: "docs", Server: Endpoint(redirecting.URL)}, Options{}); err != nil {
-		t.Fatal(err)
-	}
+
+	t.Run("the redirect to another origin is refused", func(t *testing.T) {
+		other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("the other origin received a request")
+		}))
+		defer other.Close()
+		source := Source{Alias: "docs", Server: Endpoint(redirectingTo(other.URL).URL)}
+		if _, err := ResolveDocument(t.Context(), source, Options{}); err == nil {
+			t.Fatal("ResolveDocument followed a redirect to another origin")
+		}
+	})
+	t.Run("a client that follows it sends no token there", func(t *testing.T) {
+		source := Source{Alias: "docs", Server: Endpoint(redirectingTo(tokenlessServer(t).URL).URL)}
+		follow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return nil }}
+		if _, err := ResolveDocument(t.Context(), source, Options{HTTPClient: follow}); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestRegistrySourceResolution(t *testing.T) {

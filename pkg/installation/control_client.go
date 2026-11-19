@@ -52,7 +52,7 @@ func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool 
 		return err
 	}
 	encoded, err := json.Marshal(result.StructuredContent)
-	if err != nil || result.StructuredContent == nil {
+	if err != nil || string(encoded) == "null" {
 		return errMalformedResponse
 	}
 	if result.IsError {
