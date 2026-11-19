@@ -5,6 +5,7 @@ package installation
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -204,7 +205,7 @@ func TestDockerTransportContract(t *testing.T) {
 				t.Fatalf("echo: %#v %v", result, err)
 			}
 			if diff := cmp.Diff(map[string]any{
-				"value": "hello", "environment": "preserved", "directory": "/work", "uid": float64(10001),
+				"value": "hello", "environment": "preserved", "directory": "/work", "uid": json.Number("10001"),
 				"injected": test.injected, "token": test.token, "empty": "", "arguments": test.arguments,
 			}, result.StructuredContent); diff != "" {
 				t.Fatalf("session configuration (-want +got):\n%s", diff)

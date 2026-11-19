@@ -94,7 +94,7 @@ func tokenlessServer(t *testing.T) *httptest.Server {
 }
 
 func TestEndpointToken(t *testing.T) {
-	server := liveServerBehind(t, func(authorization string) bool { return authorization == "Bearer good-value" })
+	endpoint := liveServerBehind(t, func(authorization string) bool { return authorization == "Bearer good-value" }).URL + "/mcp/orders"
 	for _, test := range []struct {
 		name, alias, env, signedIn, want string
 		signInErr                        error
@@ -108,14 +108,14 @@ func TestEndpointToken(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			signedIn := false
-			signIn := func(_ context.Context, origin string) (string, error) {
-				if signedIn || origin != server.URL {
-					t.Errorf("signed in again, or to %s rather than the endpoint's origin %s", origin, server.URL)
+			signIn := func(_ context.Context, resource string) (string, error) {
+				if signedIn || resource != endpoint {
+					t.Errorf("signed in again, or for %s rather than the endpoint %s", resource, endpoint)
 				}
 				signedIn = true
 				return test.signedIn, test.signInErr
 			}
-			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Server: Endpoint(server.URL)}, Options{Env: []string{test.env}, SignIn: signIn})
+			document, err := ResolveDocument(t.Context(), Source{Alias: test.alias, Server: Endpoint(endpoint)}, Options{Env: []string{test.env}, SignIn: signIn})
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), "-value") {
 					t.Fatalf("ResolveDocument = %v, want %q without the token", err, test.want)
@@ -140,19 +140,36 @@ func TestEndpointTokenFollowsEachAlias(t *testing.T) {
 }
 
 func TestEndpointTokenStaysWithItsOrigin(t *testing.T) {
-	other := tokenlessServer(t)
-	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer secret" {
-			t.Errorf("the named origin received %q", r.Header.Get("Authorization"))
-		}
-		http.Redirect(w, r, other.URL, http.StatusTemporaryRedirect)
-	}))
-	defer redirecting.Close()
+	redirectingTo := func(target string) *httptest.Server {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer secret" {
+				t.Errorf("the named origin received %q", r.Header.Get("Authorization"))
+			}
+			http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+		}))
+		t.Cleanup(server.Close)
+		return server
+	}
 	// The process environment is where the CLI's token comes from.
 	t.Setenv("DOCS_MCP_TOKEN", "secret")
-	if _, err := ResolveDocument(t.Context(), Source{Alias: "docs", Server: Endpoint(redirecting.URL)}, Options{}); err != nil {
-		t.Fatal(err)
-	}
+
+	t.Run("the redirect to another origin is refused", func(t *testing.T) {
+		other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("the other origin received a request")
+		}))
+		defer other.Close()
+		source := Source{Alias: "docs", Server: Endpoint(redirectingTo(other.URL).URL)}
+		if _, err := ResolveDocument(t.Context(), source, Options{}); err == nil {
+			t.Fatal("ResolveDocument followed a redirect to another origin")
+		}
+	})
+	t.Run("a client that follows it sends no token there", func(t *testing.T) {
+		source := Source{Alias: "docs", Server: Endpoint(redirectingTo(tokenlessServer(t).URL).URL)}
+		follow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return nil }}
+		if _, err := ResolveDocument(t.Context(), source, Options{HTTPClient: follow}); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestRegistrySourceResolution(t *testing.T) {

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -196,11 +195,7 @@ func (m *Client) token(ctx context.Context, audience string) (*oauth2.Token, err
 		return nil, err
 	}
 	m.state.Refresh, token.RefreshToken = token.RefreshToken, ""
-	maps.DeleteFunc(m.state.Access, func(_ string, token *oauth2.Token) bool { return time.Until(token.Expiry) <= accessSafety })
-	if m.state.Access == nil {
-		m.state.Access = map[string]*oauth2.Token{}
-	}
-	m.state.Access[audience] = token
+	m.state.Access = map[string]*oauth2.Token{audience: token}
 	return token, m.writeState(m.state)
 }
 
@@ -561,17 +556,25 @@ func (m *Client) Call(ctx context.Context, plane protocol.Plane, tool string, in
 	return m.client.Call(ctx, plane, token, tool, input, output)
 }
 
-func (config ClientConfig) AppToken(ctx context.Context, origin string) (string, error) {
+func (config ClientConfig) AppToken(ctx context.Context, resource string) (string, error) {
 	local, err := newLocalAuthManager(config)
 	if err != nil {
 		return "", err
 	}
-	if _, _, ok := protocol.ParseSessionAudience(local.client.baseURL, origin); !ok {
-		return "", nil
-	}
-	manager, err := NewClient(ctx, config)
+	endpoint, err := url.Parse(resource)
 	if err != nil {
 		return "", err
 	}
-	return manager.controlToken(ctx)
+	if _, _, ok := protocol.ParseSessionAudience(local.client.baseURL, endpoint.Scheme+"://"+endpoint.Host); !ok {
+		return "", nil
+	}
+	manager, err := NewClient(ctx, config)
+	if err != nil || manager.info.OAuth == nil {
+		return "", err
+	}
+	token, err := manager.resourceToken(ctx, resource)
+	if err != nil {
+		return "", err
+	}
+	return token.AccessToken, nil
 }

@@ -2,6 +2,7 @@ package installation
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -88,9 +89,13 @@ func TestMovedInstallationNamesItsNewOrigin(t *testing.T) {
 	}
 }
 
-func TestAppTokenIsTheInstallationSignIn(t *testing.T) {
+func TestAppTokenIsForTheEndpoint(t *testing.T) {
 	t.Parallel()
-	server := newAuthTestServer(t, func(http.ResponseWriter, *http.Request) { t.Error("an app token signed in") })
+	server := newAuthTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		installationtest.WriteJSON(w, map[string]any{
+			"token_type": "Bearer", "access_token": r.FormValue("resource") + strings.Repeat("=", 4<<10), "refresh_token": "refresh-" + r.FormValue("resource"), "expires_in": 3600,
+		})
+	})
 	dir := t.TempDir()
 	config := ClientConfig{Origin: server.URL, ConfigDir: dir, HTTPClient: server.Client()}
 	session, err := protocol.SessionAudience(server.URL, protocol.ModeDevelopment, "calm-fox-42")
@@ -100,9 +105,17 @@ func TestAppTokenIsTheInstallationSignIn(t *testing.T) {
 	seedAdminCredentials(t, newManager(t, server, dir), oauth2.Token{
 		AccessToken: "control", RefreshToken: "refresh", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour),
 	})
-	for origin, want := range map[string]string{"https://example.com": "", server.URL: "control", session: "control"} {
-		if token, err := config.AppToken(t.Context(), origin); token != want || err != nil {
-			t.Fatalf("%s: token=%q error=%v, want %q", origin, token, err, want)
+	endpoints := []string{"https://example.com/mcp/app", server.URL + "/mcp/app", session + "/mcp"}
+	for i := range 20 {
+		endpoints = append(endpoints, fmt.Sprintf("%s/mcp/app-%d", session, i))
+	}
+	for i, endpoint := range endpoints {
+		want := endpoint
+		if i == 0 {
+			want = ""
+		}
+		if token, err := config.AppToken(t.Context(), endpoint); strings.TrimRight(token, "=") != want || err != nil {
+			t.Fatalf("%s: token=%.40q error=%v", endpoint, token, err)
 		}
 	}
 }
