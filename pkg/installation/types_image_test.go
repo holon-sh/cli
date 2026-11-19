@@ -88,37 +88,39 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name, contract, want string
-		untyped              bool
+		untyped, deployed    bool
 	}{
 		{
-			name:     "an app on the installation, however long its catalog, is typed and stays out of the deployment",
+			name:     "an app the deployment runs, however long its catalog, is typed and stays out of the deployment",
 			contract: strings.Replace(servedContract, `"name":"lookup"`, `"name":"lookup","description":"`+strings.Repeat("a", maxHTTPBody)+`"`, 1),
+			deployed: true,
 		},
 		{
 			name: "a contract that changed on the installation stops the deployment", contract: strings.Replace(servedContract, `"lookup"`, `"search"`, 1),
-			want: "pokeapi has changed the typed contract expected by checkout (tool lookup removed); rebuild and publish the caller",
+			want: "pokeapi has changed the typed contract expected by checkout (tool lookup removed); rebuild and publish the caller", deployed: true,
 		},
 		{
-			name: "an app in neither place stops the deployment",
+			name: "an app in neither place stops the deployment of a caller that types no calls to it", untyped: true,
 			want: "pokeapi is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation",
 		},
-		{
-			name: "an app in neither place stops the deployment of a caller that carries no contract", untyped: true,
-			want: "pokeapi is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation",
-		},
+		{name: "an app the deployment runs needs no contract when the caller types no calls to it", untyped: true, deployed: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			h := newRunHarness(t)
 			document := descriptorDocument("checkout")
 			identity := mcpcontract.Identity{Name: document["name"].(string), Version: document["version"].(string)}
-			requires := map[string]string{"pokeapi": pinned.Digest}
+			metadata := &mcpcontract.Metadata{Identity: identity, Requires: map[string]string{"pokeapi": pinned.Digest}}
+			documents := map[string]*typegen.Document{pinned.Digest: pinned}
 			if test.untyped {
-				requires = nil
+				metadata.Requires, documents = nil, nil
+			}
+			var production []protocol.App
+			if test.deployed {
+				production = []protocol.App{{Name: "pokeapi", Remote: &protocol.Remote{URL: "https://pokeapi.example/mcp"}}}
 			}
 			document["packages"].([]any)[0].(map[string]any)["identifier"] = publishTypeMetadata(t, h.registry,
-				strings.TrimPrefix(h.registryServer.URL, "https://")+"/checkout", &mcpcontract.Metadata{Identity: identity, Requires: requires},
-				buildOptions{HTTPClient: h.registryServer.Client()}, map[string]*typegen.Document{pinned.Digest: pinned})
+				strings.TrimPrefix(h.registryServer.URL, "https://")+"/checkout", metadata, buildOptions{HTTPClient: h.registryServer.Client()}, documents)
 			document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"pokeapi": map[string]any{}}}}}
 			catalog := descriptorRegistry(t, document)
 			root := t.TempDir()
@@ -147,7 +149,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 					mu.Lock()
 					defer mu.Unlock()
 					session := protocol.SessionResponse{
-						Name: protocol.ProductionName, UID: "production-uid", Revision: "1", Generation: 1,
+						Name: protocol.ProductionName, UID: "production-uid", Revision: "1", Generation: 1, Apps: production,
 						Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: protocol.ConditionTrue}},
 					}
 					if installationtest.ToolName(r) == protocol.ToolUpdateSession {
@@ -156,7 +158,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 							t.Error(err)
 						}
 						desired = input.Desired.Apps
-						session.Revision, session.Generation, session.Apps = "2", 2, desired
+						session.Revision, session.Generation, session.Apps = "2", 2, append(slices.Clone(production), desired...)
 					}
 					installationtest.WriteJSON(w, session)
 				})
