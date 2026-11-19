@@ -78,7 +78,7 @@ func compileOpenAPI(ctx context.Context, path string) (*Document, error) {
 
 func endpointClient(alias string, location Endpoint, o Options) *http.Client {
 	endpoint, _ := url.Parse(string(location))
-	transport := &endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: endpoint.Scheme + "://" + endpoint.Host, signIn: o.SignIn}
+	transport := &endpointTransport{RoundTripper: cmp.Or(o.HTTPClient.Transport, http.DefaultTransport), origin: endpoint.Scheme + "://" + endpoint.Host, resource: string(location), signIn: o.SignIn}
 	if alias != "" {
 		transport.variable = strings.TrimSuffix(protocol.DependencyEnvName(alias), "_URL") + "_TOKEN"
 		transport.token = cmp.Or(commandenv.Value(o.Env, transport.variable), os.Getenv(transport.variable))
@@ -91,6 +91,7 @@ func endpointClient(alias string, location Endpoint, o Options) *http.Client {
 type endpointTransport struct {
 	http.RoundTripper
 	origin   string
+	resource string
 	variable string
 	signIn   SignIn
 
@@ -112,7 +113,7 @@ func (t *endpointTransport) RoundTrip(request *http.Request) (*http.Response, er
 	}
 	from := t.variable
 	if token == "" && t.signIn != nil {
-		if token, err = t.signIn(request.Context(), t.origin); err != nil {
+		if token, err = t.signIn(request.Context(), t.resource); err != nil {
 			return nil, t.refuse(err)
 		}
 		if token != "" {
