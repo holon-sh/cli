@@ -249,7 +249,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	h.run.Clock, f.clock = fc, fc
 	f.await = func(check func() bool) {
 		t.Helper()
-		stepUntil(t, fc, devDebounce, check)
+		stepUntil(t, fc, time.Second, check)
 	}
 	f.start = func(args ...string) {
 		t.Helper()
