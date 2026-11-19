@@ -140,7 +140,7 @@ func node(source fs.FS, files []string) (Recipe, error) {
 	if len(declared) == 1 {
 		manager = declared[0]
 	}
-	if manager != "npm" && manager != "pnpm" {
+	if !slices.Contains([]string{"npm", "pnpm"}, manager) {
 		return Recipe{}, fmt.Errorf("package.json declares the package manager %s: Node.js projects install with npm or pnpm", manager)
 	}
 	recipe := Recipe{
@@ -169,7 +169,7 @@ func pythonInput(name string) bool {
 }
 
 func nodeInput(name string) bool {
-	return strings.HasPrefix(name, "patches/") || slices.Contains([]string{
+	return slices.Contains([]string{".nvmrc", ".node-version"}, name) || strings.HasPrefix(name, "patches/") || slices.Contains([]string{
 		"package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml",
 		"binding.gyp", ".npmrc", ".pnpmfile.cjs", "pnpmfile.cjs",
 	}, path.Base(name))

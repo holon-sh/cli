@@ -570,29 +570,22 @@ func TestOverlayPlan(t *testing.T) {
 	build := `{"scripts":{"build":"vite build"}}`
 	python := map[string]string{"pyproject.toml": "", "uv.lock": "", "package.json": build, "pnpm-lock.yaml": ""}
 	serve := []string{".venv/bin/python", "-m", "holon.serve", "src/server.py"}
-	for _, test := range []struct {
-		name, entry string
-		files       map[string]string
-		page        bool
-		want        runtimecontract.Plan
-	}{
-		{"a Python app with a page", "src/server.py", python, true, runtimecontract.Plan{
-			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}}, Prepare: [][]string{{"pnpm", "run", "build"}}, Start: serve,
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			testfiles.Write(t, root, test.files)
-			plan, err := overlayPlan(root, test.entry, test.page)
-			plan.Install.Inputs = ""
-			if err != nil || !reflect.DeepEqual(plan, test.want) {
-				t.Fatalf("plan = %+v, want %+v: %v", plan, test.want, err)
-			}
-		})
-	}
+	t.Run("a Python app with a page", func(t *testing.T) {
+		root := t.TempDir()
+		testfiles.Write(t, root, python)
+		plan, err := overlayPlan(root, "src/server.py", true)
+		want := runtimecontract.Plan{
+			Install: runtimecontract.Install{Commands: [][]string{{"uv", "sync"}, {"pnpm", "install"}}},
+			Prepare: [][]string{{"pnpm", "run", "build"}}, Start: serve,
+		}
+		plan.Install.Inputs = ""
+		if err != nil || !reflect.DeepEqual(plan, want) {
+			t.Fatalf("plan = %+v, want %+v: %v", plan, want, err)
+		}
+	})
 	t.Run("the install's inputs change with what it installs from", func(t *testing.T) {
 		root := t.TempDir()
-		files := map[string]string{"server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "", "package.json": build, "package-lock.json": ""}
+		files := map[string]string{"server.py": "", ".python-version": "3.13", "pyproject.toml": "", "uv.lock": "", "package.json": build, "package-lock.json": "", ".nvmrc": "22", ".node-version": "24"}
 		testfiles.Write(t, root, files)
 		install := func(page bool) runtimecontract.Install {
 			plan, err := overlayPlan(root, "server.py", page)
