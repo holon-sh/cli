@@ -24,10 +24,11 @@ func TestRead(t *testing.T) {
 			name: "pnpm declared, with no build",
 			files: map[string]string{
 				"go.mod": "", "main.go": "",
+				".nvmrc": "22", ".node-version": "24", "web/.nvmrc": "20",
 				"package.json": `{"packageManager":"pnpm@11.25.0","dependencies":{"holon-sh":"^0.0.1"}}`,
 			},
 			want: Recipe{
-				Inputs: []string{"package.json"}, Install: [][]string{{"pnpm", "install"}},
+				Inputs: []string{".node-version", ".nvmrc", "package.json"}, Install: [][]string{{"pnpm", "install"}},
 				Deploy: Deploy{Install: [][]string{{"pnpm", "install"}}, Build: [][]string{pnpmState}, Freeze: modules},
 			},
 		},

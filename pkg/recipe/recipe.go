@@ -169,7 +169,8 @@ func pythonInput(name string) bool {
 }
 
 func nodeInput(name string) bool {
-	return strings.HasPrefix(name, "patches/") || slices.Contains([]string{
+	return slices.Contains([]string{".nvmrc", ".node-version"}, name) ||
+		strings.HasPrefix(name, "patches/") || slices.Contains([]string{
 		"package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml",
 		"binding.gyp", ".npmrc", ".pnpmfile.cjs", "pnpmfile.cjs",
 	}, path.Base(name))
