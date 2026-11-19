@@ -470,7 +470,7 @@ func TestDevResumesTheAppsAnEarlierRunStarted(t *testing.T) {
 }
 
 func TestDevAppliesProjectChanges(t *testing.T) {
-	f := startReloadFixture(t, true)
+	f := startReloadFixture(t, true, map[string]string{"alpha/package.json": "{}"})
 	for _, step := range []struct {
 		files        map[string]string
 		fail         bool
@@ -479,6 +479,7 @@ func TestDevAppliesProjectChanges(t *testing.T) {
 		{files: map[string]string{manifestFileName: alphaManifest + betaRemote}, fail: true, line: "manifest replacement outcome conflicts", served: "alpha linear"},
 		{files: map[string]string{"alpha/tools.py": "second"}, line: "beta ready", served: "alpha beta linear"},
 		{files: map[string]string{manifestFileName: alphaManifest}, line: "beta removed", served: "alpha linear"},
+		{files: map[string]string{manifestFileName: "apps:\n" + strings.Replace(betaRemote, "name: beta", "name: alpha", 1)}, line: "alpha Node.js version ok", served: "alpha linear"},
 	} {
 		f.update(func() { f.failSave = step.fail })
 		f.save(step.files, step.line)

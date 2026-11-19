@@ -96,7 +96,17 @@ func (o *progressOutput) failed(app, reason string) {
 }
 
 func (o *progressOutput) removed(app string) {
+	o.nodeVersion(app, "")
 	o.status(app, "removed", progressDone)
+}
+
+func (o *progressOutput) nodeVersion(app, notice string) {
+	row := app + " Node.js version"
+	if notice == "" {
+		o.clear(row)
+		return
+	}
+	o.status(row, notice+" Pin an exact version in .nvmrc for repeatable builds.", progressIdle)
 }
 
 func (o *progressOutput) unrecorded(app string, cause error) {

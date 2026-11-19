@@ -450,6 +450,9 @@ func (d *devLoop) update(ctx context.Context, desired protocol.AppsRequest, remo
 		return err
 	}
 	for _, app := range desired.Apps {
+		if !app.Source {
+			d.options.output.nodeVersion(app.Name, "")
+		}
 		d.begin(app.Name)
 	}
 	for _, name := range remove {

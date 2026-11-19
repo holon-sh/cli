@@ -67,11 +67,6 @@ func readSource(app manifestApp, root string, output *progressOutput) (sourceApp
 	if err != nil {
 		return sourceApp{}, fmt.Errorf("%s: %w; ship it as an image: app", app.Name, err)
 	}
-	row := app.Name + " Node.js version"
-	if notice := steps.NodeVersionNotice; notice != "" {
-		output.status(row, notice+" Pin an exact version in .nvmrc for repeatable builds.", progressIdle)
-	} else {
-		output.clear(row)
-	}
+	output.nodeVersion(app.Name, steps.NodeVersionNotice)
 	return sourceApp{app: app, entry: entry, recipe: steps}, nil
 }
