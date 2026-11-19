@@ -49,6 +49,11 @@ func TestRead(t *testing.T) {
 			want:  Recipe{NodeVersionNotice: unspecified, Inputs: []string{"package.json", "pnpm-lock.yaml"}, Install: [][]string{{"npm", "install"}}, Deploy: npm},
 		},
 		{
+			name:  "alternative development runtimes",
+			files: map[string]string{"package.json": `{"devEngines":{"runtime":[{"name":"deno"},{"name":"node","version":"20"},{"name":"node","version":"22.x"}]}}`},
+			want:  Recipe{NodeVersionNotice: `follows devEngines.runtime "20 || 22.x". A fresh install can select a different matching version.`, Inputs: []string{"package.json"}, Install: [][]string{{"npm", "install"}}, Deploy: npm},
+		},
+		{
 			name:  "npm otherwise, beside a Python version file",
 			files: map[string]string{"package.json": "{}", ".python-version": "3.13\n"},
 			want:  Recipe{NodeVersionNotice: unspecified, Inputs: []string{"package.json"}, Install: [][]string{{"npm", "install"}}, Deploy: npm},

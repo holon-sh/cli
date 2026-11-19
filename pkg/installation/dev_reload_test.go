@@ -746,11 +746,13 @@ func TestDevInstallsNothingOnThisMachine(t *testing.T) {
 		data, _ := os.ReadFile(filepath.Join(f.root, "alpha", "package.json"))
 		return strings.Contains(string(data), `"#holon-sh"`) && strings.Contains(f.stderr.String(), "alpha Node.js version is unspecified.")
 	})
-	const ranged = `{"engines":{"node":"^24"}}`
+	const devRange = `{"devEngines":{"runtime":{"name":"node","version":"22.x","onFail":"warn"}}}`
+	f.save(map[string]string{"alpha/package.json": devRange}, `alpha Node.js version follows devEngines.runtime "22.x".`)
+	const ranged = `{"engines":{"node":"^24"},"devEngines":{"runtime":{"name":"node","version":"22.x"}}}`
 	f.save(map[string]string{"alpha/package.json": ranged}, `alpha Node.js version follows engines.node "^24".`)
 	f.save(map[string]string{"alpha/package.json": `{"engines":{"node":"24.22.0"}}`}, "alpha Node.js version ok")
 	f.save(map[string]string{"alpha/package.json": ranged, "alpha/.node-version": "24.22.0"}, "alpha ready")
-	if output := f.stderr.String(); strings.Count(output, "version follows engines.node") != 1 || strings.Count(output, "version is unspecified") != 1 {
+	if output := f.stderr.String(); strings.Count(output, "version follows devEngines.runtime") != 1 || strings.Count(output, "version follows engines.node") != 1 || strings.Count(output, "version is unspecified") != 1 {
 		t.Fatalf("Node version notices: %s", output)
 	}
 }

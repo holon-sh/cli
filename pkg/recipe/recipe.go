@@ -78,28 +78,20 @@ type packageJSON struct {
 	Engines        map[string]string `json:"engines"`
 	Scripts        map[string]string `json:"scripts"`
 	DevEngines     struct {
-		PackageManager declarations `json:"packageManager"`
+		PackageManager declarations[struct{ Name string }] `json:"packageManager"`
+		Runtime        declarations[nodeRuntime]           `json:"runtime"`
 	} `json:"devEngines"`
 }
 
-type declarations []string
+type nodeRuntime struct{ Name, Version string }
 
-func (d *declarations) UnmarshalJSON(data []byte) error {
-	type declaration struct {
-		Name string `json:"name"`
+type declarations[T any] []T
+
+func (d *declarations[T]) UnmarshalJSON(data []byte) error {
+	if data[0] == '{' {
+		data = slices.Concat([]byte{'['}, data, []byte{']'})
 	}
-	var many []declaration
-	if err := json.Unmarshal(data, &many); err != nil {
-		var one declaration
-		if err := json.Unmarshal(data, &one); err != nil {
-			return err
-		}
-		many = []declaration{one}
-	}
-	for _, declared := range many {
-		*d = append(*d, declared.Name)
-	}
-	return nil
+	return json.Unmarshal(data, (*[]T)(d))
 }
 
 func node(source fs.FS, files []string) (Recipe, error) {
@@ -114,7 +106,10 @@ func node(source fs.FS, files []string) (Recipe, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return Recipe{}, fmt.Errorf("package.json: %w", err)
 	}
-	declared := manifest.DevEngines.PackageManager
+	var declared []string
+	for _, manager := range manifest.DevEngines.PackageManager {
+		declared = append(declared, manager.Name)
+	}
 	if manifest.PackageManager != "" {
 		name, _, _ := strings.Cut(manifest.PackageManager, "@")
 		declared = append(declared, name)
@@ -140,7 +135,7 @@ func node(source fs.FS, files []string) (Recipe, error) {
 	}
 	versions := present(files, ".node-version", ".nvmrc")
 	recipe := Recipe{
-		NodeVersionNotice: nodeVersionNotice(versions, manifest.Engines["node"]),
+		NodeVersionNotice: manifest.nodeVersionNotice(versions),
 		Inputs:            append(versions, keep(files, nodeInput)...), Install: [][]string{{manager, "install"}},
 		Deploy: Deploy{Install: [][]string{{manager, "install"}}, Freeze: runtimecontract.Freeze{Dependencies: []string{"node_modules"}}},
 	}
@@ -157,11 +152,15 @@ func node(source fs.FS, files []string) (Recipe, error) {
 	return recipe, nil
 }
 
-func nodeVersionNotice(files []string, engine string) string {
+func (manifest packageJSON) nodeVersionNotice(files []string) string {
 	if len(files) > 0 {
 		return ""
 	}
-	engine = strings.TrimSpace(engine)
+	source, engine := "engines.node", strings.TrimSpace(manifest.Engines["node"])
+	if engine == "" {
+		source = "devEngines.runtime"
+		engine = nodeRange(manifest.DevEngines.Runtime)
+	}
 	if engine == "" {
 		return "is unspecified. A fresh install uses the newest LTS."
 	}
@@ -169,7 +168,22 @@ func nodeVersionNotice(files []string, engine string) string {
 	if canonical := semver.Canonical(version); canonical != "" && canonical+semver.Build(version) == version {
 		return ""
 	}
-	return fmt.Sprintf("follows engines.node %q. A fresh install can select a different matching version.", engine)
+	return fmt.Sprintf("follows %s %q. A fresh install can select a different matching version.", source, engine)
+}
+
+func nodeRange(runtimes []nodeRuntime) string {
+	var ranges []string
+	for _, runtime := range runtimes {
+		if runtime.Name != "node" {
+			continue
+		}
+		version := strings.TrimSpace(runtime.Version)
+		if version == "" {
+			return ""
+		}
+		ranges = append(ranges, version)
+	}
+	return strings.Join(ranges, " || ")
 }
 
 func present(files []string, names ...string) []string {
