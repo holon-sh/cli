@@ -241,11 +241,7 @@ func (p Project) render() (map[string][]byte, error) {
 	data := struct{ App, Name, Key, NodeMinimum string }{AppName(p.Dir), p.Name, typegen.ServerKey(p.Name), nodeMinimum}
 	files := map[string][]byte{}
 	for relative, name := range sources {
-		source, err := templates.ReadFile(name)
-		if err != nil {
-			return nil, err
-		}
-		parsed, err := template.New(name).Parse(string(source))
+		parsed, err := template.ParseFS(templates, name)
 		if err != nil {
 			return nil, err
 		}
@@ -334,11 +330,8 @@ func create(target string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if _, err := file.Write(data); err != nil {
-		file.Close()
-		return err
-	}
-	return file.Close()
+	_, err = file.Write(data)
+	return errors.Join(err, file.Close())
 }
 
 func isFile(path string) bool {

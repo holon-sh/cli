@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -106,18 +107,13 @@ func node(source fs.FS, files []string) (Recipe, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return Recipe{}, fmt.Errorf("package.json: %w", err)
 	}
-	var declared []string
+	declared := present(slices.Collect(maps.Keys(manifest.Engines)), "npm", "pnpm", "yarn", "bun")
 	for _, manager := range manifest.DevEngines.PackageManager {
 		declared = append(declared, manager.Name)
 	}
 	if manifest.PackageManager != "" {
 		name, _, _ := strings.Cut(manifest.PackageManager, "@")
 		declared = append(declared, name)
-	}
-	for _, name := range []string{"npm", "pnpm", "yarn", "bun"} {
-		if _, ok := manifest.Engines[name]; ok {
-			declared = append(declared, name)
-		}
 	}
 	slices.Sort(declared)
 	if declared = slices.Compact(declared); len(declared) > 1 {
