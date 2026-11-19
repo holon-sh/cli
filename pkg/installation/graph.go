@@ -84,9 +84,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	installed := resolved.installed()
 	for _, app := range resolved.Apps {
 		for _, name := range app.resolved.Requires {
-			_, deployed := manifest.deployed[name]
-			if slices.Contains(installed, name) &&
-				(app.resolved.descriptor.Requires[name] != (mcpregistry.Requirement{}) || manifest.deployed != nil && !deployed) {
+			if slices.Contains(installed, name) && app.resolved.descriptor.Requires[name] != (mcpregistry.Requirement{}) {
 				return manifestSpec{}, undeclaredDependency(&app, name)
 			}
 		}
@@ -114,9 +112,6 @@ func (p manifestSpec) installed() []string {
 
 func undeclaredDependency(requirer *manifestApp, name string) error {
 	pin := requirer.resolved.descriptor.Requires[name]
-	if pin == (mcpregistry.Requirement{}) {
-		return fmt.Errorf("%s requires %s, which is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation", requirer.Name, name)
-	}
 	missing := fmt.Errorf("%s requires %s, which is not an app in this project; declare it in holon.yaml", requirer.Name, name)
 	source, value := "registry", any(pin.RegistryRef)
 	if pin.URL != "" {
