@@ -337,6 +337,8 @@ func (p packedSource) publish(ctx context.Context, app, session string) error {
 }
 
 func stableStat(_ string, s *fstypes.Stat) fsutil.MapResult {
+	owner := s.Mode & 0o700
+	s.Mode = s.Mode&^0o777 | owner | owner>>3&0o050 | owner>>6&0o005
 	s.ModTime, s.Uid, s.Gid, s.Xattrs = 0, 0, 0, nil
 	return fsutil.MapResultKeep
 }

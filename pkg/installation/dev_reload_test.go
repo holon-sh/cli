@@ -450,8 +450,11 @@ func TestDevResumesTheAppsAnEarlierRunStarted(t *testing.T) {
 		f.watching()
 		return before, f.reloadRequests()[len(before):]
 	}
+	if err := os.Chmod(filepath.Join(f.root, "alpha", "tools.py"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if before, after := resume("first"); len(after) != 1 || after[0].Digest != before[len(before)-1].Digest {
-		t.Fatalf("an unchanged source was sent %d times, not as it runs", len(after))
+		t.Fatalf("a source changed only in its group's and others' permissions was sent %d times, not as it runs", len(after))
 	}
 	runs := func(tools string) {
 		t.Helper()
