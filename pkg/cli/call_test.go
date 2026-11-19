@@ -11,7 +11,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// ordersServer serves one tool that echoes its arguments as structured content, failing for id "0".
+// ordersServer serves one tool that echoes its arguments as structured content, failing for id "0" and
+// answering id "text" with null structured content and a text block.
 func ordersServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: "example.com/orders", Version: "1.2.0"}, &mcp.ServerOptions{Instructions: "Look orders up by id."})
@@ -20,6 +21,9 @@ func ordersServer(t *testing.T) *httptest.Server {
 		var arguments map[string]any
 		if err := json.Unmarshal(request.Params.Arguments, &arguments); err != nil {
 			return nil, err
+		}
+		if arguments["id"] == "text" {
+			return &mcp.CallToolResult{StructuredContent: json.RawMessage("null"), Content: []mcp.Content{&mcp.TextContent{Text: "plain"}}}, nil
 		}
 		return &mcp.CallToolResult{StructuredContent: arguments, IsError: arguments["id"] == "0", Content: []mcp.Content{&mcp.TextContent{Text: "unused"}}}, nil
 	})
@@ -62,6 +66,9 @@ func TestCallReadsEachValueAsJSONOrAString(t *testing.T) {
 	}
 	if got := run(t, "", "call", live.URL, "read", `--args={"id":"9","count":1}`, "count=3"); got != "{\n  \"count\": 3,\n  \"id\": \"9\"\n}\n" {
 		t.Errorf("--args with an overriding pair sent %s", got)
+	}
+	if got := run(t, "", "call", live.URL, "read", "id=text"); got != "plain\n" {
+		t.Errorf("a result with null structured content printed %q, want its text", got)
 	}
 	run(t, `has no tool "write"; it has read`, "call", live.URL, "write")
 	// A string that reads as JSON is quoted.

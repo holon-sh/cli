@@ -259,7 +259,7 @@ func callArguments(pairs []string, raw string) (map[string]any, error) {
 // writeResult prints a tool result's structured content, or else its text blocks as they are and any
 // other block as JSON.
 func writeResult(w io.Writer, result *mcp.CallToolResult) error {
-	if result.StructuredContent != nil {
+	if raw, ok := result.StructuredContent.(json.RawMessage); result.StructuredContent != nil && !(ok && string(raw) == "null") {
 		return writeJSON(w, result.StructuredContent)
 	}
 	for _, content := range result.Content {
