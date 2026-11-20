@@ -71,7 +71,7 @@ type resolvedApp struct {
 }
 
 type manifestApp struct {
-	Mount string `description:"Production browser path; defaults to /APP. Use / for the origin root. Development uses app-name paths." json:"mount,omitempty"`
+	Mount string `description:"Browser path; defaults to /APP. Use / for the origin root." json:"mount,omitempty"`
 
 	Remote  *manifestRemote              `json:"remote,omitempty"`
 	OAuth   *manifestOAuth               `description:"OAuth client registration and secret configuration."        json:"oauth,omitempty"`

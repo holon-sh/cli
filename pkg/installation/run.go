@@ -234,14 +234,13 @@ func previousSession(ctx context.Context, manager *Client, recordPath string) pr
 	return session
 }
 
-// sessionAudience is the origin that serves session name, and the mode the session runs in.
-func (m *Client) sessionAudience(name string) (audience, mode string, err error) {
-	mode = protocol.ModeDevelopment
+// sessionAudience is the origin that serves session name.
+func (m *Client) sessionAudience(name string) (string, error) {
+	mode := protocol.ModeDevelopment
 	if name == protocol.ProductionName {
 		mode = protocol.ModeProduction
 	}
-	audience, err = protocol.SessionAudience(m.client.baseURL, mode, name)
-	return audience, mode, err
+	return protocol.SessionAudience(m.client.baseURL, mode, name)
 }
 
 func ControlPlane(name string) protocol.Plane {
@@ -416,7 +415,7 @@ func printStartingEndpoints(stdout io.Writer, output *progressOutput, manager *C
 // summary lists the endpoints of apps, the ones a command acted on, not the rest of session name. Only a source app can
 // export a frontend; a remote, registry or image app has no page the CLI knows of.
 func (m *Client) summary(name string, apps []manifestApp) (string, error) {
-	audience, mode, err := m.sessionAudience(name)
+	audience, err := m.sessionAudience(name)
 	if err != nil || len(apps) == 0 {
 		return "", err
 	}
@@ -424,7 +423,7 @@ func (m *Client) summary(name string, apps []manifestApp) (string, error) {
 	for _, app := range apps {
 		output = fmt.Appendf(output, "\n  %s\n", app.Name)
 		if app.Path != "" && !app.resolved.stdio {
-			output = fmt.Appendf(output, "    Browser  %s%s/\n", audience, strings.TrimSuffix(protocol.AppBrowserMount(app.resolved.App, mode), "/"))
+			output = fmt.Appendf(output, "    Browser  %s%s/\n", audience, strings.TrimSuffix(protocol.AppBrowserMount(app.resolved.App), "/"))
 		}
 		output = fmt.Appendf(output, "    MCP      %s\n", audience+protocol.AppPath(app.Name))
 	}
