@@ -41,7 +41,7 @@ func (scope configurationScope) label() string {
 	case protocol.ProductionName:
 		return "production"
 	case "":
-		return "developer-wide dev"
+		return "development"
 	default:
 		return "dev session " + string(scope)
 	}
