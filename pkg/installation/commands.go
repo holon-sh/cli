@@ -80,6 +80,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 			},
 		},
 		newDevCommand(&config),
+		newSessionCommand(&config),
 		newDeployCommand(&config),
 		newLogsCommand(&config),
 		newSecretCommand(&config),
@@ -128,7 +129,10 @@ func newDevCommand(config *commandConfig) *cobra.Command {
   holon dev --detach --json
 
   # Create the detached session cli-pr-42, or update it in place so its address stays the same
-  holon dev --detach --session cli-pr-42`,
+  holon dev --detach --session cli-pr-42
+
+  # End it before its --ttl runs out
+  holon session delete cli-pr-42`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if detached {
 				if ttl < time.Second || ttl > maxTTL || ttl%time.Second != 0 {
@@ -148,11 +152,36 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 			return runDev(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
 		},
 	}
-	cmd.Flags().BoolVar(&detached, "detach", false, "Exit after readiness and retain the session until its fixed expiry")
+	cmd.Flags().BoolVar(&detached, "detach", false, "Exit once the session is ready and keep it for --ttl from this run")
 	cmd.Flags().BoolVar(&config.jsonOutput, "json", false, "Write the ready API session as JSON (requires --detach)")
 	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, fmt.Sprintf("Detached session lifetime (whole seconds, at most %dh)", maxTTL/time.Hour))
 	cmd.Flags().StringVar(&config.devSession, "session", "", "Name the detached session to create, or to update in place (requires --detach)")
 	return withProject(withProgress(cmd, config, "Done"), config)
+}
+
+func newSessionCommand(config *commandConfig) *cobra.Command {
+	return commandGroup("session", "Delete development sessions", &cobra.Command{
+		Use:   "delete NAME",
+		Short: "Delete a development session",
+		Long:  "Delete a development session and wait until it is gone. Deleting a session that does not exist succeeds.",
+		Example: `  # Delete the development session cli-pr-42
+  holon session delete cli-pr-42`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !protocol.ValidSessionName(args[0]) {
+				return fmt.Errorf("invalid session name %q", args[0])
+			}
+			manager, err := NewClient(cmd.Context(), config.Auth)
+			if err != nil {
+				return err
+			}
+			if err := manager.DeleteSession(cmd.Context(), args[0], "", false); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Deleted %s.\n", configurationScope(args[0]).label())
+			return err
+		},
+	})
 }
 
 func newDeployCommand(config *commandConfig) *cobra.Command {
