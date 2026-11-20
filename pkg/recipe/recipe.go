@@ -13,11 +13,13 @@ import (
 	"github.com/holon-sh/protocol/runtimecontract"
 )
 
-// Recipe is how a development environment runs a project: Install whenever a file in Inputs changes, then Build.
+// Recipe is how a development environment runs a project: Install whenever a file in Inputs changes, then Build, then
+// Serve followed by the project's server entry.
 type Recipe struct {
 	Inputs  []string
 	Install [][]string
 	Build   [][]string
+	Serve   []string
 	Deploy  Deploy
 }
 
@@ -51,6 +53,7 @@ func Read(source fs.FS) (Recipe, error) {
 			Inputs:  append(keep(files, pythonInput), page.Inputs...),
 			Install: append([][]string{{"uv", "sync"}}, page.Install...),
 			Build:   page.Build,
+			Serve:   []string{".venv/bin/python", "-m", "holon.serve"},
 			Deploy: Deploy{
 				Install: append([][]string{{"uv", "sync", "--locked", "--no-dev"}}, page.Deploy.Install...),
 				Freeze:  runtimecontract.Freeze{Dependencies: []string{".venv"}},
@@ -61,21 +64,10 @@ func Read(source fs.FS) (Recipe, error) {
 		}
 		return recipe, err
 	}
-	if bun := found("bun.lock", "bun.lockb", ".bun-version"); len(bun) > 0 {
-		return Recipe{}, fmt.Errorf("found %s: Node.js projects install with npm or pnpm", bun[0])
-	}
 	if !slices.Contains(files, "package.json") {
 		return Recipe{}, errors.New("found neither package.json nor pyproject.toml")
 	}
 	return node(source, files)
-}
-
-// Start is the command that serves an app from its server.py, server.ts or server.js entry once its recipe has run.
-func Start(entry string) []string {
-	if path.Ext(entry) == ".py" {
-		return []string{".venv/bin/python", "-m", "holon.serve", entry}
-	}
-	return []string{"node_modules/.bin/holon-serve", entry}
 }
 
 type packageJSON struct {
@@ -111,6 +103,9 @@ func node(source fs.FS, files []string) (Recipe, error) {
 	if !slices.Contains(files, "package.json") {
 		return Recipe{}, nil
 	}
+	if other := keep([]string{"bun.lock", "bun.lockb", ".bun-version", "yarn.lock"}, func(name string) bool { return slices.Contains(files, name) }); len(other) > 0 {
+		return Recipe{}, fmt.Errorf("found %s: Node.js projects install with npm or pnpm", other[0])
+	}
 	data, err := fs.ReadFile(source, "package.json")
 	if err != nil {
 		return Recipe{}, err
@@ -144,7 +139,7 @@ func node(source fs.FS, files []string) (Recipe, error) {
 		return Recipe{}, fmt.Errorf("package.json declares the package manager %s: Node.js projects install with npm or pnpm", manager)
 	}
 	recipe := Recipe{
-		Inputs: keep(files, nodeInput), Install: [][]string{{manager, "install"}},
+		Inputs: keep(files, nodeInput), Install: [][]string{{manager, "install"}}, Serve: []string{"node_modules/.bin/holon-serve"},
 		Deploy: Deploy{Install: [][]string{{manager, "install"}}, Freeze: runtimecontract.Freeze{Dependencies: []string{"node_modules"}}},
 	}
 	if manifest.Scripts["build"] != "" {

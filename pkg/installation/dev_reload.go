@@ -305,7 +305,7 @@ func overlayPlan(root, entry string, page bool) (runtimecontract.Plan, error) {
 		}
 		_, _ = fmt.Fprintf(inputs.Hash(), "%s\x00%d\x00%s", name, len(data), data)
 	}
-	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: inputs.Digest().String(), Commands: steps.Install}, Start: recipe.Start(entry)}
+	plan := runtimecontract.Plan{Install: runtimecontract.Install{Inputs: inputs.Digest().String(), Commands: steps.Install}, Start: slices.Concat(steps.Serve, []string{entry})}
 	if page {
 		plan.Prepare = steps.Build
 	}

@@ -195,7 +195,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 		development.Client = repository.Client
 		ctx := auth.AppendRepositoryScope(ctx, repository.Reference, auth.ActionPull, auth.ActionPush)
 		ctx = auth.AppendRepositoryScope(ctx, development.Reference, auth.ActionPull)
-		manifest, err := assembleImage(ctx, repository, development, frozen, recipe.Start(source.entry), sourceLabels(app))
+		manifest, err := assembleImage(ctx, repository, development, frozen, slices.Concat(source.recipe.Serve, []string{source.entry}), sourceLabels(app))
 		if err != nil {
 			return err
 		}
