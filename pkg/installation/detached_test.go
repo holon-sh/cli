@@ -131,3 +131,27 @@ func TestDetachedDevUpdatesTheSessionItNames(t *testing.T) {
 		t.Fatalf("failed update = %v", err)
 	}
 }
+
+func TestSessionDelete(t *testing.T) {
+	h := newRunHarness(t)
+	var deleted atomic.Bool
+	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolDeleteSession}, map[string]string{"session": "cli-pr-42"}, func(w http.ResponseWriter, r *http.Request) {
+		if installationtest.ToolName(r) == protocol.ToolDeleteSession {
+			deleted.Store(true)
+			installationtest.WriteJSON(w, protocol.DeleteSessionResult{Deleted: true})
+			return
+		}
+		installationtest.WriteJSON(w, protocol.SessionResponse{Name: "cli-pr-42"})
+	})
+	h.control.Handle([]string{protocol.ToolGetSession}, map[string]string{"session": "cli-pr-7"}, http.NotFound)
+	h.start(t)
+	for _, name := range []string{"cli-pr-42", "cli-pr-7"} {
+		var output bytes.Buffer
+		if err := executeCommand(t.Context(), []string{"session", "delete", name}, &output, nil, h.run); err != nil || output.String() != "Deleted dev session "+name+".\n" {
+			t.Fatalf("delete %s = %v, output=%q", name, err, output.String())
+		}
+	}
+	if !deleted.Load() {
+		t.Fatal("the installation received no delete for cli-pr-42")
+	}
+}
