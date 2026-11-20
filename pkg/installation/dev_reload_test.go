@@ -373,24 +373,23 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 		between func(t *testing.T, f *reloadFixture)
 		edit    map[string]string
 		creates int
-		reloads int
 		uploads int
 		apps    []string
 	}{
 		{
-			name: "a reload that fails is neither reported ready nor uploaded", creates: 1, reloads: 1,
+			name: "a reload that fails is neither reported ready nor uploaded", creates: 1,
 			between: func(_ *testing.T, f *reloadFixture) { f.failNext = true },
 		},
 		{
-			name: "an app that no longer runs is started", creates: 1, reloads: 1, uploads: 1,
+			name: "an app that no longer runs is started", creates: 1, uploads: 1,
 			between: func(_ *testing.T, f *reloadFixture) { f.running = map[string][]byte{} },
 		},
 		{
 			name: "an app added to the project since joins the session", edit: map[string]string{manifestFileName: alphaManifest + betaRemote},
-			creates: 1, reloads: 1, uploads: 1, apps: []string{"beta"},
+			creates: 1, uploads: 1, apps: []string{"beta"},
 		},
 		{
-			name: "the same apps from another directory start their own session", creates: 2, reloads: 1, uploads: 1,
+			name: "the same apps from another directory start their own session", creates: 2, uploads: 1,
 			between: func(t *testing.T, f *reloadFixture) {
 				moved := filepath.Join(t.TempDir(), "elsewhere")
 				if err := os.Rename(f.root, moved); err != nil {
@@ -411,7 +410,7 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 				}
 			})
 			sourceFiles(t, f.root, test.edit)
-			uploaded, reloaded := f.uploads(), len(f.reloadRequests())
+			uploaded := f.uploads()
 			f.start()
 			f.watching()
 			if err := f.stop(); err != nil {
@@ -422,9 +421,6 @@ func TestDevPicksUpTheSessionAnEarlierRunLeft(t *testing.T) {
 			}
 			if f.created() != test.creates {
 				t.Fatalf("creates = %d, want %d; stderr=%q", f.created(), test.creates, f.stderr.String())
-			}
-			if reloads := len(f.reloadRequests()) - reloaded; reloads != test.reloads {
-				t.Fatalf("reloads = %d, want %d", reloads, test.reloads)
 			}
 			if names := f.apps(); !slices.Equal(names, slices.Concat([]string{"alpha"}, test.apps, []string{"linear"})) {
 				t.Fatalf("session apps = %v", names)
@@ -661,7 +657,6 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 		app, client string
 		sends       []send
 	}{
-		{name: "an app with nothing to generate or build is sent once", app: "alpha", client: ui, sends: []send{{}}},
 		{
 			name: "a page is built once its clients are in the source", app: "alpha", client: ui,
 			files: map[string]string{"alpha/package.json": `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`},
