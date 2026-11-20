@@ -92,7 +92,7 @@ func TestRunPreparationFailures(t *testing.T) {
 	}{
 		{name: "oauth without identity", command: "dev", access: "--oauth", want: "requires a configured identity provider"},
 		{name: "start script", command: "dev", pkg: `{"private":true,"main":"index.js"}`, want: "ship it as an image: app"},
-		{name: "registry off", command: "deploy", prefix: "registry.example/apps", want: "turns off; ship it as an image: app"},
+		{name: "registry off", command: "deploy", prefix: "registry.example/apps", want: "ship it as an image: app"},
 		{name: "unsupported recipe", command: "deploy", files: map[string]string{"bun.lock": ""}, want: "ship it as an image: app"},
 		{
 			name: "contract diagnostic", command: "deploy", session: true, contractRan: &runtimecontract.Ran{ExitCode: 2, Stderr: "server.js: the server raised ValueError\n"},
