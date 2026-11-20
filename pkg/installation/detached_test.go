@@ -21,7 +21,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 		seconds   int64
 		wantError string
 	}{
-		{name: "ready", seconds: 86400},
+		{name: "ready", flags: []string{"--ttl", "168h"}, seconds: 604800},
 		{name: "JSON", flags: []string{"--json", "--ttl", "1s"}, seconds: 1},
 		{name: "failed hook", seconds: 86400, wantError: "install hook failed"},
 		{name: "cancelled startup", seconds: 86400, wantError: "context canceled"},
