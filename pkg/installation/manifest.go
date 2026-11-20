@@ -89,6 +89,7 @@ type manifestApp struct {
 	Registry  *protocol.RegistrySource     `description:"MCP Registry server whose OCI, npm or PyPI package Holon runs; the package may be inferred. Name a remote endpoint with remote." json:"registry,omitempty"`
 	Run       *packageRun                  `description:"Registry runtime arguments; cannot combine with arguments or headers."   json:"run,omitempty"`
 	Arguments map[string]mcpregistry.Value `description:"Argument literals, or secrets named for the input (--api-key: API_KEY)." json:"arguments,omitempty"`
+	Webhooks  map[string]string            `description:"Webhook names, each with the tool that a POST to /webhooks/APP/NAME on the session's host calls with the request's headers and body." json:"webhooks,omitempty"`
 	resolved  resolvedApp
 }
 

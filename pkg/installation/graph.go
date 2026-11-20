@@ -46,7 +46,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 		}
 		app.resolved = resolvedApp{App: protocol.App{
 			Name: app.Name, Mount: app.Mount, Image: app.Image, Access: access,
-			OAuth: app.OAuth.client(),
+			OAuth: app.OAuth.client(), Webhooks: app.Webhooks,
 		}}
 		if app.Path != "" {
 			info, statErr := os.Stat(app.Path)

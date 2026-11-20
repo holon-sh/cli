@@ -32,6 +32,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
   - name: echo
     remote: {url: https://upstream.example/mcp}
     access: {server: {}}
+    webhooks: {github: receive_github_delivery}
 `})
 			h := newRunHarness(t)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -43,7 +44,8 @@ func TestDetachedDevLifecycle(t *testing.T) {
 			h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
 				installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 				var request protocol.AppsRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds {
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds ||
+					request.Apps[0].Webhooks["github"] != "receive_github_delivery" {
 					t.Errorf("detached request: %#v, %v", request, err)
 				}
 				created.Apps = request.Apps
@@ -95,7 +97,8 @@ func TestDetachedDevLifecycle(t *testing.T) {
 					t.Fatalf("detached JSON = %+v", result)
 				}
 			default:
-				if err != nil || !strings.Contains(output.String(), "Expires  2030-01-02T00:00:00Z") {
+				if err != nil || !strings.Contains(output.String(), "Expires  2030-01-02T00:00:00Z") ||
+					!strings.Contains(output.String(), "Webhook  https://gentle-otter-482."+h.baseHost+"/webhooks/echo/github\n") {
 					t.Fatalf("detached session = %v, output=%s", err, output.String())
 				}
 			}
