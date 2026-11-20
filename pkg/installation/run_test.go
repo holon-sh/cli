@@ -96,7 +96,7 @@ func TestRunPreparationFailures(t *testing.T) {
 		{name: "unsupported recipe", command: "deploy", files: map[string]string{"bun.lock": ""}, want: "ship it as an image: app"},
 		{
 			name: "server under server/", command: "deploy", files: map[string]string{"server.js": "export default {}", "server/server.ts": "// mcp"},
-			want: "keeps its MCP server in",
+			want: "ship it as an image: app",
 		},
 		{
 			name: "contract diagnostic", command: "deploy", session: true, contractRan: &runtimecontract.Ran{ExitCode: 2, Stderr: "server.js: the server raised ValueError\n"},
