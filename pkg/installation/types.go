@@ -79,6 +79,9 @@ func prepareManifestTypes(
 			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name), unserved: served != nil && !ok}
 			app.resolved.types = p
 			consumer, err := typegen.AppConsumer(app.Name, app.Path)
+			if err == nil && consumer != nil && !slices.Contains([]string{"", app.Path}, consumer.Server.Dir) {
+				err = fmt.Errorf("holon dev and holon deploy run the server entry at an app's root, and this app keeps its MCP server in %s; ship it as an image: app", consumer.Server.Dir)
+			}
 			if err != nil {
 				return manifestSpec{}, nil, fmt.Errorf("%s: %w", app.Name, err)
 			}
