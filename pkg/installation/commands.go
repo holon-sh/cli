@@ -104,6 +104,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 }
 
 func newDevCommand(config *commandConfig) *cobra.Command {
+	const maxTTL = protocol.MaxTTLSeconds * time.Second
 	var detached bool
 	var ttl time.Duration
 	cmd := &cobra.Command{
@@ -130,8 +131,8 @@ func newDevCommand(config *commandConfig) *cobra.Command {
   holon dev --detach --session cli-pr-42`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if detached {
-				if ttl < time.Second || ttl > 24*time.Hour || ttl%time.Second != 0 {
-					return errors.New("--ttl must be whole seconds between 1s and 24h")
+				if ttl < time.Second || ttl > maxTTL || ttl%time.Second != 0 {
+					return fmt.Errorf("--ttl must be whole seconds between 1s and %dh", maxTTL/time.Hour)
 				}
 				if cmd.Flags().Changed("session") && !protocol.ValidSessionName(config.devSession) {
 					return errors.New("--session requires a development session name")
@@ -149,7 +150,7 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&detached, "detach", false, "Exit after readiness and retain the session until its fixed expiry")
 	cmd.Flags().BoolVar(&config.jsonOutput, "json", false, "Write the ready API session as JSON (requires --detach)")
-	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "Detached session lifetime (whole seconds, at most 24h)")
+	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, fmt.Sprintf("Detached session lifetime (whole seconds, at most %dh)", maxTTL/time.Hour))
 	cmd.Flags().StringVar(&config.devSession, "session", "", "Name the detached session to create, or to update in place (requires --detach)")
 	return withProject(withProgress(cmd, config, "Done"), config)
 }
