@@ -42,6 +42,7 @@ type commandConfig struct {
 	file               string
 	apps               []string
 	devTTLSeconds      *int64
+	devSession         string
 	RegistryHTTPClient *http.Client
 	Auth               ClientConfig
 	Clock              clock.WithTickerAndDelayedExecution
@@ -174,7 +175,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
-	request.TTLSeconds = config.devTTLSeconds
+	request.Session, request.TTLSeconds = config.devSession, config.devTTLSeconds
 	if dev.session.Name != "" {
 		err = dev.update(ctx, request, removedApps(dev.session.Apps, request.Apps)...)
 	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &dev.session); err == nil {
@@ -195,6 +196,9 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		if err == nil {
 			dev.session = ready
 			err = dev.generate(ctx)
+		}
+		if err != nil && request.Session != "" {
+			return err
 		}
 		if err != nil {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)

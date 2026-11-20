@@ -105,3 +105,29 @@ func TestDetachedDevLifecycle(t *testing.T) {
 		})
 	}
 }
+
+func TestDetachedDevUpdatesTheSessionItNames(t *testing.T) {
+	root := t.TempDir()
+	sourceFiles(t, root, map[string]string{manifestFileName: `apps:
+  - name: echo
+    remote: {url: https://upstream.example/mcp}
+    access: {server: {}}
+`})
+	h := newRunHarness(t)
+	ready := protocol.Condition{Type: protocol.ConditionReady, Status: protocol.ConditionTrue}
+	h.control.Handle([]string{protocol.ToolCreateSession}, map[string]string{"session": "cli-pr-42"}, func(w http.ResponseWriter, _ *http.Request) {
+		installationtest.WriteJSON(w, protocol.SessionResponse{
+			Name: "cli-pr-42", UID: "preview-uid", Revision: "1", Generation: 1, Conditions: []protocol.Condition{ready},
+		})
+	})
+	h.start(t)
+	args := []string{"dev", "-f", filepath.Join(root, manifestFileName), "--detach", "--session", "cli-pr-42"}
+	if err := executeCommand(t.Context(), args, nil, nil, h.run); err != nil {
+		t.Fatal(err)
+	}
+	// The next run updates the same session, and one that fails leaves it in place: no fixture answers delete_session.
+	ready.Status, ready.Reason = protocol.ConditionFalse, protocol.ReasonProgressDeadline
+	if err := executeCommand(t.Context(), args, nil, nil, h.run); err == nil || !strings.Contains(err.Error(), "session failed") {
+		t.Fatalf("failed update = %v", err)
+	}
+}

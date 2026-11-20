@@ -25,7 +25,7 @@ func withScope(cmd *cobra.Command, run func(*cobra.Command, []string, configurat
 		if !slices.Contains([]string{"dev", "prod"}, environment) {
 			return errors.New("--env must be dev or prod")
 		}
-		if session != "" && (!protocol.ValidDNSLabel(session) || session == protocol.ProductionName) {
+		if session != "" && !protocol.ValidSessionName(session) {
 			return errors.New("--session requires a development session name")
 		}
 		if environment == "prod" {
