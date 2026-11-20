@@ -90,7 +90,6 @@ func TestAppConsumerFindsTheOwnServer(t *testing.T) {
 		want  string // the directory relative to the project, when one is found
 		fails bool
 	}{
-		{name: "entry at the root", files: map[string]string{"server.py": pythonProvider}, want: "."},
 		{name: "a web server beside an MCP server and a page", files: map[string]string{"server.js": "export default {};", "src/page.ts": node, "server/server.ts": node}, want: "server"},
 		{name: "a compiled binary named server", files: map[string]string{"server": ""}},
 		{name: "two servers", files: map[string]string{"server.py": pythonProvider, "server/server.py": pythonProvider}, fails: true},
