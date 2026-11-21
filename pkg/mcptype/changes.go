@@ -37,15 +37,15 @@ func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 		wanted, actual := part.entries(*want), part.entries(*have)
 		for _, name := range sortedKeys(wanted) {
 			entry := wanted[name]
-			published, ok := actual[name]
+			got, ok := actual[name]
 			switch {
 			case !ok:
 				result = append(result, fmt.Sprintf("%s %s removed", part.kind, name))
-			case !reflect.DeepEqual(published.Input, entry.Input):
+			case !reflect.DeepEqual(got.Input, entry.Input):
 				result = append(result, fmt.Sprintf("%s %s %s changed", part.kind, name, part.input))
-			case !reflect.DeepEqual(published.Output, entry.Output):
+			case !reflect.DeepEqual(got.Output, entry.Output):
 				result = append(result, fmt.Sprintf("%s %s %s changed", part.kind, name, part.output))
-			case !reflect.DeepEqual(published.Response, entry.Response):
+			case !reflect.DeepEqual(got.Response, entry.Response):
 				result = append(result, fmt.Sprintf("%s %s response changed", part.kind, name))
 			}
 		}
@@ -53,10 +53,9 @@ func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 	return result, nil
 }
 
-// parts are the kinds of entry a contract types clients from, in the order Changes reports them, with
-// what Changes calls each kind's Input and Output. A kind's name for a schema it never has is empty,
-// and only tools have a Response. Changes and canonicalContract both walk parts, so neither leaves out
-// a schema that a client is typed from.
+// parts are the kinds of contract entry, in the order Changes reports them, with what Changes calls
+// each kind's Input and Output. canonicalContract walks them too, so it normalizes every schema that
+// Changes compares.
 var parts = []struct {
 	kind, input, output string
 	entries             func(contract) map[string]contractTool
