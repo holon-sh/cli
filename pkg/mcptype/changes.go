@@ -9,7 +9,9 @@ import (
 )
 
 // Changes describes each way published breaks expected if it is deployed: identity first, then tools by name,
-// resources by URI and events by name, each by the first of its schemas that differs. Empty means compatible.
+// resources by URI and events by name, each by the first of its schemas that differs. A tool's response counts
+// only when expected has one, because a caller typed without it returns the tool's whole result whatever
+// published describes. Empty means compatible.
 func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 	want, err := decodeMetadata(expected)
 	if err != nil {
@@ -45,7 +47,7 @@ func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 				result = append(result, fmt.Sprintf("%s %s %s changed", part.kind, name, part.input))
 			case !reflect.DeepEqual(got.Output, entry.Output):
 				result = append(result, fmt.Sprintf("%s %s %s changed", part.kind, name, part.output))
-			case !reflect.DeepEqual(got.Response, entry.Response):
+			case entry.Response != nil && !reflect.DeepEqual(got.Response, entry.Response):
 				result = append(result, fmt.Sprintf("%s %s response changed", part.kind, name))
 			}
 		}
