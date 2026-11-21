@@ -3,7 +3,6 @@ package mcptype
 import (
 	"encoding/json"
 	"os/exec"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -71,29 +70,6 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	}
 	if got.PlainConnects {
 		t.Error("a page without its own app has connect")
-	}
-}
-
-// Clients tell the runtime which tools return the JSON a contract's responses describe.
-func TestClientsTellTheRuntimeWhichToolsReturnJSON(t *testing.T) {
-	contracts := `{"pets":{"tools":[{"name":"get_pet","inputSchema":{"type":"object"}}],"responses":{"properties":{"get_pet":{"$ref":"#/$defs/Pet"}},"$defs":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}}}}}`
-	typed := strings.ReplaceAll(`"responses":["get_pet"],"tools":[{"inputSchema":{"type":"object"},"name":"get_pet","responseSchema":{"$defs":{"Pet":{"properties":{"name":{"type":"string"}},"type":"object"}},"$ref":"#/$defs/Pet"}}]`, `"`, `\"`)
-	for target, runtime := range map[string]struct{ file, contract string }{
-		"node":    {TypeScriptModule, typed},
-		"browser": {TypeScriptModule, typed},
-		"go":      {"clients.go", "Parsed: true"},
-	} {
-		request := GenerateRequest{Target: target, Identity: mcpcontract.Identity{Name: "shop", Version: "1"}, App: "shop", GoModule: "example.test/holon"}
-		if err := json.Unmarshal([]byte(contracts), &request.Contracts); err != nil {
-			t.Fatal(err)
-		}
-		files, err := Generate(t.Context(), request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if module := string(files[runtime.file]); !strings.Contains(module, runtime.contract) || target == "go" && strings.Contains(module, "$defs") {
-			t.Errorf("%s clients do not tell the runtime %s:\n%s", target, runtime.contract, module)
-		}
 	}
 }
 

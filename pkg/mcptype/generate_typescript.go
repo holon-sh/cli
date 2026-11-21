@@ -25,19 +25,19 @@ var runtimes = map[string]string{"node": quoted("holon-sh/runtime"), "browser": 
 func generateTypeScriptPackage(ctx context.Context, request generateRequest, catalogs map[string]catalog) (map[string]string, error) {
 	// Resources take names that tools left free, in the same declarations.
 	names := map[string]bool{}
-	tools := generateTypeScript(catalogs, names, [5]string{"Inputs", "Outputs", "InputTypes", "OutputTypes", "Responses"})
+	tools := generateTypeScript(catalogs, names, [4]string{"Inputs", "Outputs", "InputTypes", "OutputTypes"})
 	catalogs, err := compileCatalogs(ctx, request, func(c contract) map[string]contractTool { return c.Resources }, false)
 	if err != nil {
 		return nil, err
 	}
-	resources := generateTypeScript(catalogs, names, [5]string{1: "Resources"})
+	resources := generateTypeScript(catalogs, names, [4]string{1: "Resources"})
 	catalogs, err = compileCatalogs(ctx, request, func(c contract) map[string]contractTool { return c.Events }, false)
 	if err != nil {
 		return nil, err
 	}
-	events := generateTypeScript(catalogs, names, [5]string{"EventArguments", "EventData"}) + eventTypes
+	events := generateTypeScript(catalogs, names, [4]string{"EventArguments", "EventData"}) + eventTypes
 	runtime := runtimes[request.Target]
-	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A], Responses[A]> };\n", runtime, runtime, tools, resources, events)
+	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A]> };\n", runtime, runtime, tools, resources, events)
 	bound := fmt.Sprintf("const [identity, contracts] = JSON.parse(%s);\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", quoted(string(encode([]Value{request.caller(), request.contracts}))))
 	imports, module, declarations := "bindApps", bound, types
 	if request.Target == "node" {
