@@ -170,7 +170,7 @@ func decodeMetadata(document *mcpcontract.Metadata) (*contract, error) {
 // URI, and the names of the tools whose text is JSON.
 func (c contract) MarshalJSON() ([]byte, error) {
 	tools := make([]Value, 0, len(c.Tools))
-	schemas := Object{}
+	var responses []string
 	for _, name := range sortedKeys(c.Tools) {
 		tool := c.Tools[name]
 		entry := Object{"name": name, "inputSchema": tool.Input}
@@ -178,7 +178,8 @@ func (c contract) MarshalJSON() ([]byte, error) {
 			entry["outputSchema"] = tool.Output
 		}
 		if tool.Response != nil {
-			schemas[name] = tool.Response
+			entry["responseSchema"] = tool.Response
+			responses = append(responses, name)
 		}
 		tools = append(tools, entry)
 	}
@@ -197,8 +198,8 @@ func (c contract) MarshalJSON() ([]byte, error) {
 		}
 		wire["events"] = events
 	}
-	if len(schemas) > 0 {
-		wire["responses"], wire["responseSchemas"] = sortedKeys(schemas), schemas
+	if len(responses) > 0 {
+		wire["responses"] = responses
 	}
 	return json.Marshal(wire)
 }

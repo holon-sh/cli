@@ -77,7 +77,7 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 // Clients tell the runtime which tools return the JSON a contract's responses describe.
 func TestClientsTellTheRuntimeWhichToolsReturnJSON(t *testing.T) {
 	contracts := `{"pets":{"tools":[{"name":"get_pet","inputSchema":{"type":"object"}}],"responses":{"properties":{"get_pet":{"$ref":"#/$defs/Pet"}},"$defs":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}}}}}`
-	typed := strings.ReplaceAll(`"responseSchemas":{"get_pet":{"$defs":{"Pet":{"properties":{"name":{"type":"string"}},"type":"object"}},"$ref":"#/$defs/Pet"}},"responses":["get_pet"]`, `"`, `\"`)
+	typed := strings.ReplaceAll(`"responses":["get_pet"],"tools":[{"inputSchema":{"type":"object"},"name":"get_pet","responseSchema":{"$defs":{"Pet":{"properties":{"name":{"type":"string"}},"type":"object"}},"$ref":"#/$defs/Pet"}}]`, `"`, `\"`)
 	for target, runtime := range map[string]struct{ file, contract string }{
 		"node":    {TypeScriptModule, typed},
 		"browser": {TypeScriptModule, typed},
