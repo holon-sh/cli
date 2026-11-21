@@ -13,7 +13,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
 	github.com/holon-sh/mcp-bridge v0.0.4
-	github.com/holon-sh/om v0.0.9
+	github.com/holon-sh/om v0.0.10-0.20261121220615-1be55f21b743
 	github.com/holon-sh/protocol v0.0.1-dev.26
 	github.com/klauspost/compress v1.19.2
 	github.com/moby/patternmatcher v0.6.1
