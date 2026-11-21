@@ -69,20 +69,7 @@ func compileOpenAPI(ctx context.Context, path string) (*Document, error) {
 		return nil, err
 	}
 	contract, err := listCatalog(options.Capabilities, func(string) ([]json.RawMessage, error) {
-		var pages []json.RawMessage
-		for cursor := ""; ; {
-			page, err := compiled.Document.Tools(cursor)
-			if err != nil {
-				return nil, err
-			}
-			data, err := json.Marshal(page)
-			if err != nil {
-				return nil, err
-			}
-			if pages, cursor = append(pages, data), page.NextCursor; cursor == "" {
-				return pages, nil
-			}
-		}
+		return paged(func(cursor string) (any, error) { return compiled.Document.Tools(cursor) })
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
