@@ -38,8 +38,7 @@ func generateTypeScriptPackage(ctx context.Context, request generateRequest, cat
 	events := generateTypeScript(catalogs, names, [5]string{"EventArguments", "EventData"}) + eventTypes
 	runtime := runtimes[request.Target]
 	types := fmt.Sprintf("import type { ToolClient, EndpointBinding, CreateOptions } from %s;\nexport { ToolCallError } from %s;\n%s%s%s\nexport type Apps = { readonly [A in keyof Inputs]: ToolClient<Inputs[A], Outputs[A], Resources[A], Events[A], Responses[A]> };\n", runtime, runtime, tools, resources, events)
-	identity, contracts := encode(request.caller()), encode(request.contracts)
-	bound := fmt.Sprintf("const identity = %s, contracts = %s;\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", identity, contracts)
+	bound := fmt.Sprintf("const [identity, contracts] = JSON.parse(%s);\nexport function createApps(bindings,options){return bindApps(identity,contracts,bindings,options)}\n", quoted(string(encode([]Value{request.caller(), request.contracts}))))
 	imports, module, declarations := "bindApps", bound, types
 	if request.Target == "node" {
 		imports, module, declarations = "createApps as create, bindApps", module+"export const apps = create(identity, contracts);\n", declarations+"export declare const apps: Apps;\n"

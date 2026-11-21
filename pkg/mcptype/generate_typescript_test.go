@@ -74,12 +74,10 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	}
 }
 
-// TypeScript clients tell the runtime which tools return the JSON a contract's responses describe,
-// and the schema, with the definitions it reaches, that each tool's JSON must match. Go clients tell
-// it only which tools, since the Go runtime has nowhere yet to take the schemas.
-func TestClientsTellTheRuntimeWhichToolsReturnJSONAndItsSchema(t *testing.T) {
+// Clients tell the runtime which tools return the JSON a contract's responses describe.
+func TestClientsTellTheRuntimeWhichToolsReturnJSON(t *testing.T) {
 	contracts := `{"pets":{"tools":[{"name":"get_pet","inputSchema":{"type":"object"}}],"responses":{"properties":{"get_pet":{"$ref":"#/$defs/Pet"}},"$defs":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}}}}}`
-	typed := `"responseSchemas":{"get_pet":{"$defs":{"Pet":{"properties":{"name":{"type":"string"}},"type":"object"}},"$ref":"#/$defs/Pet"}},"responses":["get_pet"]`
+	typed := strings.ReplaceAll(`"responseSchemas":{"get_pet":{"$defs":{"Pet":{"properties":{"name":{"type":"string"}},"type":"object"}},"$ref":"#/$defs/Pet"}},"responses":["get_pet"]`, `"`, `\"`)
 	for target, runtime := range map[string]struct{ file, contract string }{
 		"node":    {TypeScriptModule, typed},
 		"browser": {TypeScriptModule, typed},
