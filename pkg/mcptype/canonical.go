@@ -12,11 +12,13 @@ var (
 	schemaValues = []string{"additionalProperties", "unevaluatedProperties", "propertyNames", "contains", "items", "prefixItems", "additionalItems", "unevaluatedItems", "not", "if", "then", "else", "contentSchema"}
 )
 
+// canonicalContract normalizes, in place, every schema that contract types clients from.
 func canonicalContract(contract contract) {
-	for _, entries := range []map[string]contractTool{contract.Tools, contract.Resources, contract.Events} {
-		for _, entry := range entries {
+	for _, part := range parts {
+		for _, entry := range part.entries(contract) {
 			normalizeObject(entry.Input)
 			normalizeObject(entry.Output)
+			normalizeObject(entry.Response)
 		}
 	}
 }

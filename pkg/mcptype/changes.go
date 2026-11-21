@@ -9,7 +9,7 @@ import (
 )
 
 // Changes describes each way published breaks expected if it is deployed: identity first, then tools by name,
-// then resources by URI. Empty means compatible.
+// resources by URI and events by name, each by the first of its schemas that differs. Empty means compatible.
 func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 	want, err := decodeMetadata(expected)
 	if err != nil {
@@ -33,26 +33,35 @@ func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 	}
 	canonicalContract(*want)
 	canonicalContract(*have)
-	for _, name := range sortedKeys(want.Tools) {
-		tool := want.Tools[name]
-		actual, ok := have.Tools[name]
-		switch {
-		case !ok:
-			result = append(result, fmt.Sprintf("tool %s removed", name))
-		case !reflect.DeepEqual(actual.Input, tool.Input):
-			result = append(result, fmt.Sprintf("tool %s input changed", name))
-		case !reflect.DeepEqual(actual.Output, tool.Output):
-			result = append(result, fmt.Sprintf("tool %s output changed", name))
-		}
-	}
-	for _, uri := range sortedKeys(want.Resources) {
-		actual, ok := have.Resources[uri]
-		switch {
-		case !ok:
-			result = append(result, fmt.Sprintf("resource %s removed", uri))
-		case !reflect.DeepEqual(actual, want.Resources[uri]):
-			result = append(result, fmt.Sprintf("resource %s contents changed", uri))
+	for _, part := range parts {
+		wanted, actual := part.entries(*want), part.entries(*have)
+		for _, name := range sortedKeys(wanted) {
+			entry := wanted[name]
+			published, ok := actual[name]
+			switch {
+			case !ok:
+				result = append(result, fmt.Sprintf("%s %s removed", part.kind, name))
+			case !reflect.DeepEqual(published.Input, entry.Input):
+				result = append(result, fmt.Sprintf("%s %s %s changed", part.kind, name, part.input))
+			case !reflect.DeepEqual(published.Output, entry.Output):
+				result = append(result, fmt.Sprintf("%s %s %s changed", part.kind, name, part.output))
+			case !reflect.DeepEqual(published.Response, entry.Response):
+				result = append(result, fmt.Sprintf("%s %s response changed", part.kind, name))
+			}
 		}
 	}
 	return result, nil
+}
+
+// parts are the kinds of entry a contract types clients from, in the order Changes reports them, with
+// what Changes calls each kind's Input and Output. A kind's name for a schema it never has is empty,
+// and only tools have a Response. Changes and canonicalContract both walk parts, so neither leaves out
+// a schema that a client is typed from.
+var parts = []struct {
+	kind, input, output string
+	entries             func(contract) map[string]contractTool
+}{
+	{"tool", "input", "output", func(c contract) map[string]contractTool { return c.Tools }},
+	{"resource", "", "contents", func(c contract) map[string]contractTool { return c.Resources }},
+	{"event", "arguments", "data", func(c contract) map[string]contractTool { return c.Events }},
 }
