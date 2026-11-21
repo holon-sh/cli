@@ -4,6 +4,7 @@ package mcptype
 import (
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+	"reflect"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 )
@@ -23,16 +24,16 @@ func ParseMetadata(data []byte) (*mcpcontract.Metadata, error) {
 // SameContract reports whether two contracts are equal once annotations are removed and unordered
 // keywords sorted.
 func SameContract(a, b *mcpcontract.Contract) (bool, error) {
-	var forms [2]string
+	var forms [2]contract
 	for i, side := range []*mcpcontract.Contract{a, b} {
 		decoded, err := decodeContract(*side)
 		if err != nil {
 			return false, err
 		}
 		canonicalContract(decoded)
-		forms[i] = string(encode(decoded))
+		forms[i] = decoded
 	}
-	return forms[0] == forms[1], nil
+	return reflect.DeepEqual(forms[0], forms[1]), nil
 }
 
 // GenerateRequest asks for one target's typed client package: node, browser, python or go.
