@@ -38,7 +38,7 @@ type Contract struct {
 	Events    []Event    `json:"events,omitempty"`
 	// Responses is one JSON Schema whose properties, each named after a tool without an outputSchema,
 	// describe that tool's result text parsed as JSON, or null when it has no text; its $defs hold the
-	// definitions they share. A client returns that JSON without checking it.
+	// definitions they share.
 	Responses json.RawMessage `json:"responses,omitempty"`
 }
 

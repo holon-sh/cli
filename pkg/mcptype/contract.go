@@ -167,10 +167,11 @@ func decodeMetadata(document *mcpcontract.Metadata) (*contract, error) {
 }
 
 // MarshalJSON writes the contract as a runtime reads it: tools, resources and events sorted by name or
-// URI, and the names of the tools whose text is JSON in place of their responses.
+// URI, the names of the tools whose text is JSON in responses, and in responseSchemas each of those
+// tools' Response, which the runtime checks the parsed text against.
 func (c contract) MarshalJSON() ([]byte, error) {
 	tools := make([]Value, 0, len(c.Tools))
-	var responses []string
+	schemas := Object{}
 	for _, name := range sortedKeys(c.Tools) {
 		tool := c.Tools[name]
 		entry := Object{"name": name, "inputSchema": tool.Input}
@@ -178,7 +179,7 @@ func (c contract) MarshalJSON() ([]byte, error) {
 			entry["outputSchema"] = tool.Output
 		}
 		if tool.Response != nil {
-			responses = append(responses, name)
+			schemas[name] = tool.Response
 		}
 		tools = append(tools, entry)
 	}
@@ -197,8 +198,8 @@ func (c contract) MarshalJSON() ([]byte, error) {
 		}
 		wire["events"] = events
 	}
-	if len(responses) > 0 {
-		wire["responses"] = responses
+	if len(schemas) > 0 {
+		wire["responses"], wire["responseSchemas"] = sortedKeys(schemas), schemas
 	}
 	return json.Marshal(wire)
 }

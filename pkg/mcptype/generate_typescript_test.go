@@ -74,13 +74,15 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	}
 }
 
-// Clients tell the runtime only which tools return the JSON a contract's responses describe, never
-// the schemas that type it.
-func TestClientsTellTheRuntimeOnlyWhichToolsReturnJSON(t *testing.T) {
+// TypeScript clients tell the runtime which tools return the JSON a contract's responses describe,
+// and the schema, with the definitions it reaches, that each tool's JSON must match. Go clients tell
+// it only which tools, since the Go runtime has nowhere yet to take the schemas.
+func TestClientsTellTheRuntimeWhichToolsReturnJSONAndItsSchema(t *testing.T) {
 	contracts := `{"pets":{"tools":[{"name":"get_pet","inputSchema":{"type":"object"}}],"responses":{"properties":{"get_pet":{"$ref":"#/$defs/Pet"}},"$defs":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}}}}}`
-	for target, runtime := range map[string]struct{ file, names string }{
-		"node":    {TypeScriptModule, `"responses":["get_pet"]`},
-		"browser": {TypeScriptModule, `"responses":["get_pet"]`},
+	typed := `"responseSchemas":{"get_pet":{"$defs":{"Pet":{"properties":{"name":{"type":"string"}},"type":"object"}},"$ref":"#/$defs/Pet"}},"responses":["get_pet"]`
+	for target, runtime := range map[string]struct{ file, contract string }{
+		"node":    {TypeScriptModule, typed},
+		"browser": {TypeScriptModule, typed},
 		"go":      {"clients.go", "Parsed: true"},
 	} {
 		request := GenerateRequest{Target: target, Identity: mcpcontract.Identity{Name: "shop", Version: "1"}, App: "shop", GoModule: "example.test/holon"}
@@ -91,8 +93,8 @@ func TestClientsTellTheRuntimeOnlyWhichToolsReturnJSON(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if module := string(files[runtime.file]); !strings.Contains(module, runtime.names) || strings.Contains(module, "$defs") {
-			t.Errorf("%s clients do not tell the runtime only which tools return JSON:\n%s", target, module)
+		if module := string(files[runtime.file]); !strings.Contains(module, runtime.contract) || target == "go" && strings.Contains(module, "$defs") {
+			t.Errorf("%s clients do not tell the runtime %s:\n%s", target, runtime.contract, module)
 		}
 	}
 }
