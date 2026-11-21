@@ -17,7 +17,6 @@ func canonicalContract(contract contract) {
 		for _, entry := range part.entries(contract) {
 			normalizeObject(entry.Input)
 			normalizeObject(entry.Output)
-			normalizeObject(entry.Response)
 		}
 	}
 }

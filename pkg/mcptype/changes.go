@@ -45,8 +45,6 @@ func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 				result = append(result, fmt.Sprintf("%s %s %s changed", part.kind, name, part.input))
 			case !reflect.DeepEqual(got.Output, entry.Output):
 				result = append(result, fmt.Sprintf("%s %s %s changed", part.kind, name, part.output))
-			case entry.Response != nil && !reflect.DeepEqual(got.Response, entry.Response):
-				result = append(result, fmt.Sprintf("%s %s response changed", part.kind, name))
 			}
 		}
 	}
