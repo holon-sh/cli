@@ -9,9 +9,7 @@ import (
 )
 
 // Changes describes each way published breaks expected if it is deployed: identity first, then tools by name,
-// resources by URI and events by name, each by the first of its schemas that differs. A tool's response counts
-// only when expected has one, because a caller typed without it returns the tool's whole result whatever
-// published describes. Empty means compatible.
+// then resources by URI. Empty means compatible.
 func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 	want, err := decodeMetadata(expected)
 	if err != nil {
@@ -55,9 +53,6 @@ func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 	return result, nil
 }
 
-// parts are the kinds of contract entry, in the order Changes reports them, with what Changes calls
-// each kind's Input and Output. canonicalContract walks them too, so it normalizes every schema that
-// Changes compares.
 var parts = []struct {
 	kind, input, output string
 	entries             func(contract) map[string]contractTool

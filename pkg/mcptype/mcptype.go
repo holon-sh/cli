@@ -21,8 +21,8 @@ func ParseMetadata(data []byte) (*mcpcontract.Metadata, error) {
 	return &document, nil
 }
 
-// SameContract reports whether two contracts have the same entries with the same schemas, responses
-// included, once annotations are removed and unordered keywords sorted.
+// SameContract reports whether two contracts are equal once annotations are removed and unordered
+// keywords sorted.
 func SameContract(a, b *mcpcontract.Contract) (bool, error) {
 	var forms [2]contract
 	for i, side := range []*mcpcontract.Contract{a, b} {
