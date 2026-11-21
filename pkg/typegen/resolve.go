@@ -54,7 +54,7 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 }
 
 // compileOpenAPI is the contract of the tools om serves for the OpenAPI document at path, under the
-// name and version om serves it with, and with the response schemas that type their results.
+// name and version om serves it with.
 func compileOpenAPI(ctx context.Context, path string) (*Document, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

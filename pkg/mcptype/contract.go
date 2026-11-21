@@ -110,8 +110,7 @@ func decodeMetadata(document *mcpcontract.Metadata) (*contract, error) {
 	return &decoded, nil
 }
 
-// MarshalJSON writes the contract as a runtime reads it: tools, resources and events sorted by name or
-// URI.
+// MarshalJSON writes the contract as a runtime reads it: tools, resources and events sorted by name or URI.
 func (c contract) MarshalJSON() ([]byte, error) {
 	tools := make([]Value, 0, len(c.Tools))
 	for _, name := range sortedKeys(c.Tools) {
