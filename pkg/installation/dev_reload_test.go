@@ -729,11 +729,9 @@ func TestDevStartup(t *testing.T) {
 	f.update(func() { f.ready = true })
 	f.watching()
 	// Ready repeats only its heading when the endpoints are the ones Starting listed.
-	if strings.Count(f.stdout.String(), "/mcp/alpha") != 1 || !strings.Contains(f.stdout.String(), "\nReady\n") {
+	if strings.Count(f.stdout.String(), "/mcp/alpha") != 1 || !strings.Contains(f.stdout.String(), "\nReady\n") ||
+		!strings.Contains(f.stdout.String(), "Browser  https://gentle-otter-482."+f.harness.baseHost+"/docs/\n") {
 		t.Fatalf("stdout = %q", f.stdout.String())
-	}
-	if browser := "Browser  https://gentle-otter-482." + f.harness.baseHost + "/docs/\n"; !strings.Contains(f.stdout.String(), browser) {
-		t.Fatalf("stdout = %q, want %q", f.stdout.String(), browser)
 	}
 }
 
