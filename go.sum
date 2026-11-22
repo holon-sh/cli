@@ -102,10 +102,8 @@ github.com/holon-sh/protocol v0.0.1-dev.23 h1:6n6+6zwGqZbtr7CcNGl/bTe9DpKiJNQspJ
 github.com/holon-sh/protocol v0.0.1-dev.23/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
 github.com/holon-sh/protocol v0.0.1-dev.26 h1:DE2FdvJ8B78pW9KJnqBYKFNt2x2hH4ZgU2/qzWAMszM=
 github.com/holon-sh/protocol v0.0.1-dev.26/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
-github.com/holon-sh/protocol v0.0.1-dev.26.0.20261122190200-325bb44ea9cd h1:DZTJ0r773BOykkLTRc524zWwT0iawYdvySpD/9YJwDg=
-github.com/holon-sh/protocol v0.0.1-dev.26.0.20261122190200-325bb44ea9cd/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
-github.com/holon-sh/protocol v0.0.1-dev.26.0.20261122190200-ba4d3d054a52 h1:T09XY+0PBYaUOMpSFPneN1tqy5KZZE13BMTUg5VCQ2c=
-github.com/holon-sh/protocol v0.0.1-dev.26.0.20261122190200-ba4d3d054a52/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
+github.com/holon-sh/protocol v0.0.1-dev.26.0.20261122195624-e953ecf2c0aa h1:Nfb7exHCZuTG+W/j39TaLtggGOV1N6Uu1yCSePVHBjE=
+github.com/holon-sh/protocol v0.0.1-dev.26.0.20261122195624-e953ecf2c0aa/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
 github.com/iancoleman/orderedmap v0.3.0 h1:5cbR2grmZR/DiVt+VJopEhtVs9YGInGIxAoMJn+Ichc=
 github.com/iancoleman/orderedmap v0.3.0/go.mod h1:XuLcCUkdL5owUCQeF2Ue9uuw1EptkJDkXXS7VoV7XGE=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=

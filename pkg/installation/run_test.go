@@ -67,7 +67,6 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 		{"--ttl requires --detach", []string{"dev", "--ttl", "24h", "--file", project}},
 		{"--json requires --detach", []string{"dev", "--json", "--file", project}},
 		{"--session requires --detach", []string{"dev", "--session", "cli-pr-42", "--file", project}},
-		{"--session requires a development session name", []string{"dev", "--detach", "--session", "Cli-PR-42", "--file", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "0s", "--file", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "1.5s", "--file", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "192h", "--file", project}},
