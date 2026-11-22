@@ -20,6 +20,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/tonistiigi/fsutil"
 	fstypes "github.com/tonistiigi/fsutil/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 
@@ -54,11 +55,12 @@ func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error
 func (d *devLoop) installedContracts(ctx context.Context) (served map[string]*typegen.Served, unread error) {
 	served = map[string]*typegen.Served{}
 	for _, name := range d.manifest.installed() {
-		if answer, err := d.manager.appContract(ctx, d.session.Name, name); err == nil {
-			served[name] = answer
-		} else {
+		answer, err := d.manager.appContract(ctx, d.session.Name, name)
+		if err != nil {
 			unread = errors.Join(unread, fmt.Errorf("%s: %w", name, err))
+			answer = nil
 		}
+		served[name] = answer
 	}
 	return served, unread
 }
@@ -75,15 +77,16 @@ var (
 	errSourceUnrecorded = errors.New("no answer within a minute")
 )
 
-func (d *devLoop) regenerate(ctx context.Context) bool {
+func (d *devLoop) regenerate(ctx context.Context) error {
 	err := d.generate(ctx)
-	if errors.Is(err, errUnstarted) {
-		return false
+	if err == nil || errors.Is(err, errUnstarted) || ctx.Err() != nil {
+		return err
 	}
-	if err != nil {
-		d.options.output.problem("MCP types", err)
+	d.options.output.problem("MCP types", err)
+	if !d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), d.running)) {
+		return errUnstarted
 	}
-	return d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), d.running))
+	return nil
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
@@ -96,11 +99,18 @@ func (d *devLoop) generate(ctx context.Context) error {
 	installed, unread := d.installedContracts(ctx)
 	kept := func(app manifestApp) bool {
 		_, running := ran[app.Name]
-		return running && unread != nil
+		return running && unread != nil && slices.ContainsFunc(app.resolved.Requires, func(name string) bool {
+			answer, present := installed[name]
+			return present && answer == nil
+		})
 	}
-	pending := func(app manifestApp) bool { return !kept(app) && d.unsent(app) }
 	for {
-		last := !slices.ContainsFunc(d.manifest.Apps, pending)
+		pending := sets.New[string]()
+		for _, app := range d.manifest.Apps {
+			if app.Path != "" && d.sent[app.Name] == "" && !kept(app) {
+				pending.Insert(app.Name)
+			}
+		}
 		served, err := d.served(ctx)
 		if err != nil {
 			return err
@@ -108,9 +118,7 @@ func (d *devLoop) generate(ctx context.Context) error {
 		maps.Copy(served, installed)
 		manifest := d.manifest
 		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), func(app manifestApp) bool {
-			return slices.ContainsFunc(d.manifest.Apps, func(required manifestApp) bool {
-				return pending(required) && slices.Contains(app.resolved.Requires, required.Name)
-			})
+			return slices.ContainsFunc(app.resolved.Requires, pending.Has)
 		})
 		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, d.options, served)
 		if err != nil {
@@ -133,7 +141,7 @@ func (d *devLoop) generate(ctx context.Context) error {
 		if !d.reload(ctx, slices.DeleteFunc(manifest.Apps, kept)) {
 			return errUnstarted
 		}
-		if last {
+		if pending.Len() == 0 {
 			d.options.output.problem("MCP types", unread)
 			return nil
 		}
@@ -164,10 +172,6 @@ func (d *devLoop) reload(ctx context.Context, apps []manifestApp) bool {
 func (d *devLoop) running(app manifestApp) bool {
 	_, running := d.sent[app.Name]
 	return running
-}
-
-func (d *devLoop) unsent(app manifestApp) bool {
-	return app.Path != "" && d.sent[app.Name] == ""
 }
 
 func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func(), error) {

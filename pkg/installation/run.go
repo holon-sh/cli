@@ -194,7 +194,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		ready, err := waitSessionReady(ctx, manager, dev.session, config.output)
 		if err == nil {
 			dev.session = ready
-			err = dev.generate(ctx)
+			err = dev.regenerate(ctx)
 		}
 		if err != nil {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)

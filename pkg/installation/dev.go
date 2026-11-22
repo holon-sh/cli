@@ -306,9 +306,9 @@ func (d *devLoop) settle(ctx context.Context, stdout io.Writer) error {
 		return err
 	}
 	d.rollout = false
-	started := d.regenerate(ctx)
+	err = d.regenerate(ctx)
 	d.finish()
-	if !started {
+	if err != nil {
 		return nil
 	}
 	return d.options.output.endpoints(stdout, "Ready", d.manager, d.session.Name, d.manifest.Apps, false)
