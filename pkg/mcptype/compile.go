@@ -13,21 +13,8 @@ type catalog map[string]compiledTool
 
 type compiledTool struct {
 	input, output shape
-	returns       returns
+	structured    bool
 }
-
-// returns is what a tool's typed call returns, which its output shape describes.
-type returns uint8
-
-const (
-	// returnsResult is the complete MCP result, of a tool with neither an outputSchema nor a response.
-	returnsResult returns = iota
-	// returnsStructured is the structuredContent that the tool's outputSchema describes.
-	returnsStructured
-	// returnsParsed is the result's text parsed as JSON, which the tool's response describes; its
-	// structuredContent is not that.
-	returnsParsed
-)
 
 func parseCatalog(ctx context.Context, entries map[string]contractTool, files bool, declares func(typ) bool) (catalog, error) {
 	names := sortedKeys(entries)
@@ -39,19 +26,13 @@ func parseCatalog(ctx context.Context, entries map[string]contractTool, files bo
 		if err != nil {
 			return catalog{}, err
 		}
-		output, kind, schema := shape{named: map[string]typ{}}, returnsResult, tool.Output
-		switch {
-		case tool.Response != nil:
-			kind, schema = returnsParsed, tool.Response
-		case tool.Output != nil:
-			kind = returnsStructured
-		}
-		if schema != nil {
-			if output, err = parseShape(ctx, schema, false); err != nil {
+		output := shape{named: map[string]typ{}}
+		if tool.Output != nil {
+			if output, err = parseShape(ctx, tool.Output, false); err != nil {
 				return catalog{}, err
 			}
 		}
-		tools[i] = compiledTool{input: input, output: output, returns: kind}
+		tools[i] = compiledTool{input: input, output: output, structured: tool.Output != nil}
 		inputs[i], outputs[i] = &tools[i].input, &tools[i].output
 	}
 	// Inputs and outputs are named apart, so each shares only with its own kind.

@@ -14,7 +14,7 @@ import (
 )
 
 // MaxContractBytes is the largest contract document Holon reads.
-const MaxContractBytes = 4 << 20
+const MaxContractBytes = 16 << 20
 
 // Document retains the bytes a registry digest names. Copy Data when publishing;
 // marshaling Metadata again would give a different digest for some valid documents.
