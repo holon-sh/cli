@@ -76,7 +76,7 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 		return false
 	}
 	d.options.output.problem("MCP types", err)
-	return true
+	return d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool { return !d.unsent(app) }))
 }
 
 func (d *devLoop) generate(ctx context.Context) error {

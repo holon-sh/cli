@@ -680,6 +680,16 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 			},
 			sends: []send{{clients: true}, {clients: true, page: true}},
 		},
+		{
+			name: "a server starts without the clients of a required app whose contract cannot be read", app: "gamma", client: "generated/holon-sh/index.mjs",
+			files: map[string]string{
+				manifestFileName:     gammaManifest,
+				"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"delta":{}`),
+				"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
+				"gamma/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
+			},
+			sends: []send{{}},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := startReloadFixture(t, true, map[string]string{"alpha/server.py": "import mcp\n"}, test.files)
