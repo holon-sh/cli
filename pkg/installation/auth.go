@@ -105,18 +105,26 @@ func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := fmt.Fprintf(manager.output, "Running against %s\n", manager.client.baseURL); err != nil {
+	if err := manager.discoverInstallation(ctx); err != nil {
 		return nil, err
-	}
-	manager.info, err = manager.client.Info(ctx)
-	if err != nil {
-		return nil, err
-	}
-	manager.client.installationUID = manager.info.Installation.UID
-	if manager.environment != nil && manager.info.OAuth == nil {
-		return nil, errors.New("authentication from the environment requires an identity-enabled installation")
 	}
 	return manager, nil
+}
+
+func (m *Client) discoverInstallation(ctx context.Context) error {
+	if _, err := fmt.Fprintf(m.output, "Running against %s\n", m.client.baseURL); err != nil {
+		return err
+	}
+	info, err := m.client.Info(ctx)
+	if err != nil {
+		return err
+	}
+	if m.environment != nil && info.OAuth == nil {
+		return errors.New("authentication from the environment requires an identity-enabled installation")
+	}
+	m.info = info
+	m.client.installationUID = info.Installation.UID
+	return nil
 }
 
 func newLocalAuthManager(config ClientConfig) (*Client, error) {
@@ -567,7 +575,7 @@ func (m *Client) Call(ctx context.Context, plane protocol.Plane, tool string, in
 }
 
 func (config ClientConfig) AppToken(ctx context.Context, resource string) (string, error) {
-	local, err := newLocalAuthManager(config)
+	manager, err := newLocalAuthManager(config)
 	if err != nil {
 		return "", err
 	}
@@ -575,11 +583,10 @@ func (config ClientConfig) AppToken(ctx context.Context, resource string) (strin
 	if err != nil {
 		return "", err
 	}
-	if _, _, ok := protocol.ParseSessionAudience(local.client.baseURL, endpoint.Scheme+"://"+endpoint.Host); !ok {
+	if _, _, ok := protocol.ParseSessionAudience(manager.client.baseURL, endpoint.Scheme+"://"+endpoint.Host); !ok {
 		return "", nil
 	}
-	manager, err := NewClient(ctx, config)
-	if err != nil || manager.info.OAuth == nil {
+	if err := manager.discoverInstallation(ctx); err != nil || manager.info.OAuth == nil {
 		return "", err
 	}
 	token, err := manager.resourceToken(ctx, resource)

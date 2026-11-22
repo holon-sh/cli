@@ -314,6 +314,7 @@ func TestMachineCredentials(t *testing.T) {
 			server := installationtest.MachineAuthServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				if scenario.status == 0 {
 					t.Error("token endpoint called")
+					return
 				}
 				w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
 				w.WriteHeader(scenario.status)
