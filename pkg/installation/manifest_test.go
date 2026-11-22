@@ -24,6 +24,7 @@ func TestManifestRejectsInvalidDeclarations(t *testing.T) {
 		{name: "run with npm", fields: `registry: {name: io.github.acme/app, version: '1.0.0', package: {registryType: npm}}
 run: {transport: {type: stdio}}`},
 		{name: "tagged image", fields: "image: ghcr.io/acme/alpha:latest\nport: 3000"},
+		{name: "duplicate webhook", fields: "path: ./alpha\nwebhooks: [{name: github, tool: a}, {name: github, tool: b}]"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			manifest := "apps:\n  - name: alpha\n    access: {server: {}}\n    " +

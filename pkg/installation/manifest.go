@@ -160,6 +160,11 @@ func parseManifest(data []byte, file string) (manifestSpec, error) {
 			errs = append(errs, fmt.Sprintf("%s.name duplicates '%s'", label, a.Name))
 		}
 		names.Insert(a.Name)
+		for j, webhook := range a.Webhooks {
+			if slices.ContainsFunc(a.Webhooks[:j], func(w protocol.Webhook) bool { return w.Name == webhook.Name }) {
+				errs = append(errs, fmt.Sprintf("%s.webhooks.%d.name duplicates '%s'", label, j, webhook.Name))
+			}
+		}
 		if filepath.IsAbs(a.Path) {
 			errs = append(errs, label+".path must be a relative directory")
 		} else if a.Path != "" {
