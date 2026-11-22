@@ -48,11 +48,15 @@ func main() {
 		manifestApp{Name: "caller", Path: root, resolved: resolvedApp{App: protocol.App{Name: "caller", Requires: []string{"orders"}}, descriptor: descriptor}},
 	)
 	options.plane = protocol.DevPlane
-	_, cleanupDev, err := prepareManifestTypes(t.Context(), manifest, options, map[string]*typegen.Served{})
+	prepared, cleanupDev, err := prepareManifestTypes(t.Context(), manifest, options, map[string]*typegen.Served{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanupDev()
+	caller, _ := prepared.app("caller")
+	if err := caller.resolved.types.write(root); err != nil {
+		t.Fatal(err)
+	}
 	clients, err := os.ReadFile(filepath.Join(root, "holon", "clients.go"))
 	if err != nil || !strings.Contains(string(clients), `holon "github.com/holon-sh/sdk-go"`) || !strings.Contains(string(clients), " GetOrder(") {
 		t.Fatalf("the app's Go clients in its source: %v\n%s", err, clients)

@@ -48,14 +48,19 @@ func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
 	}
-	for _, name := range d.manifest.installed() {
-		answer, err := d.manager.appContract(ctx, d.session.Name, name)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
-		}
-		served[name] = answer
-	}
 	return served, nil
+}
+
+func (d *devLoop) installedContracts(ctx context.Context) (served map[string]*typegen.Served, unread error) {
+	served = map[string]*typegen.Served{}
+	for _, name := range d.manifest.installed() {
+		if answer, err := d.manager.appContract(ctx, d.session.Name, name); err == nil {
+			served[name] = answer
+		} else {
+			unread = errors.Join(unread, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	return served, unread
 }
 
 func (m *Client) appContract(ctx context.Context, session, app string) (*typegen.Served, error) {
@@ -75,24 +80,38 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 	if errors.Is(err, errUnstarted) {
 		return false
 	}
-	d.options.output.problem("MCP types", err)
+	if err != nil {
+		d.options.output.problem("MCP types", err)
+	}
 	return d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), d.running))
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
+	ran := maps.Clone(d.sent)
 	if !d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool {
 		return d.running(app) || len(app.resolved.Requires) != 0
 	})) {
 		return errUnstarted
 	}
+	installed, unread := d.installedContracts(ctx)
+	kept := func(app manifestApp) bool {
+		_, running := ran[app.Name]
+		return running && unread != nil
+	}
+	pending := func(app manifestApp) bool { return !kept(app) && d.unsent(app) }
 	for {
-		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
+		last := !slices.ContainsFunc(d.manifest.Apps, pending)
 		served, err := d.served(ctx)
 		if err != nil {
 			return err
 		}
+		maps.Copy(served, installed)
 		manifest := d.manifest
-		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), d.waiting)
+		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), func(app manifestApp) bool {
+			return slices.ContainsFunc(d.manifest.Apps, func(required manifestApp) bool {
+				return pending(required) && slices.Contains(app.resolved.Requires, required.Name)
+			})
+		})
 		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, d.options, served)
 		if err != nil {
 			seeded := len(d.sent)
@@ -104,14 +123,18 @@ func (d *devLoop) generate(ctx context.Context) error {
 		}
 		cleanup()
 		for _, app := range prepared.Apps {
-			if p := app.resolved.types; p != nil {
+			if p := app.resolved.types; p != nil && !kept(app) {
+				if err := p.write(app.Path); err != nil {
+					return err
+				}
 				d.accepted[app.Name] = p
 			}
 		}
-		if !d.reload(ctx, manifest.Apps) {
+		if !d.reload(ctx, slices.DeleteFunc(manifest.Apps, kept)) {
 			return errUnstarted
 		}
 		if last {
+			d.options.output.problem("MCP types", unread)
 			return nil
 		}
 	}
@@ -145,12 +168,6 @@ func (d *devLoop) running(app manifestApp) bool {
 
 func (d *devLoop) unsent(app manifestApp) bool {
 	return app.Path != "" && d.sent[app.Name] == ""
-}
-
-func (d *devLoop) waiting(app manifestApp) bool {
-	return slices.ContainsFunc(d.manifest.Apps, func(required manifestApp) bool {
-		return d.unsent(required) && slices.Contains(app.resolved.Requires, required.Name)
-	})
 }
 
 func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func(), error) {
@@ -219,7 +236,7 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 
 func packSource(ctx context.Context, app manifestApp, root string, accepted *preparedTypes) (packedSource, error) {
 	if accepted != nil {
-		if err := accepted.prepared.WriteClients(accepted.name, root); err != nil {
+		if err := accepted.write(root); err != nil {
 			return packedSource{}, err
 		}
 	}

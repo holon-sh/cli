@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"os"
@@ -31,6 +30,10 @@ type preparedTypes struct {
 	metadata    *mcpcontract.Metadata
 	documents   map[string]*typegen.Document
 	unserved    bool
+}
+
+func (p *preparedTypes) write(dir string) error {
+	return p.prepared.WriteClients(p.name, dir)
 }
 
 func lockSources(manifest manifestSpec) (func(), error) {
@@ -161,6 +164,9 @@ func prepareManifestTypes(
 		app, _ := manifest.app(consumers[i].Name)
 		for _, name := range app.resolved.Requires {
 			server, ok := byApp[name]
+			if !ok && slices.Contains(installed, name) {
+				continue
+			}
 			if !ok {
 				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s carries no MCP contract to type calls against", consumers[i].Name, name)
 			}
@@ -195,11 +201,6 @@ func prepareManifestTypes(
 			p.metadata = &mcpcontract.Metadata{Identity: d.Identity()}
 		}
 		metadata[app.Name] = p.metadata
-	}
-	if options.plane == protocol.DevPlane {
-		if err := prepared.Write(io.Discard); err != nil {
-			return manifestSpec{}, nil, err
-		}
 	}
 	for _, app := range manifest.Apps {
 		requires := ptr.Deref(metadata[app.Name], mcpcontract.Metadata{}).Requires
