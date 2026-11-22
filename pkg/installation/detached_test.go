@@ -18,12 +18,14 @@ func TestDetachedDevLifecycle(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		flags     []string
+		session   string
 		seconds   int64
 		wantError string
 	}{
 		{name: "ready", seconds: 86400},
 		{name: "JSON", flags: []string{"--json", "--ttl", "1s"}, seconds: 1},
 		{name: "failed hook", seconds: 86400, wantError: "install hook failed"},
+		{name: "failed named session", session: "gentle-otter-482", seconds: 86400, wantError: "install hook failed"},
 		{name: "cancelled startup", seconds: 86400, wantError: "context canceled"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,7 +45,8 @@ func TestDetachedDevLifecycle(t *testing.T) {
 			h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
 				installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 				var request protocol.AppsRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds {
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds ||
+					request.Session != tc.session {
 					t.Errorf("detached request: %#v, %v", request, err)
 				}
 				created.Apps = request.Apps
@@ -57,7 +60,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				case "cancelled startup":
 					cancel()
 					ready.Conditions = nil
-				case "failed hook":
+				case "failed hook", "failed named session":
 					ready.Operation = &protocol.LifecycleOperation{ID: "install"}
 					ready.Lifecycle = &protocol.LifecycleStatus{ID: "install", Phase: "Failed", Message: "install hook failed"}
 				}
@@ -76,6 +79,9 @@ func TestDetachedDevLifecycle(t *testing.T) {
 			h.start(t)
 			args := []string{"dev", "-f", filepath.Join(root, manifestFileName), "--detach"}
 			args = append(args, tc.flags...)
+			if tc.session != "" {
+				args = append(args, "--session", tc.session)
+			}
 			var output bytes.Buffer
 			err := executeCommand(ctx, args, &output, nil, h.run)
 			switch {
@@ -99,34 +105,9 @@ func TestDetachedDevLifecycle(t *testing.T) {
 					t.Fatalf("detached session = %v, output=%s", err, output.String())
 				}
 			}
-			if deleted.Load() != (tc.wantError != "") {
+			if deleted.Load() != (tc.wantError != "" && tc.session == "") {
 				t.Fatalf("session cleanup: deleted=%v, error=%v", deleted.Load(), err)
 			}
 		})
-	}
-}
-
-func TestDetachedDevUpdatesTheSessionItNames(t *testing.T) {
-	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{manifestFileName: `apps:
-  - name: echo
-    remote: {url: https://upstream.example/mcp}
-    access: {server: {}}
-`})
-	h := newRunHarness(t)
-	ready := protocol.Condition{Type: protocol.ConditionReady, Status: protocol.ConditionTrue}
-	h.control.Handle([]string{protocol.ToolCreateSession}, map[string]string{"session": "cli-pr-42"}, func(w http.ResponseWriter, _ *http.Request) {
-		installationtest.WriteJSON(w, protocol.SessionResponse{
-			Name: "cli-pr-42", UID: "preview-uid", Revision: "1", Generation: 1, Conditions: []protocol.Condition{ready},
-		})
-	})
-	h.start(t)
-	args := []string{"dev", "-f", filepath.Join(root, manifestFileName), "--detach", "--session", "cli-pr-42"}
-	if err := executeCommand(t.Context(), args, nil, nil, h.run); err != nil {
-		t.Fatal(err)
-	}
-	ready.Status, ready.Reason = protocol.ConditionFalse, protocol.ReasonProgressDeadline
-	if err := executeCommand(t.Context(), args, nil, nil, h.run); err == nil || !strings.Contains(err.Error(), "session failed") {
-		t.Fatalf("failed update = %v", err)
 	}
 }

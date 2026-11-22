@@ -197,10 +197,10 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 			dev.session = ready
 			err = dev.generate(ctx)
 		}
-		if err != nil && request.Session != "" {
-			return err
-		}
 		if err != nil {
+			if request.Session != "" {
+				return err
+			}
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 			defer cancel()
 			return errors.Join(err, manager.DeleteSession(cleanup, dev.session.Name, dev.session.UID, true))
