@@ -178,7 +178,7 @@ func newSessionCommand(config *commandConfig) *cobra.Command {
 			if err := manager.DeleteSession(cmd.Context(), args[0], "", false); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Deleted %s.\n", configurationScope(args[0]).label())
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Deleted dev session %s.\n", args[0])
 			return err
 		},
 	})
