@@ -15,7 +15,7 @@ import (
 
 // Generated clients send files, so the contract lists the tools a server shows only to clients that do
 // (https://github.com/modelcontextprotocol/experimental-ext-file-uploads/blob/main/specification/draft/file-uploads.md#backward-compatibility).
-var clientExtensions = map[string]any{"io.modelcontextprotocol/files": map[string]any{"upload": map[string]any{}, "download": map[string]any{}}}
+var clientExtensions = map[string]any{"io.modelcontextprotocol/files": map[string]any{}}
 
 const eventsExtension = "io.modelcontextprotocol/events"
 
@@ -71,31 +71,34 @@ func listCatalog(capabilities *mcp.ServerCapabilities, pages func(method string)
 	return contract, nil
 }
 
+func paged(list func(cursor string) (any, error)) ([]json.RawMessage, error) {
+	var pages []json.RawMessage
+	for cursor := ""; ; {
+		result, err := list(cursor)
+		if err != nil {
+			return nil, err
+		}
+		page, _ := json.Marshal(result)
+		var next struct{ NextCursor string }
+		_ = json.Unmarshal(page, &next)
+		if pages = append(pages, page); next.NextCursor == "" {
+			return pages, nil
+		}
+		cursor = next.NextCursor
+	}
+}
+
 func sessionPages(ctx context.Context, session *mcp.ClientSession) func(method string) ([]json.RawMessage, error) {
 	return func(method string) ([]json.RawMessage, error) {
-		var pages []json.RawMessage
-		for cursor := ""; ; {
-			var result any
-			var err error
+		return paged(func(cursor string) (any, error) {
 			switch method {
 			case "tools/list":
-				result, err = session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
+				return session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
 			case "resources/list":
-				result, err = session.ListResources(ctx, &mcp.ListResourcesParams{Cursor: cursor})
-			default:
-				result, err = mcp.CallCustomMethod[*listEventsParams, *listEventsResult](ctx, session, method, &listEventsParams{Cursor: cursor})
+				return session.ListResources(ctx, &mcp.ListResourcesParams{Cursor: cursor})
 			}
-			if err != nil {
-				return nil, err
-			}
-			page, _ := json.Marshal(result)
-			var next struct{ NextCursor string }
-			_ = json.Unmarshal(page, &next)
-			if pages = append(pages, page); next.NextCursor == "" {
-				return pages, nil
-			}
-			cursor = next.NextCursor
-		}
+			return mcp.CallCustomMethod[*listEventsParams, *listEventsResult](ctx, session, method, &listEventsParams{Cursor: cursor})
+		})
 	}
 }
 
@@ -112,7 +115,6 @@ func (s *Served) Document(name string) (*Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	contract.Responses = s.Responses
 	return NewDocument(&mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: name, Version: unversioned}, Schema: contract})
 }
 
