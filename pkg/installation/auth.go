@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -133,14 +132,9 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 		state:  authState{Access: map[string]*oauth2.Token{}},
 		output: cmp.Or(config.Output, io.Discard), interactive: config.Interactive, hookSent: map[string]time.Time{},
 	}
-	set := func(keys ...string) bool {
-		return slices.ContainsFunc(env, func(entry string) bool {
-			key, _, _ := strings.Cut(entry, "=")
-			return slices.Contains(keys, key)
-		})
-	}
-	if set("HOLON_CLIENT_ID", "HOLON_CLIENT_SECRET") {
-		id, secret := commandenv.Value(env, "HOLON_CLIENT_ID"), commandenv.Value(env, "HOLON_CLIENT_SECRET")
+	id, idSet := commandenv.Lookup(env, "HOLON_CLIENT_ID")
+	secret, secretSet := commandenv.Lookup(env, "HOLON_CLIENT_SECRET")
+	if idSet || secretSet {
 		if !validToken(id) || !validToken(secret) {
 			return nil, errors.New("service-account authentication requires HOLON_CLIENT_ID and HOLON_CLIENT_SECRET together")
 		}
@@ -149,8 +143,7 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 			return manager.machineToken(ctx, credentials, audience)
 		}
 	}
-	if set("HOLON_TOKEN") {
-		token := commandenv.Value(env, "HOLON_TOKEN")
+	if token, set := commandenv.Lookup(env, "HOLON_TOKEN"); set {
 		if manager.environment != nil || !validToken(token) {
 			return nil, errors.New("HOLON_TOKEN must be a bearer token, set without HOLON_CLIENT_ID and HOLON_CLIENT_SECRET")
 		}
