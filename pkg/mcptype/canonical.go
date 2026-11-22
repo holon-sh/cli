@@ -7,14 +7,14 @@ import (
 
 var (
 	annotations  = []string{"description", "title", "$comment", "examples"}
-	unordered    = []string{"required", "enum", "type", "allOf", "anyOf", "oneOf"}
+	unordered    = []string{"required", "enum", "type"}
 	schemaMaps   = []string{"properties", "$defs", "definitions", "patternProperties", "dependentSchemas", "dependencies"}
-	schemaValues = []string{"additionalProperties", "unevaluatedProperties", "propertyNames", "contains", "items", "prefixItems", "additionalItems", "unevaluatedItems", "not", "if", "then", "else", "contentSchema"}
+	schemaValues = []string{"additionalProperties", "unevaluatedProperties", "propertyNames", "contains", "items", "prefixItems", "additionalItems", "unevaluatedItems", "not", "if", "then", "else", "contentSchema", "allOf", "anyOf", "oneOf"}
 )
 
 func canonicalContract(contract contract) {
-	for _, entries := range []map[string]contractTool{contract.Tools, contract.Resources, contract.Events} {
-		for _, entry := range entries {
+	for _, part := range parts {
+		for _, entry := range part.entries(contract) {
 			normalizeObject(entry.Input)
 			normalizeObject(entry.Output)
 		}
@@ -40,11 +40,6 @@ func normalizeObject(object Object) {
 		switch {
 		case slices.Contains(unordered, key):
 			items, _ := item.([]Value)
-			if key != "enum" {
-				for _, item := range items {
-					normalize(item)
-				}
-			}
 			type encodedItem struct {
 				value Value
 				key   []byte

@@ -54,7 +54,7 @@ func ResolveDocument(ctx context.Context, source Source, options Options) (*Docu
 }
 
 // compileOpenAPI is the contract of the tools om serves for the OpenAPI document at path, under the
-// name and version om serves it with, and with the response schemas that type their results.
+// name and version om serves it with.
 func compileOpenAPI(ctx context.Context, path string) (*Document, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -64,13 +64,15 @@ func compileOpenAPI(ctx context.Context, path string) (*Document, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	contract := &mcpcontract.Contract{Responses: compiled.Responses}
-	for _, operation := range compiled.Document.Operations {
-		contract.Tools = append(contract.Tools, mcpcontract.Tool{Name: operation.Name, Input: operation.InputSchema})
-	}
-	server, _, err := compiled.Document.Implementation()
+	server, options, err := compiled.Document.Implementation()
 	if err != nil {
 		return nil, err
+	}
+	contract, err := listCatalog(options.Capabilities, func(string) ([]json.RawMessage, error) {
+		return paged(func(cursor string) (any, error) { return compiled.Document.Tools(cursor) })
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	identity := mcpcontract.Identity{Name: server.Name, Version: cmp.Or(server.Version, unversioned)}
 	return NewDocument(&mcpcontract.Metadata{Identity: identity, Schema: contract})

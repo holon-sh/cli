@@ -36,10 +36,6 @@ type Contract struct {
 	Tools     []Tool     `json:"tools"`
 	Resources []Resource `json:"resources,omitempty"`
 	Events    []Event    `json:"events,omitempty"`
-	// Responses is one JSON Schema whose properties, each named after a tool without an outputSchema,
-	// describe that tool's result text parsed as JSON, or null when it has no text; its $defs hold the
-	// definitions they share. A client returns that JSON without checking it.
-	Responses json.RawMessage `json:"responses,omitempty"`
 }
 
 // MarshalJSON writes "tools" as an array even when there are none, as the v1

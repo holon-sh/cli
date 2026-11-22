@@ -12,9 +12,9 @@ require (
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
-	github.com/holon-sh/mcp-bridge v0.0.4
-	github.com/holon-sh/om v0.0.9
-	github.com/holon-sh/protocol v0.0.1-dev.25.0.20261120161855-b586c13bf8ee
+	github.com/holon-sh/mcp-bridge v0.0.13
+	github.com/holon-sh/om v0.0.10
+	github.com/holon-sh/protocol v0.0.1-dev.26.0.20261122190200-325bb44ea9cd
 	github.com/klauspost/compress v1.19.2
 	github.com/moby/patternmatcher v0.6.1
 	github.com/modelcontextprotocol/go-sdk v1.9.0-pre.1
