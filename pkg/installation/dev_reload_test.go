@@ -724,12 +724,11 @@ func TestDevShowsReloadDetailsOnlyWhenVerbose(t *testing.T) {
 }
 
 func TestDevStartup(t *testing.T) {
-	f := startReloadFixture(t, false)
+	f := startReloadFixture(t, false, map[string]string{manifestFileName: alphaManifest + "  mount: /docs\n"})
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Starting") })
 	f.update(func() { f.ready = true })
 	f.watching()
-	// Ready repeats only its heading when the endpoints are the ones Starting listed.
-	if strings.Count(f.stdout.String(), "/mcp/alpha") != 1 || !strings.Contains(f.stdout.String(), "\nReady\n") {
+	if strings.Count(f.stdout.String(), "Browser  https://gentle-otter-482."+f.harness.baseHost+"/docs/\n") != 1 || !strings.Contains(f.stdout.String(), "\nReady\n") {
 		t.Fatalf("stdout = %q", f.stdout.String())
 	}
 }

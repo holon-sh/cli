@@ -37,7 +37,7 @@ func (m *Client) authorizeOperation(ctx context.Context, s protocol.SessionRespo
 	if m.hookSent[key].After(time.Now()) {
 		return nil
 	}
-	audience, _, err := m.sessionAudience(s.Name)
+	audience, err := m.sessionAudience(s.Name)
 	if err != nil {
 		return err
 	}
