@@ -238,7 +238,6 @@ func previousSession(ctx context.Context, manager *Client, recordPath string) pr
 	return session
 }
 
-// sessionAudience is the origin that serves session name.
 func (m *Client) sessionAudience(name string) (string, error) {
 	mode := protocol.ModeDevelopment
 	if name == protocol.ProductionName {
