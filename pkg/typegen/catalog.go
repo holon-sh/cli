@@ -15,7 +15,7 @@ import (
 
 // Generated clients send files, so the contract lists the tools a server shows only to clients that do
 // (https://github.com/modelcontextprotocol/experimental-ext-file-uploads/blob/main/specification/draft/file-uploads.md#backward-compatibility).
-var clientExtensions = map[string]any{"io.modelcontextprotocol/files": map[string]any{"upload": map[string]any{}, "download": map[string]any{}}}
+var clientExtensions = map[string]any{"io.modelcontextprotocol/files": map[string]any{}}
 
 const eventsExtension = "io.modelcontextprotocol/events"
 
