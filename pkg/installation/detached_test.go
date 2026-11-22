@@ -125,7 +125,6 @@ func TestDetachedDevUpdatesTheSessionItNames(t *testing.T) {
 	if err := executeCommand(t.Context(), args, nil, nil, h.run); err != nil {
 		t.Fatal(err)
 	}
-	// The next run updates the same session, and one that fails leaves it in place: no fixture answers delete_session.
 	ready.Status, ready.Reason = protocol.ConditionFalse, protocol.ReasonProgressDeadline
 	if err := executeCommand(t.Context(), args, nil, nil, h.run); err == nil || !strings.Contains(err.Error(), "session failed") {
 		t.Fatalf("failed update = %v", err)
