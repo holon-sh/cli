@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,7 +33,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
   - name: echo
     remote: {url: https://upstream.example/mcp}
     access: {server: {}}
-    webhooks: {github: receive_github_delivery}
+    webhooks: [{name: github, tool: receive_github_delivery}]
 `})
 			h := newRunHarness(t)
 			ctx, cancel := context.WithCancel(t.Context())
@@ -45,7 +46,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 				var request protocol.AppsRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds ||
-					request.Apps[0].Webhooks["github"] != "receive_github_delivery" {
+					!slices.Equal(request.Apps[0].Webhooks, []protocol.Webhook{{Name: "github", Tool: "receive_github_delivery"}}) {
 					t.Errorf("detached request: %#v, %v", request, err)
 				}
 				created.Apps = request.Apps

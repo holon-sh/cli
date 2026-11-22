@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -428,8 +427,8 @@ func (m *Client) summary(name string, apps []manifestApp) (string, error) {
 			output = fmt.Appendf(output, "    Browser  %s%s/\n", audience, strings.TrimSuffix(protocol.AppBrowserMount(app.resolved.App, mode), "/"))
 		}
 		output = fmt.Appendf(output, "    MCP      %s\n", audience+protocol.AppPath(app.Name))
-		for _, webhook := range slices.Sorted(maps.Keys(app.resolved.Webhooks)) {
-			output = fmt.Appendf(output, "    Webhook  %s\n", audience+protocol.WebhookPath(app.Name, webhook))
+		for _, webhook := range app.resolved.Webhooks {
+			output = fmt.Appendf(output, "    Webhook  %s\n", audience+protocol.WebhookPath(app.Name, webhook.Name))
 		}
 	}
 	return string(append(output, '\n')), nil

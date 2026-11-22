@@ -58,16 +58,12 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	project := filepath.Join(root, manifestFileName)
-	sourceFiles(t, root, map[string]string{
-		manifestFileName: manifestFixture,
-		"webhooks.yaml":  strings.Replace(manifestFixture, "path: ./alpha", "path: ./alpha\n    webhooks: [receive_github_delivery]", 1),
-	})
+	sourceFiles(t, root, map[string]string{manifestFileName: manifestFixture})
 	for _, tc := range []struct {
 		want string
 		args []string
 	}{
 		{`unknown app "missing"`, []string{"dev", "alpha", "missing", "--file", project}},
-		{"apps.0.webhooks: got array, want object", []string{"dev", "--file", filepath.Join(root, "webhooks.yaml")}},
 		{"--ttl requires --detach", []string{"dev", "--ttl", "24h", "--file", project}},
 		{"--json requires --detach", []string{"dev", "--json", "--file", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "0s", "--file", project}},
