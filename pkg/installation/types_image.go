@@ -52,7 +52,10 @@ func resolveTypeMetadata(ctx context.Context, image string, options buildOptions
 		return "", nil, fmt.Errorf("resolve dependency contract for %s: %w", image, err)
 	}
 	metadata, err := typegen.ReadDocument(ctx, repository, descriptor)
-	return repository.Reference.String() + "@" + descriptor.Digest.String(), metadata, err
+	if err != nil {
+		return "", nil, fmt.Errorf("read dependency contract for %s: %w", image, err)
+	}
+	return repository.Reference.String() + "@" + descriptor.Digest.String(), metadata, nil
 }
 
 func fetchTypeDocument(
