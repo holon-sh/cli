@@ -42,7 +42,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 					}
 					for _, app := range session.Apps {
 						_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", session.Name, expires, app.Name, appURL(session, app.Name),
-							appSource(app), accessSummary(app.Access), egressSummary(app), egressCut(session, app.Name))
+							appSource(app), accessSummary(app.Access), egressSummary(app), deniedEgress(session, app.Name))
 					}
 				}
 				return table.Flush()
@@ -60,7 +60,7 @@ func newAppCommand(config *commandConfig) *cobra.Command {
 						protocol.App
 
 						EgressRestricted string `json:"egressRestricted,omitempty"`
-					}{target.app, egressCut(target.session, args[0])})
+					}{target.app, deniedEgress(target.session, args[0])})
 					if err != nil {
 						return err
 					}
@@ -307,6 +307,10 @@ func egressSummary(app protocol.App) string {
 	if len(egress) == 0 {
 		return "none"
 	}
+	return egressDestinations(egress)
+}
+
+func egressDestinations(egress protocol.Egress) string {
 	destinations := make([]string, 0, len(egress))
 	for _, destination := range egress {
 		ports := make([]string, 0, len(destination.Ports))
@@ -318,15 +322,10 @@ func egressSummary(app protocol.App) string {
 	return strings.Join(destinations, " ")
 }
 
-func egressCut(session protocol.SessionResponse, app string) string {
-	condition := session.Condition(protocol.ConditionEgressRestricted)
-	if condition.Status != protocol.ConditionTrue {
-		return ""
-	}
-	_, cuts, _ := strings.Cut(condition.Message, " cuts ")
-	for cut := range strings.SplitSeq(cuts, "; ") {
-		if hosts, ok := strings.CutPrefix(cut, app+": "); ok {
-			return hosts
+func deniedEgress(session protocol.SessionResponse, app string) string {
+	for _, denied := range session.DeniedEgress {
+		if denied.App == app {
+			return egressDestinations(denied.Egress)
 		}
 	}
 	return ""

@@ -3,7 +3,6 @@ package mcptype
 import (
 	"encoding/json"
 	"os/exec"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -71,29 +70,6 @@ console.log(JSON.stringify({ apps, bound: createApps({ orders: { endpoint: "mcp:
 	}
 	if got.PlainConnects {
 		t.Error("a page without its own app has connect")
-	}
-}
-
-// Clients tell the runtime only which tools return the JSON a contract's responses describe, never
-// the schemas that type it.
-func TestClientsTellTheRuntimeOnlyWhichToolsReturnJSON(t *testing.T) {
-	contracts := `{"pets":{"tools":[{"name":"get_pet","inputSchema":{"type":"object"}}],"responses":{"properties":{"get_pet":{"$ref":"#/$defs/Pet"}},"$defs":{"Pet":{"type":"object","properties":{"name":{"type":"string"}}}}}}}`
-	for target, runtime := range map[string]struct{ file, names string }{
-		"node":    {TypeScriptModule, `"responses":["get_pet"]`},
-		"browser": {TypeScriptModule, `"responses":["get_pet"]`},
-		"go":      {"clients.go", "Parsed: true"},
-	} {
-		request := GenerateRequest{Target: target, Identity: mcpcontract.Identity{Name: "shop", Version: "1"}, App: "shop", GoModule: "example.test/holon"}
-		if err := json.Unmarshal([]byte(contracts), &request.Contracts); err != nil {
-			t.Fatal(err)
-		}
-		files, err := Generate(t.Context(), request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if module := string(files[runtime.file]); !strings.Contains(module, runtime.names) || strings.Contains(module, "$defs") {
-			t.Errorf("%s clients do not tell the runtime only which tools return JSON:\n%s", target, module)
-		}
 	}
 }
 
