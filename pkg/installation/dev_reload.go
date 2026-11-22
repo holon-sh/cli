@@ -20,7 +20,6 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/tonistiigi/fsutil"
 	fstypes "github.com/tonistiigi/fsutil/types"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/registry/remote"
 
@@ -55,12 +54,11 @@ func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error
 func (d *devLoop) installedContracts(ctx context.Context) (served map[string]*typegen.Served, unread error) {
 	served = map[string]*typegen.Served{}
 	for _, name := range d.manifest.installed() {
-		answer, err := d.manager.appContract(ctx, d.session.Name, name)
-		if err != nil {
+		if answer, err := d.manager.appContract(ctx, d.session.Name, name); err == nil {
+			served[name] = answer
+		} else {
 			unread = errors.Join(unread, fmt.Errorf("%s: %w", name, err))
-			answer = nil
 		}
-		served[name] = answer
 	}
 	return served, unread
 }
@@ -90,36 +88,21 @@ func (d *devLoop) regenerate(ctx context.Context) error {
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
-	ran := maps.Clone(d.sent)
 	if !d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool {
 		return d.running(app) || len(app.resolved.Requires) != 0
 	})) {
 		return errUnstarted
 	}
 	installed, unread := d.installedContracts(ctx)
-	kept := func(app manifestApp) bool {
-		_, running := ran[app.Name]
-		return running && unread != nil && slices.ContainsFunc(app.resolved.Requires, func(name string) bool {
-			answer, present := installed[name]
-			return present && answer == nil
-		})
-	}
 	for {
-		pending := sets.New[string]()
-		for _, app := range d.manifest.Apps {
-			if app.Path != "" && d.sent[app.Name] == "" && !kept(app) {
-				pending.Insert(app.Name)
-			}
-		}
+		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
 		served, err := d.served(ctx)
 		if err != nil {
 			return err
 		}
 		maps.Copy(served, installed)
 		manifest := d.manifest
-		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), func(app manifestApp) bool {
-			return slices.ContainsFunc(app.resolved.Requires, pending.Has)
-		})
+		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), d.waiting)
 		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, d.options, served)
 		if err != nil {
 			seeded := len(d.sent)
@@ -130,19 +113,24 @@ func (d *devLoop) generate(ctx context.Context) error {
 			return err
 		}
 		cleanup()
+		problems := unread
 		for _, app := range prepared.Apps {
-			if p := app.resolved.types; p != nil && !kept(app) {
-				if err := p.write(app.Path); err != nil {
-					return err
-				}
+			p := app.resolved.types
+			if p == nil {
+				continue
+			}
+			if err := p.write(app.Path); err != nil {
+				problems = errors.Join(problems, err)
+				delete(d.accepted, app.Name)
+			} else {
 				d.accepted[app.Name] = p
 			}
 		}
-		if !d.reload(ctx, slices.DeleteFunc(manifest.Apps, kept)) {
+		if !d.reload(ctx, manifest.Apps) {
 			return errUnstarted
 		}
-		if pending.Len() == 0 {
-			d.options.output.problem("MCP types", unread)
+		if last {
+			d.options.output.problem("MCP types", problems)
 			return nil
 		}
 	}
@@ -172,6 +160,16 @@ func (d *devLoop) reload(ctx context.Context, apps []manifestApp) bool {
 func (d *devLoop) running(app manifestApp) bool {
 	_, running := d.sent[app.Name]
 	return running
+}
+
+func (d *devLoop) unsent(app manifestApp) bool {
+	return app.Path != "" && d.sent[app.Name] == ""
+}
+
+func (d *devLoop) waiting(app manifestApp) bool {
+	return slices.ContainsFunc(d.manifest.Apps, func(required manifestApp) bool {
+		return d.unsent(required) && slices.Contains(app.resolved.Requires, required.Name)
+	})
 }
 
 func (d *devLoop) pack(ctx context.Context, app manifestApp) (packedSource, func(), error) {

@@ -729,6 +729,7 @@ func TestDevDetachSendsSourceAfterClientWriteFails(t *testing.T) {
 	f := startReloadFixture(t, true, map[string]string{
 		manifestFileName:     gammaManifest,
 		"alpha/server.py":    "import mcp\n",
+		"alpha/package.json": `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`,
 		"gamma/server.json":  requiresAlpha,
 		"gamma/server.ts":    "import { McpServer } from \"@modelcontextprotocol/server\";\n",
 		"gamma/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
@@ -747,48 +748,46 @@ func TestDevDetachSendsSourceAfterClientWriteFails(t *testing.T) {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.running["gamma"]) == 0 {
-		t.Fatal("the new session did not receive gamma's source")
+	var plan runtimecontract.Plan
+	_ = json.Unmarshal(overlayEntries(t, f.running["alpha"])[runtimecontract.PlanFile], &plan)
+	if len(f.running["gamma"]) == 0 || plan.Prepare == nil {
+		t.Fatalf("the new session runs gamma: %t, alpha's page build: %q", len(f.running["gamma"]) != 0, plan.Prepare)
 	}
 }
 
-func TestDevKeepsRunningAppsWhileARequiredContractCannotBeRead(t *testing.T) {
+func TestDevRunsAppsWithTheClientsOfTheContractsThatRead(t *testing.T) {
 	const client = "generated/holon-sh/index.mjs"
 	f := startReloadFixture(t, true, map[string]string{
-		manifestFileName:     gammaManifest + "- name: beta\n  access: {server: {}}\n  path: ./beta\n",
+		manifestFileName:     gammaManifest,
 		"alpha/server.py":    "import mcp\n",
-		"beta/server.json":   strings.ReplaceAll(requiresAlpha, "/gamma", "/beta"),
-		"beta/server.ts":     "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
-		"beta/package.json":  `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
 		"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"alpha":{},"linear":{}`),
 		"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
 		"gamma/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
 	})
-	runs := func(app string) string {
+	runs := func(alpha string, linear bool) {
+		t.Helper()
 		f.mu.Lock()
-		defer f.mu.Unlock()
-		return string(overlayEntries(t, f.running[app])[client])
+		clients := string(overlayEntries(t, f.running["gamma"])[client])
+		f.mu.Unlock()
+		if !strings.Contains(clients, "lookup_"+alpha) || strings.Contains(clients, "linear") != linear {
+			t.Fatalf("gamma runs the clients %q", clients)
+		}
 	}
-	clients := runs("gamma")
-	if !strings.Contains(clients, "linear") {
-		t.Fatalf("gamma starts with the clients %q", clients)
-	}
+	runs("first", true)
 	f.update(func() {
 		f.served = slices.DeleteFunc(f.served, func(app protocol.App) bool { return app.Name == "linear" })
 	})
 	f.save(map[string]string{"alpha/tools.py": "second"}, "MCP types linear")
-	if current := runs("beta"); !strings.Contains(current, "lookup_second") {
-		t.Fatalf("beta runs the clients %q after alpha changes", current)
-	}
+	runs("second", false)
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
-	saved := len(f.reloadRequests())
+	f.update(func() { delete(f.running, "gamma") })
 	f.start()
 	f.watching()
-	if slices.ContainsFunc(f.reloadRequests()[saved:], func(sent sentSource) bool { return sent.App == "gamma" }) || runs("gamma") != clients {
-		t.Fatalf("after resume gamma runs the clients %q", runs("gamma"))
-	}
+	runs("second", false)
+	f.save(map[string]string{"gamma/server.ts": "import { apps } from \"#holon-sh\";\n"}, "gamma ready")
+	runs("second", false)
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
@@ -798,9 +797,7 @@ func TestDevKeepsRunningAppsWhileARequiredContractCannotBeRead(t *testing.T) {
 	if err := f.stop(); err != nil || !strings.Contains(f.stderr.String(), "MCP types delta") {
 		t.Fatalf("detached start: %v; stdout=%q stderr=%q", err, f.stdout.String(), f.stderr.String())
 	}
-	if current := runs("gamma"); !strings.Contains(current, "lookup_second") || !strings.Contains(current, "linear") {
-		t.Fatalf("after a detached start gamma runs the clients %q", current)
-	}
+	runs("second", true)
 }
 
 func TestDevShowsReloadDetailsOnlyWhenVerbose(t *testing.T) {
