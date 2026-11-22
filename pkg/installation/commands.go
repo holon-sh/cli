@@ -105,7 +105,6 @@ func newCommands(config commandConfig) []*cobra.Command {
 }
 
 func newDevCommand(config *commandConfig) *cobra.Command {
-	const maxTTL = protocol.MaxTTLSeconds * time.Second
 	var detached bool
 	var ttl time.Duration
 	cmd := &cobra.Command{
@@ -126,35 +125,25 @@ func newDevCommand(config *commandConfig) *cobra.Command {
   holon dev hf=https://huggingface.co/mcp
 
   # Exit once the session is ready and print it as JSON
-  holon dev --detach --json
-
-  # Create the detached session cli-pr-42, or update it in place so its address stays the same
-  holon dev --detach --session cli-pr-42
-
-  # End it before its --ttl runs out
-  holon session delete cli-pr-42`,
+  holon dev --detach --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if detached {
-				if ttl < time.Second || ttl > maxTTL || ttl%time.Second != 0 {
-					return fmt.Errorf("--ttl must be whole seconds between 1s and %dh", maxTTL/time.Hour)
+			for _, flag := range []string{"json", "ttl", "session"} {
+				if !detached && cmd.Flags().Changed(flag) {
+					return fmt.Errorf("--%s requires --detach", flag)
 				}
-				if cmd.Flags().Changed("session") && !protocol.ValidSessionName(config.devSession) {
-					return errors.New("--session requires a development session name")
+			}
+			if detached {
+				if ttl < time.Second || ttl > protocol.MaxTTLSeconds*time.Second || ttl%time.Second != 0 {
+					return errors.New("--ttl must be whole seconds between 1s and 168h")
 				}
 				config.devTTLSeconds = new(int64(ttl / time.Second))
-			} else if config.jsonOutput {
-				return errors.New("--json requires --detach")
-			} else if cmd.Flags().Changed("ttl") {
-				return errors.New("--ttl requires --detach")
-			} else if cmd.Flags().Changed("session") {
-				return errors.New("--session requires --detach")
 			}
 			return runDev(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
 		},
 	}
-	cmd.Flags().BoolVar(&detached, "detach", false, "Exit once the session is ready and keep it for --ttl from this run")
+	cmd.Flags().BoolVar(&detached, "detach", false, "Exit after readiness and retain the session until its fixed expiry")
 	cmd.Flags().BoolVar(&config.jsonOutput, "json", false, "Write the ready API session as JSON (requires --detach)")
-	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, fmt.Sprintf("Detached session lifetime (whole seconds, at most %dh)", maxTTL/time.Hour))
+	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "Detached session lifetime (whole seconds, at most 168h)")
 	cmd.Flags().StringVar(&config.devSession, "session", "", "Name the detached session to create, or to update in place (requires --detach)")
 	return withProject(withProgress(cmd, config, "Done"), config)
 }
@@ -163,10 +152,7 @@ func newSessionCommand(config *commandConfig) *cobra.Command {
 	return commandGroup("session", "Delete development sessions", &cobra.Command{
 		Use:   "delete NAME",
 		Short: "Delete a development session",
-		Long:  "Delete a development session and wait until it is gone. Deleting a session that does not exist succeeds.",
-		Example: `  # Delete the development session cli-pr-42
-  holon session delete cli-pr-42`,
-		Args: cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !protocol.ValidSessionName(args[0]) {
 				return fmt.Errorf("invalid session name %q", args[0])
@@ -175,11 +161,7 @@ func newSessionCommand(config *commandConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := manager.DeleteSession(cmd.Context(), args[0], "", false); err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Deleted %s.\n", configurationScope(args[0]).label())
-			return err
+			return manager.DeleteSession(cmd.Context(), args[0], "", false)
 		},
 	})
 }
