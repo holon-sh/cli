@@ -35,8 +35,8 @@ type packedSource struct {
 	upload  *imageUpload
 }
 
-func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error) {
-	served := map[string]*typegen.Served{}
+func (d *devLoop) served(ctx context.Context) (served map[string]*typegen.Served, unread []error, err error) {
+	served = map[string]*typegen.Served{}
 	for _, app := range d.manifest.Apps {
 		sent, running := d.sent[app.Name]
 		if !running {
@@ -45,17 +45,17 @@ func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error
 		if answer, err := d.manager.appContract(ctx, d.session.Name, app.Name); err == nil {
 			served[app.Name] = answer
 		} else if sent != "" {
-			return nil, fmt.Errorf("%s: %w", app.Name, err)
+			return nil, nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
 	}
 	for _, name := range d.manifest.installed() {
-		answer, err := d.manager.appContract(ctx, d.session.Name, name)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+		if answer, err := d.manager.appContract(ctx, d.session.Name, name); err == nil {
+			served[name] = answer
+		} else {
+			unread = append(unread, fmt.Errorf("%s: %w", name, err))
 		}
-		served[name] = answer
 	}
-	return served, nil
+	return served, unread, nil
 }
 
 func (m *Client) appContract(ctx context.Context, session, app string) (*typegen.Served, error) {
@@ -76,7 +76,7 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 		return false
 	}
 	d.options.output.problem("MCP types", err)
-	return d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool { return !d.unsent(app) }))
+	return true
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
@@ -88,7 +88,7 @@ func (d *devLoop) generate(ctx context.Context) error {
 	}
 	for {
 		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
-		served, err := d.served(ctx)
+		served, unread, err := d.served(ctx)
 		if err != nil {
 			return err
 		}
@@ -113,7 +113,7 @@ func (d *devLoop) generate(ctx context.Context) error {
 			return errUnstarted
 		}
 		if last {
-			return nil
+			return errors.Join(unread...)
 		}
 	}
 }

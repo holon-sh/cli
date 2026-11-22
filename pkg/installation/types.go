@@ -161,6 +161,9 @@ func prepareManifestTypes(
 		app, _ := manifest.app(consumers[i].Name)
 		for _, name := range app.resolved.Requires {
 			server, ok := byApp[name]
+			if !ok && slices.Contains(installed, name) {
+				continue
+			}
 			if !ok {
 				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s carries no MCP contract to type calls against", consumers[i].Name, name)
 			}
