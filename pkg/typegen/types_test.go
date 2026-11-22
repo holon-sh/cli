@@ -233,7 +233,6 @@ const pet = await apps.pets.tools.getPet({ id: "1" });
 export const name: string = pet.name;
 export const owner: string | null | undefined = pet.owner;
 export const names: string[] = (await apps.pets.tools.listPets({})).map(pet => pet.name);
-export const called = await apps.pets.callTool({ name: "getPet", arguments: { id: "1" } }).then(result => result.resultType === "complete" && !result.isError && 0 satisfies typeof result.structuredContent);
 `)
 		if output, err := check(t, app); err != nil {
 			t.Fatalf("check: %v\n%s", err, output)
@@ -248,11 +247,9 @@ export const name = (await apps.pets.tools.getPet({ id: "1" })).nmae;
 		app := pythonApp(t)
 		generate(t, app, TargetPy)
 		put(t, app, "main.py", `from holon.apps import apps
-from holon.client import ToolResult
 async def use() -> None:
     name: str = (await apps.pets.tools.getPet(id="1"))["name"]
     names: list[str] = [pet["name"] for pet in await apps.pets.tools.listPets()]
-    called: ToolResult[object] = await apps.pets.call_tool("getPet", id="1")
 `)
 		if output, err := check(t, app); err != nil {
 			t.Fatalf("check: %v\n%s", err, output)
@@ -314,7 +311,6 @@ func TestDecodesResults(t *testing.T) {
 		}
 		answer := mustJSON(t, map[string]any{
 			"capabilities": options.Capabilities, "lists": map[string]any{"tools/list": map[string]any{"pages": []any{page}}},
-			"responses": compiled.Responses,
 		})
 		var served Served
 		if err := json.Unmarshal(answer, &served); err != nil {

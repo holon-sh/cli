@@ -33,26 +33,29 @@ func Changes(expected, published *mcpcontract.Metadata) ([]string, error) {
 	}
 	canonicalContract(*want)
 	canonicalContract(*have)
-	for _, name := range sortedKeys(want.Tools) {
-		tool := want.Tools[name]
-		actual, ok := have.Tools[name]
-		switch {
-		case !ok:
-			result = append(result, fmt.Sprintf("tool %s removed", name))
-		case !reflect.DeepEqual(actual.Input, tool.Input):
-			result = append(result, fmt.Sprintf("tool %s input changed", name))
-		case !reflect.DeepEqual(actual.Output, tool.Output):
-			result = append(result, fmt.Sprintf("tool %s output changed", name))
-		}
-	}
-	for _, uri := range sortedKeys(want.Resources) {
-		actual, ok := have.Resources[uri]
-		switch {
-		case !ok:
-			result = append(result, fmt.Sprintf("resource %s removed", uri))
-		case !reflect.DeepEqual(actual, want.Resources[uri]):
-			result = append(result, fmt.Sprintf("resource %s contents changed", uri))
+	for _, part := range parts {
+		wanted, actual := part.entries(*want), part.entries(*have)
+		for _, name := range sortedKeys(wanted) {
+			entry := wanted[name]
+			got, ok := actual[name]
+			switch {
+			case !ok:
+				result = append(result, fmt.Sprintf("%s %s removed", part.kind, name))
+			case !reflect.DeepEqual(got.Input, entry.Input):
+				result = append(result, fmt.Sprintf("%s %s %s changed", part.kind, name, part.input))
+			case !reflect.DeepEqual(got.Output, entry.Output):
+				result = append(result, fmt.Sprintf("%s %s %s changed", part.kind, name, part.output))
+			}
 		}
 	}
 	return result, nil
+}
+
+var parts = []struct {
+	kind, input, output string
+	entries             func(contract) map[string]contractTool
+}{
+	{"tool", "input", "output", func(c contract) map[string]contractTool { return c.Tools }},
+	{"resource", "", "contents", func(c contract) map[string]contractTool { return c.Resources }},
+	{"event", "arguments", "data", func(c contract) map[string]contractTool { return c.Events }},
 }
