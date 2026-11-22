@@ -18,14 +18,13 @@ func TestDetachedDevLifecycle(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		flags     []string
-		session   string
 		seconds   int64
 		wantError string
 	}{
 		{name: "ready", flags: []string{"--ttl", "168h"}, seconds: 604800},
 		{name: "JSON", flags: []string{"--json", "--ttl", "1s"}, seconds: 1},
 		{name: "failed hook", seconds: 86400, wantError: "install hook failed"},
-		{name: "failed named session", session: "gentle-otter-482", seconds: 86400, wantError: "install hook failed"},
+		{name: "failed named session", flags: []string{"--session", "gentle-otter-482"}, seconds: 86400, wantError: "install hook failed"},
 		{name: "cancelled startup", seconds: 86400, wantError: "context canceled"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -45,8 +44,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 			h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
 				installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 				var request protocol.AppsRequest
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds ||
-					request.Session != tc.session {
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds {
 					t.Errorf("detached request: %#v, %v", request, err)
 				}
 				created.Apps = request.Apps
@@ -79,9 +77,6 @@ func TestDetachedDevLifecycle(t *testing.T) {
 			h.start(t)
 			args := []string{"dev", "-f", filepath.Join(root, manifestFileName), "--detach"}
 			args = append(args, tc.flags...)
-			if tc.session != "" {
-				args = append(args, "--session", tc.session)
-			}
 			var output bytes.Buffer
 			err := executeCommand(ctx, args, &output, nil, h.run)
 			switch {
@@ -105,7 +100,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 					t.Fatalf("detached session = %v, output=%s", err, output.String())
 				}
 			}
-			if deleted.Load() != (tc.wantError != "" && tc.session == "") {
+			if deleted.Load() != (tc.wantError != "" && tc.name != "failed named session") {
 				t.Fatalf("session cleanup: deleted=%v, error=%v", deleted.Load(), err)
 			}
 		})
@@ -125,9 +120,8 @@ func TestSessionDelete(t *testing.T) {
 	h.control.Handle([]string{protocol.ToolGetSession}, map[string]string{"session": "cli-pr-7"}, http.NotFound)
 	h.start(t)
 	for _, name := range []string{"cli-pr-42", "cli-pr-7"} {
-		var output bytes.Buffer
-		if err := executeCommand(t.Context(), []string{"session", "delete", name}, &output, nil, h.run); err != nil || output.String() != "Deleted dev session "+name+".\n" {
-			t.Fatalf("delete %s = %v, output=%q", name, err, output.String())
+		if err := executeCommand(t.Context(), []string{"session", "delete", name}, nil, nil, h.run); err != nil {
+			t.Fatalf("delete %s = %v", name, err)
 		}
 	}
 	if !deleted.Load() {

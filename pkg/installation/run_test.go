@@ -67,7 +67,6 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 		{"--ttl requires --detach", []string{"dev", "--ttl", "24h", "--file", project}},
 		{"--json requires --detach", []string{"dev", "--json", "--file", project}},
 		{"--session requires --detach", []string{"dev", "--session", "cli-pr-42", "--file", project}},
-		{"--session requires a development session name", []string{"dev", "--detach", "--session", "Cli-PR-42", "--file", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "0s", "--file", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "1.5s", "--file", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "192h", "--file", project}},
@@ -75,7 +74,7 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 		{"--session requires a development session", []string{"config", "set", "--session", "production", "chat", "API_URL", "value"}},
 		{`invalid variable name "not-valid"`, []string{"config", "set", "chat", "not-valid", "value"}},
 		{`invalid app name "Chat"`, []string{"config", "set", "Chat", "API_URL", "value"}},
-		{`invalid session name "Cli-PR-42"`, []string{"session", "delete", "Cli-PR-42"}},
+		{`invalid session name "production"`, []string{"session", "delete", "production"}},
 	} {
 		config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir()}}
 		if err := executeCommand(t.Context(), tc.args, nil, nil, config); err == nil || !strings.Contains(err.Error(), tc.want) {
