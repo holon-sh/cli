@@ -732,7 +732,6 @@ func TestDevStartup(t *testing.T) {
 	if strings.Count(f.stdout.String(), "/mcp/alpha") != 1 || !strings.Contains(f.stdout.String(), "\nReady\n") {
 		t.Fatalf("stdout = %q", f.stdout.String())
 	}
-	// The session serves an app at its mount, as production does.
 	if browser := "Browser  https://gentle-otter-482." + f.harness.baseHost + "/docs/\n"; !strings.Contains(f.stdout.String(), browser) {
 		t.Fatalf("stdout = %q, want %q", f.stdout.String(), browser)
 	}
