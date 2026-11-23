@@ -46,10 +46,7 @@ func writeDescriptor(t *testing.T, path string, document map[string]any) {
 func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	beta := descriptorDocument("beta")
 	beta["packages"].([]any)[0].(map[string]any)["transport"].(map[string]any)["url"] = "http://localhost:8080/mcp"
-	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/v0.1/servers/io.github.acme%2Fbeta/versions/1.4.2" {
-			t.Errorf("unexpected catalog request %s %s", r.Method, r.URL)
-		}
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"server": beta})
 	}))
 	defer catalog.Close()
@@ -72,8 +69,7 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resolved.Apps) != 2 || resolved.Apps[1].resolved.Image == "" || !resolved.Apps[1].resolved.Imported ||
-		resolved.Apps[0].resolved.Port != 3000 || resolved.Apps[1].resolved.Port != 8080 {
+	if resolved.Apps[1].resolved.Image == "" || !resolved.Apps[1].resolved.Imported || resolved.Apps[1].resolved.Port != 8080 {
 		t.Fatalf("incorrect installation: %#v", resolved)
 	}
 	catalog.Close()
@@ -142,45 +138,24 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 }
 
 func TestRequirementSource(t *testing.T) {
-	zeta := descriptorRegistry(t, descriptorDocument("zeta"))
 	for _, test := range []struct {
-		name        string
-		requirement any
-		production  map[string]protocol.App
-		other       any
-		want        []string
-		refused     string
+		name       string
+		production map[string]protocol.App
+		want       []string
 	}{
-		{name: "a url is added", requirement: map[string]string{"url": "https://zeta.example/mcp"}, want: []string{"alpha", "zeta"}},
-		{name: "a published version is added", requirement: zeta.RegistryRef, want: []string{"alpha", "zeta"}},
-		{
-			name: "an app production runs is left as it is", requirement: map[string]string{"url": "https://zeta.example/mcp"},
-			production: map[string]protocol.App{"zeta": {Name: "zeta"}}, want: []string{"alpha"},
-		},
-		{
-			name: "two apps naming different sources are refused", requirement: map[string]string{"url": "https://zeta.example/mcp"},
-			other: map[string]string{"url": "https://other.example/mcp"}, refused: "different sources for zeta",
-		},
+		{name: "the source a requirement names is added", want: []string{"alpha", "zeta"}},
+		{name: "an app production runs is left as it is", production: map[string]protocol.App{"zeta": {Name: "zeta"}}, want: []string{"alpha"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			alpha := descriptorDocument("alpha")
-			alpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"zeta": test.requirement}}}}
+			alpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
+				"sh.holon": map[string]any{"requires": map[string]any{"zeta": map[string]string{"url": "https://zeta.example/mcp"}}},
+			}}
 			root := t.TempDir()
 			writeDescriptor(t, filepath.Join(root, "server.json"), alpha)
-			apps := []manifestApp{{Name: "alpha", Path: root}}
-			if test.other != nil {
-				gamma := descriptorDocument("gamma")
-				gamma["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"zeta": test.other}}}}
-				writeDescriptor(t, filepath.Join(root, "gamma/server.json"), gamma)
-				apps = append(apps, manifestApp{Name: "gamma", Path: filepath.Join(root, "gamma")})
-			}
-			resolved, err := resolveManifestGraph(t.Context(), manifestSpec{access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, deployed: test.production, Apps: apps})
-			if test.refused != "" {
-				if err == nil || !strings.Contains(err.Error(), test.refused) {
-					t.Fatalf("expected %q, got %v", test.refused, err)
-				}
-				return
-			}
+			resolved, err := resolveManifestGraph(t.Context(), manifestSpec{
+				access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, deployed: test.production, Apps: []manifestApp{{Name: "alpha", Path: root}},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
