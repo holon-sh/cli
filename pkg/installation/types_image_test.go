@@ -190,27 +190,37 @@ func TestRemoteContractIsPinnedByConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
-	sourceFiles(t, root, map[string]string{
-		"server.js": "export default {}", "package.json": `{"dependencies":{"holon-sh":"*"}}`,
-	})
-	manifest := typedManifest(t,
-		manifestApp{Name: "orders", resolved: resolvedApp{
-			App: protocol.App{Name: "orders", Remote: &protocol.Remote{URL: "https://orders.example/mcp"}},
-		}},
-		manifestApp{Name: "checkout", Path: root, resolved: resolvedApp{
-			App: protocol.App{Name: "checkout", Requires: []string{"orders"}}, descriptor: &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"},
-		}},
-	)
-	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{manager: manager, plane: protocol.AdminPlane}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	caller := prepared.Apps[1].resolved.types
-	stored := caller.documents[caller.metadata.Requires["orders"]]
-	if stored == nil || stored.Identity != (mcpcontract.Identity{Name: "example.com/alpha", Version: "1"}) || len(stored.Schema.Tools) != 1 {
-		t.Fatalf("consumer did not pin the served contract: %+v", stored)
+	orders := protocol.App{Name: "orders", Remote: &protocol.Remote{URL: "https://orders.example/mcp"}}
+	for _, test := range []struct {
+		name     string
+		deployed string
+		pinned   *mcpcontract.Identity
+	}{
+		{name: "a remote production runs as declared is pinned under its server's identity", deployed: orders.Remote.URL,
+			pinned: &mcpcontract.Identity{Name: "example.com/alpha", Version: "1"}},
+		{name: "a remote production runs at another address is left out", deployed: "https://old.example/mcp"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			sourceFiles(t, root, map[string]string{"server.js": "export default {}", "package.json": `{"dependencies":{"holon-sh":"*"}}`})
+			manifest := typedManifest(t,
+				manifestApp{Name: "orders", resolved: resolvedApp{App: orders}},
+				manifestApp{Name: "checkout", Path: root, resolved: resolvedApp{
+					App: protocol.App{Name: "checkout", Requires: []string{"orders"}}, descriptor: &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"},
+				}},
+			)
+			manifest.deployed = map[string]protocol.App{"orders": {Name: "orders", Remote: &protocol.Remote{URL: test.deployed}}}
+			prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{manager: manager, plane: protocol.AdminPlane}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			caller := prepared.Apps[1].resolved.types
+			stored := caller.documents[caller.metadata.Requires["orders"]]
+			if (stored == nil) != (test.pinned == nil) || stored != nil && (stored.Identity != *test.pinned || len(stored.Schema.Tools) != 1) {
+				t.Fatalf("checkout pins %+v", stored)
+			}
+		})
 	}
 }
 

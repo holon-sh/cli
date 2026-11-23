@@ -28,7 +28,7 @@ type manifestSpec struct {
 	file     string
 	sources  []manifestApp
 	access   *protocol.AppAccess
-	deployed map[string]*protocol.AppAccess
+	deployed map[string]protocol.App
 }
 
 type packageRun struct {
