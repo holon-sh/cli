@@ -185,7 +185,8 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		}
 		err = printStartingEndpoints(stdout, config.output, manager, dev.session.Name, resolved.Apps)
 	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
-		console, _ := protocol.HostOrigin(manager.client.baseURL, protocol.DevHost, "")
+		console, _ := protocol.HostOrigin(manager.client.baseURL, protocol.ConsoleHost, "")
+		console += "/?environment=" + protocol.ModeDevelopment
 		err = fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
 	}
 	if err != nil {
