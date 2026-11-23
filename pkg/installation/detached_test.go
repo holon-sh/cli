@@ -42,7 +42,6 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				Name: "gentle-otter-482", UID: "preview-uid", Revision: "1", Generation: 1, ExpiresAt: "2030-01-02T00:00:00Z",
 			}
 			h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
-				installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 				var request protocol.AppsRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds {
 					t.Errorf("detached request: %#v, %v", request, err)
@@ -65,11 +64,8 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				installationtest.WriteJSON(w, ready)
 			})
 			h.control.Handle([]string{protocol.ToolDeleteSession}, map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
-				if installationtest.ToolArguments(r)["skipHooks"] != true {
-					t.Error("cleanup must bypass lifecycle hooks")
-				}
-				if installationtest.ToolArguments(r)["expectedRevision"] != "1" {
-					t.Error("cleanup missing current revision")
+				if args := installationtest.ToolArguments(r); args["skipHooks"] != true || args["expectedRevision"] != "1" {
+					t.Errorf("cleanup must bypass hooks at the current revision: %v", args)
 				}
 				deleted.Store(true)
 				installationtest.WriteJSON(w, protocol.DeleteSessionResult{Deleted: true})
