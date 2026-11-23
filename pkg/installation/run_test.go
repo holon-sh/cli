@@ -556,6 +556,9 @@ func TestRunDeployLifecycle(t *testing.T) {
 				if rolloutFailure == "rolled back" || rolloutFailure == "superseded" {
 					accepted.Operation = &protocol.LifecycleOperation{ID: "deploy"}
 				}
+				if rolloutFailure == "rolled back" {
+					accepted.Lifecycle = &protocol.LifecycleStatus{ID: "previous", Phase: protocol.PhaseFailed, Message: "previous deploy failed"}
+				}
 				installationtest.WriteJSON(w, accepted)
 			}
 		})

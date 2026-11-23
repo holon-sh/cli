@@ -22,7 +22,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/clock"
-	"k8s.io/utils/ptr"
 
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
@@ -403,7 +402,7 @@ const deployingApps = "Deploying apps"
 
 func reportSessionProgress(session protocol.SessionResponse, output *progressOutput, headline string, state progressState) {
 	if lifecyclePending(session) {
-		lifecycle := ptr.Deref(session.Lifecycle, protocol.LifecycleStatus{})
+		lifecycle := currentLifecycle(session)
 		headline, state = deployingApps, progressWorking
 		if lifecycle.Hook != "" {
 			headline = strings.TrimSuffix("Running "+lifecycle.Hook+" for "+lifecycle.App, " for ")

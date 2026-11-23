@@ -15,25 +15,30 @@ import (
 )
 
 func lifecyclePending(s protocol.SessionResponse) bool {
-	lifecycle := ptr.Deref(s.Lifecycle, protocol.LifecycleStatus{})
-	return s.Operation != nil && (lifecycle.ID != s.Operation.ID || lifecycle.Phase != protocol.PhaseSucceeded)
+	return s.Operation != nil && currentLifecycle(s).Phase != protocol.PhaseSucceeded
 }
 
-// operation identifies the lifecycle operation s carries, or is empty when it carries none.
 func operation(s protocol.SessionResponse) string {
 	return ptr.Deref(s.Operation, protocol.LifecycleOperation{}).ID
 }
 
-func lifecycleFailed(s protocol.SessionResponse) bool {
+func currentLifecycle(s protocol.SessionResponse) protocol.LifecycleStatus {
 	lifecycle := ptr.Deref(s.Lifecycle, protocol.LifecycleStatus{})
+	if lifecycle.ID != operation(s) {
+		return protocol.LifecycleStatus{}
+	}
+	return lifecycle
+}
+
+func lifecycleFailed(s protocol.SessionResponse) bool {
+	lifecycle := currentLifecycle(s)
 	return s.Operation != nil && lifecycle.Phase == protocol.PhaseFailed && lifecycle.Retry == s.Operation.Retry
 }
 
 func (m *Client) authorizeOperation(ctx context.Context, s protocol.SessionResponse) error {
-	lifecycle := ptr.Deref(s.Lifecycle, protocol.LifecycleStatus{})
+	lifecycle := currentLifecycle(s)
 	if !lifecyclePending(s) ||
 		m.info.OAuth == nil ||
-		lifecycle.ID != s.Operation.ID ||
 		lifecycle.Hook == "" ||
 		lifecycle.Phase == protocol.PhaseFailed {
 		return nil
