@@ -18,6 +18,7 @@ func TestParseDocumentRejectsInvalidDocuments(t *testing.T) {
 		`{"schema":{"tools":[]}}`,
 		`{"identity":{"name":"a","version":"1"},"requires":{"orders":"sha256:abc"}}`,
 		`{"identity":{"name":"a","version":"1"},"schema":{"tools":[{"name":"get","inputSchema":{"type":"string"}}]}}`,
+		`{"identity":{"name":"a","version":"1"},"schema":{"tools":[{"name":"get","inputSchema":null}]}}`,
 	} {
 		if _, err := ParseDocument([]byte(invalid)); err == nil {
 			t.Fatalf("accepted %s", invalid)

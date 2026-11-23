@@ -3,7 +3,6 @@ package installation
 import (
 	"archive/tar"
 	"bytes"
-	"cmp"
 	"encoding/json"
 	"errors"
 	"io"
@@ -315,7 +314,7 @@ func (f *reloadFixture) created() int {
 func TestDevSaves(t *testing.T) {
 	for _, test := range []struct {
 		name       string
-		manifest   string
+		files      map[string]string
 		failReload bool
 		unsaved    bool
 		saves      []map[string]string
@@ -338,14 +337,14 @@ func TestDevSaves(t *testing.T) {
 			lines: []string{"alpha ready in", "alpha serves this save, but a restart loses it: no answer within a minute"}, reloads: 2,
 		},
 		{
-			name:     "a tool rule for a tool the app stops listing is reported",
-			manifest: strings.Replace(alphaManifest, "{server: {}}", "{server: {}, tools: {lookup_first: {}}}", 1),
-			saves:    []map[string]string{{"alpha/tools.py": "second"}},
-			lines:    []string{"alpha: access.tools[lookup_first] names a tool the app does not list"}, reloads: 1,
+			name:  "a tool rule for a tool the app stops listing is reported",
+			files: map[string]string{manifestFileName: strings.Replace(alphaManifest, "{server: {}}", "{server: {}, tools: {lookup_first: {}}}", 1)},
+			saves: []map[string]string{{"alpha/tools.py": "second"}},
+			lines: []string{"alpha: access.tools[lookup_first] names a tool the app does not list"}, reloads: 1,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			f := startReloadFixture(t, true, map[string]string{manifestFileName: cmp.Or(test.manifest, alphaManifest)})
+			f := startReloadFixture(t, true, test.files)
 			started := len(f.reloadRequests())
 			f.update(func() { f.failNext, f.unsaved = test.failReload, test.unsaved })
 			for i, files := range test.saves {

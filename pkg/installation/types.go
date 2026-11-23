@@ -76,6 +76,11 @@ func prepareManifestTypes(
 				return manifestSpec{}, nil, fmt.Errorf("%s: build metadata must be outside application source", app.Name)
 			}
 			answer, ok := served[app.Name]
+			if ok {
+				if err := checkAccess(answer, app.Access); err != nil {
+					return manifestSpec{}, nil, fmt.Errorf("%s: %w", app.Name, err)
+				}
+			}
 			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name), unserved: served != nil && !ok}
 			app.resolved.types = p
 			consumer, err := typegen.AppConsumer(app.Name, app.Path)
@@ -260,6 +265,19 @@ func currentTypeSources(manifest manifestSpec) error {
 		}
 		if fingerprint != p.fingerprint {
 			return errors.New("application source changed during preparation; discarding the superseded update")
+		}
+	}
+	return nil
+}
+
+func checkAccess(served *typegen.Served, access *protocol.AppAccess) error {
+	findings, err := served.Check(access.Tools)
+	if err != nil {
+		return err
+	}
+	for _, finding := range findings {
+		if finding.Rule == typegen.RuleUnlistedTool {
+			return fmt.Errorf("access.tools[%s] names a tool the app does not list", finding.Tool)
 		}
 	}
 	return nil

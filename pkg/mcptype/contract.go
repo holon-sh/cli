@@ -25,59 +25,61 @@ func checkIdentity(identity mcpcontract.Identity) error {
 	return nil
 }
 
-func decodeSchema(member string, raw json.RawMessage) (Object, error) {
+func objectOf(raw json.RawMessage) Object {
 	if len(raw) == 0 {
-		return nil, fmt.Errorf("missing field `%s`", member)
+		return nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var object Object
-	if err := decoder.Decode(&object); err != nil || object == nil {
-		return nil, fmt.Errorf("%s must be an object", member)
+	if decoder.Decode(&object) != nil {
+		return nil
 	}
-	return object, nil
+	return object
 }
 
-// decodeTool reads a tool whose name is a valid MCP name and whose [MCP Tool] inputSchema is an object of type
-// object.
+func decodeSchema(member string, raw json.RawMessage) (Object, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("missing field `%s`", member)
+	}
+	if object := objectOf(raw); object != nil {
+		return object, nil
+	}
+	return nil, fmt.Errorf("%s must be an object", member)
+}
+
+// CheckTool requires a valid MCP name and an [MCP Tool] inputSchema that is an object of type object.
 //
 // [MCP Tool]: https://modelcontextprotocol.io/specification/2026-07-28/schema#tool
-func decodeTool(tool mcpcontract.Tool) (contractTool, error) {
-	if !protocol.ValidMCPName(tool.Name) {
-		return contractTool{}, fmt.Errorf("tool name %q is not a valid MCP name", tool.Name)
-	}
-	input, err := decodeSchema("inputSchema", tool.Input)
-	if err != nil {
-		return contractTool{}, fmt.Errorf("%s: %w", tool.Name, err)
-	}
-	decoded := contractTool{Input: input}
-	if len(tool.Output) != 0 {
-		if decoded.Output, err = decodeSchema("outputSchema", tool.Output); err != nil {
-			return contractTool{}, fmt.Errorf("%s: %w", tool.Name, err)
-		}
-	}
-	if input["type"] != "object" {
-		return contractTool{}, fmt.Errorf("%s: inputSchema must have type object", tool.Name)
-	}
-	return decoded, nil
-}
-
 func CheckTool(tool mcpcontract.Tool) error {
-	_, err := decodeTool(tool)
-	return err
+	if !protocol.ValidMCPName(tool.Name) {
+		return fmt.Errorf("tool name %q is not a valid MCP name", tool.Name)
+	}
+	var input, output *struct {
+		Type any `json:"type"`
+	}
+	if json.Unmarshal(tool.Input, &input) != nil || input == nil {
+		return fmt.Errorf("%s: inputSchema must be an object", tool.Name)
+	}
+	if len(tool.Output) != 0 && (json.Unmarshal(tool.Output, &output) != nil || output == nil) {
+		return fmt.Errorf("%s: outputSchema must be an object", tool.Name)
+	}
+	if input.Type != "object" {
+		return fmt.Errorf("%s: inputSchema must have type object", tool.Name)
+	}
+	return nil
 }
 
 func decodeContract(source mcpcontract.Contract) (contract, error) {
 	result := contract{Tools: map[string]contractTool{}, Resources: map[string]contractTool{}, Events: map[string]contractTool{}}
 	for _, tool := range source.Tools {
-		decoded, err := decodeTool(tool)
-		if err != nil {
+		if err := CheckTool(tool); err != nil {
 			return contract{}, err
 		}
 		if _, exists := result.Tools[tool.Name]; exists {
 			return contract{}, fmt.Errorf("tool %s is listed twice", tool.Name)
 		}
-		result.Tools[tool.Name] = decoded
+		result.Tools[tool.Name] = contractTool{Input: objectOf(tool.Input), Output: objectOf(tool.Output)}
 	}
 	for _, resource := range source.Resources {
 		output, err := decodeSchema("outputSchema", resource.Output)
