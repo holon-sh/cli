@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -104,26 +105,18 @@ func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := manager.discoverInstallation(ctx); err != nil {
+	if _, err := fmt.Fprintf(manager.output, "Running against %s\n", manager.client.baseURL); err != nil {
 		return nil, err
 	}
-	return manager, nil
-}
-
-func (m *Client) discoverInstallation(ctx context.Context) error {
-	if _, err := fmt.Fprintf(m.output, "Running against %s\n", m.client.baseURL); err != nil {
-		return err
-	}
-	info, err := m.client.Info(ctx)
+	manager.info, err = manager.client.Info(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if m.environment != nil && info.OAuth == nil {
-		return errors.New("authentication from the environment requires an identity-enabled installation")
+	manager.client.installationUID = manager.info.Installation.UID
+	if manager.environment != nil && manager.info.OAuth == nil {
+		return nil, errors.New("authentication from the environment requires an identity-enabled installation")
 	}
-	m.info = info
-	m.client.installationUID = info.Installation.UID
-	return nil
+	return manager, nil
 }
 
 func newLocalAuthManager(config ClientConfig) (*Client, error) {
@@ -132,9 +125,14 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 		state:  authState{Access: map[string]*oauth2.Token{}},
 		output: cmp.Or(config.Output, io.Discard), interactive: config.Interactive, hookSent: map[string]time.Time{},
 	}
-	id, idSet := commandenv.Lookup(env, "HOLON_CLIENT_ID")
-	secret, secretSet := commandenv.Lookup(env, "HOLON_CLIENT_SECRET")
-	if idSet || secretSet {
+	set := func(keys ...string) bool {
+		return slices.ContainsFunc(env, func(entry string) bool {
+			key, _, _ := strings.Cut(entry, "=")
+			return slices.Contains(keys, key)
+		})
+	}
+	if set("HOLON_CLIENT_ID", "HOLON_CLIENT_SECRET") {
+		id, secret := commandenv.Value(env, "HOLON_CLIENT_ID"), commandenv.Value(env, "HOLON_CLIENT_SECRET")
 		if !validToken(id) || !validToken(secret) {
 			return nil, errors.New("service-account authentication requires HOLON_CLIENT_ID and HOLON_CLIENT_SECRET together")
 		}
@@ -143,7 +141,8 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 			return manager.machineToken(ctx, credentials, audience)
 		}
 	}
-	if token, set := commandenv.Lookup(env, "HOLON_TOKEN"); set {
+	if set("HOLON_TOKEN") {
+		token := commandenv.Value(env, "HOLON_TOKEN")
 		if manager.environment != nil || !validToken(token) {
 			return nil, errors.New("HOLON_TOKEN must be a bearer token, set without HOLON_CLIENT_ID and HOLON_CLIENT_SECRET")
 		}
@@ -568,7 +567,7 @@ func (m *Client) Call(ctx context.Context, plane protocol.Plane, tool string, in
 }
 
 func (config ClientConfig) AppToken(ctx context.Context, resource string) (string, error) {
-	manager, err := newLocalAuthManager(config)
+	local, err := newLocalAuthManager(config)
 	if err != nil {
 		return "", err
 	}
@@ -576,10 +575,11 @@ func (config ClientConfig) AppToken(ctx context.Context, resource string) (strin
 	if err != nil {
 		return "", err
 	}
-	if _, _, ok := protocol.ParseSessionAudience(manager.client.baseURL, endpoint.Scheme+"://"+endpoint.Host); !ok {
+	if _, _, ok := protocol.ParseSessionAudience(local.client.baseURL, endpoint.Scheme+"://"+endpoint.Host); !ok {
 		return "", nil
 	}
-	if err := manager.discoverInstallation(ctx); err != nil || manager.info.OAuth == nil {
+	manager, err := NewClient(ctx, config)
+	if err != nil || manager.info.OAuth == nil {
 		return "", err
 	}
 	token, err := manager.resourceToken(ctx, resource)

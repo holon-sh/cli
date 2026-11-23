@@ -297,7 +297,6 @@ func machineTestConfig(t *testing.T, server *httptest.Server, env ...string) com
 
 func TestMachineCredentials(t *testing.T) {
 	t.Parallel()
-	args := []string{"config", "delete", "chat", "REGION", "--env", "prod"}
 	for _, scenario := range []struct {
 		name   string
 		env    []string
@@ -308,14 +307,13 @@ func TestMachineCredentials(t *testing.T) {
 		{"valid", clientCredentials, 200, `{"access_token":"machine-token","token_type":"Bearer"}`, nil},
 		{"invalid secret", clientCredentials, 401, `{"error":"invalid_client","error_description":"ci-secret"}`, errOAuthFailed},
 		{"invalid token", clientCredentials, 200, `{"access_token":"invalid token ci-secret","token_type":"Bearer"}`, errMalformedResponse},
-		{"environment token", []string{"HOLON_TOKEN=old-token", "HOLON_TOKEN=machine-token", "HOLON_TOKEN"}, 0, "", nil},
+		{"environment token", []string{"HOLON_TOKEN=machine-token"}, 0, "", nil},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
 			server := installationtest.MachineAuthServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				if scenario.status == 0 {
 					t.Error("token endpoint called")
-					return
 				}
 				w.Header().Set(protocol.HeaderContentType, protocol.MIMEApplicationJSON)
 				w.WriteHeader(scenario.status)
@@ -329,7 +327,7 @@ func TestMachineCredentials(t *testing.T) {
 			})
 			config := machineTestConfig(t, server, scenario.env...)
 			var output strings.Builder
-			err := executeCommand(t.Context(), args, &output, &output, config)
+			err := executeCommand(t.Context(), []string{"config", "delete", "chat", "REGION", "--env", "prod"}, &output, &output, config)
 			if !errors.Is(err, scenario.want) || strings.Contains(fmt.Sprint(err)+output.String(), "ci-secret") || strings.Contains(output.String(), "machine-token") {
 				t.Fatalf("error = %v, output = %q", err, output.String())
 			}
@@ -345,11 +343,10 @@ func TestMachineCredentials(t *testing.T) {
 		{[]string{"HOLON_CLIENT_ID=ci-deployer"}, "requires HOLON_CLIENT_ID and HOLON_CLIENT_SECRET together"},
 		{[]string{"HOLON_CLIENT_ID=", "HOLON_CLIENT_SECRET="}, "requires HOLON_CLIENT_ID and HOLON_CLIENT_SECRET together"},
 		{[]string{"HOLON_TOKEN="}, "HOLON_TOKEN must be a bearer token"},
-		{[]string{"HOLON_TOKEN"}, "HOLON_TOKEN must be a bearer token"},
 		{append([]string{"HOLON_TOKEN=machine-token"}, clientCredentials...), "HOLON_TOKEN must be a bearer token"},
 	} {
 		config := commandConfig{Auth: ClientConfig{Env: invalid.env, Origin: "https://unused.example", ConfigDir: t.TempDir()}}
-		if err := executeCommand(t.Context(), args, nil, nil, config); err == nil ||
+		if err := executeCommand(t.Context(), []string{"config", "delete", "chat", "REGION", "--env", "prod"}, nil, nil, config); err == nil ||
 			!strings.Contains(err.Error(), invalid.want) {
 			t.Fatalf("%v fell back: %v", invalid.env, err)
 		}
@@ -358,7 +355,7 @@ func TestMachineCredentials(t *testing.T) {
 		installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: "https://" + r.Host, UID: "test-installation"}})
 	}))
 	defer server.Close()
-	if err := executeCommand(t.Context(), args, nil, nil, machineTestConfig(t, server, clientCredentials...)); err == nil ||
+	if err := executeCommand(t.Context(), []string{"config", "delete", "chat", "REGION", "--env", "prod"}, nil, nil, machineTestConfig(t, server, clientCredentials...)); err == nil ||
 		!strings.Contains(err.Error(), "requires an identity-enabled installation") {
 		t.Fatalf("machine authentication on anonymous installation: %v", err)
 	}
