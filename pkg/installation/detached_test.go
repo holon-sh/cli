@@ -41,6 +41,9 @@ func TestDetachedDevLifecycle(t *testing.T) {
 			created := protocol.SessionResponse{
 				Name: "gentle-otter-482", UID: "preview-uid", Revision: "1", Generation: 1, ExpiresAt: "2030-01-02T00:00:00Z",
 			}
+			if tc.wantError == "install hook failed" {
+				created.Operation = &protocol.LifecycleOperation{ID: "install"}
+			}
 			h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
 				var request protocol.AppsRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds {
@@ -58,7 +61,6 @@ func TestDetachedDevLifecycle(t *testing.T) {
 					cancel()
 					ready.Conditions = nil
 				case "failed hook", "failed named session":
-					ready.Operation = &protocol.LifecycleOperation{ID: "install"}
 					ready.Lifecycle = &protocol.LifecycleStatus{ID: "install", Phase: "Failed", Message: "install hook failed"}
 				}
 				installationtest.WriteJSON(w, ready)

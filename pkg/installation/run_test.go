@@ -447,6 +447,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	var sent *protocol.Revision
 	var forceConflict, loseResponse bool
 	var rolloutFailure string
+	var released []protocol.App
 	revision := 7
 	h := newRunHarness(t)
 	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
@@ -486,25 +487,33 @@ func TestRunDeployLifecycle(t *testing.T) {
 					http.NotFound(w, r)
 					return
 				}
-				if loseResponse && installationtest.ToolArguments(r)["revision"] != nil {
+				waiting := installationtest.ToolArguments(r)["revision"] != nil
+				if loseResponse && waiting {
 					t.Error("deploy waited for a deployment that was already ready")
 				}
-				generation := int64(revision)
-				conditions := []protocol.Condition{{Type: protocol.ConditionReady, Status: "True", Reason: "Ready"}}
-				if rolloutFailure != "" {
-					conditions = []protocol.Condition{
+				session := protocol.SessionResponse{
+					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: int64(revision), Revision: strconv.Itoa(revision),
+					Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: "True", Reason: "Ready"}},
+				}
+				switch {
+				case !waiting || rolloutFailure == "":
+				case rolloutFailure == "progress deadline":
+					session.Conditions = []protocol.Condition{
 						{Type: protocol.ConditionReady, Status: "False", Reason: protocol.ReasonProgressDeadline, Message: "prod: unready replacement"},
 						{Type: protocol.ConditionAvailable, Status: "True"},
 					}
+				default:
+					id, declared := "deploy", released
 					if rolloutFailure == "superseded" {
-						generation++
-						desired.Apps[1].Port = 4001
+						session.Generation++
+						id, declared = "later", desired.Apps
 					}
+					failure := "prod: StartError: exec: no such file"
+					session.Revision, session.Apps, session.Operation = strconv.Itoa(revision+1), declared, &protocol.LifecycleOperation{ID: id}
+					session.Lifecycle = &protocol.LifecycleStatus{ID: id, Phase: protocol.PhaseFailed, App: "prod", Message: failure}
+					session.Conditions = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "LifecycleFailed", Message: failure}}
 				}
-				installationtest.WriteJSON(w, protocol.SessionResponse{
-					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: generation, Revision: strconv.Itoa(revision),
-					Conditions: conditions,
-				})
+				installationtest.WriteJSON(w, session)
 			case protocol.ToolUpdateSession:
 				var input protocol.UpdateSessionRequest
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -529,7 +538,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 					w.WriteHeader(http.StatusPreconditionFailed)
 					return
 				}
-				written = input.Desired.Apps
+				written, released = input.Desired.Apps, slices.Clone(desired.Apps)
 				desired.Apps = append(slices.DeleteFunc(desired.Apps, func(app protocol.App) bool {
 					return slices.ContainsFunc(written, func(update protocol.App) bool { return update.Name == app.Name })
 				}), written...)
@@ -539,10 +548,17 @@ func TestRunDeployLifecycle(t *testing.T) {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					return
 				}
-				installationtest.WriteJSON(w, protocol.SessionResponse{
+				accepted := protocol.SessionResponse{
 					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: int64(revision), Revision: strconv.Itoa(revision),
 					Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}},
-				})
+				}
+				if rolloutFailure == "rolled back" || rolloutFailure == "superseded" {
+					accepted.Operation = &protocol.LifecycleOperation{ID: "deploy"}
+				}
+				if rolloutFailure == "rolled back" {
+					accepted.Lifecycle = &protocol.LifecycleStatus{ID: "previous", Phase: protocol.PhaseFailed, Message: "previous deploy failed"}
+				}
+				installationtest.WriteJSON(w, accepted)
 			}
 		})
 	h.start(t)
@@ -642,7 +658,8 @@ func TestRunDeployLifecycle(t *testing.T) {
 	head := git("rev-parse", "HEAD")
 	sourceFiles(t, checkout, map[string]string{"notes.md": "outside the app"})
 	mu.Lock()
-	desired.Apps[1].Image = strings.Replace(initial[1].Image, "registry.example/holon/upload/prod", "old-registry.example/prod", 1)
+	previous := strings.Replace(initial[1].Image, "registry.example/holon/upload/prod", "old-registry.example/prod", 1)
+	desired.Apps[1].Image = previous
 	mu.Unlock()
 	if err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath, "--verbose"}, &output, &diagnostics, runConfig); err != nil {
 		t.Fatal(err)
@@ -673,10 +690,11 @@ func TestRunDeployLifecycle(t *testing.T) {
 	for _, scenario := range []struct{ name, message string }{
 		{"progress deadline", "ProgressDeadlineExceeded: prod: unready replacement"},
 		{"superseded", "superseded"},
+		{"rolled back", "prod: StartError: exec: no such file"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			mu.Lock()
-			forceConflict, rolloutFailure = false, scenario.name
+			forceConflict, rolloutFailure, desired.Apps[1].Image = false, scenario.name, previous
 			mu.Unlock()
 			output.Reset()
 			err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath}, &output, nil, runConfig)

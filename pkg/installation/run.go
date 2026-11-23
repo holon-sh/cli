@@ -22,7 +22,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/clock"
-	"k8s.io/utils/ptr"
 
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
@@ -377,7 +376,9 @@ func waitSessionReady(ctx context.Context, manager *Client, accepted protocol.Se
 	defer finish()
 	session := accepted
 	for {
-		if session.UID != accepted.UID || len(protocol.ChangedApps(session.Apps, accepted.Apps)) != 0 || session.Generation < accepted.Generation {
+		replaced := operation(session) != operation(accepted) ||
+			accepted.Operation == nil && len(protocol.ChangedApps(session.Apps, accepted.Apps)) != 0
+		if session.UID != accepted.UID || session.Generation < accepted.Generation || replaced {
 			return session, errors.New("deployment was superseded")
 		}
 		reportSessionProgress(session, output, deployingApps, progressWorking)
@@ -399,7 +400,7 @@ const deployingApps = "Deploying apps"
 
 func reportSessionProgress(session protocol.SessionResponse, output *progressOutput, headline string, state progressState) {
 	if lifecyclePending(session) {
-		lifecycle := ptr.Deref(session.Lifecycle, protocol.LifecycleStatus{})
+		lifecycle := currentLifecycle(session)
 		headline, state = deployingApps, progressWorking
 		if lifecycle.Hook != "" {
 			headline = strings.TrimSuffix("Running "+lifecycle.Hook+" for "+lifecycle.App, " for ")
