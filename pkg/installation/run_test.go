@@ -572,7 +572,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 		t.Fatalf("image layers %+v, diff IDs %v", manifest.Layers, config.RootFS.DiffIDs)
 	}
 	wantConfig := ocispec.ImageConfig{
-		User: "10001:10001", WorkingDir: "/app/source", Cmd: []string{"node_modules/.bin/holon-serve", "server.js"},
+		User: "10001:10001", WorkingDir: "/app/source", Entrypoint: []string{"node_modules/.bin/holon-serve", "server.js"},
 		Env: []string{"HOLON_RELOAD_DIR=/app/source", "HOME=/tmp", "NODE_ENV=production", "PATH=/usr/local/bin:/usr/bin:/bin", "PYTHONUNBUFFERED=1"},
 	}
 	labels := config.Config.Labels
