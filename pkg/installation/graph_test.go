@@ -147,7 +147,9 @@ func TestRequirementSource(t *testing.T) {
 		name        string
 		requirement any
 		production  map[string]protocol.App
+		other       any
 		want        []string
+		refused     string
 	}{
 		{name: "a url is added", requirement: map[string]string{"url": "https://zeta.example/mcp"}, want: []string{"alpha", "zeta"}},
 		{name: "a published version is added", requirement: zeta.RegistryRef, want: []string{"alpha", "zeta"}},
@@ -155,15 +157,30 @@ func TestRequirementSource(t *testing.T) {
 			name: "an app production runs is left as it is", requirement: map[string]string{"url": "https://zeta.example/mcp"},
 			production: map[string]protocol.App{"zeta": {Name: "zeta"}}, want: []string{"alpha"},
 		},
+		{
+			name: "two apps naming different sources are refused", requirement: map[string]string{"url": "https://zeta.example/mcp"},
+			other: map[string]string{"url": "https://other.example/mcp"}, refused: "different sources for zeta",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			alpha := descriptorDocument("alpha")
 			alpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"zeta": test.requirement}}}}
 			root := t.TempDir()
 			writeDescriptor(t, filepath.Join(root, "server.json"), alpha)
-			resolved, err := resolveManifestGraph(t.Context(), manifestSpec{
-				access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, deployed: test.production, Apps: []manifestApp{{Name: "alpha", Path: root}},
-			})
+			apps := []manifestApp{{Name: "alpha", Path: root}}
+			if test.other != nil {
+				gamma := descriptorDocument("gamma")
+				gamma["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"zeta": test.other}}}}
+				writeDescriptor(t, filepath.Join(root, "gamma/server.json"), gamma)
+				apps = append(apps, manifestApp{Name: "gamma", Path: filepath.Join(root, "gamma")})
+			}
+			resolved, err := resolveManifestGraph(t.Context(), manifestSpec{access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, deployed: test.production, Apps: apps})
+			if test.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), test.refused) {
+					t.Fatalf("expected %q, got %v", test.refused, err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

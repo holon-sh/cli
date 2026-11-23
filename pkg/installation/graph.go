@@ -26,6 +26,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	}
 	resolved := manifest
 	resolved.Apps = nil
+	added := map[string]mcpregistry.Requirement{}
 	for len(apps) > 0 {
 		name := apps[0]
 		apps = apps[1:]
@@ -41,6 +42,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 			if _, runs := manifest.deployed[name]; runs || source == (mcpregistry.Requirement{}) {
 				continue
 			}
+			added[name] = source
 			app, err = manifestApp{Name: name, Registry: &protocol.RegistrySource{RegistryRef: source.RegistryRef}}, nil
 			if source.URL != "" {
 				app = manifestApp{Name: name, Remote: &manifestRemote{URL: source.URL}}
@@ -83,6 +85,14 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 		apps = append(apps, app.resolved.Requires...)
 	}
 	slices.SortFunc(resolved.Apps, func(a, b manifestApp) int { return strings.Compare(a.Name, b.Name) })
+	for _, app := range resolved.Apps {
+		for _, name := range app.resolved.Requires {
+			source := app.resolved.descriptor.Requires[name]
+			if chosen, ok := added[name]; ok && source != chosen && source != (mcpregistry.Requirement{}) {
+				return manifestSpec{}, fmt.Errorf("apps name different sources for %s; declare it in holon.yaml", name)
+			}
+		}
+	}
 	declared := resolved.declarations()
 	if err := protocol.ValidateAppMounts(declared); err != nil {
 		return manifestSpec{}, err
