@@ -40,7 +40,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 			}
 			return manifestSpec{}, err
 		}
-		access := cmp.Or(app.Access, manifest.access, manifest.deployed[name])
+		access := cmp.Or(app.Access, manifest.access, manifest.deployed[name].Access)
 		if access == nil {
 			return manifestSpec{}, fmt.Errorf("app %s needs an access rule: pass --public or --oauth", name)
 		}

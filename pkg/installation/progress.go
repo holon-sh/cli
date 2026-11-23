@@ -129,6 +129,9 @@ func (o *progressOutput) show(name, message string, state progressState) {
 // problem shows err on the named row, or removes the row when err is nil. A task that never failed stays silent;
 // plain output, which cannot remove a line it already printed, reports the recovery instead.
 func (o *progressOutput) problem(name string, err error) {
+	if o == nil {
+		return
+	}
 	if err != nil {
 		o.status(name, err.Error(), progressError)
 		return
