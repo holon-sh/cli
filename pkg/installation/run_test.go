@@ -69,7 +69,7 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 		{"--session requires --detach", []string{"dev", "--session", "cli-pr-42", "--file", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "0s", "--file", project}},
 		{"whole seconds", []string{"dev", "--detach", "--ttl", "1.5s", "--file", project}},
-		{"whole seconds", []string{"dev", "--detach", "--ttl", "25h", "--file", project}},
+		{"whole seconds", []string{"dev", "--detach", "--ttl", "192h", "--file", project}},
 		{"--env must be dev or prod", []string{"config", "set", "--env", "staging", "chat", "API_URL", "value"}},
 		{"--session requires a development session", []string{"config", "set", "--session", "production", "chat", "API_URL", "value"}},
 		{`invalid variable name "not-valid"`, []string{"config", "set", "chat", "not-valid", "value"}},
