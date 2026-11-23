@@ -281,7 +281,7 @@ func (m *Client) postOverlay(ctx context.Context, session, app, route, overlay s
 	if err != nil {
 		return err
 	}
-	request := apiRequest{Plane: protocol.DevPlane, Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
+	request := apiRequest{Host: protocol.DevHost, Token: token, Body: file, ContentType: runtimecontract.OverlayMediaType}
 	return m.client.send(ctx, path.Join(protocol.APIPathSessions, session, "apps", app, route), request, result)
 }
 

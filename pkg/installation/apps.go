@@ -208,7 +208,7 @@ func scopeSessions(ctx context.Context, manager *Client, scope configurationScop
 		return []protocol.SessionResponse{session}, err
 	}
 	var list protocol.Sessions
-	err := manager.Call(ctx, protocol.DevPlane, protocol.ToolListSessions, struct{}{}, &list)
+	err := manager.Call(ctx, protocol.DevHost, protocol.ToolListSessions, struct{}{}, &list)
 	return list.Items, err
 }
 

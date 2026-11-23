@@ -212,7 +212,7 @@ func MachineAuthServer(t *testing.T, tokenHandler http.HandlerFunc) *httptest.Se
 }
 
 func AdminAudience(origin string) string {
-	audience, _ := protocol.PlaneOrigin(origin, protocol.AdminPlane, "")
+	audience, _ := protocol.HostOrigin(origin, protocol.AdminHost, "")
 	return audience
 }
 

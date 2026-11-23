@@ -548,12 +548,12 @@ func (m *Client) machineToken(ctx context.Context, audience string) (*oauth2.Tok
 	return token, nil
 }
 
-func (m *Client) Call(ctx context.Context, plane protocol.Plane, tool string, input, output any) error {
+func (m *Client) Call(ctx context.Context, host protocol.Host, tool string, input, output any) error {
 	token, err := m.controlToken(ctx)
 	if err != nil {
 		return err
 	}
-	return m.client.Call(ctx, plane, token, tool, input, output)
+	return m.client.Call(ctx, host, token, tool, input, output)
 }
 
 func (config ClientConfig) AppToken(ctx context.Context, resource string) (string, error) {

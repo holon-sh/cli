@@ -61,7 +61,7 @@ func TestAPIClientRequestAndResponse(t *testing.T) {
 				Content string `json:"content"`
 			}
 			var output bytes.Buffer
-			request := apiRequest{Plane: protocol.DevPlane, Token: token}
+			request := apiRequest{Host: protocol.DevHost, Token: token}
 			if tc.stream {
 				request.Stream = &output
 			}
@@ -110,7 +110,7 @@ func TestAPIClientTimeouts(t *testing.T) {
 				})
 				transport.Timeout = time.Second
 				client := newAPIClient("https://api.example", transport, time.Second)
-				request := apiRequest{Plane: protocol.DevPlane}
+				request := apiRequest{Host: protocol.DevHost}
 				if tc.stream {
 					request.Stream = io.Discard
 					defer time.AfterFunc(tc.duration, cancel).Stop()

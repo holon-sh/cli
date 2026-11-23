@@ -90,7 +90,7 @@ func TestRegistryPackagesImportOnTheServerAndBindArguments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apps, err := buildAndPush(t.Context(), manifest, nil, buildOptions{manager: manager, plane: protocol.DevPlane})
+	apps, err := buildAndPush(t.Context(), manifest, nil, buildOptions{manager: manager, host: protocol.DevHost})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestRegistryPackageImportFailureAndCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = buildAndPush(ctx, manifest, nil, buildOptions{manager: manager, plane: protocol.DevPlane})
+			_, err = buildAndPush(ctx, manifest, nil, buildOptions{manager: manager, host: protocol.DevHost})
 			if phase == "Failed" {
 				if err == nil || !strings.Contains(err.Error(), "native-package runs an install script") {
 					t.Fatalf("failure = %v", err)

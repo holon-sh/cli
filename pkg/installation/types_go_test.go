@@ -47,7 +47,7 @@ func main() {
 		manifestApp{Name: "orders", resolved: resolvedApp{App: protocol.App{Name: "orders", Image: image}}},
 		manifestApp{Name: "caller", Path: root, resolved: resolvedApp{App: protocol.App{Name: "caller", Requires: []string{"orders"}}, descriptor: descriptor}},
 	)
-	options.plane = protocol.DevPlane
+	options.host = protocol.DevHost
 	_, cleanupDev, err := prepareManifestTypes(t.Context(), manifest, options, map[string]*typegen.Served{})
 	if err != nil {
 		t.Fatal(err)

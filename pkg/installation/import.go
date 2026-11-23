@@ -12,14 +12,14 @@ import (
 )
 
 func importRegistryBuild(
-	ctx context.Context, manager *Client, plane protocol.Plane, app manifestApp,
+	ctx context.Context, manager *Client, host protocol.Host, app manifestApp,
 ) (protocol.ResolvedAppBuild, error) {
 	var build protocol.ResolvedAppBuild
 	var imported protocol.Import
-	err := manager.Call(ctx, plane, protocol.ToolImportRegistryPackage, protocol.ImportRegistryPackageRequest{App: app.Name, Registry: *app.resolved.pkg}, &imported)
+	err := manager.Call(ctx, host, protocol.ToolImportRegistryPackage, protocol.ImportRegistryPackageRequest{App: app.Name, Registry: *app.resolved.pkg}, &imported)
 	if err == nil {
 		err = wait.PollUntilContextCancel(ctx, workflowPoll, true, func(ctx context.Context) (bool, error) {
-			if err := manager.Call(ctx, plane, protocol.ToolGetImport, protocol.GetImportRequest{ID: imported.ID}, &imported); err != nil {
+			if err := manager.Call(ctx, host, protocol.ToolGetImport, protocol.GetImportRequest{ID: imported.ID}, &imported); err != nil {
 				return false, err
 			}
 			if imported.Phase == protocol.PhaseFailed {
@@ -31,7 +31,7 @@ func importRegistryBuild(
 	if err != nil {
 		return build, fmt.Errorf("import %s: %w", app.Name, err)
 	}
-	if err := manager.Call(ctx, plane, protocol.ToolResolveAppBuild, *imported.Build, &build); err != nil {
+	if err := manager.Call(ctx, host, protocol.ToolResolveAppBuild, *imported.Build, &build); err != nil {
 		return build, err
 	}
 	if len(build.UnsupportedReasons) != 0 {

@@ -29,7 +29,7 @@ func ReleaseTag(buildDigest digest.Digest) string {
 	return ReleasePrefix + buildDigest.Encoded()
 }
 
-func Publish(ctx context.Context, repository oras.Target, image ocispec.Descriptor, record protocol.BuildRecord, plane protocol.Plane) (ocispec.Descriptor, error) {
+func Publish(ctx context.Context, repository oras.Target, image ocispec.Descriptor, record protocol.BuildRecord, host protocol.Host) (ocispec.Descriptor, error) {
 	if err := record.Validate(); err != nil {
 		return ocispec.Descriptor{}, err
 	}
@@ -50,7 +50,7 @@ func Publish(ctx context.Context, repository oras.Target, image ocispec.Descript
 	index := indexBytes(indexType, []ocispec.Descriptor{image, metadata})
 	descriptor := content.NewDescriptorFromBytes(ocispec.MediaTypeImageIndex, index)
 	tag := DevelopmentTag
-	if plane == protocol.AdminPlane {
+	if host == protocol.AdminHost {
 		tag = ReleaseTag(descriptor.Digest)
 	}
 	if _, err := oras.TagBytes(ctx, repository, ocispec.MediaTypeImageIndex, index, tag); err == nil {

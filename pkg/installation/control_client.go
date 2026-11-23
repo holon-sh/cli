@@ -19,8 +19,8 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-func (c *apiClient) Call(ctx context.Context, plane protocol.Plane, token, tool string, input, output any) error {
-	origin, _ := protocol.PlaneOrigin(c.baseURL, plane, "")
+func (c *apiClient) Call(ctx context.Context, host protocol.Host, token, tool string, input, output any) error {
+	origin, _ := protocol.HostOrigin(c.baseURL, host, "")
 	data, err := json.Marshal(input)
 	if err != nil {
 		return err

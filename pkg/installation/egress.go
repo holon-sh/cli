@@ -92,7 +92,7 @@ func runEgressGet(cmd *cobra.Command, config *commandConfig, app string) error {
 
 func getEgress(ctx context.Context, client *Client, app string) (protocol.EgressResponse, error) {
 	var result protocol.EgressResponse
-	err := client.Call(ctx, protocol.AdminPlane, protocol.ToolGetEgress, protocol.EgressRequest{App: app}, &result)
+	err := client.Call(ctx, protocol.AdminHost, protocol.ToolGetEgress, protocol.EgressRequest{App: app}, &result)
 	return result, err
 }
 
@@ -115,7 +115,7 @@ func runEgressSet(cmd *cobra.Command, config *commandConfig, app string, allow p
 		Policy:            protocol.AppEgressPolicy{Allow: allow},
 	}
 	var result protocol.EgressResponse
-	if err := client.Call(ctx, protocol.AdminPlane, protocol.ToolSetEgress, input, &result); err != nil {
+	if err := client.Call(ctx, protocol.AdminHost, protocol.ToolSetEgress, input, &result); err != nil {
 		return err
 	}
 	return writeEgress(cmd.OutOrStdout(), result)

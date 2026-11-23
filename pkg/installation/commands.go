@@ -52,7 +52,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 				// Reading the identity proves the new credentials work before the installation is selected.
 				if manager.info.OAuth != nil {
 					var caller protocol.Caller
-					if err := manager.Call(cmd.Context(), protocol.DevPlane, protocol.ToolGetIdentity, struct{}{}, &caller); err != nil {
+					if err := manager.Call(cmd.Context(), protocol.DevHost, protocol.ToolGetIdentity, struct{}{}, &caller); err != nil {
 						return err
 					}
 					identity := ptr.Deref(caller.Identity, protocol.CallerIdentity{})
