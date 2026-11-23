@@ -74,6 +74,7 @@ func TestRunRejectsInvalidInputs(t *testing.T) {
 		{"--session requires a development session", []string{"config", "set", "--session", "production", "chat", "API_URL", "value"}},
 		{`invalid variable name "not-valid"`, []string{"config", "set", "chat", "not-valid", "value"}},
 		{`invalid app name "Chat"`, []string{"config", "set", "Chat", "API_URL", "value"}},
+		{`invalid session name "production"`, []string{"session", "delete", "production"}},
 	} {
 		config := commandConfig{Auth: ClientConfig{ConfigDir: t.TempDir()}}
 		if err := executeCommand(t.Context(), tc.args, nil, nil, config); err == nil || !strings.Contains(err.Error(), tc.want) {
