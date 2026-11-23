@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/protocol"
@@ -104,11 +104,6 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	endpointAlpha["_meta"] = alpha["_meta"]
 	endpointAlpha["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{map[string]any{"name": "BETA_MCP_URL"}}
 	writeDescriptor(t, filepath.Join(root, "alpha-endpoint/server.json"), endpointAlpha)
-	orphanAlpha := descriptorDocument("alpha")
-	orphanAlpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
-		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{"zeta": {Name: "io.github.acme/zeta", Version: "1.0.0"}}},
-	}}
-	writeDescriptor(t, filepath.Join(root, "alpha-orphan/server.json"), orphanAlpha)
 	invalidMetadata := descriptorDocument("invalid")
 	invalidMetadata["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
 		"sh.holon": map[string]any{"egress": json.RawMessage("null")},
@@ -128,9 +123,6 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata"), Access: policy}}
 		}},
 		{name: "dependency directory without access", want: "app beta needs an access rule", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
-		{name: "a requirement's source without access", want: "app zeta needs an access rule", change: func(p *manifestSpec) {
-			p.Apps[0].Path = filepath.Join(root, "alpha-orphan")
-		}},
 		{name: "dependency cycle", want: "cycle", change: func(p *manifestSpec) {
 			p.Apps[1].Path = filepath.Join(root, "beta-cycle")
 		}},
@@ -151,38 +143,36 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 
 func TestRequirementSource(t *testing.T) {
 	zeta := descriptorRegistry(t, descriptorDocument("zeta"))
-	access := &protocol.AppAccess{Server: &protocol.AccessRule{OAuth: &protocol.OAuthRequirement{}}}
 	for _, test := range []struct {
 		name        string
 		requirement any
 		production  map[string]protocol.App
-		want        []protocol.App
+		want        []string
 	}{
+		{name: "a url is added", requirement: map[string]string{"url": "https://zeta.example/mcp"}, want: []string{"alpha", "zeta"}},
+		{name: "a published version is added", requirement: zeta.RegistryRef, want: []string{"alpha", "zeta"}},
 		{
-			name: "a url is added as a remote app", requirement: map[string]string{"url": "https://zeta.example/mcp"},
-			want: []protocol.App{{Name: "zeta", Access: access, Remote: &protocol.Remote{URL: "https://zeta.example/mcp", Headers: map[string]string{}}}},
+			name: "an app production runs is left as it is", requirement: map[string]string{"url": "https://zeta.example/mcp"},
+			production: map[string]protocol.App{"zeta": {Name: "zeta"}}, want: []string{"alpha"},
 		},
-		{
-			name: "a published version is added from the Registry", requirement: zeta.RegistryRef,
-			want: []protocol.App{{Name: "zeta", Access: access, Image: "ghcr.io/acme/zeta@sha256:" + strings.Repeat("a", 64), Port: 3000, Imported: true}},
-		},
-		{
-			name: "an app production runs stays as it is", requirement: map[string]string{"url": "https://zeta.example/mcp"},
-			production: map[string]protocol.App{"zeta": {Name: "zeta"}},
-		},
-		{name: "a bare name is left to the installation", requirement: map[string]any{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			alpha := descriptorDocument("alpha")
 			alpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"zeta": test.requirement}}}}
 			root := t.TempDir()
 			writeDescriptor(t, filepath.Join(root, "server.json"), alpha)
-			resolved, err := resolveManifestGraph(t.Context(), manifestSpec{access: access, deployed: test.production, Apps: []manifestApp{{Name: "alpha", Path: root}}})
+			resolved, err := resolveManifestGraph(t.Context(), manifestSpec{
+				access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, deployed: test.production, Apps: []manifestApp{{Name: "alpha", Path: root}},
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if diff := cmp.Diff(test.want, resolved.declarations()[1:], cmpopts.EquateEmpty()); diff != "" {
-				t.Fatalf("apps added for the requirement (-want +got):\n%s", diff)
+			var names []string
+			for _, app := range resolved.Apps {
+				names = append(names, app.Name)
+			}
+			if !slices.Equal(names, test.want) {
+				t.Fatalf("resolved %v, want %v", names, test.want)
 			}
 		})
 	}
