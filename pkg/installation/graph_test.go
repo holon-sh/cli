@@ -69,7 +69,8 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Apps[1].resolved.Image == "" || !resolved.Apps[1].resolved.Imported || resolved.Apps[1].resolved.Port != 8080 {
+	if resolved.Apps[1].resolved.Image == "" || !resolved.Apps[1].resolved.Imported ||
+		resolved.Apps[0].resolved.Port != 3000 || resolved.Apps[1].resolved.Port != 8080 {
 		t.Fatalf("incorrect installation: %#v", resolved)
 	}
 	catalog.Close()
