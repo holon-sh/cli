@@ -80,6 +80,7 @@ func newCommands(config commandConfig) []*cobra.Command {
 			},
 		},
 		newDevCommand(&config),
+		newSessionCommand(&config),
 		newDeployCommand(&config),
 		newLogsCommand(&config),
 		newSecretCommand(&config),
@@ -145,6 +146,24 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 	cmd.Flags().DurationVar(&ttl, "ttl", 24*time.Hour, "Detached session lifetime (whole seconds, at most 168h)")
 	cmd.Flags().StringVar(&config.devSession, "session", "", "Name the detached session to create, or to update in place (requires --detach)")
 	return withProject(withProgress(cmd, config, "Done"), config)
+}
+
+func newSessionCommand(config *commandConfig) *cobra.Command {
+	return commandGroup("session", "Delete development sessions", &cobra.Command{
+		Use:   "delete NAME",
+		Short: "Delete a development session",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !protocol.ValidSessionName(args[0]) {
+				return fmt.Errorf("invalid session name %q", args[0])
+			}
+			manager, err := NewClient(cmd.Context(), config.Auth)
+			if err != nil {
+				return err
+			}
+			return manager.DeleteSession(cmd.Context(), args[0], "", false)
+		},
+	})
 }
 
 func newDeployCommand(config *commandConfig) *cobra.Command {
