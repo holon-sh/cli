@@ -133,6 +133,9 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 				}
 			}
 			if detached {
+				if cmd.Flags().Changed("session") && !protocol.ValidSessionName(config.devSession) {
+					return fmt.Errorf("invalid session name %q", config.devSession)
+				}
 				if ttl < time.Second || ttl > protocol.MaxTTLSeconds*time.Second || ttl%time.Second != 0 {
 					return errors.New("--ttl must be whole seconds between 1s and 168h")
 				}
