@@ -314,6 +314,7 @@ func (f *reloadFixture) created() int {
 func TestDevSaves(t *testing.T) {
 	for _, test := range []struct {
 		name       string
+		files      map[string]string
 		failReload bool
 		unsaved    bool
 		saves      []map[string]string
@@ -335,9 +336,15 @@ func TestDevSaves(t *testing.T) {
 			saves: []map[string]string{{"alpha/tools.py": "second"}, {"alpha/tools.py": "third"}},
 			lines: []string{"alpha ready in", "alpha serves this save, but a restart loses it: no answer within a minute"}, reloads: 2,
 		},
+		{
+			name:  "a tool rule for a tool the app stops listing is reported",
+			files: map[string]string{manifestFileName: strings.Replace(alphaManifest, "{server: {}}", "{server: {}, tools: {lookup_first: {}}}", 1)},
+			saves: []map[string]string{{"alpha/tools.py": "second"}},
+			lines: []string{"alpha: access.tools[lookup_first]"}, reloads: 1,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			f := startReloadFixture(t, true)
+			f := startReloadFixture(t, true, test.files)
 			started := len(f.reloadRequests())
 			f.update(func() { f.failNext, f.unsaved = test.failReload, test.unsaved })
 			for i, files := range test.saves {
