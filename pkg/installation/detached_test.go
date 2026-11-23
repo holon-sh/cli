@@ -42,7 +42,6 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				Name: "gentle-otter-482", UID: "preview-uid", Revision: "1", Generation: 1, ExpiresAt: "2030-01-02T00:00:00Z",
 			}
 			if tc.wantError == "install hook failed" {
-				// Creation answers with the operation that installs the session's apps.
 				created.Operation = &protocol.LifecycleOperation{ID: "install"}
 			}
 			h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {

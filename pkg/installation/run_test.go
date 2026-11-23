@@ -502,10 +502,8 @@ func TestRunDeployLifecycle(t *testing.T) {
 						{Type: protocol.ConditionAvailable, Status: "True"},
 					}
 				default:
-					// An operation failed, and production declares the release it returned to.
 					id, declared := "deploy", released
 					if rolloutFailure == "superseded" {
-						// A later deploy's operation failed, returning to exactly the apps this deploy wrote.
 						session.Generation++
 						id, declared = "later", desired.Apps
 					}
@@ -695,7 +693,6 @@ func TestRunDeployLifecycle(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			mu.Lock()
-			// Each deploy changes prod, so the release a failed one returns to differs from it.
 			forceConflict, rolloutFailure, desired.Apps[1].Image = false, scenario.name, previous
 			mu.Unlock()
 			output.Reset()
