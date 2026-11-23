@@ -51,18 +51,6 @@ func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error
 	return served, nil
 }
 
-func (d *devLoop) sessionContracts(ctx context.Context) (served map[string]*typegen.Served, unread error) {
-	served = map[string]*typegen.Served{}
-	for _, name := range d.manifest.sessionContracts() {
-		if answer, err := d.manager.appContract(ctx, d.session.Name, name); err == nil {
-			served[name] = answer
-		} else {
-			unread = errors.Join(unread, fmt.Errorf("%s: %w", name, err))
-		}
-	}
-	return served, unread
-}
-
 func (m *Client) appContract(ctx context.Context, session, app string) (*typegen.Served, error) {
 	answer := &typegen.Served{}
 	request := protocol.AppRequest{SessionRequest: protocol.SessionRequest{Session: session}, App: app}
@@ -80,9 +68,7 @@ func (d *devLoop) regenerate(ctx context.Context) bool {
 	if errors.Is(err, errUnstarted) {
 		return false
 	}
-	if err != nil {
-		d.options.output.problem("MCP types", err)
-	}
+	d.options.output.problem("MCP types", err)
 	return true
 }
 
@@ -93,15 +79,13 @@ func (d *devLoop) generate(ctx context.Context) error {
 	})) {
 		return errUnstarted
 	}
-	contracts, unread := d.sessionContracts(ctx)
-	d.options.output.problem("MCP types", unread)
+	d.options.session = d.session.Name
 	for {
 		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
 		served, err := d.served(ctx)
 		if err != nil {
 			return err
 		}
-		maps.Copy(served, contracts)
 		manifest := d.manifest
 		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), d.waiting)
 		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, d.options, served)

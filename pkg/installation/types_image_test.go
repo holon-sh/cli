@@ -74,8 +74,10 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "fetch expected orders contract "+expected.Digest) {
 		t.Fatalf("missing pinned blob: %v", err)
 	}
+	refused := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	defer refused.Close()
 	options.plane = protocol.DevPlane
-	deployment.Apps[0].resolved.Requires = []string{"orders"}
+	deployment.Apps = append(deployment.Apps, manifestApp{Name: "orders", resolved: resolvedApp{App: protocol.App{Name: "orders", Remote: &protocol.Remote{URL: refused.URL}}}})
 	if _, _, err = prepareManifestTypes(t.Context(), deployment, options, map[string]*typegen.Served{}); err != nil {
 		t.Fatalf("a development session's unreadable orders contract: %v", err)
 	}

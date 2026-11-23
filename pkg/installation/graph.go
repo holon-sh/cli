@@ -110,16 +110,6 @@ func (p manifestSpec) installed() []string {
 	return names
 }
 
-func (p manifestSpec) sessionContracts() []string {
-	names := p.installed()
-	for _, app := range p.Apps {
-		if app.resolved.Remote != nil && slices.ContainsFunc(p.Apps, func(caller manifestApp) bool { return slices.Contains(caller.resolved.Requires, app.Name) }) {
-			names = append(names, app.Name)
-		}
-	}
-	return names
-}
-
 func undeclaredDependency(requirer *manifestApp, name string) error {
 	pin := requirer.resolved.descriptor.Requires[name]
 	missing := fmt.Errorf("%s requires %s, which is not an app in this project; declare it in holon.yaml", requirer.Name, name)

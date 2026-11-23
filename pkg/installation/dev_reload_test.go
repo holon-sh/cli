@@ -126,6 +126,7 @@ func startReloadFixture(t *testing.T, ready bool, files ...map[string]string) *r
 	h := newRunHarness(t)
 	f.harness = h
 	h.control.Handle([]string{protocol.ToolGetAppContract}, nil, func(w http.ResponseWriter, r *http.Request) {
+		installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 		app := installationtest.ToolArguments(r)["app"].(string)
 		f.mu.Lock()
 		running, ok := f.running[app]
@@ -683,8 +684,8 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 		{
 			name: "a server starts with the clients it can read when a required app's contract cannot be read", app: "gamma", client: "generated/holon-sh/index.mjs",
 			files: map[string]string{
-				manifestFileName:     gammaManifest + betaRemote,
-				"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"alpha":{},"beta":{},"delta":{}`),
+				manifestFileName:     gammaManifest,
+				"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"alpha":{},"delta":{}`),
 				"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
 				"gamma/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
 			},
@@ -726,7 +727,7 @@ func TestDevDetachesWhenARequiredContractCannotBeRead(t *testing.T) {
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
-	if stderr := f.stderr.String(); !strings.Contains(stderr, "MCP types delta:") {
+	if stderr := f.stderr.String(); !strings.Contains(stderr, "MCP contracts delta:") {
 		t.Fatalf("detached start did not report the unreadable contract: %q", stderr)
 	}
 }
