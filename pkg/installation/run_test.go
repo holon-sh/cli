@@ -493,22 +493,25 @@ func TestRunDeployLifecycle(t *testing.T) {
 					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: int64(revision), Revision: strconv.Itoa(revision),
 					Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: "True", Reason: "Ready"}},
 				}
-				switch rolloutFailure {
-				case "":
-				case "rolled back":
-					// The operation failed, so production declares the release it returned to.
-					failure := "prod: StartError: exec: no such file"
-					session.Apps, session.Operation = released, &protocol.LifecycleOperation{ID: "deploy"}
-					session.Lifecycle = &protocol.LifecycleStatus{ID: "deploy", Phase: protocol.PhaseFailed, App: "prod", Message: failure}
-					session.Conditions = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "LifecycleFailed", Message: failure}}
-				default:
+				// The rollout's outcome reaches the deploy's wait, which reads past a revision.
+				switch {
+				case installationtest.ToolArguments(r)["revision"] == nil || rolloutFailure == "":
+				case rolloutFailure == "progress deadline":
 					session.Conditions = []protocol.Condition{
 						{Type: protocol.ConditionReady, Status: "False", Reason: protocol.ReasonProgressDeadline, Message: "prod: unready replacement"},
 						{Type: protocol.ConditionAvailable, Status: "True"},
 					}
+				default:
+					// An operation failed. Its status write keeps the generation, and production declares the release it
+					// returned to.
+					failure := "prod: StartError: exec: no such file"
+					session.Revision, session.Apps, session.Operation = strconv.Itoa(revision+1), released, &protocol.LifecycleOperation{ID: "deploy"}
+					session.Lifecycle = &protocol.LifecycleStatus{ID: "deploy", Phase: protocol.PhaseFailed, App: "prod", Message: failure}
+					session.Conditions = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "LifecycleFailed", Message: failure}}
 					if rolloutFailure == "superseded" {
+						// The operation that failed belongs to a later deploy.
 						session.Generation++
-						desired.Apps[1].Port = 4001
+						session.Operation, session.Lifecycle.ID = &protocol.LifecycleOperation{ID: "later"}, "later"
 					}
 				}
 				installationtest.WriteJSON(w, session)
@@ -653,7 +656,8 @@ func TestRunDeployLifecycle(t *testing.T) {
 	head := git("rev-parse", "HEAD")
 	sourceFiles(t, checkout, map[string]string{"notes.md": "outside the app"})
 	mu.Lock()
-	desired.Apps[1].Image = strings.Replace(initial[1].Image, "registry.example/holon/upload/prod", "old-registry.example/prod", 1)
+	previous := strings.Replace(initial[1].Image, "registry.example/holon/upload/prod", "old-registry.example/prod", 1)
+	desired.Apps[1].Image = previous
 	mu.Unlock()
 	if err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath, "--verbose"}, &output, &diagnostics, runConfig); err != nil {
 		t.Fatal(err)
@@ -688,7 +692,8 @@ func TestRunDeployLifecycle(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			mu.Lock()
-			forceConflict, rolloutFailure = false, scenario.name
+			// Each deploy changes prod, so the release a failed one returns to differs from it.
+			forceConflict, rolloutFailure, desired.Apps[1].Image = false, scenario.name, previous
 			mu.Unlock()
 			output.Reset()
 			err := executeCommand(t.Context(), []string{"deploy", "--file", manifestPath}, &output, nil, runConfig)
