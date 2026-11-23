@@ -70,7 +70,7 @@ func TestConfigurationCommands(t *testing.T) {
 		t.Fatalf("sent = %q, want %q", sent, want)
 	}
 	for _, scope := range []string{
-		"config API_URL for alpha in developer-wide dev", "config API_URL for alpha in production", "secret API_KEY for alpha in dev session s-one",
+		"config API_URL for alpha in development on", "config API_URL for alpha in production", "secret API_KEY for alpha in dev session s-one",
 		"no egress", "none set",
 	} {
 		if !strings.Contains(out.String(), scope) {
