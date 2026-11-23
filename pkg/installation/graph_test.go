@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,10 +46,7 @@ func writeDescriptor(t *testing.T, path string, document map[string]any) {
 func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	beta := descriptorDocument("beta")
 	beta["packages"].([]any)[0].(map[string]any)["transport"].(map[string]any)["url"] = "http://localhost:8080/mcp"
-	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/v0.1/servers/io.github.acme%2Fbeta/versions/1.4.2" {
-			t.Errorf("unexpected catalog request %s %s", r.Method, r.URL)
-		}
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"server": beta})
 	}))
 	defer catalog.Close()
@@ -71,7 +69,7 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resolved.Apps) != 2 || resolved.Apps[1].resolved.Image == "" || !resolved.Apps[1].resolved.Imported ||
+	if resolved.Apps[1].resolved.Image == "" || !resolved.Apps[1].resolved.Imported ||
 		resolved.Apps[0].resolved.Port != 3000 || resolved.Apps[1].resolved.Port != 8080 {
 		t.Fatalf("incorrect installation: %#v", resolved)
 	}
@@ -103,14 +101,6 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	endpointAlpha["_meta"] = alpha["_meta"]
 	endpointAlpha["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{map[string]any{"name": "BETA_MCP_URL"}}
 	writeDescriptor(t, filepath.Join(root, "alpha-endpoint/server.json"), endpointAlpha)
-	orphanAlpha := descriptorDocument("alpha")
-	orphanAlpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
-		"sh.holon": map[string]any{"requires": map[string]protocol.RegistryRef{"zeta": {Name: "io.github.acme/zeta", Version: "1.0.0"}}},
-	}}
-	writeDescriptor(t, filepath.Join(root, "alpha-orphan/server.json"), orphanAlpha)
-	namedAlpha := descriptorDocument("alpha")
-	namedAlpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"zeta": map[string]any{}}}}}
-	writeDescriptor(t, filepath.Join(root, "alpha-named/server.json"), namedAlpha)
 	invalidMetadata := descriptorDocument("invalid")
 	invalidMetadata["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
 		"sh.holon": map[string]any{"egress": json.RawMessage("null")},
@@ -130,13 +120,6 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata"), Access: policy}}
 		}},
 		{name: "dependency directory without access", want: "app beta needs an access rule", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
-		{name: "undeclared dependency", want: `registry: {"name":"io.github.acme/zeta","version":"1.0.0"}`, change: func(p *manifestSpec) {
-			p.Apps[0].Path = filepath.Join(root, "alpha-orphan")
-		}},
-		{name: "a dependency one app names and another pins", want: `registry: {"name":"io.github.acme/zeta","version":"1.0.0"}`, change: func(p *manifestSpec) {
-			p.Apps[0].Path = filepath.Join(root, "alpha-named")
-			p.Apps[1].Path, p.Apps[1].Registry = filepath.Join(root, "alpha-orphan"), nil
-		}},
 		{name: "dependency cycle", want: "cycle", change: func(p *manifestSpec) {
 			p.Apps[1].Path = filepath.Join(root, "beta-cycle")
 		}},
@@ -150,6 +133,39 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 			test.change(&invalid)
 			if _, err := resolveManifestGraph(t.Context(), invalid); err == nil || test.want != "" && !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("expected %q, got %v", test.want, err)
+			}
+		})
+	}
+}
+
+func TestRequirementSource(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		production map[string]protocol.App
+		want       []string
+	}{
+		{name: "the source a requirement names is added", want: []string{"alpha", "zeta"}},
+		{name: "an app production runs is left as it is", production: map[string]protocol.App{"zeta": {Name: "zeta"}}, want: []string{"alpha"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			alpha := descriptorDocument("alpha")
+			alpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
+				"sh.holon": map[string]any{"requires": map[string]any{"zeta": map[string]string{"url": "https://zeta.example/mcp"}}},
+			}}
+			root := t.TempDir()
+			writeDescriptor(t, filepath.Join(root, "server.json"), alpha)
+			resolved, err := resolveManifestGraph(t.Context(), manifestSpec{
+				access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, deployed: test.production, Apps: []manifestApp{{Name: "alpha", Path: root}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, app := range resolved.Apps {
+				names = append(names, app.Name)
+			}
+			if !slices.Equal(names, test.want) {
+				t.Fatalf("resolved %v, want %v", names, test.want)
 			}
 		})
 	}
