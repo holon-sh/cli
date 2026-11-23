@@ -77,7 +77,7 @@ func prepareManifestTypes(
 			}
 			answer, ok := served[app.Name]
 			if ok {
-				if err := checkAccess(answer, app.Access); err != nil {
+				if err := checkAccess(answer, app.resolved.Access); err != nil {
 					return manifestSpec{}, nil, fmt.Errorf("%s: %w", app.Name, err)
 				}
 			}
