@@ -127,6 +127,11 @@ func newDevCommand(config *commandConfig) *cobra.Command {
   # Exit once the session is ready and print it as JSON
   holon dev --detach --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, flag := range []string{"json", "ttl", "session"} {
+				if !detached && cmd.Flags().Changed(flag) {
+					return fmt.Errorf("--%s requires --detach", flag)
+				}
+			}
 			if detached {
 				if cmd.Flags().Changed("session") && !protocol.ValidSessionName(config.devSession) {
 					return fmt.Errorf("invalid session name %q", config.devSession)
@@ -135,12 +140,6 @@ func newDevCommand(config *commandConfig) *cobra.Command {
 					return errors.New("--ttl must be whole seconds between 1s and 168h")
 				}
 				config.devTTLSeconds = new(int64(ttl / time.Second))
-			} else {
-				for _, flag := range []string{"json", "ttl", "session"} {
-					if cmd.Flags().Changed(flag) {
-						return fmt.Errorf("--%s requires --detach", flag)
-					}
-				}
 			}
 			return runDev(cmd.Context(), config.apps, cmd.OutOrStdout(), cmd.ErrOrStderr(), *config)
 		},
