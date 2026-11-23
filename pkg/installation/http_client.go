@@ -35,7 +35,7 @@ var (
 )
 
 type apiRequest struct {
-	Plane       protocol.Plane
+	Host        protocol.Host
 	Token       string
 	Stream      io.Writer
 	Body        io.Reader
@@ -93,7 +93,7 @@ func (c *apiClient) send(ctx context.Context, path string, request apiRequest, r
 	default:
 		client.Timeout = 0
 	}
-	origin, _ := protocol.PlaneOrigin(c.baseURL, request.Plane, "")
+	origin, _ := protocol.HostOrigin(c.baseURL, request.Host, "")
 	req, err := http.NewRequestWithContext(reqCtx, method, origin+path, request.Body)
 	if err != nil {
 		return err
@@ -195,7 +195,7 @@ func responseError(data []byte, token string, status int) (string, string) {
 
 func (c *apiClient) Info(ctx context.Context) (protocol.Info, error) {
 	var info protocol.Info
-	if err := c.send(ctx, protocol.APIPathInfo, apiRequest{Plane: protocol.BasePlane}, &info); err != nil {
+	if err := c.send(ctx, protocol.APIPathInfo, apiRequest{Host: protocol.BaseHost}, &info); err != nil {
 		if failure, ok := errors.AsType[*httpError](err); ok && failure.MovedTo != "" {
 			return protocol.Info{}, fmt.Errorf("this installation moved to %s; run holon login %s", failure.MovedTo, failure.MovedTo)
 		}
@@ -207,7 +207,7 @@ func (c *apiClient) Info(ctx context.Context) (protocol.Info, error) {
 	if info.Installation.Origin != c.baseURL || info.Installation.Validate() != nil {
 		return protocol.Info{}, errMalformedResponse
 	}
-	expectedAdmin, _ := protocol.PlaneOrigin(c.baseURL, protocol.AdminPlane, "")
+	expectedAdmin, _ := protocol.HostOrigin(c.baseURL, protocol.AdminHost, "")
 	if info.OAuth != nil && info.OAuth.AdminAudience != expectedAdmin {
 		return protocol.Info{}, errMalformedResponse
 	}

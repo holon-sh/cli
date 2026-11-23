@@ -14,7 +14,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/holon-sh/mcp-bridge v0.0.13
 	github.com/holon-sh/om v0.0.10
-	github.com/holon-sh/protocol v0.0.1-dev.26.0.20261122200314-8ee125a6439e
+	github.com/holon-sh/protocol v0.0.1-dev.26.0.20261123183244-7b2407e6edc8
 	github.com/klauspost/compress v1.19.2
 	github.com/moby/patternmatcher v0.6.1
 	github.com/modelcontextprotocol/go-sdk v1.9.0-pre.1

@@ -24,7 +24,7 @@ import (
 
 type buildOptions struct {
 	manager    *Client
-	plane      protocol.Plane
+	host       protocol.Host
 	session    string
 	build      *buildSession
 	Env        []string
@@ -41,7 +41,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 			apps[index] = declaration
 			continue
 		}
-		if app.Path != "" && options.plane == protocol.DevPlane {
+		if app.Path != "" && options.host == protocol.DevHost {
 			if _, err := sourceAppEntry(app, app.resolved.types.root); err != nil {
 				return nil, err
 			}
@@ -56,7 +56,7 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 				return err
 			}
 			if app.resolved.pkg != nil {
-				build, err := importRegistryBuild(ctx, options.manager, options.plane, app)
+				build, err := importRegistryBuild(ctx, options.manager, options.host, app)
 				if err != nil {
 					return err
 				}
@@ -83,11 +83,11 @@ func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUploa
 						return fmt.Errorf("adapt stdio app %s: %w", app.Name, err)
 					}
 				}
-				if options.plane == protocol.AdminPlane && grant.Grant != "" {
+				if options.host == protocol.AdminHost && grant.Grant != "" {
 					ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 					defer cancel()
 					record := mcpregistry.BuildRecord(app.resolved.App, app.resolved.catalogEnv, app.resolved.descriptor)
-					if _, err = appartifact.Publish(ctx, repository, image, record, options.plane); err != nil {
+					if _, err = appartifact.Publish(ctx, repository, image, record, options.host); err != nil {
 						return err
 					}
 				}
@@ -129,7 +129,7 @@ func regularNoSymlink(path, label string) error {
 
 func newImageUpload(options buildOptions, manifest manifestSpec) *imageUpload {
 	return &imageUpload{client: options.HTTPClient, load: func(ctx context.Context) (protocol.UploadGrant, error) {
-		grant, err := imageDestination(ctx, options.manager, options.plane, manifest)
+		grant, err := imageDestination(ctx, options.manager, options.host, manifest)
 		if err == nil {
 			err = validateUploadGrant(grant, manifest)
 		}

@@ -52,8 +52,8 @@ type commandConfig struct {
 	output             *progressOutput
 }
 
-func (c commandConfig) buildOptions(manager *Client, plane protocol.Plane) buildOptions {
-	return buildOptions{manager: manager, plane: plane, HTTPClient: c.RegistryHTTPClient, Env: c.Auth.Env, output: c.output}
+func (c commandConfig) buildOptions(manager *Client, host protocol.Host) buildOptions {
+	return buildOptions{manager: manager, host: host, HTTPClient: c.RegistryHTTPClient, Env: c.Auth.Env, output: c.output}
 }
 
 func (c commandConfig) clock() clock.WithTickerAndDelayedExecution {
@@ -113,22 +113,22 @@ func uploadManifest(ctx context.Context, resolved manifestSpec, options buildOpt
 	return protocol.AppsRequest{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
 }
 
-func imageDestination(ctx context.Context, manager *Client, plane protocol.Plane, manifest manifestSpec) (protocol.UploadGrant, error) {
+func imageDestination(ctx context.Context, manager *Client, host protocol.Host, manifest manifestSpec) (protocol.UploadGrant, error) {
 	names := make([]string, 0, len(manifest.Apps))
 	for _, app := range manifest.Apps {
 		names = append(names, app.Name)
 	}
 	if prefix := manager.info.ImageRepositoryPrefix; prefix != "" {
-		host, repository, _ := strings.Cut(prefix, "/")
+		registry, repository, _ := strings.Cut(prefix, "/")
 		repositories := make(map[string]string, len(names))
 		for _, name := range names {
 			repositories[name] = repository + "/" + name
 		}
-		return protocol.UploadGrant{Registry: host, Repositories: repositories}, nil
+		return protocol.UploadGrant{Registry: registry, Repositories: repositories}, nil
 	}
 	var grant protocol.UploadGrant
 	upload := protocol.UploadRequest{Apps: names}
-	err := manager.Call(ctx, plane, protocol.ToolUploadGrant, upload, &grant)
+	err := manager.Call(ctx, host, protocol.ToolUploadGrant, upload, &grant)
 	return grant, err
 }
 
@@ -142,7 +142,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	if err != nil {
 		return err
 	}
-	options := config.buildOptions(manager, protocol.DevPlane)
+	options := config.buildOptions(manager, protocol.DevHost)
 	resolved, err := resolveManifest(ctx, manager, config.manifest, apps...)
 	if err != nil {
 		return err
@@ -178,14 +178,14 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 	request.Session, request.TTLSeconds = config.devSession, config.devTTLSeconds
 	if dev.session.Name != "" {
 		err = dev.update(ctx, request, removedApps(dev.session.Apps, request.Apps)...)
-	} else if err = manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &dev.session); err == nil {
+	} else if err = manager.Call(ctx, protocol.DevHost, protocol.ToolCreateSession, request, &dev.session); err == nil {
 		dev.rollout = true
 		for _, app := range request.Apps {
 			dev.begin(app.Name)
 		}
 		err = printStartingEndpoints(stdout, config.output, manager, dev.session.Name, resolved.Apps)
 	} else if status := HTTPStatus(err); status < http.StatusBadRequest || status >= http.StatusInternalServerError {
-		console, _ := protocol.PlaneOrigin(manager.client.baseURL, protocol.DevPlane, "")
+		console, _ := protocol.HostOrigin(manager.client.baseURL, protocol.DevHost, "")
 		err = fmt.Errorf("session creation outcome is unknown; inspect sessions at %s before retrying: %w", console, err)
 	}
 	if err != nil {
@@ -232,7 +232,7 @@ func (m *Client) sessionRecordPath(manifest manifestSpec, selection []string) st
 func previousSession(ctx context.Context, manager *Client, recordPath string) protocol.SessionResponse {
 	var session protocol.SessionResponse
 	name, err := readPrivateFile(recordPath)
-	if err != nil || manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: string(name)}, &session) != nil {
+	if err != nil || manager.Call(ctx, protocol.DevHost, protocol.ToolRenewSession, protocol.SessionRequest{Session: string(name)}, &session) != nil {
 		return protocol.SessionResponse{}
 	}
 	return session
@@ -246,11 +246,11 @@ func (m *Client) sessionAudience(name string) (string, error) {
 	return protocol.SessionAudience(m.client.baseURL, mode, name)
 }
 
-func ControlPlane(name string) protocol.Plane {
+func ControlPlane(name string) protocol.Host {
 	if name == protocol.ProductionName {
-		return protocol.AdminPlane
+		return protocol.AdminHost
 	}
-	return protocol.DevPlane
+	return protocol.DevHost
 }
 
 func (m *Client) Session(ctx context.Context, name string) (protocol.SessionResponse, error) {
@@ -306,7 +306,7 @@ func runDeploy(ctx context.Context, selection []string, stdout io.Writer, config
 	for _, app := range current.Apps {
 		manifest.deployed[app.Name] = app
 	}
-	options := config.buildOptions(manager, protocol.AdminPlane)
+	options := config.buildOptions(manager, protocol.AdminHost)
 	resolved, err := resolveManifest(ctx, manager, manifest, selection...)
 	if err != nil {
 		return err
@@ -454,7 +454,7 @@ func (m *Client) StreamLogs(ctx context.Context, input protocol.SessionLogsReque
 		token, err := m.controlToken(ctx)
 		if err == nil {
 			logPath := (&url.URL{Path: path.Join(protocol.APIPathSessions, input.Session, "logs"), RawQuery: query.Encode()}).String()
-			err = m.client.send(ctx, logPath, apiRequest{Plane: ControlPlane(input.Session), Token: token, Stream: records}, nil)
+			err = m.client.send(ctx, logPath, apiRequest{Host: ControlPlane(input.Session), Token: token, Stream: records}, nil)
 		} else if !errors.Is(err, errRefreshFailed) {
 			return err
 		}

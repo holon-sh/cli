@@ -88,7 +88,7 @@ func (b *buildSession) start(ctx context.Context, apps []*manifestApp) error {
 	}
 	request.TTLSeconds = new(int64(buildSessionSeconds))
 	created := b.output.measure("build session", "create")
-	err := b.manager.Call(ctx, protocol.DevPlane, protocol.ToolCreateSession, request, &b.session)
+	err := b.manager.Call(ctx, protocol.DevHost, protocol.ToolCreateSession, request, &b.session)
 	created()
 	if err != nil {
 		return err

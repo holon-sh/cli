@@ -210,7 +210,7 @@ func TestRemoteContractIsPinnedByConsumer(t *testing.T) {
 				}},
 			)
 			manifest.deployed = map[string]protocol.App{"orders": {Name: "orders", Remote: &protocol.Remote{URL: test.deployed}}}
-			prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{manager: manager, plane: protocol.AdminPlane}, nil)
+			prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{manager: manager, host: protocol.AdminHost}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -226,7 +226,7 @@ func (d *devLoop) renew(ctx context.Context, session string) {
 			return
 		case <-ticker.C():
 			// A failed renewal needs no report: poll ends the session when the lease expires or credentials are lost.
-			_ = d.manager.Call(ctx, protocol.DevPlane, protocol.ToolRenewSession, protocol.SessionRequest{Session: session}, nil)
+			_ = d.manager.Call(ctx, protocol.DevHost, protocol.ToolRenewSession, protocol.SessionRequest{Session: session}, nil)
 		}
 	}
 }

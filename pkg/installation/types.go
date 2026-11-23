@@ -121,7 +121,7 @@ func prepareManifestTypes(
 			}
 		}
 	}
-	if options.plane == protocol.DevPlane {
+	if options.host == protocol.DevHost {
 		if err := typegen.MapClients(consumers, typeOptions); err != nil {
 			return manifestSpec{}, nil, err
 		}
@@ -132,7 +132,7 @@ func prepareManifestTypes(
 			return manifestSpec{}, nil, err
 		}
 	}
-	if options.plane == protocol.DevPlane && served == nil {
+	if options.host == protocol.DevHost && served == nil {
 		return manifest, remove, nil
 	}
 	session := cmp.Or(options.session, protocol.ProductionName)
@@ -141,7 +141,7 @@ func prepareManifestTypes(
 		if app.resolved.Remote == nil || !needed[app.Name] {
 			continue
 		}
-		if options.plane == protocol.AdminPlane &&
+		if options.host == protocol.AdminHost &&
 			len(protocol.ChangedApps([]protocol.App{manifest.deployed[app.Name]}, []protocol.App{app.resolved.App})) != 0 {
 			unread[app.Name] = errors.New("production does not run this declaration yet")
 			continue
@@ -221,7 +221,7 @@ func prepareManifestTypes(
 		}
 		metadata[app.Name] = p.metadata
 	}
-	if options.plane == protocol.DevPlane {
+	if options.host == protocol.DevHost {
 		if err := prepared.Write(io.Discard); err != nil {
 			return manifestSpec{}, nil, err
 		}
