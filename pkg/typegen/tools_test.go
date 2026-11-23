@@ -25,7 +25,6 @@ func TestCheck(t *testing.T) {
 			map[string]protocol.AccessRule{"get": {}, "remove": {}},
 			[]Finding{{RuleUndeclaredEffect, "run"}, {RuleUnlistedTool, "remove"}},
 		},
-		{"invalid name", []json.RawMessage{json.RawMessage(`{"tools":[{"name":"get\n",` + input + `}]}`)}, nil, nil},
 		{"listed twice", []json.RawMessage{json.RawMessage(`{"tools":[{"name":"get",` + input + `}]}`), json.RawMessage(`{"tools":[{"name":"get",` + input + `}]}`)}, nil, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {

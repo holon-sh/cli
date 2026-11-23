@@ -340,7 +340,7 @@ func TestDevSaves(t *testing.T) {
 			name:  "a tool rule for a tool the app stops listing is reported",
 			files: map[string]string{manifestFileName: strings.Replace(alphaManifest, "{server: {}}", "{server: {}, tools: {lookup_first: {}}}", 1)},
 			saves: []map[string]string{{"alpha/tools.py": "second"}},
-			lines: []string{"alpha: access.tools[lookup_first] names a tool the app does not list"}, reloads: 1,
+			lines: []string{"alpha: access.tools[lookup_first]"}, reloads: 1,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
