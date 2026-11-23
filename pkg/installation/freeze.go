@@ -294,7 +294,7 @@ func configureImage(image *ociimage.Image, directory string, start []string, lab
 	maps.Copy(merged, image.Config.Labels)
 	maps.Copy(merged, labels)
 	for key, value := range map[string]any{
-		"Entrypoint": nil, "Cmd": start, "WorkingDir": directory,
+		"Entrypoint": start, "Cmd": nil, "WorkingDir": directory,
 		"Env": append(environment, production...), "Labels": merged,
 	} {
 		image.Runtime[key], _ = json.Marshal(value)
