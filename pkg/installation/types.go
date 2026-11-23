@@ -197,6 +197,11 @@ func prepareManifestTypes(
 		}
 		metadata[app.Name] = p.metadata
 	}
+	if options.plane == protocol.DevPlane {
+		if err := prepared.Write(io.Discard); err != nil {
+			return manifestSpec{}, nil, err
+		}
+	}
 	for _, app := range manifest.Apps {
 		requires := ptr.Deref(metadata[app.Name], mcpcontract.Metadata{}).Requires
 		for _, name := range slices.Sorted(maps.Keys(requires)) {
@@ -216,11 +221,6 @@ func prepareManifestTypes(
 				advice = "rebuild and publish the caller"
 			}
 			return manifestSpec{}, nil, fmt.Errorf("%s has changed the typed contract expected by %s (%s); %s", name, app.Name, strings.Join(changes, ", "), advice)
-		}
-	}
-	if options.plane == protocol.DevPlane {
-		if err := prepared.Write(io.Discard); err != nil {
-			return manifestSpec{}, nil, err
 		}
 	}
 	return manifest, remove, nil
