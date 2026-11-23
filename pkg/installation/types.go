@@ -130,41 +130,41 @@ func prepareManifestTypes(
 	if options.plane == protocol.DevPlane && served == nil {
 		return manifest, remove, nil
 	}
+	session := cmp.Or(options.session, protocol.ProductionName)
 	unread := map[string]error{}
 	for _, app := range manifest.Apps {
 		if app.resolved.Remote == nil || !needed[app.Name] {
 			continue
 		}
-		document, err := typegen.ResolveDocument(ctx, typegen.Source{Server: typegen.Endpoint(app.resolved.Remote.URL)}, typeOptions)
-		if err != nil && options.plane == protocol.DevPlane {
-			unread[app.Name] = err
-			continue
+		answer, err := options.manager.appContract(ctx, session, app.Name)
+		var document *typegen.Document
+		if err == nil {
+			document, err = answer.Advertised()
 		}
 		if err != nil {
-			return manifestSpec{}, nil, err
+			unread[app.Name] = err
+			continue
 		}
 		byApp[app.Name] = document
 	}
 	installed := manifest.installed()
 	for _, name := range installed {
-		var answer *typegen.Served
-		var err error
-		if _, deployed := manifest.deployed[name]; needed[name] || !deployed {
-			answer, err = options.manager.appContract(ctx, cmp.Or(options.session, protocol.ProductionName), name)
-		}
-		if err == nil && answer != nil {
-			byApp[name], err = answer.Document(name)
-		}
-		if err != nil && options.plane == protocol.DevPlane {
-			unread[name] = err
+		if _, deployed := manifest.deployed[name]; !needed[name] && deployed {
 			continue
+		}
+		answer, err := options.manager.appContract(ctx, session, name)
+		var document *typegen.Document
+		if err == nil {
+			document, err = answer.Document(name)
 		}
 		if HTTPStatus(err) == http.StatusNotFound {
 			return manifestSpec{}, nil, fmt.Errorf("%s is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation", name)
 		}
 		if err != nil {
-			return manifestSpec{}, nil, fmt.Errorf("%s: %w", name, err)
+			unread[name] = err
+			continue
 		}
+		byApp[name] = document
 	}
 	var reported []error
 	for _, name := range slices.Sorted(maps.Keys(unread)) {

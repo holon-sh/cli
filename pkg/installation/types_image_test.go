@@ -1,10 +1,9 @@
 package installation
 
 import (
-	"context"
+	"cmp"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,7 +14,6 @@ import (
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/typegen"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2"
@@ -74,13 +72,6 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "fetch expected orders contract "+expected.Digest) {
 		t.Fatalf("missing pinned blob: %v", err)
 	}
-	refused := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
-	defer refused.Close()
-	options.plane = protocol.DevPlane
-	deployment.Apps = append(deployment.Apps, manifestApp{Name: "orders", resolved: resolvedApp{App: protocol.App{Name: "orders", Remote: &protocol.Remote{URL: refused.URL}}}})
-	if _, _, err = prepareManifestTypes(t.Context(), deployment, options, map[string]*typegen.Served{}); err != nil {
-		t.Fatalf("a development session's unreadable orders contract: %v", err)
-	}
 }
 
 func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
@@ -96,6 +87,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 	for _, test := range []struct {
 		name, contract, want string
 		untyped, deployed    bool
+		refusal              int
 	}{
 		{
 			name:     "an app the deployment runs, however long its catalog, is typed and stays out of the deployment",
@@ -111,6 +103,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 			want: "pokeapi is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation",
 		},
 		{name: "an app the deployment runs needs no contract when the caller types no calls to it", untyped: true, deployed: true},
+		{name: "a contract the deployer cannot read is left out of the caller's types", deployed: true, refusal: http.StatusForbidden},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -141,7 +134,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 			h.control.Handle([]string{protocol.ToolGetAppContract}, map[string]string{"session": protocol.ProductionName, "app": "pokeapi"},
 				func(w http.ResponseWriter, _ *http.Request) {
 					if test.contract == "" {
-						w.WriteHeader(http.StatusNotFound)
+						w.WriteHeader(cmp.Or(test.refusal, http.StatusNotFound))
 						return
 					}
 					installationtest.WriteJSON(w, json.RawMessage(test.contract))
@@ -186,36 +179,38 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 	}
 }
 
-func TestLiveDependencySnapshotIsPinnedByConsumer(t *testing.T) {
-	server := mcp.NewServer(&mcp.Implementation{Name: "live-orders", Version: "1"}, nil)
-	tool := &mcp.Tool{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}}}`)}
-	server.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		t.Error("preparation executed the dependency tool")
-		return &mcp.CallToolResult{}, nil
-	})
-	live := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
-	defer live.Close()
+func TestRemoteContractIsPinnedByConsumer(t *testing.T) {
+	h := newRunHarness(t)
+	h.control.Handle([]string{protocol.ToolGetAppContract}, map[string]string{"session": protocol.ProductionName, "app": "orders"},
+		func(w http.ResponseWriter, _ *http.Request) {
+			installationtest.WriteJSON(w, json.RawMessage(servedContract))
+		})
+	h.start(t)
+	manager, err := NewClient(t.Context(), h.run.Auth)
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	sourceFiles(t, root, map[string]string{
 		"server.js": "export default {}", "package.json": `{"dependencies":{"holon-sh":"*"}}`,
 	})
 	manifest := typedManifest(t,
 		manifestApp{Name: "orders", resolved: resolvedApp{
-			App: protocol.App{Name: "orders", Remote: &protocol.Remote{URL: live.URL}},
+			App: protocol.App{Name: "orders", Remote: &protocol.Remote{URL: "https://orders.example/mcp"}},
 		}},
 		manifestApp{Name: "checkout", Path: root, resolved: resolvedApp{
 			App: protocol.App{Name: "checkout", Requires: []string{"orders"}}, descriptor: &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"},
 		}},
 	)
-	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{}, nil)
+	prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{manager: manager, plane: protocol.AdminPlane}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
 	caller := prepared.Apps[1].resolved.types
 	stored := caller.documents[caller.metadata.Requires["orders"]]
-	if stored == nil || stored.Identity != (mcpcontract.Identity{Name: "live-orders", Version: "1"}) || len(stored.Schema.Tools) != 1 {
-		t.Fatalf("consumer did not pin the live snapshot: %+v", stored)
+	if stored == nil || stored.Identity != (mcpcontract.Identity{Name: "example.com/alpha", Version: "1"}) || len(stored.Schema.Tools) != 1 {
+		t.Fatalf("consumer did not pin the served contract: %+v", stored)
 	}
 }
 
