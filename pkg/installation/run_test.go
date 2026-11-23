@@ -486,33 +486,31 @@ func TestRunDeployLifecycle(t *testing.T) {
 					http.NotFound(w, r)
 					return
 				}
-				if loseResponse && installationtest.ToolArguments(r)["revision"] != nil {
+				waiting := installationtest.ToolArguments(r)["revision"] != nil
+				if loseResponse && waiting {
 					t.Error("deploy waited for a deployment that was already ready")
 				}
 				session := protocol.SessionResponse{
 					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: int64(revision), Revision: strconv.Itoa(revision),
 					Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: "True", Reason: "Ready"}},
 				}
-				// The rollout's outcome reaches the deploy's wait, which reads past a revision.
 				switch {
-				case installationtest.ToolArguments(r)["revision"] == nil || rolloutFailure == "":
+				case !waiting || rolloutFailure == "":
 				case rolloutFailure == "progress deadline":
 					session.Conditions = []protocol.Condition{
 						{Type: protocol.ConditionReady, Status: "False", Reason: protocol.ReasonProgressDeadline, Message: "prod: unready replacement"},
 						{Type: protocol.ConditionAvailable, Status: "True"},
 					}
 				default:
-					// An operation failed. Its status write keeps the generation, and production declares the release it
-					// returned to.
-					failure := "prod: StartError: exec: no such file"
-					session.Revision, session.Apps, session.Operation = strconv.Itoa(revision+1), released, &protocol.LifecycleOperation{ID: "deploy"}
-					session.Lifecycle = &protocol.LifecycleStatus{ID: "deploy", Phase: protocol.PhaseFailed, App: "prod", Message: failure}
-					session.Conditions = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "LifecycleFailed", Message: failure}}
+					id := "deploy"
 					if rolloutFailure == "superseded" {
-						// The operation that failed belongs to a later deploy.
 						session.Generation++
-						session.Operation, session.Lifecycle.ID = &protocol.LifecycleOperation{ID: "later"}, "later"
+						id = "later"
 					}
+					failure := "prod: StartError: exec: no such file"
+					session.Revision, session.Apps, session.Operation = strconv.Itoa(revision+1), released, &protocol.LifecycleOperation{ID: id}
+					session.Lifecycle = &protocol.LifecycleStatus{ID: id, Phase: protocol.PhaseFailed, App: "prod", Message: failure}
+					session.Conditions = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "LifecycleFailed", Message: failure}}
 				}
 				installationtest.WriteJSON(w, session)
 			case protocol.ToolUpdateSession:

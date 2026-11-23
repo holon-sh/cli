@@ -377,10 +377,9 @@ func waitSessionReady(ctx context.Context, manager *Client, accepted protocol.Se
 	defer finish()
 	session := accepted
 	for {
-		// A failed operation's session declares the release it returned to; only a later write supersedes the deploy.
 		rolledBack := session.Generation == accepted.Generation && lifecycleFailed(session)
 		if session.UID != accepted.UID || session.Generation < accepted.Generation ||
-			len(protocol.ChangedApps(session.Apps, accepted.Apps)) != 0 && !rolledBack {
+			!rolledBack && len(protocol.ChangedApps(session.Apps, accepted.Apps)) != 0 {
 			return session, errors.New("deployment was superseded")
 		}
 		reportSessionProgress(session, output, deployingApps, progressWorking)
