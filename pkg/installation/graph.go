@@ -3,7 +3,6 @@ package installation
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -35,10 +34,17 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 		}
 		app, err := manifest.app(name)
 		if err != nil {
-			if slices.ContainsFunc(resolved.Apps, func(a manifestApp) bool { return slices.Contains(a.resolved.Requires, name) }) {
+			source, required := resolved.requirement(name)
+			if !required {
+				return manifestSpec{}, err
+			}
+			if _, runs := manifest.deployed[name]; runs || source == (mcpregistry.Requirement{}) {
 				continue
 			}
-			return manifestSpec{}, err
+			app, err = manifestApp{Name: name, Registry: &protocol.RegistrySource{RegistryRef: source.RegistryRef}}, nil
+			if source.URL != "" {
+				app = manifestApp{Name: name, Remote: &manifestRemote{URL: source.URL}}
+			}
 		}
 		access := cmp.Or(app.Access, manifest.access, manifest.deployed[name].Access)
 		if access == nil {
@@ -81,15 +87,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 	if err := protocol.ValidateAppMounts(declared); err != nil {
 		return manifestSpec{}, err
 	}
-	installed := resolved.installed()
-	for _, app := range resolved.Apps {
-		for _, name := range app.resolved.Requires {
-			if slices.Contains(installed, name) && app.resolved.descriptor.Requires[name] != (mcpregistry.Requirement{}) {
-				return manifestSpec{}, undeclaredDependency(&app, name)
-			}
-		}
-	}
-	for _, name := range installed {
+	for _, name := range resolved.installed() {
 		declared = append(declared, protocol.App{Name: name})
 	}
 	if problems := protocol.Dependencies(declared); len(problems) != 0 {
@@ -110,15 +108,15 @@ func (p manifestSpec) installed() []string {
 	return names
 }
 
-func undeclaredDependency(requirer *manifestApp, name string) error {
-	pin := requirer.resolved.descriptor.Requires[name]
-	missing := fmt.Errorf("%s requires %s, which is not an app in this project; declare it in holon.yaml", requirer.Name, name)
-	source, value := "registry", any(pin.RegistryRef)
-	if pin.URL != "" {
-		source, value = "remote", map[string]string{"url": pin.URL}
+func (p manifestSpec) requirement(name string) (mcpregistry.Requirement, bool) {
+	var source mcpregistry.Requirement
+	required := false
+	for _, app := range p.Apps {
+		if slices.Contains(app.resolved.Requires, name) {
+			source, required = cmp.Or(source, app.resolved.descriptor.Requires[name]), true
+		}
 	}
-	data, _ := json.Marshal(value)
-	return fmt.Errorf("%w:\n  - name: %s\n    %s: %s\n    access: {server: {oauth: {}}}", missing, name, source, data)
+	return source, required
 }
 
 func resolveApp(app *manifestApp) error {
