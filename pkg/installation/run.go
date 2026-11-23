@@ -377,9 +377,11 @@ func waitSessionReady(ctx context.Context, manager *Client, accepted protocol.Se
 	defer finish()
 	session := accepted
 	for {
-		rolledBack := session.Generation == accepted.Generation && lifecycleFailed(session)
-		if session.UID != accepted.UID || session.Generation < accepted.Generation ||
-			!rolledBack && len(protocol.ChangedApps(session.Apps, accepted.Apps)) != 0 {
+		// The accepted operation reports this deploy's outcome, whatever apps it leaves declared. Without one, other apps
+		// mean another deploy replaced this one.
+		replaced := operation(session) != operation(accepted) ||
+			accepted.Operation == nil && len(protocol.ChangedApps(session.Apps, accepted.Apps)) != 0
+		if session.UID != accepted.UID || session.Generation < accepted.Generation || replaced {
 			return session, errors.New("deployment was superseded")
 		}
 		reportSessionProgress(session, output, deployingApps, progressWorking)

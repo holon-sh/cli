@@ -502,13 +502,15 @@ func TestRunDeployLifecycle(t *testing.T) {
 						{Type: protocol.ConditionAvailable, Status: "True"},
 					}
 				default:
-					id := "deploy"
+					// An operation failed, and production declares the release it returned to.
+					id, declared := "deploy", released
 					if rolloutFailure == "superseded" {
+						// A later deploy's operation failed, returning to exactly the apps this deploy wrote.
 						session.Generation++
-						id = "later"
+						id, declared = "later", desired.Apps
 					}
 					failure := "prod: StartError: exec: no such file"
-					session.Revision, session.Apps, session.Operation = strconv.Itoa(revision+1), released, &protocol.LifecycleOperation{ID: id}
+					session.Revision, session.Apps, session.Operation = strconv.Itoa(revision+1), declared, &protocol.LifecycleOperation{ID: id}
 					session.Lifecycle = &protocol.LifecycleStatus{ID: id, Phase: protocol.PhaseFailed, App: "prod", Message: failure}
 					session.Conditions = []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "LifecycleFailed", Message: failure}}
 				}
@@ -551,7 +553,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 					Name: "production", UID: "production-uid", Apps: desired.Apps, Generation: int64(revision), Revision: strconv.Itoa(revision),
 					Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: "False", Reason: "Provisioning"}},
 				}
-				if rolloutFailure == "rolled back" {
+				if rolloutFailure == "rolled back" || rolloutFailure == "superseded" {
 					accepted.Operation = &protocol.LifecycleOperation{ID: "deploy"}
 				}
 				installationtest.WriteJSON(w, accepted)

@@ -19,6 +19,11 @@ func lifecyclePending(s protocol.SessionResponse) bool {
 	return s.Operation != nil && (lifecycle.ID != s.Operation.ID || lifecycle.Phase != protocol.PhaseSucceeded)
 }
 
+// operation identifies the lifecycle operation s carries, or is empty when it carries none.
+func operation(s protocol.SessionResponse) string {
+	return ptr.Deref(s.Operation, protocol.LifecycleOperation{}).ID
+}
+
 func lifecycleFailed(s protocol.SessionResponse) bool {
 	lifecycle := ptr.Deref(s.Lifecycle, protocol.LifecycleStatus{})
 	return s.Operation != nil && lifecycle.Phase == protocol.PhaseFailed && lifecycle.Retry == s.Operation.Retry
