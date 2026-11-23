@@ -43,12 +43,25 @@ func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error
 			continue
 		}
 		if answer, err := d.manager.appContract(ctx, d.session.Name, app.Name); err == nil {
+			if err := checkAccess(answer, app.Access); err != nil {
+				return nil, fmt.Errorf("%s: %w", app.Name, err)
+			}
 			served[app.Name] = answer
 		} else if sent != "" {
 			return nil, fmt.Errorf("%s: %w", app.Name, err)
 		}
 	}
 	return served, nil
+}
+
+func checkAccess(served *typegen.Served, access *protocol.AppAccess) error {
+	findings, err := served.Check(access.Tools)
+	for _, finding := range findings {
+		if finding.Rule == typegen.RuleUnlistedTool {
+			err = cmp.Or(err, fmt.Errorf("access.tools[%s] names a tool the app does not list", finding.Tool))
+		}
+	}
+	return err
 }
 
 func (m *Client) appContract(ctx context.Context, session, app string) (*typegen.Served, error) {

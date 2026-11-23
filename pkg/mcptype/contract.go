@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
+	"github.com/holon-sh/protocol"
 	"github.com/opencontainers/go-digest"
 )
 
@@ -37,24 +38,44 @@ func decodeSchema(member string, raw json.RawMessage) (Object, error) {
 	return object, nil
 }
 
+// decodeTool reads a tool whose name is a valid MCP name and whose [MCP Tool] inputSchema is an object of type
+// object.
+//
+// [MCP Tool]: https://modelcontextprotocol.io/specification/2026-07-28/schema#tool
+func decodeTool(tool mcpcontract.Tool) (contractTool, error) {
+	if !protocol.ValidMCPName(tool.Name) {
+		return contractTool{}, fmt.Errorf("tool name %q is not a valid MCP name", tool.Name)
+	}
+	input, err := decodeSchema("inputSchema", tool.Input)
+	if err != nil {
+		return contractTool{}, fmt.Errorf("%s: %w", tool.Name, err)
+	}
+	decoded := contractTool{Input: input}
+	if len(tool.Output) != 0 {
+		if decoded.Output, err = decodeSchema("outputSchema", tool.Output); err != nil {
+			return contractTool{}, fmt.Errorf("%s: %w", tool.Name, err)
+		}
+	}
+	if input["type"] != "object" {
+		return contractTool{}, fmt.Errorf("%s: inputSchema must have type object", tool.Name)
+	}
+	return decoded, nil
+}
+
+func CheckTool(tool mcpcontract.Tool) error {
+	_, err := decodeTool(tool)
+	return err
+}
+
 func decodeContract(source mcpcontract.Contract) (contract, error) {
 	result := contract{Tools: map[string]contractTool{}, Resources: map[string]contractTool{}, Events: map[string]contractTool{}}
 	for _, tool := range source.Tools {
-		input, err := decodeSchema("inputSchema", tool.Input)
+		decoded, err := decodeTool(tool)
 		if err != nil {
 			return contract{}, err
 		}
-		decoded := contractTool{Input: input}
-		if len(tool.Output) != 0 {
-			if decoded.Output, err = decodeSchema("outputSchema", tool.Output); err != nil {
-				return contract{}, err
-			}
-		}
-		if input["type"] != "object" {
-			return contract{}, fmt.Errorf("%s: inputSchema must have type object", tool.Name)
-		}
-		if _, exists := result.Tools[tool.Name]; tool.Name == "" || exists {
-			return contract{}, errors.New("tool names must be nonempty and unique")
+		if _, exists := result.Tools[tool.Name]; exists {
+			return contract{}, fmt.Errorf("tool %s is listed twice", tool.Name)
 		}
 		result.Tools[tool.Name] = decoded
 	}
