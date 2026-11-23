@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -111,11 +112,26 @@ func ServedContract(ctx context.Context, endpoint string, client *http.Client) (
 
 // Document is the contract s describes, under name.
 func (s *Served) Document(name string) (*Document, error) {
+	return s.identified(mcpcontract.Identity{Name: name, Version: unversioned})
+}
+
+// Advertised is the contract s describes, under the name and version its serverInfo reports. MCP allows an empty
+// serverInfo version, which SDKs report for a server that does not set one.
+func (s *Served) Advertised() (*Document, error) {
+	var info struct{ Name, Version string }
+	_ = json.Unmarshal(s.ServerInfo, &info)
+	if info.Name == "" {
+		return nil, errors.New("the server does not report its name")
+	}
+	return s.identified(mcpcontract.Identity{Name: info.Name, Version: cmp.Or(info.Version, unversioned)})
+}
+
+func (s *Served) identified(identity mcpcontract.Identity) (*Document, error) {
 	contract, err := listCatalog(s.Capabilities, s.pages)
 	if err != nil {
 		return nil, err
 	}
-	return NewDocument(&mcpcontract.Metadata{Identity: mcpcontract.Identity{Name: name, Version: unversioned}, Schema: contract})
+	return NewDocument(&mcpcontract.Metadata{Identity: identity, Schema: contract})
 }
 
 // listServer lists what the server at endpoint serves, and the contract that makes. It talks to the server under a

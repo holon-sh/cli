@@ -302,9 +302,9 @@ func runDeploy(ctx context.Context, selection []string, stdout io.Writer, config
 	if err != nil && HTTPStatus(err) != http.StatusNotFound {
 		return err
 	}
-	manifest.deployed = map[string]*protocol.AppAccess{}
+	manifest.deployed = map[string]protocol.App{}
 	for _, app := range current.Apps {
-		manifest.deployed[app.Name] = app.Access
+		manifest.deployed[app.Name] = app
 	}
 	options := config.buildOptions(manager, protocol.AdminPlane)
 	resolved, err := resolveManifest(ctx, manager, manifest, selection...)
