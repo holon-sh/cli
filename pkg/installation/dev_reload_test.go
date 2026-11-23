@@ -532,7 +532,7 @@ func TestDevSessionLifecycle(t *testing.T) {
 	f.update(func() { f.ambiguous = true })
 	f.start("--detach")
 	f.await(func() bool { return f.created() == 2 })
-	if err := f.stop(); err == nil || !strings.Contains(err.Error(), "outcome is unknown; inspect sessions at https://dev."+f.harness.baseHost+" before retrying") ||
+	if err := f.stop(); err == nil || !strings.Contains(err.Error(), "outcome is unknown; inspect sessions at https://console."+f.harness.baseHost+"/?environment=development before retrying") ||
 		f.created() != 2 {
 		t.Fatalf("ambiguous creation: creates=%d error=%v", f.created(), err)
 	}
