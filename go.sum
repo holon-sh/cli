@@ -104,6 +104,8 @@ github.com/holon-sh/protocol v0.0.1-dev.26 h1:DE2FdvJ8B78pW9KJnqBYKFNt2x2hH4ZgU2
 github.com/holon-sh/protocol v0.0.1-dev.26/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
 github.com/holon-sh/protocol v0.0.1-dev.26.0.20261123183244-7b2407e6edc8 h1:h1T8eW1ykre5526xmTdv+P1/Q3rsY+PrFAJaFui6mm8=
 github.com/holon-sh/protocol v0.0.1-dev.26.0.20261123183244-7b2407e6edc8/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
+github.com/holon-sh/protocol v0.0.1-dev.26.0.20261123233407-ea5e89afb15c h1:o3/30CmppkqUe5LkirishZa3XrES0nQGNuxTz4B060s=
+github.com/holon-sh/protocol v0.0.1-dev.26.0.20261123233407-ea5e89afb15c/go.mod h1:evk5shdLw43mGrC3s5hg1HLXc1CbieOYRccFy5NgRVI=
 github.com/iancoleman/orderedmap v0.3.0 h1:5cbR2grmZR/DiVt+VJopEhtVs9YGInGIxAoMJn+Ichc=
 github.com/iancoleman/orderedmap v0.3.0/go.mod h1:XuLcCUkdL5owUCQeF2Ue9uuw1EptkJDkXXS7VoV7XGE=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
