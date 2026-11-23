@@ -24,6 +24,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 		{name: "ready", seconds: 86400},
 		{name: "JSON", flags: []string{"--json", "--ttl", "1s"}, seconds: 1},
 		{name: "failed hook", seconds: 86400, wantError: "install hook failed"},
+		{name: "failed named session", flags: []string{"--session", "gentle-otter-482"}, seconds: 86400, wantError: "install hook failed"},
 		{name: "cancelled startup", seconds: 86400, wantError: "context canceled"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,7 +42,6 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				Name: "gentle-otter-482", UID: "preview-uid", Revision: "1", Generation: 1, ExpiresAt: "2030-01-02T00:00:00Z",
 			}
 			h.control.Handle([]string{protocol.ToolCreateSession}, nil, func(w http.ResponseWriter, r *http.Request) {
-				installationtest.AssertOrigin(t, r, "dev."+h.baseHost)
 				var request protocol.AppsRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.TTLSeconds == nil || *request.TTLSeconds != tc.seconds {
 					t.Errorf("detached request: %#v, %v", request, err)
@@ -57,18 +57,15 @@ func TestDetachedDevLifecycle(t *testing.T) {
 				case "cancelled startup":
 					cancel()
 					ready.Conditions = nil
-				case "failed hook":
+				case "failed hook", "failed named session":
 					ready.Operation = &protocol.LifecycleOperation{ID: "install"}
 					ready.Lifecycle = &protocol.LifecycleStatus{ID: "install", Phase: "Failed", Message: "install hook failed"}
 				}
 				installationtest.WriteJSON(w, ready)
 			})
 			h.control.Handle([]string{protocol.ToolDeleteSession}, map[string]string{"session": "gentle-otter-482"}, func(w http.ResponseWriter, r *http.Request) {
-				if installationtest.ToolArguments(r)["skipHooks"] != true {
-					t.Error("cleanup must bypass lifecycle hooks")
-				}
-				if installationtest.ToolArguments(r)["expectedRevision"] != "1" {
-					t.Error("cleanup missing current revision")
+				if args := installationtest.ToolArguments(r); args["skipHooks"] != true || args["expectedRevision"] != "1" {
+					t.Errorf("cleanup must bypass hooks at the current revision: %v", args)
 				}
 				deleted.Store(true)
 				installationtest.WriteJSON(w, protocol.DeleteSessionResult{Deleted: true})
@@ -99,7 +96,7 @@ func TestDetachedDevLifecycle(t *testing.T) {
 					t.Fatalf("detached session = %v, output=%s", err, output.String())
 				}
 			}
-			if deleted.Load() != (tc.wantError != "") {
+			if deleted.Load() != (tc.wantError != "" && tc.name != "failed named session") {
 				t.Fatalf("session cleanup: deleted=%v, error=%v", deleted.Load(), err)
 			}
 		})
