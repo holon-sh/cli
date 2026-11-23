@@ -157,7 +157,7 @@ func (b *buildSession) build(
 func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (ocispec.Descriptor, error) {
 	source := options.build.sources[app.Path]
 	p := app.resolved.types
-	if err := p.write(p.root); err != nil {
+	if err := p.prepared.WriteClients(p.name, p.root); err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	build := runtimecontract.Build{Freeze: &source.recipe.Deploy.Freeze}

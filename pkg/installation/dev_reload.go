@@ -75,21 +75,24 @@ var (
 	errSourceUnrecorded = errors.New("no answer within a minute")
 )
 
-func (d *devLoop) regenerate(ctx context.Context) error {
+func (d *devLoop) regenerate(ctx context.Context) bool {
 	err := d.generate(ctx)
-	if err == nil || errors.Is(err, errUnstarted) || ctx.Err() != nil {
-		return err
+	if errors.Is(err, errUnstarted) {
+		return false
 	}
-	d.options.output.problem("MCP types", err)
-	if !d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), d.running)) {
-		return errUnstarted
+	if err != nil {
+		d.options.output.problem("MCP types", err)
 	}
-	return nil
+	return d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool {
+		_, running := d.sent[app.Name]
+		return running
+	}))
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
 	if !d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool {
-		return d.running(app) || len(app.resolved.Requires) != 0
+		_, running := d.sent[app.Name]
+		return running || len(app.resolved.Requires) != 0
 	})) {
 		return errUnstarted
 	}
@@ -113,16 +116,8 @@ func (d *devLoop) generate(ctx context.Context) error {
 			return err
 		}
 		cleanup()
-		problems := unread
 		for _, app := range prepared.Apps {
-			p := app.resolved.types
-			if p == nil {
-				continue
-			}
-			if err := p.write(app.Path); err != nil {
-				problems = errors.Join(problems, err)
-				delete(d.accepted, app.Name)
-			} else {
+			if p := app.resolved.types; p != nil {
 				d.accepted[app.Name] = p
 			}
 		}
@@ -130,7 +125,7 @@ func (d *devLoop) generate(ctx context.Context) error {
 			return errUnstarted
 		}
 		if last {
-			d.options.output.problem("MCP types", problems)
+			d.options.output.problem("MCP types", unread)
 			return nil
 		}
 	}
@@ -155,11 +150,6 @@ func (d *devLoop) reload(ctx context.Context, apps []manifestApp) bool {
 		}
 	}
 	return reloaded
-}
-
-func (d *devLoop) running(app manifestApp) bool {
-	_, running := d.sent[app.Name]
-	return running
 }
 
 func (d *devLoop) unsent(app manifestApp) bool {
@@ -238,7 +228,7 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 
 func packSource(ctx context.Context, app manifestApp, root string, accepted *preparedTypes) (packedSource, error) {
 	if accepted != nil {
-		if err := accepted.write(root); err != nil {
+		if err := accepted.prepared.WriteClients(accepted.name, root); err != nil {
 			return packedSource{}, err
 		}
 	}

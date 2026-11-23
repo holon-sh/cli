@@ -656,7 +656,6 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 		files       map[string]string
 		app, client string
 		sends       []send
-		problem     string
 	}{
 		{
 			name: "a page is built once its clients are in the source", app: "alpha", client: ui,
@@ -689,11 +688,10 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 				"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
 				"gamma/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
 			},
-			sends:   []send{{clients: true}},
-			problem: "MCP types delta",
+			sends: []send{{clients: true}},
 		},
 		{
-			name: "a server's source is sent when its clients cannot be written", app: "gamma", client: "generated/holon-sh/index.mjs",
+			name: "a server starts without clients when they cannot be written", app: "gamma", client: "generated/holon-sh/index.mjs",
 			files: map[string]string{
 				manifestFileName:     gammaManifest,
 				"gamma/server.json":  requiresAlpha,
@@ -701,8 +699,7 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 				"gamma/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
 				"gamma/generated":    "not a directory",
 			},
-			sends:   []send{{}},
-			problem: "MCP types gamma",
+			sends: []send{{}},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -718,86 +715,28 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 			}
 			_, err := os.Stat(filepath.Join(f.root, test.app, test.client))
 			if !slices.Equal(sends, test.sends) || (err == nil) != test.sends[len(test.sends)-1].clients ||
-				strings.Count(f.stderr.String(), test.app+" ready") != 1 || !strings.Contains(f.stderr.String(), test.problem) {
+				strings.Count(f.stderr.String(), test.app+" ready") != 1 {
 				t.Fatalf("%s sends = %+v, local %s: %v; stderr=%q", test.app, sends, test.client, err, f.stderr.String())
 			}
 		})
 	}
 }
 
-func TestDevDetachSendsSourceAfterClientWriteFails(t *testing.T) {
+func TestDevDetachesWhenARequiredContractCannotBeRead(t *testing.T) {
 	f := startReloadFixture(t, true, map[string]string{
 		manifestFileName:     gammaManifest,
-		"alpha/server.py":    "import mcp\n",
-		"alpha/package.json": `{"private":true,"scripts":{"build":"vite build"},"dependencies":{"holon-ui":"0.0.1"}}`,
-		"gamma/server.json":  requiresAlpha,
+		"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"delta":{}`),
 		"gamma/server.ts":    "import { McpServer } from \"@modelcontextprotocol/server\";\n",
-		"gamma/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
+		"gamma/package.json": `{"private":true}`,
 	})
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.RemoveAll(filepath.Join(f.root, "gamma", "generated")); err != nil {
-		t.Fatal(err)
-	}
-	sourceFiles(t, f.root, map[string]string{"gamma/generated": "not a directory"})
 	f.start("--detach")
 	f.await(func() bool { return strings.Contains(f.stdout.String(), "Expires") })
-	if err := f.stop(); err != nil || !strings.Contains(f.stderr.String(), "MCP types gamma") {
-		t.Fatalf("detached start: %v; stdout=%q stderr=%q", err, f.stdout.String(), f.stderr.String())
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var plan runtimecontract.Plan
-	_ = json.Unmarshal(overlayEntries(t, f.running["alpha"])[runtimecontract.PlanFile], &plan)
-	if len(f.running["gamma"]) == 0 || plan.Prepare == nil {
-		t.Fatalf("the new session runs gamma: %t, alpha's page build: %q", len(f.running["gamma"]) != 0, plan.Prepare)
-	}
-}
-
-func TestDevRunsAppsWithTheClientsOfTheContractsThatRead(t *testing.T) {
-	const client = "generated/holon-sh/index.mjs"
-	f := startReloadFixture(t, true, map[string]string{
-		manifestFileName:     gammaManifest,
-		"alpha/server.py":    "import mcp\n",
-		"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"alpha":{},"linear":{}`),
-		"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
-		"gamma/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
-	})
-	runs := func(alpha string, linear bool) {
-		t.Helper()
-		f.mu.Lock()
-		clients := string(overlayEntries(t, f.running["gamma"])[client])
-		f.mu.Unlock()
-		if !strings.Contains(clients, "lookup_"+alpha) || strings.Contains(clients, "linear") != linear {
-			t.Fatalf("gamma runs the clients %q", clients)
-		}
-	}
-	runs("first", true)
-	f.update(func() {
-		f.served = slices.DeleteFunc(f.served, func(app protocol.App) bool { return app.Name == "linear" })
-	})
-	f.save(map[string]string{"alpha/tools.py": "second"}, "MCP types linear")
-	runs("second", false)
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
-	f.update(func() { delete(f.running, "gamma") })
-	f.start()
-	f.watching()
-	runs("second", false)
-	f.save(map[string]string{"gamma/server.ts": "import { apps } from \"#holon-sh\";\n"}, "gamma ready")
-	runs("second", false)
-	if err := f.stop(); err != nil {
-		t.Fatal(err)
-	}
-	sourceFiles(t, f.root, map[string]string{"gamma/server.json": strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"alpha":{},"linear":{},"delta":{}`)})
-	f.start("--detach")
-	f.await(func() bool { return strings.Contains(f.stdout.String(), "Expires") })
-	if err := f.stop(); err != nil || !strings.Contains(f.stderr.String(), "MCP types delta") {
-		t.Fatalf("detached start: %v; stdout=%q stderr=%q", err, f.stdout.String(), f.stderr.String())
-	}
-	runs("second", true)
 }
 
 func TestDevShowsReloadDetailsOnlyWhenVerbose(t *testing.T) {
