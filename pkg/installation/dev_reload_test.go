@@ -683,23 +683,12 @@ func TestDevSendsClientsAndPagesOnFirstStart(t *testing.T) {
 		{
 			name: "a server starts with the clients it can read when a required app's contract cannot be read", app: "gamma", client: "generated/holon-sh/index.mjs",
 			files: map[string]string{
-				manifestFileName:     gammaManifest,
-				"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"alpha":{},"delta":{}`),
+				manifestFileName:     gammaManifest + betaRemote,
+				"gamma/server.json":  strings.ReplaceAll(requiresAlpha, `"alpha":{}`, `"alpha":{},"beta":{},"delta":{}`),
 				"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
 				"gamma/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
 			},
 			sends: []send{{clients: true}},
-		},
-		{
-			name: "a server starts without clients when they cannot be written", app: "gamma", client: "generated/holon-sh/index.mjs",
-			files: map[string]string{
-				manifestFileName:     gammaManifest,
-				"gamma/server.json":  requiresAlpha,
-				"gamma/server.ts":    "import { apps } from \"#holon-sh\";\nimport { McpServer } from \"@modelcontextprotocol/server\";\n",
-				"gamma/package.json": `{"private":true,"dependencies":{"holon-sh":"0.0.1"}}`,
-				"gamma/generated":    "not a directory",
-			},
-			sends: []send{{}},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

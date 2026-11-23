@@ -74,6 +74,11 @@ func TestImageContractsSurviveImport(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "fetch expected orders contract "+expected.Digest) {
 		t.Fatalf("missing pinned blob: %v", err)
 	}
+	options.plane = protocol.DevPlane
+	deployment.Apps[0].resolved.Requires = []string{"orders"}
+	if _, _, err = prepareManifestTypes(t.Context(), deployment, options, map[string]*typegen.Served{}); err != nil {
+		t.Fatalf("a development session's unreadable orders contract: %v", err)
+	}
 }
 
 func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {

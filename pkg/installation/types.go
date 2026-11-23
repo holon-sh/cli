@@ -131,7 +131,7 @@ func prepareManifestTypes(
 		return manifest, remove, nil
 	}
 	for _, app := range manifest.Apps {
-		if app.resolved.Remote == nil || !needed[app.Name] {
+		if app.resolved.Remote == nil || !needed[app.Name] || served != nil {
 			continue
 		}
 		document, err := typegen.ResolveDocument(ctx, typegen.Source{Server: typegen.Endpoint(app.resolved.Remote.URL)}, typeOptions)
@@ -140,8 +140,11 @@ func prepareManifestTypes(
 		}
 		byApp[app.Name] = document
 	}
-	installed := manifest.installed()
-	for _, name := range installed {
+	installed, contracts := manifest.installed(), manifest.installed()
+	if served != nil {
+		contracts = manifest.sessionContracts()
+	}
+	for _, name := range contracts {
 		answer := served[name]
 		var err error
 		if _, deployed := manifest.deployed[name]; options.plane == protocol.AdminPlane && (needed[name] || !deployed) {
@@ -163,7 +166,7 @@ func prepareManifestTypes(
 			server, ok := byApp[name]
 			if ok {
 				consumers[i].Sources = append(consumers[i].Sources, typegen.Source{Alias: name, Server: server})
-			} else if !slices.Contains(installed, name) {
+			} else if !slices.Contains(contracts, name) {
 				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s carries no MCP contract to type calls against", consumers[i].Name, name)
 			}
 		}
@@ -205,6 +208,9 @@ func prepareManifestTypes(
 	for _, app := range manifest.Apps {
 		requires := ptr.Deref(metadata[app.Name], mcpcontract.Metadata{}).Requires
 		for _, name := range slices.Sorted(maps.Keys(requires)) {
+			if metadata[name] == nil && slices.Contains(contracts, name) {
+				continue
+			}
 			expected, err := fetchTypeDocument(ctx, app.resolved.Image, requires[name], documents, options)
 			if err != nil {
 				return manifestSpec{}, nil, fmt.Errorf("%s: fetch expected %s contract %s: %w", app.Name, name, requires[name], err)

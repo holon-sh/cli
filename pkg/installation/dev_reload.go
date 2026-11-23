@@ -35,8 +35,8 @@ type packedSource struct {
 	upload  *imageUpload
 }
 
-func (d *devLoop) served(ctx context.Context, installed map[string]*typegen.Served) (map[string]*typegen.Served, error) {
-	served := maps.Clone(installed)
+func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error) {
+	served := map[string]*typegen.Served{}
 	for _, app := range d.manifest.Apps {
 		sent, running := d.sent[app.Name]
 		if !running {
@@ -51,9 +51,9 @@ func (d *devLoop) served(ctx context.Context, installed map[string]*typegen.Serv
 	return served, nil
 }
 
-func (d *devLoop) installedContracts(ctx context.Context) (served map[string]*typegen.Served, unread error) {
+func (d *devLoop) sessionContracts(ctx context.Context) (served map[string]*typegen.Served, unread error) {
 	served = map[string]*typegen.Served{}
-	for _, name := range d.manifest.installed() {
+	for _, name := range d.manifest.sessionContracts() {
 		if answer, err := d.manager.appContract(ctx, d.session.Name, name); err == nil {
 			served[name] = answer
 		} else {
@@ -76,18 +76,14 @@ var (
 )
 
 func (d *devLoop) regenerate(ctx context.Context) bool {
-	switch err := d.generate(ctx); {
-	case err == nil:
-		return true
-	case errors.Is(err, errUnstarted):
+	err := d.generate(ctx)
+	if errors.Is(err, errUnstarted) {
 		return false
-	default:
+	}
+	if err != nil {
 		d.options.output.problem("MCP types", err)
 	}
-	return d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool {
-		_, running := d.sent[app.Name]
-		return running
-	}))
+	return true
 }
 
 func (d *devLoop) generate(ctx context.Context) error {
@@ -97,13 +93,14 @@ func (d *devLoop) generate(ctx context.Context) error {
 	})) {
 		return errUnstarted
 	}
-	installed, unread := d.installedContracts(ctx)
+	contracts, unread := d.sessionContracts(ctx)
 	for {
 		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
-		served, err := d.served(ctx, installed)
+		served, err := d.served(ctx)
 		if err != nil {
 			return err
 		}
+		maps.Copy(served, contracts)
 		manifest := d.manifest
 		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), d.waiting)
 		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, d.options, served)
