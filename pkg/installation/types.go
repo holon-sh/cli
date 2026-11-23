@@ -136,8 +136,8 @@ func prepareManifestTypes(
 		if app.resolved.Remote == nil || !needed[app.Name] {
 			continue
 		}
-		if deployed, ok := manifest.deployed[app.Name]; options.plane == protocol.AdminPlane &&
-			(!ok || len(protocol.ChangedApps([]protocol.App{deployed}, []protocol.App{app.resolved.App})) != 0) {
+		if options.plane == protocol.AdminPlane &&
+			len(protocol.ChangedApps([]protocol.App{manifest.deployed[app.Name]}, []protocol.App{app.resolved.App})) != 0 {
 			unread[app.Name] = errors.New("production does not run this declaration yet")
 			continue
 		}
