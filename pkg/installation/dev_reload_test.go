@@ -737,6 +737,9 @@ func TestDevDetachesWhenARequiredContractCannotBeRead(t *testing.T) {
 	if err := f.stop(); err != nil {
 		t.Fatal(err)
 	}
+	if stderr := f.stderr.String(); !strings.Contains(stderr, "MCP types delta:") {
+		t.Fatalf("detached start did not report the unreadable contract: %q", stderr)
+	}
 }
 
 func TestDevShowsReloadDetailsOnlyWhenVerbose(t *testing.T) {

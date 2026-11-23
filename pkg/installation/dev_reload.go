@@ -35,8 +35,8 @@ type packedSource struct {
 	upload  *imageUpload
 }
 
-func (d *devLoop) served(ctx context.Context) (map[string]*typegen.Served, error) {
-	served := map[string]*typegen.Served{}
+func (d *devLoop) served(ctx context.Context, installed map[string]*typegen.Served) (map[string]*typegen.Served, error) {
+	served := maps.Clone(installed)
 	for _, app := range d.manifest.Apps {
 		sent, running := d.sent[app.Name]
 		if !running {
@@ -76,11 +76,12 @@ var (
 )
 
 func (d *devLoop) regenerate(ctx context.Context) bool {
-	err := d.generate(ctx)
-	if errors.Is(err, errUnstarted) {
+	switch err := d.generate(ctx); {
+	case err == nil:
+		return true
+	case errors.Is(err, errUnstarted):
 		return false
-	}
-	if err != nil {
+	default:
 		d.options.output.problem("MCP types", err)
 	}
 	return d.reload(ctx, slices.DeleteFunc(slices.Clone(d.manifest.Apps), func(app manifestApp) bool {
@@ -99,11 +100,10 @@ func (d *devLoop) generate(ctx context.Context) error {
 	installed, unread := d.installedContracts(ctx)
 	for {
 		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
-		served, err := d.served(ctx)
+		served, err := d.served(ctx, installed)
 		if err != nil {
 			return err
 		}
-		maps.Copy(served, installed)
 		manifest := d.manifest
 		manifest.Apps = slices.DeleteFunc(slices.Clone(manifest.Apps), d.waiting)
 		prepared, cleanup, err := prepareManifestTypes(ctx, manifest, d.options, served)
