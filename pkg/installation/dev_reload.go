@@ -94,6 +94,7 @@ func (d *devLoop) generate(ctx context.Context) error {
 		return errUnstarted
 	}
 	contracts, unread := d.sessionContracts(ctx)
+	d.options.output.problem("MCP types", unread)
 	for {
 		last := !slices.ContainsFunc(d.manifest.Apps, d.unsent)
 		served, err := d.served(ctx)
@@ -122,7 +123,6 @@ func (d *devLoop) generate(ctx context.Context) error {
 			return errUnstarted
 		}
 		if last {
-			d.options.output.problem("MCP types", unread)
 			return nil
 		}
 	}
