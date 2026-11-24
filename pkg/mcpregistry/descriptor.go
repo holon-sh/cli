@@ -38,12 +38,15 @@ type Descriptor struct {
 	Requires map[string]Requirement `json:"-"`
 	MayAct   []string               `json:"-"`
 	Egress   wire.Egress            `json:"-"`
+	Reach    wire.Reach             `json:"-"`
 }
 
 type HolonMetadata struct {
 	Requires map[string]Requirement `description:"Dependencies keyed by app name. In a project each is the project's app of that name, and {} is enough; {} also names an app the project does not declare that holon dev and holon deploy find on the installation. Outside a project, a published name and version or a url names the server." json:"requires"`
 
 	Egress wire.Egress `description:"Outbound TCP destinations: DNS names or IP addresses; {NAME} is a non-secret input." json:"egress,omitzero" nullable:"false"`
+
+	Reach wire.Reach `description:"How far the calls this server makes for a person go: without it, the apps it requires; person asks each person to let it act as them on any app they can use." enum:"person" json:"reach,omitempty"`
 }
 
 // Requirement is one sh.holon.requires entry: empty, a published name and version, or a URL.
@@ -132,7 +135,10 @@ func parseDescriptor(data []byte, decode func([]byte, any) error) (*Descriptor, 
 		if err := decode(extension, &holon); err != nil {
 			return &descriptor, fmt.Errorf("sh.holon metadata: %w", err)
 		}
-		descriptor.Requires, descriptor.Egress = holon.Requires, holon.Egress
+		if holon.Reach != "" && holon.Reach != wire.ReachPerson {
+			return &descriptor, fmt.Errorf("sh.holon metadata: reach %q is not %q", holon.Reach, wire.ReachPerson)
+		}
+		descriptor.Requires, descriptor.Egress, descriptor.Reach = holon.Requires, holon.Egress, holon.Reach
 	}
 	for name, ref := range descriptor.Requires {
 		if !wire.ValidAppName(name) {

@@ -42,6 +42,8 @@ func TestServerJSONSchema(t *testing.T) {
 		{"null dependencies", strings.Replace(descriptor, `"requires":{"orders":{"name":"io.github.acme/orders","version":"1.0.0"}}`, `"requires":null`, 1), true},
 		{"null egress", strings.Replace(descriptor, `"egress":[{"host":"{API_HOST}","ports":[443]}]`, `"egress":null`, 1), false},
 		{"unknown Holon field", strings.Replace(descriptor, `"sh.holon":{`, `"sh.holon":{"unknown":true,`, 1), false},
+		{"person reach", strings.Replace(descriptor, `"sh.holon":{`, `"sh.holon":{"reach":"person",`, 1), true},
+		{"unknown reach", strings.Replace(descriptor, `"sh.holon":{`, `"sh.holon":{"reach":"everyone",`, 1), false},
 		{"missing dependency version", strings.Replace(descriptor,
 			`"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{"name":"io.github.acme/orders"}`, 1), false},
 		{"project app", strings.Replace(descriptor, `"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{}`, 1), true},
