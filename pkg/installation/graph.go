@@ -181,7 +181,6 @@ func resolveApp(app *manifestApp) error {
 		return err
 	}
 	app.resolved.Env, app.resolved.EnvTemplates, app.resolved.Args = declared.Env, declared.EnvTemplates, declared.Args
-	app.resolved.Imported = app.Registry != nil
 	if app.resolved.stdio && app.OAuth != nil {
 		return errors.New("oauth requires an HTTP MCP server")
 	}
