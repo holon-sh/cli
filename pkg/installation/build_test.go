@@ -95,7 +95,7 @@ func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 			t.Error(err)
 		}
 		for _, app := range request.Apps {
-			if !app.Source || app.Access == nil || app.Access.Server == nil || app.Access.Server.Callers == nil || len(app.Access.Server.Callers) != 0 {
+			if app.Source && (app.Access == nil || app.Access.Server == nil || app.Access.Server.Callers == nil || len(app.Access.Server.Callers) != 0) {
 				t.Errorf("build session lets callers reach %+v", app)
 			}
 		}

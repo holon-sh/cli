@@ -136,17 +136,26 @@ func prepareManifestTypes(
 		return manifest, remove, nil
 	}
 	session := cmp.Or(options.session, protocol.ProductionName)
-	unread := map[string]error{}
+	declared := session
+	var remotes []protocol.App
 	for _, app := range manifest.Apps {
-		if app.resolved.Remote == nil || !needed[app.Name] {
-			continue
+		if app.resolved.Remote != nil && needed[app.Name] {
+			remotes = append(remotes, app.resolved.App)
 		}
-		if options.host == protocol.AdminHost &&
-			len(protocol.ChangedApps([]protocol.App{manifest.deployed[app.Name]}, []protocol.App{app.resolved.App})) != 0 {
+	}
+	if options.build != nil {
+		if err := options.build.start(ctx, pathApps, remotes); err != nil {
+			return manifestSpec{}, nil, err
+		}
+		declared = cmp.Or(options.build.session.Name, declared)
+	}
+	unread := map[string]error{}
+	for _, app := range remotes {
+		if declared == protocol.ProductionName && len(protocol.ChangedApps([]protocol.App{manifest.deployed[app.Name]}, []protocol.App{app})) != 0 {
 			unread[app.Name] = errors.New("production does not run this declaration yet")
 			continue
 		}
-		answer, err := options.manager.appContract(ctx, session, app.Name)
+		answer, err := options.manager.appContract(ctx, declared, app.Name)
 		var document *typegen.Document
 		if err == nil {
 			document, err = answer.Advertised()
@@ -190,11 +199,6 @@ func prepareManifestTypes(
 			} else if unread[name] == nil {
 				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s carries no MCP contract to type calls against", consumers[i].Name, name)
 			}
-		}
-	}
-	if options.build != nil {
-		if err := options.build.start(ctx, pathApps); err != nil {
-			return manifestSpec{}, nil, err
 		}
 	}
 	prepared, err := typegen.Prepare(ctx, consumers, prepareOptions)

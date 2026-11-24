@@ -3,6 +3,7 @@ package installation
 import (
 	"cmp"
 	"encoding/json"
+	"io"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -181,10 +182,13 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 
 func TestRemoteContractIsPinnedByConsumer(t *testing.T) {
 	h := newRunHarness(t)
-	h.control.Handle([]string{protocol.ToolGetAppContract}, map[string]string{"session": protocol.ProductionName, "app": "orders"},
-		func(w http.ResponseWriter, _ *http.Request) {
-			installationtest.WriteJSON(w, json.RawMessage(servedContract))
-		})
+	serveBuilds(t, h)
+	for _, session := range []string{protocol.ProductionName, buildSessionName} {
+		h.control.Handle([]string{protocol.ToolGetAppContract}, map[string]string{"session": session, "app": "orders"},
+			func(w http.ResponseWriter, _ *http.Request) {
+				installationtest.WriteJSON(w, json.RawMessage(servedContract))
+			})
+	}
 	h.start(t)
 	manager, err := NewClient(t.Context(), h.run.Auth)
 	if err != nil {
@@ -194,11 +198,14 @@ func TestRemoteContractIsPinnedByConsumer(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		deployed string
+		build    bool
 		pinned   *mcpcontract.Identity
 	}{
 		{name: "a remote production runs as declared is pinned under its server's identity", deployed: orders.Remote.URL,
 			pinned: &mcpcontract.Identity{Name: "example.com/alpha", Version: "1"}},
 		{name: "a remote production runs at another address is left out", deployed: "https://old.example/mcp"},
+		{name: "a remote the build session runs is pinned whatever production runs", deployed: "https://old.example/mcp", build: true,
+			pinned: &mcpcontract.Identity{Name: "example.com/alpha", Version: "1"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -210,7 +217,12 @@ func TestRemoteContractIsPinnedByConsumer(t *testing.T) {
 				}},
 			)
 			manifest.deployed = map[string]protocol.App{"orders": {Name: "orders", Remote: &protocol.Remote{URL: test.deployed}}}
-			prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{manager: manager, host: protocol.AdminHost}, nil)
+			options := buildOptions{manager: manager, host: protocol.AdminHost}
+			if test.build {
+				output, _, _ := newProgressOutput(io.Discard, io.Discard, false, h.run.clock())
+				options.output, options.build = output, &buildSession{manager: manager, output: output}
+			}
+			prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, options, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

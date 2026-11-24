@@ -62,7 +62,7 @@ type buildSession struct {
 	sources map[string]sourceBuild
 }
 
-func (b *buildSession) start(ctx context.Context, apps []*manifestApp) error {
+func (b *buildSession) start(ctx context.Context, apps []*manifestApp, remotes []protocol.App) error {
 	if len(apps) == 0 {
 		return nil
 	}
@@ -86,6 +86,7 @@ func (b *buildSession) start(ctx context.Context, apps []*manifestApp) error {
 			Name: app.Name, Source: true, Access: &protocol.AppAccess{Server: &protocol.AccessRule{Callers: []string{}}},
 		})
 	}
+	request.Apps = append(request.Apps, remotes...)
 	request.TTLSeconds = new(int64(buildSessionSeconds))
 	created := b.output.measure("build session", "create")
 	err := b.manager.Call(ctx, protocol.DevHost, protocol.ToolCreateSession, request, &b.session)
