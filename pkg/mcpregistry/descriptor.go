@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 
 	"github.com/holon-sh/cli/pkg/mcpcontract"
 
@@ -35,6 +36,7 @@ type Descriptor struct {
 		} `json:"io.modelcontextprotocol.registry/publisher-provided"`
 	} `json:"_meta"`
 	Requires map[string]Requirement `json:"-"`
+	MayAct   []string               `json:"-"`
 	Egress   wire.Egress            `json:"-"`
 }
 
@@ -48,7 +50,8 @@ type HolonMetadata struct {
 type Requirement struct {
 	wire.RegistryRef
 
-	URL string `json:"url,omitempty"`
+	URL    string `json:"url,omitempty"`
+	MayAct bool   `json:"mayAct,omitempty"`
 }
 
 func (r Requirement) Validate() error {
@@ -138,7 +141,12 @@ func parseDescriptor(data []byte, decode func([]byte, any) error) (*Descriptor, 
 		if err := ref.Validate(); err != nil {
 			return &descriptor, fmt.Errorf("dependency %s: %w", name, err)
 		}
+		if ref.MayAct {
+			descriptor.MayAct = append(descriptor.MayAct, name)
+		}
+		descriptor.Requires[name] = Requirement{RegistryRef: ref.RegistryRef, URL: ref.URL}
 	}
+	slices.Sort(descriptor.MayAct)
 	return &descriptor, nil
 }
 

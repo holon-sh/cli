@@ -45,6 +45,8 @@ func TestServerJSONSchema(t *testing.T) {
 		{"missing dependency version", strings.Replace(descriptor,
 			`"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{"name":"io.github.acme/orders"}`, 1), false},
 		{"project app", strings.Replace(descriptor, `"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{}`, 1), true},
+		{"project app that may act", strings.Replace(descriptor, `"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{"mayAct":true}`, 1), true},
+		{"published dependency that may act", strings.Replace(descriptor, `"version":"1.0.0"}`, `"version":"1.0.0","mayAct":true}`, 1), true},
 		{"dependency url", strings.Replace(descriptor,
 			`"orders":{"name":"io.github.acme/orders","version":"1.0.0"}`, `"orders":{"url":"https://orders.example/mcp"}`, 1), true},
 	} {

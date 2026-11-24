@@ -10,11 +10,19 @@ import (
 )
 
 func ServerJSONSchema() ([]byte, error) {
+	type Delegation struct {
+		MayAct bool `description:"Whether the required app may act for this server: a call it makes as this server counts as this server's own, for a person who lets this server act for them." json:"mayAct,omitempty"`
+	}
+	type registryRequirement struct {
+		protocol.RegistryRef
+		Delegation
+	}
 	type endpointRequirement struct {
 		URL string `description:"URL of a running MCP server." format:"uri" json:"url" required:"true"`
+		Delegation
 	}
 	reflector := configurationReflector()
-	reflector.AddTypeMapping(mcpregistry.Requirement{}, jsonschema.OneOf(struct{}{}, protocol.RegistryRef{}, endpointRequirement{}))
+	reflector.AddTypeMapping(mcpregistry.Requirement{}, jsonschema.OneOf(Delegation{}, registryRequirement{}, endpointRequirement{}))
 	reflected, err := reflector.Reflect(struct {
 		Meta struct {
 			Publisher struct {
