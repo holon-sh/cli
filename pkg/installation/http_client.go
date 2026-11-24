@@ -186,7 +186,7 @@ func responseError(data []byte, token string, status int) (string, string) {
 		return "", ""
 	}
 	message := value.Error.Message
-	if status < http.StatusBadRequest || status >= http.StatusInternalServerError || len(message) > 256 ||
+	if status < http.StatusBadRequest || status >= http.StatusInternalServerError ||
 		strings.ContainsFunc(message, unicode.IsControl) || token != "" && strings.Contains(message, token) {
 		message = ""
 	}
