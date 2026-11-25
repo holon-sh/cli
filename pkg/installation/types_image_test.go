@@ -151,7 +151,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 				func(w http.ResponseWriter, _ *http.Request) { installationtest.WriteJSON(w, production) })
 			h.start(t)
 			err := executeCommand(t.Context(), []string{"deploy", "--file", filepath.Join(root, manifestFileName)}, nil, nil, h.run)
-			if test.want == "" && err != nil || test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+			if (err == nil) != (test.want == "") || err != nil && !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("deploy = %v, want %q", err, test.want)
 			}
 		})
