@@ -111,7 +111,7 @@ func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 		name := installationtest.ToolArguments(r)["app"]
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		if !slices.ContainsFunc(f.running, func(app protocol.App) bool { return app.Remote != nil && app.Name == name }) {
+		if !slices.ContainsFunc(f.running, func(app protocol.App) bool { return !app.Source && app.Name == name }) {
 			http.NotFound(w, r)
 			return
 		}
