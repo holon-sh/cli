@@ -5,6 +5,7 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"slices"
 
@@ -107,6 +108,11 @@ func (d *Descriptor) StreamableRemote() string {
 
 func (d *Descriptor) Identity() mcpcontract.Identity {
 	return mcpcontract.Identity{Name: d.Name, Version: d.Version}
+}
+
+func (d *Descriptor) Declare(runtime *wire.BuildRuntime) {
+	runtime.Icons, runtime.Egress, runtime.MayAct, runtime.Reach = d.Icons, d.Egress, d.MayAct, d.Reach
+	runtime.Requires = slices.Sorted(maps.Keys(d.Requires))
 }
 
 // ParseDescriptor reads a server.json published by someone else, such as a registry record. It

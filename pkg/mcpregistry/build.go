@@ -7,19 +7,8 @@ import (
 )
 
 func BuildRecord(app protocol.App, catalogEnv map[string]protocol.Input, descriptor *Descriptor) protocol.BuildRecord {
-	record := protocol.BuildRecord{
-		SchemaVersion: 1, AppName: app.Name,
-		Runtime: protocol.BuildRuntime{
-			Icons:        app.Icons,
-			Port:         app.Port,
-			Args:         app.Args,
-			EnvTemplates: app.EnvTemplates,
-			Env:          map[string]protocol.Input{},
-			Requires:     app.Requires,
-			Egress:       app.Egress,
-		},
-		UnsupportedReasons: []string{},
-	}
+	record := protocol.BuildRecord{SchemaVersion: 1, AppName: app.Name, Runtime: app.BuildRuntime, UnsupportedReasons: []string{}}
+	record.Runtime.Env = map[string]protocol.Input{}
 	maps.Copy(record.Runtime.Env, catalogEnv)
 	for name, input := range app.Env {
 		if _, declared := record.Runtime.Env[name]; declared {
