@@ -74,7 +74,6 @@ type buildCall struct {
 type buildFixture struct {
 	base                  digest.Digest
 	failure               string
-	remoteContract        string
 	contractRan, checkRan *runtimecontract.Ran
 	duringFreeze          func()
 
@@ -116,7 +115,7 @@ func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 			http.NotFound(w, r)
 			return
 		}
-		installationtest.WriteJSON(w, json.RawMessage(cmp.Or(f.remoteContract, servedContract)))
+		installationtest.WriteJSON(w, json.RawMessage(servedContract))
 	})
 	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolDeleteSession}, map[string]string{"session": buildSessionName},
 		func(w http.ResponseWriter, r *http.Request) {
