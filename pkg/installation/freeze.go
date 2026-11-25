@@ -62,16 +62,16 @@ type buildSession struct {
 	sources map[string]sourceBuild
 }
 
-func (b *buildSession) start(ctx context.Context, apps []*manifestApp) error {
-	if len(apps) == 0 {
+func (b *buildSession) start(ctx context.Context, apps []*manifestApp, remotes []protocol.App) error {
+	if len(apps)+len(remotes) == 0 {
 		return nil
-	}
-	if b.manager.info.ImageRepositoryPrefix != "" {
-		return fmt.Errorf("%s: holon deploy builds source apps in the installation's registry, which this installation turns off; ship it as an image: app", apps[0].Name)
 	}
 	b.sources = map[string]sourceBuild{}
 	var request protocol.AppsRequest
 	for _, app := range apps {
+		if b.manager.info.ImageRepositoryPrefix != "" {
+			return fmt.Errorf("%s: holon deploy builds source apps in the installation's registry, which this installation turns off; ship it as an image: app", app.Name)
+		}
 		root := app.resolved.types.root
 		entry, err := sourceAppEntry(*app, root)
 		if err != nil {
@@ -86,6 +86,7 @@ func (b *buildSession) start(ctx context.Context, apps []*manifestApp) error {
 			Name: app.Name, Source: true, Access: &protocol.AppAccess{Server: &protocol.AccessRule{Callers: []string{}}},
 		})
 	}
+	request.Apps = append(request.Apps, remotes...)
 	request.TTLSeconds = new(int64(buildSessionSeconds))
 	created := b.output.measure("build session", "create")
 	err := b.manager.Call(ctx, protocol.DevHost, protocol.ToolCreateSession, request, &b.session)
@@ -157,11 +158,11 @@ func (b *buildSession) build(
 func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (ocispec.Descriptor, error) {
 	source := options.build.sources[app.Path]
 	p := app.resolved.types
-	if err := p.prepared.WriteClients(p.name, p.root); err != nil {
+	if err := p.prepared.WriteClients(app.Name, p.root); err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	build := runtimecontract.Build{Freeze: &source.recipe.Deploy.Freeze}
-	if checked, language, ok := p.prepared.CheckEntry(p.name); ok {
+	if checked, language, ok := p.prepared.CheckEntry(app.Name); ok {
 		checker := typegen.Checker(language)
 		script, err := tooling.File(language, checker)
 		if err == nil {

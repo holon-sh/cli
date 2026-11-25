@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -73,12 +74,14 @@ type buildCall struct {
 type buildFixture struct {
 	base                  digest.Digest
 	failure               string
+	remoteContract        string
 	contractRan, checkRan *runtimecontract.Ran
 	duringFreeze          func()
 
 	mu       sync.Mutex
 	sessions int
 	deleted  int
+	running  []protocol.App
 	calls    []buildCall
 }
 
@@ -95,14 +98,25 @@ func serveBuilds(t *testing.T, h *runHarness) *buildFixture {
 			t.Error(err)
 		}
 		for _, app := range request.Apps {
-			if !app.Source || app.Access == nil || app.Access.Server == nil || app.Access.Server.Callers == nil || len(app.Access.Server.Callers) != 0 {
+			if app.Source && (app.Access == nil || app.Access.Server == nil || app.Access.Server.Callers == nil || len(app.Access.Server.Callers) != 0) {
 				t.Errorf("build session lets callers reach %+v", app)
 			}
 		}
 		f.mu.Lock()
 		f.sessions++
+		f.running = request.Apps
 		f.mu.Unlock()
 		installationtest.WriteJSON(w, session)
+	})
+	h.control.Handle([]string{protocol.ToolGetAppContract}, map[string]string{"session": buildSessionName}, func(w http.ResponseWriter, r *http.Request) {
+		name := installationtest.ToolArguments(r)["app"]
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if !slices.ContainsFunc(f.running, func(app protocol.App) bool { return app.Remote != nil && app.Name == name }) {
+			http.NotFound(w, r)
+			return
+		}
+		installationtest.WriteJSON(w, json.RawMessage(cmp.Or(f.remoteContract, servedContract)))
 	})
 	h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolDeleteSession}, map[string]string{"session": buildSessionName},
 		func(w http.ResponseWriter, r *http.Request) {

@@ -85,9 +85,9 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
-		name, contract, want string
-		untyped, deployed    bool
-		refusal              int
+		name, contract, want        string
+		untyped, deployed, declared bool
+		refusal                     int
 	}{
 		{
 			name:     "an app the deployment runs, however long its catalog, is typed and stays out of the deployment",
@@ -104,6 +104,10 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 		},
 		{name: "an app the deployment runs needs no contract when the caller types no calls to it", untyped: true, deployed: true},
 		{name: "a contract the deployer cannot read is left out of the caller's types", deployed: true, refusal: http.StatusForbidden},
+		{
+			name: "a declared remote whose contract changed stops the deployment", contract: strings.Replace(servedContract, `"lookup"`, `"search"`, 1), declared: true,
+			want: "pokeapi has changed the typed contract expected by checkout",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -124,8 +128,13 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 			document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"pokeapi": map[string]any{}}}}}
 			catalog := descriptorRegistry(t, document)
 			root := t.TempDir()
-			sourceFiles(t, root, map[string]string{manifestFileName: "apps:\n- name: checkout\n  access: {server: {}}\n" +
-				"  registry: {name: " + identity.Name + ", version: " + identity.Version + ", registry: '" + catalog.Registry + "'}\n"})
+			manifest := "apps:\n- name: checkout\n  access: {server: {}}\n" +
+				"  registry: {name: " + identity.Name + ", version: " + identity.Version + ", registry: '" + catalog.Registry + "'}\n"
+			if test.declared {
+				manifest += "- name: pokeapi\n  remote: {url: https://pokeapi.example/mcp}\n  access: {server: {}}\n"
+				serveBuilds(t, h).remoteContract = test.contract
+			}
+			sourceFiles(t, root, map[string]string{manifestFileName: manifest})
 			var mu sync.Mutex
 			var desired []protocol.App
 			h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
@@ -174,51 +183,6 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 			defer mu.Unlock()
 			if err != nil || len(desired) != 1 || desired[0].Name != "checkout" || !slices.Equal(desired[0].Requires, []string{"pokeapi"}) {
 				t.Fatalf("deploy sent %+v: %v", desired, err)
-			}
-		})
-	}
-}
-
-func TestRemoteContractIsPinnedByConsumer(t *testing.T) {
-	h := newRunHarness(t)
-	h.control.Handle([]string{protocol.ToolGetAppContract}, map[string]string{"session": protocol.ProductionName, "app": "orders"},
-		func(w http.ResponseWriter, _ *http.Request) {
-			installationtest.WriteJSON(w, json.RawMessage(servedContract))
-		})
-	h.start(t)
-	manager, err := NewClient(t.Context(), h.run.Auth)
-	if err != nil {
-		t.Fatal(err)
-	}
-	orders := protocol.App{Name: "orders", Remote: &protocol.Remote{URL: "https://orders.example/mcp"}}
-	for _, test := range []struct {
-		name     string
-		deployed string
-		pinned   *mcpcontract.Identity
-	}{
-		{name: "a remote production runs as declared is pinned under its server's identity", deployed: orders.Remote.URL,
-			pinned: &mcpcontract.Identity{Name: "example.com/alpha", Version: "1"}},
-		{name: "a remote production runs at another address is left out", deployed: "https://old.example/mcp"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			sourceFiles(t, root, map[string]string{"server.js": "export default {}", "package.json": `{"dependencies":{"holon-sh":"*"}}`})
-			manifest := typedManifest(t,
-				manifestApp{Name: "orders", resolved: resolvedApp{App: orders}},
-				manifestApp{Name: "checkout", Path: root, resolved: resolvedApp{
-					App: protocol.App{Name: "checkout", Requires: []string{"orders"}}, descriptor: &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"},
-				}},
-			)
-			manifest.deployed = map[string]protocol.App{"orders": {Name: "orders", Remote: &protocol.Remote{URL: test.deployed}}}
-			prepared, cleanup, err := prepareManifestTypes(t.Context(), manifest, buildOptions{manager: manager, host: protocol.AdminHost}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer cleanup()
-			caller := prepared.Apps[1].resolved.types
-			stored := caller.documents[caller.metadata.Requires["orders"]]
-			if (stored == nil) != (test.pinned == nil) || stored != nil && (stored.Identity != *test.pinned || len(stored.Schema.Tools) != 1) {
-				t.Fatalf("checkout pins %+v", stored)
 			}
 		})
 	}

@@ -209,7 +209,7 @@ func (d *devLoop) record(app string, packed packedSource, cleanup func()) {
 
 func packSource(ctx context.Context, app manifestApp, root string, accepted *preparedTypes) (packedSource, error) {
 	if accepted != nil {
-		if err := accepted.prepared.WriteClients(accepted.name, root); err != nil {
+		if err := accepted.prepared.WriteClients(app.Name, root); err != nil {
 			return packedSource{}, err
 		}
 	}
