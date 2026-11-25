@@ -86,7 +86,10 @@ func (b *buildSession) start(ctx context.Context, apps []*manifestApp, dependenc
 			Name: app.Name, Source: true, Access: &protocol.AppAccess{Server: &protocol.AccessRule{Callers: []string{}}},
 		})
 	}
-	request.Apps = append(request.Apps, dependencies...)
+	for _, app := range dependencies {
+		app.Requires, app.MayAct = nil, nil
+		request.Apps = append(request.Apps, app)
+	}
 	request.TTLSeconds = new(int64(buildSessionSeconds))
 	created := b.output.measure("build session", "create")
 	err := b.manager.Call(ctx, protocol.DevHost, protocol.ToolCreateSession, request, &b.session)
