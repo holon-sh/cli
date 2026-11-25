@@ -57,6 +57,14 @@ func (m *Client) appContract(ctx context.Context, session, app string) (*typegen
 	return answer, m.Call(ctx, ControlPlane(session), protocol.ToolGetAppContract, request, answer)
 }
 
+func (m *Client) appDocument(ctx context.Context, session, app string) (*typegen.Document, error) {
+	answer, err := m.appContract(ctx, session, app)
+	if err != nil {
+		return nil, err
+	}
+	return answer.Document(app)
+}
+
 var (
 	errUnstarted        = errors.New("an app did not start from its source")
 	errSourceSuperseded = errors.New("superseded by a newer save")

@@ -207,7 +207,7 @@ func liveContract(ctx context.Context, location string, identity *mcpcontract.Id
 		return nil, err
 	}
 	if identity == nil {
-		document, err := served.Advertised()
+		document, err := served.advertised()
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w; give the client an alias", location, err)
 		}

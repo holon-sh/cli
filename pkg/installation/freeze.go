@@ -62,8 +62,8 @@ type buildSession struct {
 	sources map[string]sourceBuild
 }
 
-func (b *buildSession) start(ctx context.Context, apps []*manifestApp, remotes []protocol.App) error {
-	if len(apps)+len(remotes) == 0 {
+func (b *buildSession) start(ctx context.Context, apps []*manifestApp, dependencies []protocol.App) error {
+	if len(apps)+len(dependencies) == 0 {
 		return nil
 	}
 	b.sources = map[string]sourceBuild{}
@@ -86,7 +86,7 @@ func (b *buildSession) start(ctx context.Context, apps []*manifestApp, remotes [
 			Name: app.Name, Source: true, Access: &protocol.AppAccess{Server: &protocol.AccessRule{Callers: []string{}}},
 		})
 	}
-	request.Apps = append(request.Apps, remotes...)
+	request.Apps = append(request.Apps, dependencies...)
 	request.TTLSeconds = new(int64(buildSessionSeconds))
 	created := b.output.measure("build session", "create")
 	err := b.manager.Call(ctx, protocol.DevHost, protocol.ToolCreateSession, request, &b.session)
@@ -155,11 +155,11 @@ func (b *buildSession) build(
 	return reply, fmt.Errorf("build %s: %w", app, err)
 }
 
-func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (ocispec.Descriptor, error) {
+func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (string, error) {
 	source := options.build.sources[app.Path]
 	p := app.resolved.types
 	if err := p.prepared.WriteClients(app.Name, p.root); err != nil {
-		return ocispec.Descriptor{}, err
+		return "", err
 	}
 	build := runtimecontract.Build{Freeze: &source.recipe.Deploy.Freeze}
 	if checked, language, ok := p.prepared.CheckEntry(app.Name); ok {
@@ -169,7 +169,7 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 			err = writeSourceFile(p.root, path.Join(".holon", checker), script)
 		}
 		if err != nil {
-			return ocispec.Descriptor{}, err
+			return "", err
 		}
 		build.Run = slices.Concat(contractRunners[language].check, []string{path.Join(".holon", checker), "check", checked})
 	}
@@ -177,35 +177,34 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 	reply, err := options.build.build(ctx, app.Name, p.root, source.plan(source.recipe.Deploy.Build), build)
 	built()
 	if err != nil {
-		return ocispec.Descriptor{}, err
+		return "", err
 	}
 	if reply.Ran != nil && reply.Ran.ExitCode != 0 {
-		return ocispec.Descriptor{}, fmt.Errorf("%s does not type-check against its typed contracts:\n%s", app.Name, strings.TrimSpace(reply.Ran.Stdout+reply.Ran.Stderr))
+		return "", fmt.Errorf("%s does not type-check against its typed contracts:\n%s", app.Name, strings.TrimSpace(reply.Ran.Stdout+reply.Ran.Stderr))
 	}
 	frozen, err := digest.Parse(reply.Image)
 	if err != nil {
-		return ocispec.Descriptor{}, fmt.Errorf("build %s: the build froze no image: %w", app.Name, err)
+		return "", fmt.Errorf("build %s: the build froze no image: %w", app.Name, err)
 	}
 	defer options.output.measure(app.Name, "assemble")()
-	var image ocispec.Descriptor
-	err = upload.repository(ctx, app.Name, func(repository *remote.Repository, grant protocol.UploadGrant) error {
+	return upload.push(ctx, app, options, func(repository *remote.Repository, grant protocol.UploadGrant) (ocispec.Descriptor, error) {
 		development, err := remote.NewRepository(grant.Registry + "/" + protocol.BaseRepository)
 		if err != nil {
-			return err
+			return ocispec.Descriptor{}, err
 		}
 		development.Client = repository.Client
 		ctx := auth.AppendRepositoryScope(ctx, repository.Reference, auth.ActionPull, auth.ActionPush)
 		ctx = auth.AppendRepositoryScope(ctx, development.Reference, auth.ActionPull)
 		manifest, err := assembleImage(ctx, repository, development, frozen, slices.Concat(source.recipe.Serve, []string{source.entry}), sourceLabels(app))
 		if err != nil {
-			return err
+			return ocispec.Descriptor{}, err
 		}
 		entries := []ocispec.Descriptor{manifest}
 		annotations := map[string]string{}
 		if p.metadata != nil {
 			metadata, ownDigest, err := pushTypeMetadata(ctx, repository, p.metadata, p.documents)
 			if err != nil {
-				return err
+				return ocispec.Descriptor{}, err
 			}
 			entries = append(entries, metadata)
 			annotations[mcpcontract.DigestAnnotation] = ownDigest
@@ -214,10 +213,8 @@ func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, opti
 			Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex,
 			Manifests: entries, Annotations: annotations,
 		})
-		image, err = oras.PushBytes(ctx, repository, ocispec.MediaTypeImageIndex, data)
-		return err
+		return oras.PushBytes(ctx, repository, ocispec.MediaTypeImageIndex, data)
 	})
-	return image, err
 }
 
 func assembleImage(

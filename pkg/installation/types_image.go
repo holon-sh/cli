@@ -42,36 +42,27 @@ func pushTypeMetadata(
 	return descriptor, own.Digest, err
 }
 
-func resolveTypeMetadata(ctx context.Context, image string, options buildOptions) (string, *typegen.Document, error) {
+func imageExpectations(ctx context.Context, image string, options buildOptions) (string, map[string]*mcpcontract.Metadata, error) {
 	repository, err := sourceRepository(image, options.HTTPClient)
 	if err != nil {
 		return "", nil, err
 	}
 	descriptor, err := repository.Resolve(ctx, image)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve dependency contract for %s: %w", image, err)
+		return "", nil, fmt.Errorf("resolve %s: %w", image, err)
 	}
-	metadata, err := typegen.ReadDocument(ctx, repository, descriptor)
-	if err != nil {
-		return "", nil, fmt.Errorf("read dependency contract for %s: %w", image, err)
+	pinned := repository.Reference.String() + "@" + descriptor.Digest.String()
+	own, err := typegen.ReadDocument(ctx, repository, descriptor)
+	if own == nil || err != nil {
+		return pinned, nil, err
 	}
-	return repository.Reference.String() + "@" + descriptor.Digest.String(), metadata, nil
-}
-
-func fetchTypeDocument(
-	ctx context.Context, image, reference string, documents map[string]*typegen.Document, options buildOptions,
-) (*mcpcontract.Metadata, error) {
-	if document := documents[reference]; document != nil {
-		return document.Metadata, nil
+	expects := map[string]*mcpcontract.Metadata{}
+	for alias, reference := range own.Requires {
+		expected, err := typegen.FetchDocument(ctx, repository.Blobs(), reference)
+		if err != nil {
+			return "", nil, fmt.Errorf("%s: fetch expected %s contract %s: %w", image, alias, reference, err)
+		}
+		expects[alias] = expected.Metadata
 	}
-	repository, err := sourceRepository(image, options.HTTPClient)
-	if err != nil {
-		return nil, err
-	}
-	document, err := typegen.FetchDocument(ctx, repository.Blobs(), reference)
-	if err != nil {
-		return nil, err
-	}
-	documents[reference] = document
-	return document.Metadata, nil
+	return pinned, expects, nil
 }

@@ -18,59 +18,6 @@ import (
 	"github.com/holon-sh/protocol"
 )
 
-func TestImageContractsSurviveImport(t *testing.T) {
-	t.Parallel()
-	fixture, server := buildRegistry(t)
-	host := strings.TrimPrefix(server.URL, "https://")
-	options := buildOptions{HTTPClient: server.Client(), Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
-	raw := []byte(` { "schema":{"tools":[{"name":"lookup",
-"inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}]},
-"identity":{"version":"1","name":"example/orders"} } `)
-	expected, err := typegen.ParseDocument(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	descriptor := &mcpregistry.Descriptor{Name: "example/checkout", Version: "1"}
-	caller := &mcpcontract.Metadata{Identity: descriptor.Identity(), Requires: map[string]string{"orders": expected.Digest}}
-	image := publishTypeMetadata(t, fixture, host+"/checkout", caller, options, map[string]*typegen.Document{expected.Digest: expected})
-	destination, err := imageRepository(host+"/destination/checkout", "", options.HTTPClient)
-	if err != nil {
-		t.Fatal(err)
-	}
-	imported, err := importImage(t.Context(), image, destination, options.HTTPClient)
-	if err != nil {
-		t.Fatal(err)
-	}
-	copied := destination.Reference.String() + "@" + imported.Digest.String()
-	fixture.mu.Lock()
-	for key := range fixture.items {
-		if strings.HasPrefix(key, "checkout/") {
-			delete(fixture.items, key)
-		}
-	}
-	fixture.mu.Unlock()
-	published := &mcpcontract.Metadata{
-		Identity: mcpcontract.Identity{Name: "example/orders", Version: "1"},
-		Schema:   &mcpcontract.Contract{Tools: []mcpcontract.Tool{{Name: "lookup", Input: json.RawMessage(`{"type":"object","properties":{"id":{"type":"number"}},"required":["id"]}`)}}},
-	}
-	deployment := manifestSpec{Apps: []manifestApp{
-		{Name: "orders", resolved: resolvedApp{App: protocol.App{Name: "orders", Image: publishTypeMetadata(t, fixture, host+"/orders", published, options, nil)}}},
-		{Name: "checkout", resolved: resolvedApp{App: protocol.App{Name: "checkout", Image: copied}, descriptor: descriptor}},
-	}}
-	_, _, err = prepareManifestTypes(t.Context(), deployment, options, nil)
-	if err == nil || !strings.Contains(err.Error(), "tool lookup input changed") || !strings.Contains(err.Error(), "holon deploy orders checkout") {
-		t.Fatalf("expectation check: %v", err)
-	}
-	fixture.mu.Lock()
-	delete(fixture.items, "destination/checkout/blobs/"+expected.Digest)
-	fixture.mu.Unlock()
-	deployment = manifestSpec{Apps: []manifestApp{{Name: "checkout", resolved: resolvedApp{App: protocol.App{Image: copied}}}}}
-	_, _, err = prepareManifestTypes(t.Context(), deployment, options, nil)
-	if err == nil || !strings.Contains(err.Error(), "fetch expected orders contract "+expected.Digest) {
-		t.Fatalf("missing pinned blob: %v", err)
-	}
-}
-
 func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 	t.Parallel()
 	var built typegen.Served

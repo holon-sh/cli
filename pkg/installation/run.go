@@ -86,31 +86,48 @@ func resolveManifestFile(arg string) (manifestSpec, error) {
 	return parseManifest(data, absolute)
 }
 
-func resolveManifest(ctx context.Context, manager *Client, manifest manifestSpec, apps ...string) (manifestSpec, error) {
-	if _, err := manager.controlToken(ctx); err != nil {
+func resolveManifest(ctx context.Context, options buildOptions, manifest manifestSpec, apps ...string) (manifestSpec, error) {
+	if _, err := options.manager.controlToken(ctx); err != nil {
 		return manifestSpec{}, err
 	}
 	resolved, err := resolveManifestGraph(ctx, manifest, apps...)
 	if err != nil {
 		return manifestSpec{}, err
 	}
-	return resolved, protocol.AccessPolicy(resolved.declarations(), manager.info.OAuth != nil)
+	if err := protocol.AccessPolicy(resolved.declarations(), options.manager.info.OAuth != nil); err != nil {
+		return manifestSpec{}, err
+	}
+	for i := range resolved.Apps {
+		app := &resolved.Apps[i]
+		if app.resolved.Image == "" {
+			continue
+		}
+		if app.resolved.Image, app.resolved.expects, err = imageExpectations(ctx, app.resolved.Image, options); err != nil {
+			return manifestSpec{}, err
+		}
+	}
+	return resolved, nil
 }
 
 func uploadManifest(ctx context.Context, resolved manifestSpec, options buildOptions) (protocol.AppsRequest, error) {
-	prepared, cleanup, err := prepareManifestTypes(ctx, resolved, options, nil)
+	upload := newImageUpload(options, resolved)
+	shipped, err := shipApps(ctx, resolved, upload, options)
+	if err != nil {
+		return protocol.AppsRequest{}, err
+	}
+	prepared, cleanup, err := prepareManifestTypes(ctx, shipped, options, nil)
 	if err != nil {
 		return protocol.AppsRequest{}, err
 	}
 	defer cleanup()
-	built, err := buildAndPush(ctx, prepared, newImageUpload(options, prepared), options)
+	built, err := buildSources(ctx, prepared, upload, options)
 	if err != nil {
 		return protocol.AppsRequest{}, err
 	}
 	if err := currentTypeSources(prepared); err != nil {
 		return protocol.AppsRequest{}, err
 	}
-	return protocol.AppsRequest{RequestID: strings.ToLower(rand.Text()), Apps: built}, nil
+	return protocol.AppsRequest{RequestID: strings.ToLower(rand.Text()), Apps: built.declarations()}, nil
 }
 
 func imageDestination(ctx context.Context, manager *Client, host protocol.Host, manifest manifestSpec) (protocol.UploadGrant, error) {
@@ -143,7 +160,7 @@ func runDev(ctx context.Context, apps []string, stdout, stderr io.Writer, config
 		return err
 	}
 	options := config.buildOptions(manager, protocol.DevHost)
-	resolved, err := resolveManifest(ctx, manager, config.manifest, apps...)
+	resolved, err := resolveManifest(ctx, options, config.manifest, apps...)
 	if err != nil {
 		return err
 	}
@@ -308,7 +325,7 @@ func runDeploy(ctx context.Context, selection []string, stdout io.Writer, config
 		manifest.deployed[app.Name] = app
 	}
 	options := config.buildOptions(manager, protocol.AdminHost)
-	resolved, err := resolveManifest(ctx, manager, manifest, selection...)
+	resolved, err := resolveManifest(ctx, options, manifest, selection...)
 	if err != nil {
 		return err
 	}

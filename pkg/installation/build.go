@@ -32,75 +32,92 @@ type buildOptions struct {
 	output     *progressOutput
 }
 
-func buildAndPush(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) ([]protocol.App, error) {
-	apps := make([]protocol.App, len(manifest.Apps))
+func shipApps(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) (manifestSpec, error) {
+	manifest.Apps = slices.Clone(manifest.Apps)
 	group, ctx := errgroup.WithContext(ctx)
-	for index, app := range manifest.Apps {
-		declaration := app.resolved.App
-		if app.resolved.Remote != nil {
-			apps[index] = declaration
-			continue
-		}
-		if app.Path != "" && options.host == protocol.DevHost {
-			if _, err := sourceAppEntry(app, app.resolved.types.root); err != nil {
-				return nil, err
-			}
-			declaration.Port, declaration.Source = 0, true
-			apps[index] = declaration
+	for i := range manifest.Apps {
+		app := &manifest.Apps[i]
+		if app.Path != "" || app.resolved.Remote != nil {
 			continue
 		}
 		group.Go(func() error {
-			finish := options.output.measure(app.Name, "build and upload")
-			defer finish()
-			if err := ctx.Err(); err != nil {
+			defer options.output.measure(app.Name, "build and upload")()
+			if app.resolved.pkg != nil {
+				build, err := importRegistryBuild(ctx, options.manager, options.host, *app)
+				app.resolved.Image, app.resolved.Port = build.Image, build.Runtime.Port
 				return err
 			}
-			if app.resolved.pkg != nil {
-				build, err := importRegistryBuild(ctx, options.manager, options.host, app)
+			var err error
+			app.resolved.Image, err = upload.push(ctx, *app, options, func(repository *remote.Repository, _ protocol.UploadGrant) (ocispec.Descriptor, error) {
+				image, err := importImage(ctx, app.resolved.Image, repository, upload.client)
 				if err != nil {
-					return err
-				}
-				declaration.Image, declaration.Port = build.Image, build.Runtime.Port
-				apps[index] = declaration
-				return nil
-			}
-			var built ocispec.Descriptor
-			if app.resolved.Image == "" {
-				var err error
-				if built, err = buildSource(ctx, app, upload, options); err != nil {
-					return err
-				}
-			}
-			return upload.repository(ctx, app.Name, func(repository *remote.Repository, grant protocol.UploadGrant) (err error) {
-				image := built
-				if app.resolved.Image != "" {
-					if image, err = importImage(ctx, app.resolved.Image, repository, upload.client); err != nil {
-						return fmt.Errorf("import %s: %w", app.Name, err)
-					}
+					return image, fmt.Errorf("import %s: %w", app.Name, err)
 				}
 				if app.resolved.stdio {
 					if image, err = adaptStdio(ctx, repository, image, options.manager.client.baseURL); err != nil {
-						return fmt.Errorf("adapt stdio app %s: %w", app.Name, err)
+						return image, fmt.Errorf("adapt stdio app %s: %w", app.Name, err)
 					}
 				}
-				if options.host == protocol.AdminHost && grant.Grant != "" {
-					ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-					defer cancel()
-					record := mcpregistry.BuildRecord(app.resolved.App, app.resolved.catalogEnv, app.resolved.descriptor)
-					if _, err = appartifact.Publish(ctx, repository, image, record, options.host); err != nil {
-						return err
-					}
-				}
-				declaration.Image = repository.Reference.String() + "@" + image.Digest.String()
-				apps[index] = declaration
-				return nil
+				return image, nil
 			})
+			return err
 		})
 	}
 	if err := group.Wait(); err != nil {
-		return nil, err
+		return manifestSpec{}, err
 	}
-	return apps, nil
+	return manifest, nil
+}
+
+func buildSources(ctx context.Context, manifest manifestSpec, upload *imageUpload, options buildOptions) (manifestSpec, error) {
+	manifest.Apps = slices.Clone(manifest.Apps)
+	group, ctx := errgroup.WithContext(ctx)
+	for i := range manifest.Apps {
+		app := &manifest.Apps[i]
+		if app.Path == "" {
+			continue
+		}
+		if options.host == protocol.DevHost {
+			if _, err := sourceAppEntry(*app, app.resolved.types.root); err != nil {
+				return manifestSpec{}, err
+			}
+			app.resolved.Port, app.resolved.Source = 0, true
+			continue
+		}
+		group.Go(func() error {
+			defer options.output.measure(app.Name, "build and upload")()
+			var err error
+			app.resolved.Image, err = buildSource(ctx, *app, upload, options)
+			return err
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return manifestSpec{}, err
+	}
+	return manifest, nil
+}
+
+func (u *imageUpload) push(
+	ctx context.Context, app manifestApp, options buildOptions, image func(*remote.Repository, protocol.UploadGrant) (ocispec.Descriptor, error),
+) (string, error) {
+	var reference string
+	err := u.repository(ctx, app.Name, func(repository *remote.Repository, grant protocol.UploadGrant) error {
+		pushed, err := image(repository, grant)
+		if err != nil {
+			return err
+		}
+		if options.host == protocol.AdminHost && grant.Grant != "" {
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancel()
+			record := mcpregistry.BuildRecord(app.resolved.App, app.resolved.catalogEnv, app.resolved.descriptor)
+			if _, err = appartifact.Publish(ctx, repository, pushed, record, options.host); err != nil {
+				return err
+			}
+		}
+		reference = repository.Reference.String() + "@" + pushed.Digest.String()
+		return nil
+	})
+	return reference, err
 }
 
 func validateUploadGrant(grant protocol.UploadGrant, manifest manifestSpec) error {
