@@ -91,11 +91,11 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 	endpointAlpha["_meta"] = alpha["_meta"]
 	endpointAlpha["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{map[string]any{"name": "BETA_MCP_URL"}}
 	writeDescriptor(t, filepath.Join(root, "alpha-endpoint/server.json"), endpointAlpha)
-	invalidMetadata := descriptorDocument("invalid")
-	invalidMetadata["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
-		"sh.holon": map[string]any{"egress": json.RawMessage("null")},
-	}}
-	writeDescriptor(t, filepath.Join(root, "invalid-metadata/server.json"), invalidMetadata)
+	for dir, metadata := range map[string]any{"invalid-metadata": map[string]any{"egress": json.RawMessage("null")}, "unknown-reach": map[string]any{"reach": "everyone"}} {
+		invalidMetadata := descriptorDocument("invalid")
+		invalidMetadata["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": metadata}}
+		writeDescriptor(t, filepath.Join(root, dir, "server.json"), invalidMetadata)
+	}
 	for _, test := range []struct {
 		name, want string
 		change     func(*manifestSpec)
@@ -108,6 +108,9 @@ func TestDescriptorInstallAndSourceReplacement(t *testing.T) {
 		}},
 		{name: "invalid publisher metadata", want: "example descriptor: sh.holon metadata", change: func(p *manifestSpec) {
 			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "invalid-metadata"), Access: policy}}
+		}},
+		{name: "unknown reach", want: "example descriptor: sh.holon metadata", change: func(p *manifestSpec) {
+			p.Apps = []manifestApp{{Name: "example", Path: filepath.Join(root, "unknown-reach"), Access: policy}}
 		}},
 		{name: "dependency directory without access", want: "app beta needs an access rule", change: func(p *manifestSpec) { p.Apps = p.Apps[:1] }},
 		{name: "dependency cycle", want: "cycle", change: func(p *manifestSpec) {
@@ -164,23 +167,22 @@ func TestRequirementSource(t *testing.T) {
 	}
 }
 
-func TestDescriptorEgress(t *testing.T) {
+func TestDescriptorMetadata(t *testing.T) {
 	appEgress := []any{map[string]any{"host": "API.Example.com.", "ports": []int{8443, 443, 443}}}
 	for _, test := range []struct {
 		name     string
-		metadata any
-		want     protocol.Egress
+		metadata map[string]any
+		want     protocol.App
 	}{
-		{name: "app declaration", metadata: appEgress, want: protocol.Egress{{Host: "api.example.com", Ports: []int32{443, 8443}}}},
-		{name: "app deny all", metadata: []any{}, want: protocol.Egress{}},
+		{name: "app declaration", metadata: map[string]any{"egress": appEgress}, want: protocol.App{Egress: protocol.Egress{{Host: "api.example.com", Ports: []int32{443, 8443}}}}},
+		{name: "app deny all", metadata: map[string]any{"egress": []any{}}, want: protocol.App{Egress: protocol.Egress{}}},
+		{name: "person reach", metadata: map[string]any{"reach": "person"}, want: protocol.App{Reach: protocol.ReachPerson}},
 		{name: "no declaration"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			document := descriptorDocument("alpha")
 			if test.metadata != nil {
-				document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
-					"sh.holon": map[string]any{"egress": test.metadata},
-				}}
+				document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": test.metadata}}
 			}
 			path := filepath.Join(t.TempDir(), "server.json")
 			writeDescriptor(t, path, document)
@@ -193,8 +195,9 @@ func TestDescriptorEgress(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !cmp.Equal(resolved.Apps[0].resolved.Egress, test.want) {
-				t.Fatalf("effective egress = %#v, want %#v", resolved.Apps[0].resolved.Egress, test.want)
+			got := resolved.Apps[0].resolved
+			if diff := cmp.Diff(test.want, protocol.App{Egress: got.Egress, Reach: got.Reach}); diff != "" {
+				t.Fatalf("effective metadata (-want +got):\n%s", diff)
 			}
 		})
 	}
