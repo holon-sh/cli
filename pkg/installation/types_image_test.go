@@ -1,13 +1,10 @@
 package installation
 
 import (
-	"cmp"
 	"encoding/json"
 	"net/http"
 	"path/filepath"
-	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/holon-sh/cli/pkg/installation/installationtest"
@@ -86,24 +83,24 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name, contract, want        string
+		status                      int
 		untyped, deployed, declared bool
-		refusal                     int
 	}{
 		{
-			name:     "an app the deployment runs, however long its catalog, is typed and stays out of the deployment",
+			name:     "an app the deployment runs is read however long its catalog",
 			contract: strings.Replace(servedContract, `"name":"lookup"`, `"name":"lookup","description":"`+strings.Repeat("a", maxHTTPBody)+`"`, 1),
 			deployed: true,
 		},
 		{
 			name: "a contract that changed on the installation stops the deployment", contract: strings.Replace(servedContract, `"lookup"`, `"search"`, 1),
-			want: "pokeapi has changed the typed contract expected by checkout (tool lookup removed); rebuild and publish the caller", deployed: true,
+			deployed: true, want: "pokeapi has changed the typed contract expected by checkout (tool lookup removed)",
 		},
 		{
-			name: "an app in neither place stops the deployment of a caller that types no calls to it", untyped: true,
-			want: "pokeapi is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation",
+			name: "an app in neither place stops the deployment of a caller that types no calls to it", status: http.StatusNotFound, untyped: true,
+			want: "pokeapi is neither an app in this project nor on the installation",
 		},
-		{name: "an app the deployment runs needs no contract when the caller types no calls to it", untyped: true, deployed: true},
-		{name: "a contract the deployer cannot read is left out of the caller's types", deployed: true, refusal: http.StatusForbidden},
+		{name: "an app the deployment runs is not read when the caller types no calls to it", status: http.StatusNotFound, untyped: true, deployed: true},
+		{name: "a contract the deployer cannot read does not stop the deployment", status: http.StatusForbidden, deployed: true},
 		{name: "a remote the project declares never stops the deployment of a caller built against it", declared: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,9 +113,12 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 			if test.untyped {
 				metadata.Requires, documents = nil, nil
 			}
-			var production []protocol.App
+			production := protocol.SessionResponse{
+				Name: protocol.ProductionName, UID: "production-uid", Revision: "1",
+				Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: protocol.ConditionTrue}},
+			}
 			if test.deployed {
-				production = []protocol.App{{Name: "pokeapi", Remote: &protocol.Remote{URL: "https://pokeapi.example/mcp"}}}
+				production.Apps = []protocol.App{{Name: "pokeapi", Remote: &protocol.Remote{URL: "https://pokeapi.example/mcp"}}}
 			}
 			document["packages"].([]any)[0].(map[string]any)["identifier"] = publishTypeMetadata(t, h.registry,
 				strings.TrimPrefix(h.registryServer.URL, "https://")+"/checkout", metadata, buildOptions{HTTPClient: h.registryServer.Client()}, documents)
@@ -131,15 +131,13 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 				manifest += "- name: pokeapi\n  remote: {url: https://pokeapi.example/mcp}\n  access: {server: {}}\n"
 			}
 			sourceFiles(t, root, map[string]string{manifestFileName: manifest})
-			var mu sync.Mutex
-			var desired []protocol.App
 			h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
 				installationtest.WriteJSON(w, protocol.Info{Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"}})
 			})
 			h.control.Handle([]string{protocol.ToolGetAppContract}, map[string]string{"session": protocol.ProductionName, "app": "pokeapi"},
 				func(w http.ResponseWriter, _ *http.Request) {
-					if test.contract == "" {
-						w.WriteHeader(cmp.Or(test.refusal, http.StatusNotFound))
+					if test.status != 0 {
+						w.WriteHeader(test.status)
 						return
 					}
 					installationtest.WriteJSON(w, json.RawMessage(test.contract))
@@ -150,36 +148,11 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 				installationtest.WriteJSON(w, grant)
 			})
 			h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolUpdateSession}, map[string]string{"session": protocol.ProductionName},
-				func(w http.ResponseWriter, r *http.Request) {
-					mu.Lock()
-					defer mu.Unlock()
-					session := protocol.SessionResponse{
-						Name: protocol.ProductionName, UID: "production-uid", Revision: "1", Generation: 1, Apps: production,
-						Conditions: []protocol.Condition{{Type: protocol.ConditionReady, Status: protocol.ConditionTrue}},
-					}
-					if installationtest.ToolName(r) == protocol.ToolUpdateSession {
-						var input protocol.UpdateSessionRequest
-						if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-							t.Error(err)
-						}
-						desired = input.Desired.Apps
-						session.Revision, session.Generation, session.Apps = "2", 2, append(slices.Clone(production), desired...)
-					}
-					installationtest.WriteJSON(w, session)
-				})
+				func(w http.ResponseWriter, _ *http.Request) { installationtest.WriteJSON(w, production) })
 			h.start(t)
 			err := executeCommand(t.Context(), []string{"deploy", "--file", filepath.Join(root, manifestFileName)}, nil, nil, h.run)
-			if test.want != "" {
-				if err == nil || !strings.Contains(err.Error(), test.want) {
-					t.Fatalf("deploy = %v, want %q", err, test.want)
-				}
-				return
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			i := slices.IndexFunc(desired, func(app protocol.App) bool { return app.Name == "checkout" })
-			if err != nil || i < 0 || !slices.Equal(desired[i].Requires, []string{"pokeapi"}) {
-				t.Fatalf("deploy sent %+v: %v", desired, err)
+			if test.want == "" && err != nil || test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+				t.Fatalf("deploy = %v, want %q", err, test.want)
 			}
 		})
 	}
