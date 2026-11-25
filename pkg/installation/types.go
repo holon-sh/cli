@@ -135,27 +135,22 @@ func prepareManifestTypes(
 	if options.host == protocol.DevHost && served == nil {
 		return manifest, remove, nil
 	}
-	session := cmp.Or(options.session, protocol.ProductionName)
-	declared := session
 	var remotes []protocol.App
 	for _, app := range manifest.Apps {
 		if app.resolved.Remote != nil && needed[app.Name] {
 			remotes = append(remotes, app.resolved.App)
 		}
 	}
+	running := options.session
 	if options.build != nil {
 		if err := options.build.start(ctx, pathApps, remotes); err != nil {
 			return manifestSpec{}, nil, err
 		}
-		declared = cmp.Or(options.build.session.Name, declared)
+		running = options.build.session.Name
 	}
 	unread := map[string]error{}
 	for _, app := range remotes {
-		if declared == protocol.ProductionName && len(protocol.ChangedApps([]protocol.App{manifest.deployed[app.Name]}, []protocol.App{app})) != 0 {
-			unread[app.Name] = errors.New("production does not run this declaration yet")
-			continue
-		}
-		answer, err := options.manager.appContract(ctx, declared, app.Name)
+		answer, err := options.manager.appContract(ctx, running, app.Name)
 		var document *typegen.Document
 		if err == nil {
 			document, err = answer.Advertised()
@@ -171,7 +166,7 @@ func prepareManifestTypes(
 		if _, deployed := manifest.deployed[name]; !needed[name] && deployed {
 			continue
 		}
-		answer, err := options.manager.appContract(ctx, session, name)
+		answer, err := options.manager.appContract(ctx, cmp.Or(options.session, protocol.ProductionName), name)
 		var document *typegen.Document
 		if err == nil {
 			document, err = answer.Document(name)

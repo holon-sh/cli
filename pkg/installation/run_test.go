@@ -24,6 +24,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	sharedcli "github.com/holon-sh/cli/pkg/cli"
+	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/oauth2"
@@ -422,6 +423,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	document["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{
 		map[string]any{"name": "TOKEN", "isSecret": true, "isRequired": true},
 	}
+	document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"hosted": map[string]any{}}}}}
 	writeDescriptor(t, filepath.Join(root, "server.json"), document)
 	sourceFiles(t, root, map[string]string{
 		"server.js": "export const mcp = 1", "pnpm-lock.yaml": "", ".holon/app.txt": "application file",
@@ -562,7 +564,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 	builds.mu.Lock()
 	build := builds.calls[slices.IndexFunc(builds.calls, func(call buildCall) bool { return call.build.Freeze != nil })]
 	wantPlan := runtimecontract.Plan{Install: runtimecontract.Install{Commands: steps.Deploy.Install}, Prepare: steps.Deploy.Build}
-	if builds.sessions != 1 || builds.deleted != 1 || !reflect.DeepEqual(build.plan, wantPlan) || string(build.files[".holon/app.txt"]) != "application file" || build.files["generated/holon-sh/index.mjs"] == nil ||
+	if builds.sessions != 1 || builds.deleted != 1 || !reflect.DeepEqual(build.plan, wantPlan) || string(build.files[".holon/app.txt"]) != "application file" || !bytes.Contains(build.files["generated/holon-sh/index.mjs"], []byte("lookup")) ||
 		slices.ContainsFunc(builds.calls, func(call buildCall) bool { return call.build.Freeze == nil && call.plan.Prepare != nil }) {
 		t.Fatalf("%d build sessions, deleted %d times, build calls %+v", builds.sessions, builds.deleted, builds.calls)
 	}

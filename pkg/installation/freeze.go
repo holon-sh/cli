@@ -63,15 +63,15 @@ type buildSession struct {
 }
 
 func (b *buildSession) start(ctx context.Context, apps []*manifestApp, remotes []protocol.App) error {
-	if len(apps) == 0 {
+	if len(apps)+len(remotes) == 0 {
 		return nil
-	}
-	if b.manager.info.ImageRepositoryPrefix != "" {
-		return fmt.Errorf("%s: holon deploy builds source apps in the installation's registry, which this installation turns off; ship it as an image: app", apps[0].Name)
 	}
 	b.sources = map[string]sourceBuild{}
 	var request protocol.AppsRequest
 	for _, app := range apps {
+		if b.manager.info.ImageRepositoryPrefix != "" {
+			return fmt.Errorf("%s: holon deploy builds source apps in the installation's registry, which this installation turns off; ship it as an image: app", app.Name)
+		}
 		root := app.resolved.types.root
 		entry, err := sourceAppEntry(*app, root)
 		if err != nil {
