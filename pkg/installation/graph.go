@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -75,9 +74,7 @@ func resolveManifestGraph(ctx context.Context, manifest manifestSpec, apps ...st
 			return manifestSpec{}, fmt.Errorf("%s descriptor: %w", app.Name, err)
 		}
 		if app.resolved.descriptor != nil {
-			app.resolved.Icons, app.resolved.Egress = app.resolved.descriptor.Icons, app.resolved.descriptor.Egress
-			app.resolved.Requires = slices.Sorted(maps.Keys(app.resolved.descriptor.Requires))
-			app.resolved.MayAct, app.resolved.Reach = app.resolved.descriptor.MayAct, app.resolved.descriptor.Reach
+			app.resolved.descriptor.Declare(&app.resolved.BuildRuntime)
 		}
 		if err := cmp.Or(resolveApp(&app), app.resolved.OAuth.Validate(app.resolved.Env), app.resolved.Egress.Validate(app.resolved.Env)); err != nil {
 			return manifestSpec{}, fmt.Errorf("%s: %w", name, err)
