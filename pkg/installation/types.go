@@ -60,7 +60,7 @@ func prepareManifestTypes(
 	manifest.Apps = slices.Clone(manifest.Apps)
 	byApp := map[string]typegen.Server{}
 	var consumers []typegen.Consumer
-	needed := map[string]bool{}
+	typed, needed := map[string]bool{}, map[string]bool{}
 	typeOptions := typegen.Options{Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.output.logs()}
 	prepareOptions := typeOptions
 	if options.build != nil {
@@ -98,7 +98,7 @@ func prepareManifestTypes(
 					consumer.Server.Served = answer
 				}
 				for _, name := range app.resolved.Requires {
-					needed[name] = true
+					typed[name], needed[name] = true, true
 				}
 				consumers = append(consumers, *consumer)
 			}
@@ -136,7 +136,7 @@ func prepareManifestTypes(
 	}
 	var remotes []protocol.App
 	for _, app := range manifest.Apps {
-		if app.resolved.Remote != nil && needed[app.Name] {
+		if app.resolved.Remote != nil && typed[app.Name] {
 			remotes = append(remotes, app.resolved.App)
 		}
 	}
@@ -227,7 +227,7 @@ func prepareManifestTypes(
 	for _, app := range manifest.Apps {
 		requires := ptr.Deref(metadata[app.Name], mcpcontract.Metadata{}).Requires
 		for _, name := range slices.Sorted(maps.Keys(requires)) {
-			if unread[name] != nil {
+			if dependency, err := manifest.app(name); unread[name] != nil || err == nil && dependency.resolved.Remote != nil {
 				continue
 			}
 			expected, err := fetchTypeDocument(ctx, app.resolved.Image, requires[name], documents, options)

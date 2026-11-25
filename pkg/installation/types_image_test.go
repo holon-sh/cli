@@ -104,10 +104,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 		},
 		{name: "an app the deployment runs needs no contract when the caller types no calls to it", untyped: true, deployed: true},
 		{name: "a contract the deployer cannot read is left out of the caller's types", deployed: true, refusal: http.StatusForbidden},
-		{
-			name: "a declared remote whose contract changed stops the deployment", contract: strings.Replace(servedContract, `"lookup"`, `"search"`, 1), declared: true,
-			want: "pokeapi has changed the typed contract expected by checkout",
-		},
+		{name: "a remote the project declares never stops the deployment of a caller built against it", declared: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -132,7 +129,6 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 				"  registry: {name: " + identity.Name + ", version: " + identity.Version + ", registry: '" + catalog.Registry + "'}\n"
 			if test.declared {
 				manifest += "- name: pokeapi\n  remote: {url: https://pokeapi.example/mcp}\n  access: {server: {}}\n"
-				serveBuilds(t, h).remoteContract = test.contract
 			}
 			sourceFiles(t, root, map[string]string{manifestFileName: manifest})
 			var mu sync.Mutex
@@ -150,7 +146,7 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 				})
 			h.control.Handle([]string{protocol.ToolUploadGrant}, nil, func(w http.ResponseWriter, _ *http.Request) {
 				grant := buildGrant(h.registryServer)
-				grant.Repositories = map[string]string{"checkout": "holon/upload/checkout"}
+				grant.Repositories = map[string]string{"checkout": "holon/upload/checkout", "pokeapi": "holon/upload/pokeapi"}
 				installationtest.WriteJSON(w, grant)
 			})
 			h.control.Handle([]string{protocol.ToolGetSession, protocol.ToolUpdateSession}, map[string]string{"session": protocol.ProductionName},
@@ -181,7 +177,8 @@ func TestDeployTypesCallsToAppsOnTheInstallation(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil || len(desired) != 1 || desired[0].Name != "checkout" || !slices.Equal(desired[0].Requires, []string{"pokeapi"}) {
+			i := slices.IndexFunc(desired, func(app protocol.App) bool { return app.Name == "checkout" })
+			if err != nil || i < 0 || !slices.Equal(desired[i].Requires, []string{"pokeapi"}) {
 				t.Fatalf("deploy sent %+v: %v", desired, err)
 			}
 		})
