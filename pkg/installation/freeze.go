@@ -158,11 +158,11 @@ func (b *buildSession) build(
 func buildSource(ctx context.Context, app manifestApp, upload *imageUpload, options buildOptions) (ocispec.Descriptor, error) {
 	source := options.build.sources[app.Path]
 	p := app.resolved.types
-	if err := p.prepared.WriteClients(p.name, p.root); err != nil {
+	if err := p.prepared.WriteClients(app.Name, p.root); err != nil {
 		return ocispec.Descriptor{}, err
 	}
 	build := runtimecontract.Build{Freeze: &source.recipe.Deploy.Freeze}
-	if checked, language, ok := p.prepared.CheckEntry(p.name); ok {
+	if checked, language, ok := p.prepared.CheckEntry(app.Name); ok {
 		checker := typegen.Checker(language)
 		script, err := tooling.File(language, checker)
 		if err == nil {

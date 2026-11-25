@@ -25,7 +25,6 @@ import (
 // from, its contract, and the generated clients typegen writes into the snapshot or the app.
 type preparedTypes struct {
 	prepared    *typegen.Prepared
-	name        string
 	root        string
 	fingerprint string
 	metadata    *mcpcontract.Metadata
@@ -81,7 +80,7 @@ func prepareManifestTypes(
 					return manifestSpec{}, nil, fmt.Errorf("%s: %w", app.Name, err)
 				}
 			}
-			p := &preparedTypes{name: app.Name, root: filepath.Join(parent, "sources", app.Name), unserved: served != nil && !ok}
+			p := &preparedTypes{root: filepath.Join(parent, "sources", app.Name), unserved: served != nil && !ok}
 			app.resolved.types = p
 			consumer, err := typegen.AppConsumer(app.Name, app.Path)
 			if err == nil && consumer != nil && !slices.Contains([]string{"", app.Path}, consumer.Server.Dir) {
