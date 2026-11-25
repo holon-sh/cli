@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -133,30 +132,33 @@ func TestRequirementSource(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		production map[string]protocol.App
-		want       []string
+		want       map[string][]string
 	}{
-		{name: "the source a requirement names is added", want: []string{"alpha", "zeta"}},
-		{name: "an app production runs is left as it is", production: map[string]protocol.App{"zeta": {Name: "zeta"}}, want: []string{"alpha"}},
+		{name: "the source a requirement names is added", want: map[string][]string{"alpha": nil, "beta": {"zeta"}, "zeta": nil}},
+		{name: "an app production runs is left as it is", production: map[string]protocol.App{"zeta": {Name: "zeta"}}, want: map[string][]string{"alpha": nil, "beta": {"zeta"}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			alpha := descriptorDocument("alpha")
-			alpha["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
-				"sh.holon": map[string]any{"requires": map[string]any{"zeta": map[string]string{"url": "https://zeta.example/mcp"}}},
-			}}
 			root := t.TempDir()
-			writeDescriptor(t, filepath.Join(root, "server.json"), alpha)
+			for name, requirement := range map[string]any{"alpha": map[string]string{"url": "https://zeta.example/mcp"}, "beta": map[string]bool{"mayAct": true}} {
+				document := descriptorDocument(name)
+				document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{
+					"sh.holon": map[string]any{"requires": map[string]any{"zeta": requirement}},
+				}}
+				writeDescriptor(t, filepath.Join(root, name, "server.json"), document)
+			}
 			resolved, err := resolveManifestGraph(t.Context(), manifestSpec{
-				access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, deployed: test.production, Apps: []manifestApp{{Name: "alpha", Path: root}},
+				access: &protocol.AppAccess{Server: &protocol.AccessRule{}}, deployed: test.production,
+				Apps: []manifestApp{{Name: "beta", Path: filepath.Join(root, "beta")}, {Name: "alpha", Path: filepath.Join(root, "alpha")}},
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			var names []string
+			mayAct := map[string][]string{}
 			for _, app := range resolved.Apps {
-				names = append(names, app.Name)
+				mayAct[app.Name] = app.resolved.MayAct
 			}
-			if !slices.Equal(names, test.want) {
-				t.Fatalf("resolved %v, want %v", names, test.want)
+			if diff := cmp.Diff(test.want, mayAct); diff != "" {
+				t.Fatalf("resolved apps and who may act for them (-want +got):\n%s", diff)
 			}
 		})
 	}
