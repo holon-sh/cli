@@ -81,7 +81,8 @@ func TestStdioImageContract(t *testing.T) {
 				Name: "app", resolved: resolvedApp{stdio: !test.http, App: protocol.App{Name: "app", Image: image, Port: 3000}},
 			}}}
 			options := buildOptions{HTTPClient: server.Client(), manager: &Client{client: &apiClient{baseURL: "https://holon.example"}}, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
-			apps, err := buildAndPush(t.Context(), manifest, &imageUpload{grant: grant, client: options.HTTPClient}, options)
+			shipped, err := shipApps(t.Context(), manifest, &imageUpload{grant: grant, client: options.HTTPClient}, options)
+			apps := shipped.declarations()
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 					t.Fatalf("want %s: %v", test.wantErr, err)
@@ -197,7 +198,8 @@ func TestStdioMultiArchitectureBuild(t *testing.T) {
 	options := buildOptions{HTTPClient: server.Client(), manager: &Client{client: &apiClient{baseURL: "https://holon.example"}}, Env: []string{"DOCKER_CONFIG=" + t.TempDir()}}
 	source := host + "/source@" + descriptor.Digest.String()
 	app := manifestApp{Name: "echo", resolved: resolvedApp{stdio: true, App: protocol.App{Name: "echo", Image: source, Port: 3000}}}
-	prepared, err := buildAndPush(t.Context(), manifestSpec{Apps: []manifestApp{app}}, &imageUpload{grant: grant, client: options.HTTPClient}, options)
+	shipped, err := shipApps(t.Context(), manifestSpec{Apps: []manifestApp{app}}, &imageUpload{grant: grant, client: options.HTTPClient}, options)
+	prepared := shipped.declarations()
 	if err != nil {
 		t.Fatal(err)
 	}

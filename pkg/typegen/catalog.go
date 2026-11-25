@@ -115,9 +115,9 @@ func (s *Served) Document(name string) (*Document, error) {
 	return s.identified(mcpcontract.Identity{Name: name, Version: unversioned})
 }
 
-// Advertised is the contract s describes, under the name and version its serverInfo reports. MCP allows an empty
+// advertised is the contract s describes, under the name and version its serverInfo reports. MCP allows an empty
 // serverInfo version, which SDKs report for a server that does not set one.
-func (s *Served) Advertised() (*Document, error) {
+func (s *Served) advertised() (*Document, error) {
 	var info struct{ Name, Version string }
 	_ = json.Unmarshal(s.ServerInfo, &info)
 	if info.Name == "" {

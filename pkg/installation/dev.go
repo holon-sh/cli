@@ -420,10 +420,7 @@ func (d *devLoop) apply(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	manifest.sources, manifest.access = d.manifest.sources, d.manifest.access
-	resolved, err := resolveManifestGraph(ctx, manifest, d.apps...)
-	if err == nil {
-		err = protocol.AccessPolicy(resolved.declarations(), d.manager.info.OAuth != nil)
-	}
+	resolved, err := resolveManifest(ctx, d.options, manifest, d.apps...)
 	if err != nil || reflect.DeepEqual(resolved.Apps, d.manifest.Apps) {
 		return false, err
 	}

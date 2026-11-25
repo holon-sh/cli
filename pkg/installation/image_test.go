@@ -299,7 +299,8 @@ func TestPrebuiltImageImports(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(configDir, "config.json"), data, 0o600); err != nil {
 					t.Fatal(err)
 				}
-				apps, err := buildAndPush(t.Context(), manifest, &upload, options)
+				shipped, err := shipApps(t.Context(), manifest, &upload, options)
+				apps := shipped.declarations()
 				if scenario.denied {
 					var response *errcode.ErrorResponse
 					if !errors.As(err, &response) || response.StatusCode != http.StatusUnauthorized || len(apps) != 0 || renewals != 1 {

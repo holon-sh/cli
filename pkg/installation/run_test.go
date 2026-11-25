@@ -423,24 +423,12 @@ func TestRunDeployLifecycle(t *testing.T) {
 	document["packages"].([]any)[0].(map[string]any)["environmentVariables"] = []any{
 		map[string]any{"name": "TOKEN", "isSecret": true, "isRequired": true},
 	}
-	document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"hosted": map[string]any{}}}}}
+	document["_meta"] = map[string]any{mcpregistry.PublisherMetadata: map[string]any{"sh.holon": map[string]any{"requires": map[string]any{"worker": map[string]any{}}}}}
 	writeDescriptor(t, filepath.Join(root, "server.json"), document)
 	sourceFiles(t, root, map[string]string{
 		"server.js": "export const mcp = 1", "pnpm-lock.yaml": "", ".holon/app.txt": "application file",
 		"package.json": `{"private":true,"packageManager":"pnpm@10.34.9","scripts":{"build":"vite build"},"dependencies":{"holon-sh":"^0.0.1"}}`,
 	})
-	manifestPath := filepath.Join(root, "holon.yaml")
-	if err := os.WriteFile(manifestPath, []byte(`apps:
-  - name: hosted
-    remote: {url: https://mcp.example/mcp}
-    access: {server: {}}
-  - name: prod
-    mount: /
-    access: {server: {}}
-    path: .
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	buildClock := testingclock.NewFakeClock(time.Unix(100, 0))
 	var mu sync.Mutex
 	var existing bool
@@ -451,6 +439,22 @@ func TestRunDeployLifecycle(t *testing.T) {
 	var rolloutFailure string
 	revision := 7
 	h := newRunHarness(t)
+	worker := addTestIndex(h.registry, addTestImage(t, h.registry, "amd64", ocispec.ImageConfig{}, nil))
+	manifestPath := filepath.Join(root, "holon.yaml")
+	if err := os.WriteFile(manifestPath, []byte(`apps:
+  - name: hosted
+    remote: {url: https://mcp.example/mcp}
+    access: {server: {}}
+  - name: prod
+    mount: /
+    access: {server: {}}
+    path: .
+  - name: worker
+    image: registry.example/source@`+worker.Digest.String()+`
+    access: {server: {}}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	h.mux.HandleFunc("GET "+protocol.APIPathInfo, func(w http.ResponseWriter, _ *http.Request) {
 		installationtest.WriteJSON(w, protocol.Info{
 			Installation: protocol.InstallationReference{Origin: h.server.URL, UID: "test-installation"},
@@ -472,7 +476,7 @@ func TestRunDeployLifecycle(t *testing.T) {
 			map[string]any{
 				"grant":        "grant-secret",
 				"registry":     "registry.example",
-				"repositories": map[string]string{"prod": "holon/upload/prod", "hosted": "unused"},
+				"repositories": map[string]string{"prod": "holon/upload/prod", "hosted": "unused", "worker": "holon/upload/worker"},
 				"expiresAt":    time.Now().Add(time.Hour).Format(time.RFC3339),
 			},
 		)
@@ -623,7 +627,8 @@ func TestRunDeployLifecycle(t *testing.T) {
 	}
 	// The summary names the remote app without a page, and nothing else production runs.
 	wantOutput := "Ready MCP tools (all apps) https://" + h.baseHost + "/mcp hosted MCP https://" + h.baseHost + "/mcp/hosted " +
-		"prod Browser https://" + h.baseHost + "/ MCP https://" + h.baseHost + "/mcp/prod"
+		"prod Browser https://" + h.baseHost + "/ MCP https://" + h.baseHost + "/mcp/prod " +
+		"worker MCP https://" + h.baseHost + "/mcp/worker"
 	if strings.Join(strings.Fields(output.String()), " ") != wantOutput {
 		t.Fatalf("endpoint = %q", output.String())
 	}

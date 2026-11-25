@@ -18,7 +18,6 @@ import (
 	"github.com/holon-sh/cli/pkg/mcptype"
 	"github.com/holon-sh/cli/pkg/typegen"
 	"github.com/holon-sh/protocol"
-	"k8s.io/utils/ptr"
 )
 
 // preparedTypes is one path app's share of a typegen preparation: the snapshot its image is built
@@ -60,7 +59,7 @@ func prepareManifestTypes(
 	manifest.Apps = slices.Clone(manifest.Apps)
 	byApp := map[string]typegen.Server{}
 	var consumers []typegen.Consumer
-	typed, needed := map[string]bool{}, map[string]bool{}
+	typed := map[string]bool{}
 	typeOptions := typegen.Options{Env: options.Env, HTTPClient: options.HTTPClient, Stderr: options.output.logs()}
 	prepareOptions := typeOptions
 	if options.build != nil {
@@ -69,8 +68,7 @@ func prepareManifestTypes(
 	var pathApps []*manifestApp
 	for i := range manifest.Apps {
 		app := &manifest.Apps[i]
-		switch {
-		case app.Path != "":
+		if app.Path != "" {
 			if clientutil.PathInside(parent, app.Path) {
 				return manifestSpec{}, nil, fmt.Errorf("%s: build metadata must be outside application source", app.Name)
 			}
@@ -98,25 +96,9 @@ func prepareManifestTypes(
 					consumer.Server.Served = answer
 				}
 				for _, name := range app.resolved.Requires {
-					typed[name], needed[name] = true, true
+					typed[name] = true
 				}
 				consumers = append(consumers, *consumer)
-			}
-		case app.resolved.Image != "":
-			image, document, err := resolveTypeMetadata(ctx, app.resolved.Image, options)
-			if err != nil {
-				return manifestSpec{}, nil, err
-			}
-			app.resolved.Image = image
-			if d := app.resolved.descriptor; d != nil && document != nil && document.Identity != d.Identity() {
-				return manifestSpec{}, nil, fmt.Errorf(
-					"%s descriptor identity does not match the retained image contract; use the original release identity or a new image tag", app.Name)
-			}
-			if document != nil {
-				byApp[app.Name] = document
-				for name := range document.Requires {
-					needed[name] = true
-				}
 			}
 		}
 	}
@@ -134,42 +116,37 @@ func prepareManifestTypes(
 	if options.host == protocol.DevHost && served == nil {
 		return manifest, remove, nil
 	}
-	var remotes []protocol.App
+	var started []protocol.App
+	needed := maps.Clone(typed)
 	for _, app := range manifest.Apps {
-		if app.resolved.Remote != nil && typed[app.Name] {
-			remotes = append(remotes, app.resolved.App)
+		if app.Path == "" && typed[app.Name] {
+			started = append(started, app.resolved.App)
+		}
+		for name := range app.resolved.expects {
+			needed[name] = true
 		}
 	}
 	running := options.session
 	if options.build != nil {
-		if err := options.build.start(ctx, pathApps, remotes); err != nil {
+		if err := options.build.start(ctx, pathApps, started); err != nil {
 			return manifestSpec{}, nil, err
 		}
 		running = options.build.session.Name
 	}
 	unread := map[string]error{}
-	for _, app := range remotes {
-		answer, err := options.manager.appContract(ctx, running, app.Name)
-		var document *typegen.Document
-		if err == nil {
-			document, err = answer.Advertised()
-		}
+	for _, app := range started {
+		document, err := options.manager.appDocument(ctx, running, app.Name)
 		if err != nil {
 			unread[app.Name] = err
 			continue
 		}
 		byApp[app.Name] = document
 	}
-	installed := manifest.installed()
-	for _, name := range installed {
+	for _, name := range manifest.installed() {
 		if _, deployed := manifest.deployed[name]; !needed[name] && deployed {
 			continue
 		}
-		answer, err := options.manager.appContract(ctx, cmp.Or(options.session, protocol.ProductionName), name)
-		var document *typegen.Document
-		if err == nil {
-			document, err = answer.Document(name)
-		}
+		document, err := options.manager.appDocument(ctx, cmp.Or(options.session, protocol.ProductionName), name)
 		if HTTPStatus(err) == http.StatusNotFound {
 			return manifestSpec{}, nil, fmt.Errorf("%s is neither an app in this project nor on the installation; declare it in holon.yaml or add it to the installation", name)
 		}
@@ -187,11 +164,8 @@ func prepareManifestTypes(
 	for i := range consumers {
 		app, _ := manifest.app(consumers[i].Name)
 		for _, name := range app.resolved.Requires {
-			server, ok := byApp[name]
-			if ok {
+			if server, ok := byApp[name]; ok {
 				consumers[i].Sources = append(consumers[i].Sources, typegen.Source{Alias: name, Server: server})
-			} else if unread[name] == nil {
-				return manifestSpec{}, nil, fmt.Errorf("%s: dependency %s carries no MCP contract to type calls against", consumers[i].Name, name)
 			}
 		}
 	}
@@ -205,7 +179,6 @@ func prepareManifestTypes(
 	for name, server := range byApp {
 		if document, ok := server.(*typegen.Document); ok {
 			metadata[name] = document.Metadata
-			documents[document.Digest] = document
 		}
 	}
 	for _, app := range pathApps {
@@ -225,27 +198,17 @@ func prepareManifestTypes(
 		}
 	}
 	for _, app := range manifest.Apps {
-		requires := ptr.Deref(metadata[app.Name], mcpcontract.Metadata{}).Requires
-		for _, name := range slices.Sorted(maps.Keys(requires)) {
-			if dependency, err := manifest.app(name); unread[name] != nil || err == nil && dependency.resolved.Remote != nil {
+		for _, name := range slices.Sorted(maps.Keys(app.resolved.expects)) {
+			if dependency, err := manifest.app(name); unread[name] != nil || err == nil && dependency.Path == "" {
 				continue
 			}
-			expected, err := fetchTypeDocument(ctx, app.resolved.Image, requires[name], documents, options)
-			if err != nil {
-				return manifestSpec{}, nil, fmt.Errorf("%s: fetch expected %s contract %s: %w", app.Name, name, requires[name], err)
-			}
-			changes, err := mcptype.Changes(expected, metadata[name])
+			changes, err := mcptype.Changes(app.resolved.expects[name], metadata[name])
 			if err != nil {
 				return manifestSpec{}, nil, err
 			}
-			if len(changes) == 0 {
-				continue
+			if len(changes) != 0 {
+				return manifestSpec{}, nil, fmt.Errorf("%s has changed the typed contract expected by %s (%s); rebuild and publish the caller", name, app.Name, strings.Join(changes, ", "))
 			}
-			advice := fmt.Sprintf("include both in holon deploy %s %s (or rebuild and publish the caller)", name, app.Name)
-			if slices.Contains(installed, name) {
-				advice = "rebuild and publish the caller"
-			}
-			return manifestSpec{}, nil, fmt.Errorf("%s has changed the typed contract expected by %s (%s); %s", name, app.Name, strings.Join(changes, ", "), advice)
 		}
 	}
 	return manifest, remove, nil

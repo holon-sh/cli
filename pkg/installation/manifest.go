@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/yaml"
 
+	"github.com/holon-sh/cli/pkg/mcpcontract"
 	"github.com/holon-sh/cli/pkg/mcpregistry"
 	"github.com/holon-sh/cli/pkg/scaffold"
 	"github.com/holon-sh/cli/pkg/typegen"
@@ -68,6 +69,7 @@ type resolvedApp struct {
 	descriptor *mcpregistry.Descriptor
 	stdio      bool
 	catalogEnv map[string]protocol.Input
+	expects    map[string]*mcpcontract.Metadata
 }
 
 type manifestApp struct {
