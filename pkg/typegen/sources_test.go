@@ -20,11 +20,11 @@ func TestResolveDocumentFindsServerSources(t *testing.T) {
 	if err := os.Rename(filepath.Join(root, "nested/server.py"), filepath.Join(root, "nested/src/server.py")); err != nil {
 		t.Fatal(err)
 	}
-	put(t, root, "both/server.py", pythonProvider)
+	writeProvider(t, filepath.Join(root, "both"), "both", pythonProvider)
 	put(t, root, "both/server.ts", "export default {};\n")
 	put(t, root, "none/package.json", "{}")
-	put(t, root, "odd/index.ts", "export default {};\n")
-	for _, path := range []string{"nested/src/server.py", "both", "none", "odd/index.ts", "missing"} {
+	put(t, root, "nested/src/main.py", pythonProvider)
+	for _, path := range []string{"nested/src/server.py", "both", "none", "nested/src/main.py", "missing"} {
 		document, err := ResolveDocument(t.Context(), Source{Server: Path{Dir: filepath.Join(root, path)}}, Options{})
 		if path != "nested/src/server.py" {
 			if err == nil {
@@ -46,7 +46,7 @@ func TestGenerateKeepsFilesItDidNotWrite(t *testing.T) {
 		t.Run(test.file, func(t *testing.T) {
 			dir := t.TempDir()
 			runtimePackage(t, dir, "holon-sh")
-			put(t, dir, "requirements.txt", "holon-sh\n")
+			put(t, dir, ".venv/bin/python", "")
 			put(t, dir, test.file, "user content")
 			c := Consumer{Name: "app", Dir: dir, Targets: []string{test.target}, Sources: []Source{{Server: document(t, ordersMetadata())}}}
 			if err := Generate(t.Context(), []Consumer{c}, Options{}); err == nil {

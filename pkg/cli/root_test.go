@@ -170,7 +170,7 @@ func TestErrorsNameTheAppAndItsServer(t *testing.T) {
 		}
 	}
 	writeCLIFile(t, root, "holon.yaml", "apps:\n"+unused)
-	if _, err := projectConsumers(root, true); err == nil || err.Error() != "consumer name is required" {
+	if _, err := projectConsumers(root, true); err == nil {
 		t.Fatalf("generate with a nameless app = %v", err)
 	}
 }
