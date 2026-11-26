@@ -145,7 +145,7 @@ def test_effects_and_missing_packages_fail_naming_them(tmp_path):
     sources = {
         "socket": "import socket\n\nsocket.create_connection(('example.com', 443))\n",
         "write": "import json\n\njson.dump({}, open('cache.json', 'w'))\n",
-        "missing": "import requests\n",
+        "missing": "import uninstalled\n",
         # Naming a forbidden class is not using it, as eagerly evaluated annotations do.
         "typed": "import subprocess\nfrom mcp.server import MCPServer\n"
         "Runner = subprocess.Popen[bytes]\nserver = MCPServer('typed')\n",
@@ -159,5 +159,5 @@ def test_effects_and_missing_packages_fail_naming_them(tmp_path):
         diagnostic = result[name]["diagnostic"]
         assert f'{name}/server.py", line 3' in diagnostic, diagnostic
         assert f"contract evaluation has no {capability}" in diagnostic, diagnostic
-    assert result["missing"]["missing"] == "requests"
+    assert result["missing"]["missing"] == "uninstalled"
     assert result["typed"]["tools"] == []

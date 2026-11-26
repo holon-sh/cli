@@ -190,6 +190,36 @@ async def use() -> None:
 	})
 }
 
+func TestPythonTasksAreStartedByToolNameWithTypedArguments(t *testing.T) {
+	app := pythonApp(t)
+	c := Consumer{Name: "caller", Dir: app, Targets: []string{TargetPy}, Sources: []Source{{Server: document(t, ordersMetadata())}}}
+	if err := Generate(t.Context(), []Consumer{c}, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	put(t, app, "main.py", `from holon.apps import apps
+async def use() -> None:
+    started = await apps.orders.start_task("lookup", {"timeout": 1}, id="1")
+    if started.result_type == "task":
+        task = await apps.orders.get_task(started.task_id, timeout=1)
+        if task.status == "input_required":
+            await apps.orders.update_task(task.task_id, {}, timeout=1)
+        await apps.orders.cancel_task(task.task_id, timeout=1)
+    elif started.result_type == "complete" and not started.is_error:
+        total: float = started.structured_content["total"]
+`)
+	if output, err := check(t, app); err != nil {
+		t.Fatalf("check: %v\n%s", err, output)
+	}
+	put(t, app, "main.py", `from holon.apps import apps
+async def use() -> None:
+    await apps.orders.start_task("lookup", id=1)
+    await apps.orders.get_task(1)
+    await apps.orders.update_task("task")
+    await apps.orders.cancel_task("task", 1)
+`)
+	mustReject(t, app, `Argument "id" to "start_task"`, `Argument 1 to "get_task"`, `Missing positional argument "input_responses"`, `Too many positional arguments for "cancel_task"`)
+}
+
 // An OpenAPI document's response schemas type the results of the tools om serves for it, whether the generator compiles
 // the document or reads the contract an installation serving it answers.
 func TestOpenAPIResponsesTypeResults(t *testing.T) {
