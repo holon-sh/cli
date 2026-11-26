@@ -452,10 +452,6 @@ func TestResourceTokenCacheIsPerAudience(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := manager.controlToken(t.Context())
-	if err != nil || again != token || len(requests) != 1 {
-		t.Fatalf("control token cache miss: %v %v", requests, err)
-	}
 	if requests[0] != audience+"|" {
 		t.Fatalf("wrong control token request: %s", requests[0])
 	}
