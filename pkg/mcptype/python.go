@@ -263,7 +263,7 @@ func generatePython(contracts, events map[string]catalog) string {
 	for _, binding := range sortedKeys(contracts) {
 		appName := unique(emitter.names, typeIdentifier(binding)+"App")
 		toolsName := unique(emitter.names, typeIdentifier(binding)+"Tools")
-		var methods, calls []string
+		var methods, calls, starts []string
 		appExports := make([][]string, 4)
 		tools := contracts[binding]
 		nameDeclarations(emitter.names, binding, tools)
@@ -282,7 +282,9 @@ func generatePython(contracts, events map[string]catalog) string {
 			}
 			var signatures []string
 			for _, argument := range arguments {
-				calls = append(calls, fmt.Sprintf("    async def call_tool(self, name: _typing.Literal[%s], options: _CallOptions | None = ..., /, **arguments: %s) -> _ToolResult[%s]: ...", quoted(name), argument, output))
+				call := fmt.Sprintf("(self, name: _typing.Literal[%s], options: _CallOptions | None = ..., /, **arguments: %s) -> _ToolResult[%s]", quoted(name), argument, output)
+				calls = append(calls, "    async def call_tool"+call+": ...")
+				starts = append(starts, "    async def start_task"+call+" | _CreateTaskResult: ...")
 				signatures = append(signatures, fmt.Sprintf("    async def %s(self, options: _CallOptions | None = ..., /, **arguments: %s) -> %s: ...", method, argument, returned))
 			}
 			if method == "" {
@@ -325,6 +327,12 @@ func generatePython(contracts, events map[string]catalog) string {
 		clients = append(clients, pythonBlock(fmt.Sprintf("class %s(_typing.Protocol):", extName), []string{"    events: " + eventsName}, "    "))
 		app = append(app, "    tools: "+toolsName, "    ext: "+extName)
 		app = append(app, pythonOverloaded(calls)...)
+		app = append(app, pythonOverloaded(starts)...)
+		app = append(app,
+			"    async def get_task(self, task_id: _builtins.str, *, timeout: _builtins.float | None = ...) -> _DetailedTask: ...",
+			"    async def update_task(self, task_id: _builtins.str, input_responses: _InputResponses, *, timeout: _builtins.float | None = ...) -> None: ...",
+			"    async def cancel_task(self, task_id: _builtins.str, *, timeout: _builtins.float | None = ...) -> None: ...",
+		)
 		clients = append(clients, pythonBlock(fmt.Sprintf("class %s(_typing.Protocol):", appName), app, "    "))
 		if pythonIdentifier(binding) {
 			fields = append(fields, fmt.Sprintf("    %s: %s", binding, appName))

@@ -27,6 +27,7 @@ func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
 	testfiles.Write(t, root, map[string][]byte{
 		"holon/apps/__init__.py": files["__init__.py"],
 		"holon/client.py":        []byte("import json\nclass Apps:\n    def __init__(self, identity, *rest):\n        print(json.dumps(identity))\ndef __getattr__(name):\n    return object\n"),
+		"mcp/types.py":           []byte("class InputResponses: ...\n"),
 	})
 	command := exec.CommandContext(t.Context(), python, "-c", "import holon.apps")
 	command.Dir = root
@@ -59,6 +60,8 @@ T = TypeVar("T")
 class Binding: ...
 class CallOptions: ...
 class CompleteResult(Generic[T]): ...
+class CreateTaskResult: ...
+class DetailedTask: ...
 class ToolResult(Generic[T]): ...
 def _method(tool: str) -> Any:
     async def call() -> str:
@@ -90,7 +93,7 @@ func TestPythonMethodsCallToolsNamedOtherwise(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files = map[string][]byte{"holon/apps/__init__.py": files["__init__.py"], "holon/client.py": []byte(pythonRuntime), "holon/ext/files.py": []byte("class File: ...\n"), "holon/ext/events.py": []byte("from typing import Generic, TypeVar\nD = TypeVar(\"D\")\nclass Subscription(Generic[D]): ...\n")}
+	files = map[string][]byte{"holon/apps/__init__.py": files["__init__.py"], "holon/client.py": []byte(pythonRuntime), "holon/ext/files.py": []byte("class File: ...\n"), "mcp/types.py": []byte("class InputResponses: ...\n"), "holon/ext/events.py": []byte("from typing import Generic, TypeVar\nD = TypeVar(\"D\")\nclass Subscription(Generic[D]): ...\n")}
 	files["typed.py"] = []byte(`from holon.apps import Inputs, Outputs, apps
 async def use(request: Inputs.schemas.runtime_run) -> Outputs.schemas.runtime_run:
     await apps.schemas.tools.runtime_run(code=1)
