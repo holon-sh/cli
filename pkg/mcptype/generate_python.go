@@ -20,10 +20,7 @@ from holon.client import Apps as _Apps
 from holon.client import Binding as _Binding
 from holon.client import CallOptions as _CallOptions
 from holon.client import CompleteResult as _CompleteResult
-from holon.client import CreateTaskResult as _CreateTaskResult
-from holon.client import DetailedTask as _DetailedTask
-from holon.client import ToolResult as _ToolResult
-from mcp.types import InputResponses as _InputResponses`
+from holon.client import ToolResult as _ToolResult`
 
 // pythonClients creates the clients. The runtime names each method after its tool, so a method named
 // otherwise is added here.

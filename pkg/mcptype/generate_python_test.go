@@ -27,7 +27,6 @@ func TestPythonModulePassesItsIdentityToTheRuntime(t *testing.T) {
 	testfiles.Write(t, root, map[string][]byte{
 		"holon/apps/__init__.py": files["__init__.py"],
 		"holon/client.py":        []byte("import json\nclass Apps:\n    def __init__(self, identity, *rest):\n        print(json.dumps(identity))\ndef __getattr__(name):\n    return object\n"),
-		"mcp/types.py":           []byte("class InputResponses: ...\n"),
 	})
 	command := exec.CommandContext(t.Context(), python, "-c", "import holon.apps")
 	command.Dir = root

@@ -352,6 +352,7 @@ func generatePython(contracts, events map[string]catalog) string {
 	if emitter.events {
 		imports += "\nfrom holon.ext.events import Subscription as _Subscription"
 	}
+	imports += "\n\nif _typing.TYPE_CHECKING:\n    from holon.client import CreateTaskResult as _CreateTaskResult\n    from holon.client import DetailedTask as _DetailedTask\n    from mcp.types import InputResponses as _InputResponses"
 	sections := []string{imports}
 	sections = append(sections, emitter.shapes...)
 	for i, name := range exportNames {
