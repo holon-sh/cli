@@ -89,7 +89,7 @@ func credentialTarget(info *protocol.OAuthInfo) protocol.OAuthInfo {
 
 type Client struct {
 	hookSent    map[string]time.Time
-	machine     *clientcredentials.Config
+	environment func(context.Context, string) (*oauth2.Token, error)
 	output      io.Writer
 	interactive bool
 
@@ -113,8 +113,8 @@ func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
 		return nil, err
 	}
 	manager.client.installationUID = manager.info.Installation.UID
-	if manager.machine != nil && manager.info.OAuth == nil {
-		return nil, errors.New("service-account authentication requires an identity-enabled installation")
+	if manager.environment != nil && manager.info.OAuth == nil {
+		return nil, errors.New("authentication from the environment requires an identity-enabled installation")
 	}
 	return manager, nil
 }
@@ -125,17 +125,28 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 		state:  authState{Access: map[string]*oauth2.Token{}},
 		output: cmp.Or(config.Output, io.Discard), interactive: config.Interactive, hookSent: map[string]time.Time{},
 	}
-	if slices.ContainsFunc(env, func(entry string) bool {
-		key, _, _ := strings.Cut(entry, "=")
-		return slices.Contains([]string{"HOLON_CLIENT_ID", "HOLON_CLIENT_SECRET"}, key)
-	}) {
+	set := func(keys ...string) bool {
+		return slices.ContainsFunc(env, func(entry string) bool {
+			key, _, _ := strings.Cut(entry, "=")
+			return slices.Contains(keys, key)
+		})
+	}
+	if set("HOLON_CLIENT_ID", "HOLON_CLIENT_SECRET") {
 		id, secret := commandenv.Value(env, "HOLON_CLIENT_ID"), commandenv.Value(env, "HOLON_CLIENT_SECRET")
 		if !validToken(id) || !validToken(secret) {
 			return nil, errors.New("service-account authentication requires HOLON_CLIENT_ID and HOLON_CLIENT_SECRET together")
 		}
-		manager.machine = &clientcredentials.Config{
-			ClientID: id, ClientSecret: secret, AuthStyle: oauth2.AuthStyleInHeader,
+		credentials := clientcredentials.Config{ClientID: id, ClientSecret: secret, AuthStyle: oauth2.AuthStyleInHeader}
+		manager.environment = func(ctx context.Context, audience string) (*oauth2.Token, error) {
+			return manager.machineToken(ctx, credentials, audience)
 		}
+	}
+	if set("HOLON_TOKEN") {
+		token := commandenv.Value(env, "HOLON_TOKEN")
+		if manager.environment != nil || !validToken(token) {
+			return nil, errors.New("HOLON_TOKEN must be a bearer token, set without HOLON_CLIENT_ID and HOLON_CLIENT_SECRET")
+		}
+		manager.environment = func(context.Context, string) (*oauth2.Token, error) { return &oauth2.Token{AccessToken: token}, nil }
 	}
 	dir, err := clientConfigDir(config.ConfigDir)
 	if err != nil {
@@ -151,8 +162,8 @@ func newLocalAuthManager(config ClientConfig) (*Client, error) {
 }
 
 func (m *Client) loginInteractive(ctx context.Context) error {
-	if m.machine != nil {
-		return errors.New("service-account credentials are supplied by the environment")
+	if m.environment != nil {
+		return errors.New("credentials are supplied by the environment")
 	}
 	if m.info.OAuth == nil {
 		_, err := fmt.Fprintln(m.output, "Connected to "+m.client.baseURL+" (authentication disabled)")
@@ -263,8 +274,8 @@ func (m *Client) renewToken(ctx context.Context, config *oauth2.Config, refreshT
 }
 
 func (m *Client) logout(ctx context.Context) error {
-	if m.machine != nil {
-		return errors.New("service-account credentials are supplied by the environment; unset HOLON_CLIENT_ID and HOLON_CLIENT_SECRET")
+	if m.environment != nil {
+		return errors.New("credentials are supplied by the environment; unset HOLON_TOKEN, HOLON_CLIENT_ID and HOLON_CLIENT_SECRET")
 	}
 	return m.withLock(ctx, func() error {
 		revokeErr := m.revokeRefreshTokens(ctx)
@@ -498,8 +509,8 @@ func (m *Client) controlToken(ctx context.Context) (string, error) {
 }
 
 func (m *Client) resourceToken(ctx context.Context, audience string) (*oauth2.Token, error) {
-	if m.machine != nil {
-		return m.machineToken(ctx, audience)
+	if m.environment != nil {
+		return m.environment(ctx, audience)
 	}
 	var result *oauth2.Token
 	token := func() error {
@@ -521,7 +532,7 @@ func (m *Client) resourceToken(ctx context.Context, audience string) (*oauth2.To
 	return result, err
 }
 
-func (m *Client) machineToken(ctx context.Context, audience string) (*oauth2.Token, error) {
+func (m *Client) machineToken(ctx context.Context, credentials clientcredentials.Config, audience string) (*oauth2.Token, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// A response may omit expires_in per [RFC 6749 §5.1]. Its zero Expiry fails this check, so the token is renewed.
@@ -534,7 +545,6 @@ func (m *Client) machineToken(ctx context.Context, audience string) (*oauth2.Tok
 	if err != nil {
 		return nil, err
 	}
-	credentials := *m.machine
 	credentials.TokenURL = config.Endpoint.TokenURL
 	credentials.EndpointParams = url.Values{"resource": {audience}}
 	token, err := credentials.Token(m.oauthContext(ctx))
