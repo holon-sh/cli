@@ -12,7 +12,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-cmp v0.7.0
-	github.com/holon-sh/mcp-bridge v0.0.13
+	github.com/holon-sh/mcp-bridge v0.0.16
 	github.com/holon-sh/om v0.0.10
 	github.com/holon-sh/protocol v0.0.1-dev.26.0.20261125011422-45c14147617e
 	github.com/klauspost/compress v1.19.2

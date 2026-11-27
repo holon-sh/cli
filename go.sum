@@ -85,6 +85,8 @@ github.com/google/jsonschema-go v0.4.3 h1:/DBOLZTfDow7pe2GmaJNhltueGTtDKICi8V8p+
 github.com/google/jsonschema-go v0.4.3/go.mod h1:r5quNTdLOYEz95Ru18zA0ydNbBuYoo9tgaYcxEYhJVE=
 github.com/holon-sh/mcp-bridge v0.0.13 h1:ZQpJ8yyS8wZ37PXJoHD2qVS3n8HFmT3mNs3Bz6Jl3DY=
 github.com/holon-sh/mcp-bridge v0.0.13/go.mod h1:4Zj3W5TYQhZ4kENbZhXMZmspaqnXmQYYxaLw9GHIYVM=
+github.com/holon-sh/mcp-bridge v0.0.16 h1:WULAI3NMlIZ75wNKWKap8C724nNP0bPqVki4iQbdLxE=
+github.com/holon-sh/mcp-bridge v0.0.16/go.mod h1:4Zj3W5TYQhZ4kENbZhXMZmspaqnXmQYYxaLw9GHIYVM=
 github.com/holon-sh/om v0.0.10 h1:6PXRrOy6F8k6R4xt7hOqHQKY9BKo+jgX46wBhQG7+uo=
 github.com/holon-sh/om v0.0.10/go.mod h1:mN6eWDWU2QVabyifJBSX0f48UpEYiCEzO60bOIJZoJc=
 github.com/holon-sh/protocol v0.0.1-dev.26.0.20261125011422-45c14147617e h1:JHDxVdISP6NqYNpYf2myvvWL+NPHpXS7+gU9DcF7xh4=
